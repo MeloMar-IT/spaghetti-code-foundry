@@ -480,6 +480,7 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
 describe("the shipped refine-round flow", { timeout: 60_000 }, () => {
   const ship = (extra: { source?: string; owner?: string }) =>
     runFlow(loadFlow("refine-round", gh.tmp).flow, { task: "Let people export CSV", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: ConfigSchema.parse({ protected_branches: [] }), ...extra });
+  beforeEach(() => void fakeGit(gh));
 
   it("succeeds with the stored token, keeps it from the agent and from .git/config", async () => {
     tokenRepo(user);
@@ -495,8 +496,10 @@ describe("the shipped refine-round flow", { timeout: 60_000 }, () => {
 
   it("fails with the refused sentence when GitHub refuses the token", async () => {
     tokenRepo(user);
-    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN2;
-    const s = await ship({ source: REFINE, owner: user.id });
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
+    // The clone is plain git with the stored token (the fake git does not check it), so a refusal is a git 403 in the output.
+    const probeClone = parseFlow("name: refine-round\nworkspace: empty\nsteps:\n  - id: clone\n    type: shell\n    repo_access: true\n    run: 'echo \"remote: Write access to repository not granted.\"; echo \"fatal: The requested URL returned error: 403\"; exit 128'\n", "p.yaml");
+    const s = await go(probeClone, { source: REFINE, owner: user.id });
     expect(s.status).toBe("failed");
     expect(s.history.map((h) => h.id)).toEqual(["clone"]);
     expect(s.reason).toBe(`step "clone" failed: ${TOKEN_REFUSED_REASON}`);
