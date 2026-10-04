@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction } from "../auth/audit.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../auth/repos.js";
-import { tryParseRepoUrl } from "../auth/repo-url.js";
+import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
 import { StoreError } from "../auth/store.js";
@@ -71,6 +71,12 @@ async function lookupInstallation(ctx: ApiContext, app: RepoApp, github: string 
 }
 
 const BLOCKED: Record<InstallProblem, Code> = { "not-installed": "app-not-installed", "app-broken": "app-broken", "rate-limit": "rate-limit", unreachable: "unreachable", failed: "failed" };
+
+/** A record as its owner sees it: with `github` ("owner/name") when it is a GitHub repository. */
+const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
+  const github = githubNameOf(r.url);
+  return github === undefined ? r : { ...r, github };
+};
 
 /** The public keys of deploy-key records; `send` keeps them readable (a public key is not a secret). */
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
@@ -168,7 +174,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     if (m === "none" && user.role !== "admin") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
   };
   if (seg.length === 1 && method === "GET") {
-    const repos = guardedRepos(ctx, () => listRepos(user.id));
+    const repos = guardedRepos(ctx, () => listRepos(user.id)).map(shown);
     return send(res, 200, repos, publicKeys(repos)), true;
   }
   if (seg.length === 2 && seg[1] === "methods" && method === "GET") {
@@ -189,7 +195,8 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     }
     const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId }));
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
-    return send(res, 201, repo, publicKeys([repo])), true;
+    const out = shown(repo);
+    return send(res, 201, out, publicKeys([out])), true;
   }
   if (seg.length === 3 && seg[2] === "auth" && method === "PUT") {
     const body = await readJson(req);
@@ -205,7 +212,8 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     const r = guardedRepos(ctx, () => setRepoAuth(user.id, seg[1]!, change, { installationId }));
     if (r.changed) auditAction(ctx.diagLog, user.id, "repo-change", r.repo.id, r.repo.url);
     oldKeys(ctx, r.oldKeysLeft, "the repository was changed");
-    return send(res, 200, r.repo, publicKeys([r.repo])), true;
+    const out = shown(r.repo);
+    return send(res, 200, out, publicKeys([out])), true;
   }
   if (seg.length === 3 && seg[2] === "test" && method === "POST") {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;

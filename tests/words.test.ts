@@ -127,7 +127,7 @@ const shown = (src: string) => src
 
 describe("words in the app", () => {
   const dir = new URL("../ui/", import.meta.url);
-  const files = [...readdirSync(dir).filter((f) => f.endsWith(".js") || f === "index.html"), "user/app.js", "user/index.html"];
+  const files = [...readdirSync(dir).filter((f) => f.endsWith(".js") || f === "index.html"), "user/app.js", "user/start.js", "user/index.html"];
 
   it("scan helper keeps real text and drops names", () => {
     expect(shown('h("li", { class: "holds" }, w.status?.holds, step.jump_only, "On hold")').toLowerCase()).toContain("hold");

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
@@ -10,14 +11,15 @@ describe("ui/user/index.html", () => {
   it("has the places the sign-in and the pages need", () => {
     for (const id of ["main", "user", "modal-root", "toast"]) expect(html).toContain(`id="${id}"`);
   });
-  it("has exactly three links with the user pages", () => {
+  it("has exactly four links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(links).toEqual([
+      ["#/start", "start", "Start work"],
       ["#/runs", "runs", "My runs"],
       ["#/repos", "repos", "My repositories"],
       ["#/refinement", "refinement", "Refinement"],
     ]);
-    expect(html.split("data-nav=").length - 1).toBe(3);
+    expect(html.split("data-nav=").length - 1).toBe(4);
   });
   it("has nothing of the admin page", () => {
     for (const bad of ['id="repo"', 'id="health"', 'id="since"', 'id="sidebar"', "<aside", "turn-badge"]) expect(html, bad).not.toContain(bad);
@@ -48,7 +50,7 @@ describe("ui/user/app.js", () => {
       seen.add(file);
       for (const s of specifiers(read(file))) {
         if (s.startsWith("/vendor/")) continue;
-        const next = s.startsWith("/") ? s.slice(1) : s.replace(/^\.\//, "");
+        const next = s.startsWith("/") ? s.slice(1) : posix.join(posix.dirname(file), s);
         expect(existsSync(`ui/${next}`), `${file} imports ${s}`).toBe(true);
         walk(next);
       }
@@ -56,7 +58,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["auth.js", "runs.js", "repos.js", "refinement.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "auth.js", "runs.js", "repos.js", "refinement.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -72,6 +74,13 @@ describe("ui/user/app.js", () => {
     expect(app).toContain("const mine = ++generation;");
     expect(app).toContain("if (mine !== generation) done?.();");
     expect(app).toContain("else cleanup = done;");
+  });
+
+  it("routes Start work and decides the empty address behind the generation guard", () => {
+    expect(app).toContain('if (page.section === "start") done = await renderStart(box);');
+    expect(app).toContain("isNoHash(");
+    expect(app.indexOf("const mine = ++generation;")).toBeLessThan(app.indexOf("await homeHash()"));
+    expect(app.match(/\+\+generation/g)).toHaveLength(1);
   });
 
   it("gives every renderer admin: false", () => {
