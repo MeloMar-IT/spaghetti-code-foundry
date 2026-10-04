@@ -1870,11 +1870,16 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
-| `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state (an admin: any session) |
+| `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
 | `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
 | `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
 | `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
+| `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
+| `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
+| `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
+| `PUT /api/refinement/:id/map/:eid` | yes | yes | change the text of a rule, example or open question of your refinement session |
+| `DELETE /api/refinement/:id/map/:eid` | yes | yes | remove a rule, example or open question from your refinement session |
 
 **What comes later.** Runs that use a user's stored credentials or a repository's token, runs that use a deploy key, runs that use the GitHub App, and pages for users (starting runs).
 
@@ -2298,7 +2303,7 @@ The folder of your clone can keep its name.
 
 ## 12. Refinement
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. On the session page you can ask the architect to look at the code (see below).
+**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
@@ -2312,7 +2317,23 @@ The folder of your clone can keep its name.
 
 **When something goes away.** If you remove the repository from My repositories, the session stays readable; the page says so, and it works again when you add the repository back. If an admin deletes your account, your refinement sessions are deleted with it.
 
-**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. Nothing is removed to make room.
+**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. In the talk (see below): 100 entries per list, 50 waiting proposals and 50 own questions. A full list or log answers 400 with a plain sentence. Nothing is removed to make room.
+
+### The talk: questions, answers and the map
+
+A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. No architect round is started from a session yet.
+
+**What is kept.** Rounds of questions (at most 5 per round), your answer to each question, proposed entries that wait for you, and the map with three lists: **rules** (what must be true), **examples** (concrete cases, including edge cases) and **open questions**. `GET /api/refinement/:id` returns all of it as `talk`. The log has every question, every answer, and every accepted, rejected, changed and removed entry, with its text (cut at 2,000 characters).
+
+**Three kinds of answer.** `POST /api/refinement/:id/questions/:qid/answer` takes `{ "option": n }` (an option of the question, counted from 1), `{ "text": "…" }` (your own answer, 1–2,000 characters) or `{ "unknown": true }` ("I don't know yet"). A question is answered once; a second answer gets 409. "I don't know yet" puts the question in the open questions at once.
+
+**Accept and reject.** A proposed entry waits. **Accept** (`POST …/proposals/:pid/accept`) puts it in its list; **Reject** (`POST …/proposals/:pid/reject`) removes it. Nothing is in the map that you did not accept, apart from the open questions that came from "I don't know yet".
+
+**Change and remove.** `PUT /api/refinement/:id/map/:eid` with `{ "text": "…" }` (1–500 characters) changes an entry; `DELETE /api/refinement/:id/map/:eid` removes it.
+
+**Who may do what.** Only the owner changes the talk. Another user gets 404, an admin 403 (an admin may read it). A dropped session answers 409.
+
+**Hidden talk.** While the repository is not in My repositories, the talk and the texts of its log lines are not shown (`talkHidden: true`), and the calls that change it answer 409. It comes back when you add the repository again.
 
 **Where it is kept.** In `refinements.json` in the data folder (mode 0600). It survives a restart and is copied unchanged when the data folder moves. If the file cannot be read, the calls answer "the refinement sessions are not working; see the server log", and an account cannot be deleted until the file is repaired.
 

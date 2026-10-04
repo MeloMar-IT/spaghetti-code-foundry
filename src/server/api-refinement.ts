@@ -5,11 +5,17 @@ import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps } from "../refinement/architect.js";
+import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
   DROP_KEEP_MS,
   RefinementError,
   type RefinementErrorCode,
   type Session,
+  acceptProposal,
+  answerQuestion,
+  changeEntry,
+  rejectProposal,
+  removeEntry,
   createSession,
   dropSession,
   getSession,
@@ -27,6 +33,9 @@ const STATUS: Record<RefinementErrorCode, number> = {
   "bad-idea": 400,
   "bad-title": 400,
   "bad-repo": 400,
+  "bad-answer": 400,
+  "bad-text": 400,
+  "bad-round": 400,
   "no-owner": 404,
   "not-yours": 403,
   limit: 400,
@@ -69,6 +78,8 @@ function githubNames(userId: string): string[] {
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
 function view(ctx: ApiContext, s: Session, viewer: User) {
   const repoAvailable = ownsRepo(s.owner, s.repo);
+  // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
+  const talkHidden = !repoAvailable && s.talk !== undefined;
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -88,7 +99,14 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
     ...(s.brief && repoAvailable ? { brief: s.brief } : {}),
     ...(s.brief && !repoAvailable ? { briefHidden: true } : {}),
-    log: s.log.map((l) => ({ at: l.at, what: l.what, who: who(l.by), ...(l.detail !== undefined ? { detail: l.detail } : {}) })),
+    ...(talkHidden ? { talkHidden: true } : { talk: s.talk ?? emptyTalk() }),
+    log: s.log.map((l) => ({
+      at: l.at,
+      what: l.what,
+      who: who(l.by),
+      ...(l.detail !== undefined && !(talkHidden && isTalkKind(l.what)) ? { detail: l.detail } : {}),
+      ...(l.list !== undefined ? { list: l.list } : {}),
+    })),
     created: s.created,
     updated: s.updated,
     ...(s.droppedAt !== undefined ? { droppedAt: s.droppedAt, removedOn: new Date(Date.parse(s.droppedAt) + DROP_KEEP_MS).toISOString() } : {}),
@@ -184,6 +202,21 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
       return view(ctx, settled(seg[1]!), user);
     });
     return send(res, 202, body), true;
+  }
+  if (seg.length === 5 && seg[2] === "questions" && seg[4] === "answer" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(answerQuestion(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "proposals" && (seg[4] === "accept" || seg[4] === "reject") && method === "POST") {
+    const decide = seg[4] === "accept" ? acceptProposal : rejectProposal;
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(decide(actor, seg[1]!, seg[3]!).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "map" && method === "PUT") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(changeEntry(actor, seg[1]!, seg[3]!, body.text).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "map" && method === "DELETE") {
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(removeEntry(actor, seg[1]!, seg[3]!).id), user))), true;
   }
   return false;
 };
