@@ -129,6 +129,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST monitor/mutes": no("monitor/mutes", 400, {}),
   "DELETE monitor/mutes/:id": no("monitor/mutes/0000000000000000", 404),
   "POST monitor/retry": no("monitor/retry", 400, {}),
+  "GET monitor/findings/:id": no("monitor/findings/0000000000000000", 404),
+  "POST monitor/story": no("monitor/story", 400, {}),
   "POST clean": no("clean", 200, {}),
   "GET providers": no("providers", 200),
   "POST providers/test": no("providers/test", 400, {}),
@@ -217,6 +219,8 @@ describe("the table", () => {
     expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
     expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");
+    expect(findRule("GET", ["monitor", "findings", "0000000000000000"])?.path).toBe("monitor/findings/:id");
+    expect(findRule("POST", ["monitor", "story"])?.path).toBe("monitor/story");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();

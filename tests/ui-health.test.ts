@@ -176,3 +176,24 @@ describe("renderHealth: version and update", () => {
     expect(e.all("span").filter((s) => s.attrs.class === "health-version muted")).toHaveLength(0);
   });
 });
+
+describe("the link to the Problems page", () => {
+  const link = (monitorFindings?: unknown) => {
+    const e = el();
+    ui.renderHealth(e, { ...good, ...(monitorFindings ? { monitorFindings } : {}) });
+    return e.all("a").find((a) => a.attrs.href === "#/problems");
+  };
+  it("counts the open findings", () => {
+    expect(link({ open: 1, total: 1 })!.textContent).toBe("1 open finding of the monitor");
+    expect(link({ open: 2, total: 5 })!.textContent).toBe("2 open findings of the monitor");
+  });
+  it("says none are open", () => {
+    expect(link({ open: 0, total: 3 })!.textContent).toBe("Findings of the monitor (none open)");
+  });
+  it("says when the file cannot be read", () => {
+    expect(link({ open: 0, total: 0, unreadable: true })!.textContent).toBe("Findings of the monitor (the file cannot be read)");
+  });
+  it("is not there without the field", () => {
+    expect(link()).toBeUndefined();
+  });
+});

@@ -8,6 +8,7 @@ import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./librar
 import { renderSettings, renderWatchers } from "./admin.js";
 import { refreshModelLists, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
+import { renderProblems } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
 import { renderRefinement } from "./refinement.js";
@@ -388,6 +389,7 @@ async function route() {
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);
     else if (section === "watchers") await renderWatchers(main);
+    else if (section === "problems") await renderProblems(main);
     else if (section === "settings") await renderSettings(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);

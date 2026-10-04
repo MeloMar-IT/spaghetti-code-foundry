@@ -3,6 +3,10 @@ import { AGENTS } from "../flow/schema.js";
 import { briefFailure, FAILURE_SHOWN_MS, LIMIT_SHOWN_MS, nextStep, type NextStep } from "../next-step.js";
 import type { UpdateView } from "../self-update.js";
 import { supersededRuns } from "../stats.js";
+import { readFindings } from "../monitor/findings.js";
+import { loadGuard } from "../monitor/guard.js";
+import { activeMutes, muteFor } from "../monitor/mutes.js";
+import { findingState } from "../monitor/state.js";
 import { runOrigin } from "../your-turn.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
@@ -18,6 +22,8 @@ export interface Health {
   repos: { repo: string; lastOk?: string }[];
   /** The commit and date of the running version (a checkout only). */
   version?: UpdateView["version"];
+  /** The findings of the monitor: how many are open and how many are stored. Absent when none is stored. A count only, never a name. */
+  monitorFindings?: { open: number; total: number; /** The findings file cannot be read. */ unreadable?: true };
   /** "An update is waiting" or why self-update does nothing. Not a problem: it does not change `ok`. */
   update?: UpdateView["update"];
 }
@@ -36,6 +42,19 @@ function safe(n: NextStep): NextStep {
     repo: /^[\w.-]+\/[\w.-]+$/.test(n.repo) ? n.repo : "",
     where: /^(https:\/\/|#\/)/.test(n.where?.url ?? "") ? n.where : RUNS,
   };
+}
+
+/** How many findings of the monitor are open (not gone, not muted) and how many are stored; undefined when none is stored. Counts only. */
+function findingsCount(target: string | undefined): Health["monitorFindings"] {
+  const { findings, broken } = readFindings();
+  if (broken) return { open: 0, total: 0, unreadable: true };
+  if (!findings.length) return undefined;
+  const mutes = activeMutes(loadGuard(), new Date());
+  const open = findings.filter((f) => {
+    const s = findingState(f, { target, muted: !!muteFor(mutes, f) });
+    return s !== "gone" && s !== "muted";
+  }).length;
+  return { open, total: findings.length };
 }
 
 /** The problems of the Foundry itself and the last successful check of every repository. Reads the context when called. */
@@ -123,11 +142,13 @@ export function health(ctx: ApiContext, now = new Date()): Health {
 
   const list = problems.map(safe);
   const self = ctx.selfUpdate?.view();
+  const monitorFindings = findingsCount(cfg.monitor.report_to);
   return {
     ok: list.length === 0,
     summary: list.length === 0 ? "All good" : list.length === 1 ? "1 problem" : `${list.length} problems`,
     problems: list,
     repos,
+    ...(monitorFindings ? { monitorFindings } : {}),
     ...(self?.version ? { version: self.version } : {}),
     ...(self?.update ? { update: self.update } : {}),
   };
