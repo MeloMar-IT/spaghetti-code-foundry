@@ -8,6 +8,39 @@ import { outputEnvName, render } from "../src/engine/template.js";
 
 const minimal = (steps: string) => `name: t\nsteps:\n${steps}`;
 
+describe("repo_access", () => {
+  const shell = (extra: string) => minimal(`  - {id: a, type: shell, run: x${extra}}`);
+  it("is optional on a shell step and keeps its value", () => {
+    expect(parseFlow(shell(", repo_access: true")).steps[0]).toMatchObject({ repo_access: true });
+    expect(parseFlow(shell(", repo_access: false")).steps[0]).toMatchObject({ repo_access: false });
+    expect("repo_access" in parseFlow(shell("")).steps[0]!).toBe(false);
+    expect(() => parseFlow(shell(", repo_access: maybe"))).toThrow(/repo_access/);
+  });
+
+  it("is rejected on other step types", () => {
+    for (const step of [
+      "{id: a, type: claude, prompt: x, repo_access: true}",
+      "{id: a, type: approval, message: x, repo_access: true}",
+      "{id: a, type: parallel, steps: [b, c], repo_access: true}",
+      "{id: a, type: flow, flow: other, repo_access: true}",
+    ]) {
+      expect(() => parseFlow(minimal(`  - ${step}\n  - {id: b, type: shell, run: x}\n  - {id: c, type: shell, run: x}`))).toThrow(/repo_access/);
+    }
+  });
+
+  it("cannot be combined with sandbox: true", () => {
+    expect(() => parseFlow(shell(", repo_access: true, sandbox: true"))).toThrow(/steps\.0\.repo_access: a step with repo_access cannot also have sandbox: true/);
+    expect(parseFlow(shell(", repo_access: false, sandbox: true")).steps).toHaveLength(1);
+    expect(parseFlow(shell(", repo_access: true, sandbox: false")).steps).toHaveLength(1);
+  });
+
+  it("cannot be listed in a parallel step", () => {
+    const flow = (flag: string) => minimal(`  - {id: p, type: parallel, steps: [a, b]}\n  - {id: a, type: shell, run: x, repo_access: ${flag}}\n  - {id: b, type: shell, run: x}`);
+    expect(() => parseFlow(flow("true"))).toThrow(/steps\.0\.steps\.0: "a" has repo_access, so it cannot be listed in a parallel step/);
+    expect(parseFlow(flow("false")).steps).toHaveLength(3);
+  });
+});
+
 describe("flow schema", () => {
   it("parses the built-in flows", () => {
     const shipped = readdirSync("flows").filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""));

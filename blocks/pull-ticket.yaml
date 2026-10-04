@@ -7,6 +7,7 @@ vars:
 steps:
   - id: pull_ticket
     type: shell
+    repo_access: true
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac

@@ -21,11 +21,13 @@ vars:
 steps:
   - id: clone
     type: shell
+    repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
   - id: find_branch
     type: shell
+    repo_access: true
     run: '"$FACTORY_TOOLS/daily-branch" latest'
     routes:
       - if: ^NONE$
@@ -46,6 +48,7 @@ steps:
       cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"
   - id: report
     type: shell
+    repo_access: true
     description: Open the PR if there is none yet; comment the checks on it; draft while they fail
     run: |-
       branch=$(printf '%s\n' "$FACTORY_OUT_FIND_BRANCH" | head -1)

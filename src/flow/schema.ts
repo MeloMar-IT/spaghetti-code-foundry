@@ -105,6 +105,8 @@ export const ShellStepSchema = z
     run: z.string().min(1),
     /** Run inside a Docker container (flow sandbox.docker_image) — use for steps that execute repo code. */
     sandbox: z.boolean().optional(),
+    /** The step talks to the repository's host (gh, git clone/fetch/pull/push/ls-remote). Only these steps will get the repository's credential. */
+    repo_access: z.boolean().optional(),
   })
   .strict();
 
@@ -201,6 +203,9 @@ export function checkStepRefs(steps: AnyStep[], known: Set<string>, addIssue: (p
         addIssue(["steps", i, key], `invalid regex: ${re}`);
       }
     }
+    if (s.type === "shell" && s.repo_access && s.sandbox) {
+      addIssue(["steps", i, "repo_access"], "a step with repo_access cannot also have sandbox: true");
+    }
     if (s.type === "claude" && s.resume) {
       const t = byId.get(s.resume);
       if (!t || t.type !== "claude") addIssue(["steps", i, "resume"], `resume must reference a claude step, got "${s.resume}"`);
@@ -211,6 +216,7 @@ export function checkStepRefs(steps: AnyStep[], known: Set<string>, addIssue: (p
         if (!t) addIssue(["steps", i, "steps", j], `unknown step "${ref}"`);
         else if (t.type !== "claude" && t.type !== "shell") addIssue(["steps", i, "steps", j], `parallel can only run claude or shell steps`);
         else if (ref === s.id) addIssue(["steps", i, "steps", j], `a parallel step cannot run itself`);
+        else if (t.type === "shell" && t.repo_access) addIssue(["steps", i, "steps", j], `"${ref}" has repo_access, so it cannot be listed in a parallel step`);
       });
     }
   });

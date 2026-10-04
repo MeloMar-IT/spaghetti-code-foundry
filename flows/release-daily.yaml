@@ -21,8 +21,9 @@ vars:
 steps:
   - id: clone
     type: shell
+    repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
   - id: changes
     type: shell
@@ -50,6 +51,7 @@ steps:
       cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"
   - id: release_pr
     type: shell
+    repo_access: true
     description: Open or update the pull request develop → main, comment the checks, draft while red
     run: |-
       dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"; day=$(date +%Y-%m-%d)

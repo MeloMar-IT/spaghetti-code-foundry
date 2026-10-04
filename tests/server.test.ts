@@ -206,6 +206,11 @@ describe("ui server", () => {
 
   it("validates, saves, lists and deletes flows", async () => {
     expect(await (await json("POST", "/api/validate", { yaml: "name: x\nsteps: []" })).json()).toMatchObject({ ok: false });
+    const conflict = "name: bad\nsteps:\n  - {id: a, type: shell, run: x, repo_access: true, sandbox: true}";
+    const checked = (await (await json("POST", "/api/validate", { yaml: conflict })).json()) as { ok: boolean; error?: string };
+    expect(checked.ok).toBe(false);
+    expect(checked.error).toContain("cannot also have sandbox: true");
+    expect((await json("PUT", "/api/flows/bad", { yaml: conflict, scope: "repo" })).status).toBe(400);
     expect((await json("PUT", "/api/flows/other", { yaml: FLOW, scope: "repo" })).status).toBe(400); // name mismatch
     expect((await json("PUT", "/api/flows/mine", { yaml: FLOW, scope: "repo" })).status).toBe(200);
     const flows = (await (await json("GET", "/api/flows")).json()) as Array<{ name: string; scope: string }>;

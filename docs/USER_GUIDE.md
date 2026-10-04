@@ -462,6 +462,13 @@ current format.
 | **Parallel** | Runs several agent/shell steps at once; succeeds when all succeed |
 | **Sub-flow** | Runs another flow inline, in the same workspace |
 
+**Repository access (shell steps).** Tick **Needs repository access** (`repo_access: true`) on a
+shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
+helper script that does. Never tick it on a step that runs tests or the build, and not together
+with **Run in Docker** or in a parallel step. It changes nothing today, and the built-in flows are
+already marked. **Flows you wrote yourself that call `gh` or push will fail for users (not admins)
+without the flag once the repository's own credentials are used, so mark those steps now.**
+
 ### Controlling the path
 
 Steps run top to bottom. Each step can change that:
@@ -1266,6 +1273,8 @@ it; paused runs continue the next day. Flows can also cap one run (`limits.max_c
   reviews. This is the one exception to **Protected branches**: only the merge-to-`main` step of
   the unchanged built-in flow may push `main`; flows you write never can. Stored as
   `hotfix_to_main` in `config.yaml` (an older build rejects that key).
+- **Repository access** — shell steps that call `gh` or the remote carry `repo_access: true`, so
+  only they will get the repository's credential (see [Step types](#step-types)).
 - **Self-update** — off by default. When on, the Foundry builds and tests new commits of `main` of
   the repository you name and restarts on them without a person (see [Self-update](#self-update)).
   Stored as `self_update` in `config.yaml` (an older build rejects that key).

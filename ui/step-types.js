@@ -45,6 +45,7 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
         field("Command", run, "Exit code 0 = success. Untrusted text is in env: $FACTORY_TASK, $FACTORY_OUT_<STEP_ID>, $FACTORY_VAR_<NAME>."),
         chips(run, ["{{workdir}}", "{{run.id}}", ...vars.map((v) => `{{vars.${v}}}`)]),
         checkbox(step, "sandbox", "Run in Docker (for commands that execute repo code, like tests)", onChange),
+        checkbox(step, "repo_access", "Needs repository access (for commands that call gh, or clone, fetch, pull or push)", onChange),
       ];
     }
     case "approval":
