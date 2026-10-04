@@ -2380,7 +2380,7 @@ The folder of your clone can keep its name.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2392,7 +2392,21 @@ The folder of your clone can keep its name.
 
 ### The talk: questions, answers and the map
 
-A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. You can start a round or ask the architect a question from a session (see "Rounds and questions from a session" below).
+A session keeps the talk with the architect, so it is not lost. The session page shows it in two parts, **Questions** and **Map**, right after the Context brief. The calls below are what the page uses (see also "Rounds and questions from a session" below).
+
+**How a round goes on the page.**
+1. Press **Ask the architect for questions**. Without a brief the page says to ask the architect to look at the code first.
+2. Each question shows its point of view (the user's need, the build or the test), the question, why it matters, and 2–4 options with their trade-offs. The recommended option is marked.
+3. Answer each question: press **Choose** on an option, type your own answer and press **Send my answer**, or press **I don't know yet**. An answered question shows your answer and has no buttons.
+4. When every question is answered, **Ask for another round** shows. The architect then reads your answers, proposes entries for the map and asks what is still open. If it has nothing important left to ask, the page shows its sentence; you can still ask for another round.
+5. In **Map**, proposed entries show with **Accept** and **Reject**. Entries of the map have **Edit** and **Remove**.
+6. When open questions remain, the page says so: "1 open question — a story with open questions is not ready". With none, there is no such line.
+
+**A question of your own.** Type it in **Ask the architect a question** and press **Send my question**. Your question and the architect's answer stay on the page.
+
+**While the architect works.** The page says what it is doing (reading the code, writing its questions, answering your question) and looks again every 5 seconds. No ask buttons show meanwhile. A paused or failed run shows the reason, and **Ask again** or **Try again** for that kind of run. If a call fails, the page shows the server's sentence and loads the session again; the Edit dialog closes after a failed save.
+
+**Who sees buttons.** Buttons and fields show only on your own, open session, whose repository is in My repositories. A dropped session and an admin looking at another account's session show the texts without buttons. If the repository is not in My repositories, the page says that the talk is not shown. The log tells every question, answer and entry in words.
 
 **What is kept.** Rounds of questions (at most 5 per round), your answer to each question, proposed entries that wait for you, and the map with three lists: **rules** (what must be true), **examples** (concrete cases, including edge cases) and **open questions**. `GET /api/refinement/:id` returns all of it as `talk`. The log has every question, every answer, and every accepted, rejected, changed and removed entry, with its text (cut at 2,000 characters).
 

@@ -70,6 +70,11 @@ afterEach(() => {
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const main = () => (document as any).getElementById("main") as FakeElement;
 const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
+/** True for an element inside a part of the talk (ui/refinement-talk.js). */
+const inTalk = (el: FakeElement): boolean => {
+  for (let p = el.parent; p; p = p.parent) if (p.attrs.class === "talk") return true;
+  return false;
+};
 const button = (text: string) => walk(main()).find((e) => e.tag === "button" && e.textContent === text);
 const press = (el: FakeElement | undefined) => {
   expect(el, "control").toBeDefined();
@@ -330,7 +335,7 @@ describe("the brief", () => {
   it("shows five parts as text with date and branch", async () => {
     page = session({ brief: BRIEF });
     await show();
-    expect(walk(main()).filter((e) => e.tag === "h3").map((e) => e.textContent)).toEqual(["What the code does", "Where it would change", "Risks", "Open questions", "Backlog"]);
+    expect(walk(main()).filter((e) => e.tag === "h3" && !inTalk(e)).map((e) => e.textContent)).toEqual(["What the code does", "Where it would change", "Risks", "Open questions", "Backlog"]);
     const bodies = walk(main()).filter((e) => e.tag === "p" && e.style?.whiteSpace === "pre-wrap" && e.textContent !== "An idea");
     expect(bodies.length).toBe(5);
     expect(text()).toContain(new Date(BRIEF.at).toLocaleString());
@@ -370,7 +375,7 @@ describe("the brief", () => {
     page = session({ repoAvailable: false, briefHidden: true });
     await show();
     expect(text()).toContain("The brief is not shown while the repository is not in My repositories.");
-    expect(walk(main()).some((e) => e.tag === "h3")).toBe(false);
+    expect(walk(main()).some((e) => e.tag === "h3" && !inTalk(e))).toBe(false);
     expect(askButtons()).toEqual([]);
   });
   it("shows no run id, cost, model or folder", async () => {
