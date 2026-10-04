@@ -469,7 +469,7 @@ current format.
 **Repository access (shell steps).** Tick **Needs repository access** (`repo_access: true`) on a
 shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
 helper script that does. Never tick it on a step that runs tests or the build, and not together
-with **Run in Docker** or in a parallel step. It changes nothing today, and the built-in flows are
+with **Run in Docker** or in a parallel step. It changes nothing today, and the built-in flows and the blocks of the library are
 already marked. **Flows you wrote yourself that call `gh` or push will fail for users (not admins)
 without the flag once the repository's own credentials are used, so mark those steps now.**
 
@@ -552,7 +552,9 @@ Blocks are ready-made groups of steps: pull a GitHub issue, plan, code, run test
 loop, code review, cross-review by Codex, commit, push, open a PR, wait for CI, secret scan,
 Jira and Linear, and more. The block **Architect (charter)** holds the architect's role as one
 text; the architect steps of Refinement take it from there. Insert one with **+ From library** in the editor. Turn any step into
-your own block with **☆ Save as block**.
+your own block with **☆ Save as block**. Blocks that call `gh` or the remote come with **Needs
+repository access** ticked. A flow built from blocks before this version has copies without it, so
+tick it there or insert the block again.
 
 ---
 

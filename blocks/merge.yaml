@@ -6,6 +6,7 @@ vars:
 steps:
   - id: merge
     type: shell
+    repo_access: true
     run: |
       branch=$(git branch --show-current)
       decision=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json reviewDecision -q .reviewDecision)

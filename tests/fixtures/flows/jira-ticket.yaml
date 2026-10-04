@@ -181,6 +181,7 @@ steps:
       git log --oneline -1
   - id: push
     type: shell
+    repo_access: true
     run: git push -q -u origin HEAD && echo "pushed $(git branch --show-current)"
   - id: jira_push_result
     type: shell

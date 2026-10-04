@@ -7,6 +7,7 @@ vars:
 steps:
   - id: push_plan
     type: shell
+    repo_access: true
     run: |
       { echo "$FACTORY_FIRST_INFO"; echo
         echo "🤖 **Spaghetti Code Foundry plan**"; echo

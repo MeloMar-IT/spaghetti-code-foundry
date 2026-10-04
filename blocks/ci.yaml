@@ -6,6 +6,7 @@ vars:
 steps:
   - id: wait_ci
     type: shell
+    repo_access: true
     timeout_sec: 3600
     run: |
       branch=$(git branch --show-current)
@@ -36,6 +37,7 @@ steps:
 
   - id: push_ci_fix
     type: shell
+    repo_access: true
     jump_only: true
     run: |
       git add -A

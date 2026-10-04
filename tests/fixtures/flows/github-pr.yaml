@@ -21,6 +21,7 @@ vars:
 steps:
   - id: check_repo
     type: shell
+    repo_access: true
     description: Verify the repo exists and show your permission
     run: |
       gh repo view "$FACTORY_VAR_GITHUB_REPO" --json nameWithOwner,defaultBranchRef,viewerPermission \
@@ -36,10 +37,12 @@ steps:
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
   - id: pull_repo
     type: shell
+    repo_access: true
     description: Clone (or fast-forward) and create a factory/ branch
     run: |
       # Idempotent, so a resumed run can pass through here again.
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      # Plain git clones $FACTORY_REPO_URL when the engine sets it (nothing does yet); else gh, as before.
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       branch="factory/${FACTORY_VAR_ISSUE:+issue-$FACTORY_VAR_ISSUE-}$FACTORY_RUN_ID"
       git checkout -q -B "$branch" origin/HEAD
       echo "branch: $branch"
@@ -74,6 +77,7 @@ steps:
     on_failure: ask_for_info
   - id: ask_for_info
     type: shell
+    repo_access: true
     jump_only: true
     description: Post Claude's questions on the ticket, then stop the run
     run: |
@@ -90,6 +94,7 @@ steps:
     resume_from: pull_ticket
   - id: push_plan
     type: shell
+    repo_access: true
     run: |
       { echo "$FACTORY_FIRST_INFO"; echo
         echo "🤖 **Spaghetti Code Foundry plan**"; echo
@@ -211,6 +216,7 @@ steps:
         goto: request_approval
   - id: request_approval
     type: shell
+    repo_access: true
     run: |
       {
         echo "$FACTORY_FIRST_APPROVAL"; echo
@@ -230,11 +236,13 @@ steps:
     on_success: push
   - id: push
     type: shell
+    repo_access: true
     run: |
       git push -q -u origin HEAD
       echo "pushed $(git branch --show-current)"
   - id: open_pr
     type: shell
+    repo_access: true
     run: |
       branch=$(git branch --show-current)
       existing=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json url -q .url 2>/dev/null || true)
@@ -248,6 +256,7 @@ steps:
       } | gh pr create --repo "$FACTORY_VAR_GITHUB_REPO" --head "$branch" --title "${FACTORY_VAR_ISSUE:+#$FACTORY_VAR_ISSUE: }$title" --body-file -
   - id: wait_ci
     type: shell
+    repo_access: true
     timeout_sec: 3600
     run: |
       branch=$(git branch --show-current)
@@ -285,6 +294,7 @@ steps:
     on_success: push_ci_fix
   - id: push_ci_fix
     type: shell
+    repo_access: true
     jump_only: true
     run: |
       git add -A
@@ -294,6 +304,7 @@ steps:
     on_success: wait_ci
   - id: push_result
     type: shell
+    repo_access: true
     run: |
       branch=$(git branch --show-current)
       pr=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json url -q .url 2>/dev/null || true)

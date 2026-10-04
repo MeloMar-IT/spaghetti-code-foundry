@@ -642,6 +642,7 @@ steps:
       git push -q -u origin HEAD && echo "pushed $branch"
   - id: open_pr
     type: shell
+    repo_access: true
     description: Open the factory pull request, or add this issue to the open one
     run: '"$FACTORY_TOOLS/daily-branch" ensure-pr "$(git branch --show-current)"'
   - id: report

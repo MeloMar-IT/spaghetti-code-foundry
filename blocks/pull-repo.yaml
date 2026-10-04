@@ -6,10 +6,12 @@ vars:
 steps:
   - id: pull_repo
     type: shell
+    repo_access: true
     description: Clone (or fast-forward) and create a factory/ branch
     run: |
       # Idempotent, so a resumed run can pass through here again.
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      # Plain git clones $FACTORY_REPO_URL when the engine sets it (nothing does yet); else gh, as before.
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       branch="factory/${FACTORY_VAR_ISSUE:+issue-$FACTORY_VAR_ISSUE-}$FACTORY_RUN_ID"
       git checkout -q -B "$branch" origin/HEAD
       echo "branch: $branch"

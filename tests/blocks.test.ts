@@ -347,13 +347,22 @@ describe("generated ticket flows", () => {
       ["jira-push-result", "jira_push_result", ["jira-ticket"]],
       ["linear-push-plan", "linear_push_plan", ["linear-ticket"]],
       ["linear-push-result", "linear_push_result", ["linear-ticket"]],
+      ["github-repo", "check_repo", [...flows, "chore", "ci-fix"]],
+      ["pull-repo", "pull_repo", [...flows, "chore", "ci-fix"]],
+      ["push", "push", [...flows, "chore", "ci-fix"]],
+      ["open-pr", "open_pr", ["github-pr", "github-auto", "chore", "ci-fix"]],
+      ["ci", "wait_ci", ["github-pr", "github-auto", "chore", "ci-fix"]],
+      ["pr-comments", "checkout_pr", ["pr-feedback"]],
+      ["pr-comments", "pr_comments", ["pr-feedback"]],
     ];
-    const runOf = (steps: { id: string }[], id: string) => (steps.find((s) => s.id === id) as { run?: string } | undefined)?.run;
+    const of = (steps: { id: string }[], id: string) => steps.find((s) => s.id === id) as { run?: string; repo_access?: boolean } | undefined;
     for (const [block, step, inFlows] of pairs) {
-      const expected = runOf(parseBlock(readFileSync(`blocks/${block}.yaml`, "utf8")).steps, step);
-      expect(expected, `${block}/${step}`).toBeTruthy();
+      const expected = of(parseBlock(readFileSync(`blocks/${block}.yaml`, "utf8")).steps, step);
+      expect(expected?.run, `${block}/${step}`).toBeTruthy();
       for (const f of inFlows) {
-        expect(runOf(parseFlow(text(f), f).steps, step), `${f}/${step}`).toBe(expected);
+        const got = of(parseFlow(text(f), f).steps, step);
+        expect(got?.run, `${f}/${step}`).toBe(expected!.run);
+        expect(got?.repo_access, `${f}/${step} repo_access`).toBe(expected!.repo_access);
       }
     }
   });

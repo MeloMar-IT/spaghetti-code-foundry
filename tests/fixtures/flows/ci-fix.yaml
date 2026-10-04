@@ -21,22 +21,26 @@ vars:
 steps:
   - id: check_repo
     type: shell
+    repo_access: true
     description: Verify the repo exists and show your permission
     run: |
       gh repo view "$FACTORY_VAR_GITHUB_REPO" --json nameWithOwner,defaultBranchRef,viewerPermission \
         --jq '"repo: \(.nameWithOwner)\ndefault branch: \(.defaultBranchRef.name)\nyour permission: \(.viewerPermission)"'
   - id: pull_repo
     type: shell
+    repo_access: true
     description: Clone (or fast-forward) and create a factory/ branch
     run: |
       # Idempotent, so a resumed run can pass through here again.
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      # Plain git clones $FACTORY_REPO_URL when the engine sets it (nothing does yet); else gh, as before.
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       branch="factory/${FACTORY_VAR_ISSUE:+issue-$FACTORY_VAR_ISSUE-}$FACTORY_RUN_ID"
       git checkout -q -B "$branch" origin/HEAD
       echo "branch: $branch"
       git log --oneline -1
   - id: ci_logs
     type: shell
+    repo_access: true
     description: Failed job logs of CI run ci_run (set by the ci-failures watcher)
     run: |-
       case "$FACTORY_VAR_CI_RUN" in *[!0-9]*|"") echo "set var ci_run to a GitHub Actions run id"; exit 1;; esac
@@ -152,11 +156,13 @@ steps:
       git log --oneline -1
   - id: push
     type: shell
+    repo_access: true
     run: |
       git push -q -u origin HEAD
       echo "pushed $(git branch --show-current)"
   - id: open_pr
     type: shell
+    repo_access: true
     run: |
       branch=$(git branch --show-current)
       existing=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json url -q .url 2>/dev/null || true)
@@ -170,6 +176,7 @@ steps:
       } | gh pr create --repo "$FACTORY_VAR_GITHUB_REPO" --head "$branch" --title "${FACTORY_VAR_ISSUE:+#$FACTORY_VAR_ISSUE: }$title" --body-file -
   - id: wait_ci
     type: shell
+    repo_access: true
     timeout_sec: 3600
     run: |
       branch=$(git branch --show-current)
@@ -207,6 +214,7 @@ steps:
     on_success: push_ci_fix
   - id: push_ci_fix
     type: shell
+    repo_access: true
     jump_only: true
     run: |
       git add -A

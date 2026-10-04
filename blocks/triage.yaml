@@ -33,6 +33,7 @@ steps:
 
   - id: split_ticket
     type: shell
+    repo_access: true
     jump_only: true
     description: Create one GitHub issue per SUBTASK line and link them from the ticket
     run: |
