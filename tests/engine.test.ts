@@ -42,7 +42,7 @@ describe("repo_access", () => {
     }
   });
 
-  it("is ignored by the engine: flagged and unflagged steps get the same environment", async () => {
+  it("a run without an owner: marked and plain steps get the same environment", async () => {
     process.env.GH_TOKEN = "x";
     delete process.env.FACTORY_REPO_URL;
     const cmd = `printf '%s|%s|%s' "\${GH_TOKEN:+set}" "\${FACTORY_REPO_URL:-none}" "\${GIT_CONFIG_COUNT:-none}"`;

@@ -174,7 +174,10 @@ export const TOKEN_UNREADABLE = "the stored token of this repository cannot be r
 export const NO_RUN_OWNER = "this run has no owner, so the token of the repository cannot be looked up";
 
 /** How a run may read a repository: with the stored token, with the server's own access, or not at all. */
-export type RepoAccess = { kind: "token"; token: string } | { kind: "server" } | { kind: "refused"; reason: string; detail?: string };
+export type RepoAccess =
+  | { kind: "token"; token: string; url: string; username: string }
+  | { kind: "server"; unused?: "ssh-deploy-key" | "github-app" }
+  | { kind: "refused"; reason: string; detail?: string };
 
 const refused = (reason: string, detail?: string): RepoAccess => ({ kind: "refused", reason, ...(detail ? { detail } : {}) });
 
@@ -189,21 +192,24 @@ function causeOf(e: unknown): string {
  * What the account may use to read a GitHub repository: its stored token ("github-token" or "https-token"), the server's
  * access (method "none", admin only), or nothing, with a plain sentence. Sets `lastUsed` of a token. Never throws.
  */
-export function repoAccess(userId: string | undefined, githubName: string): RepoAccess {
+export function repoAccess(userId: string | undefined, githubName: string, opts: { unlisted?: "refuse" | "admin-server" } = {}): RepoAccess {
   if (!userId) return refused(NO_RUN_OWNER);
   try {
-    const notYours = refused(`"${githubName}" is not one of your repositories`);
+    const isAdmin = () => getUser(userId)?.role === "admin";
+    // a repository that is not in the list: a run (not a refinement) of an admin keeps the server's own access
+    // (a user's run on a repository that is not listed is told to set a sign-in)
+    const notYours: RepoAccess =
+      opts.unlisted === "admin-server" ? (isAdmin() ? { kind: "server" } : refused(NEEDS_TOKEN)) : refused(`"${githubName}" is not one of your repositories`);
     if (!validGithubName(githubName)) return notYours;
     const key = githubKey(githubName);
     const rec = read().repos.find((r) => r.owner === userId && keyOfRecord(r) === key);
     if (!rec) return notYours;
-    if (rec.method === "none") return getUser(userId)?.role === "admin" ? { kind: "server" } : refused(NEEDS_TOKEN);
-    // a deploy key is an ssh key, not a token for gh: it is never read here
-    // (runs do not use the GitHub App yet)
-    if (rec.method === "ssh-deploy-key" || rec.method === "github-app") return refused(NEEDS_TOKEN);
+    if (rec.method === "none") return isAdmin() ? { kind: "server" } : refused(NEEDS_TOKEN);
+    // a deploy key is an ssh key, not a token for gh, and runs do not use the GitHub App yet: an admin keeps the server's access
+    if (rec.method === "ssh-deploy-key" || rec.method === "github-app") return isAdmin() ? { kind: "server", unused: rec.method } : refused(NEEDS_TOKEN);
     if (!rec.credentialId) return refused(TOKEN_MISSING);
     try {
-      return { kind: "token", token: readSecret(userId, rec.credentialId) };
+      return { kind: "token", token: readSecret(userId, rec.credentialId), url: rec.url, username: rec.method === "https-token" ? (rec.username ?? "") : "x-access-token" };
     } catch (e) {
       if (e instanceof CredentialError && e.code === "not-found") return refused(TOKEN_MISSING);
       throw e;

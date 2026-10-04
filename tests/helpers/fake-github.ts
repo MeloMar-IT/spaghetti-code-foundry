@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -16,6 +16,20 @@ export interface FakeIssue {
   html_url: string;
   created_at: string;
   closed_at: string | null;
+}
+
+/**
+ * Puts a `git` wrapper next to the fake `gh`: the https address `url` is the fake remote, and every call logs the
+ * GIT_ALLOW_PROTOCOL it got. Call it after fakeGithub(); that one's restore() undoes it. Only blocks that clone or push need it.
+ */
+export function fakeGit(gh: { tmp: string }, url = "https://github.com/acme/app") {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const log = join(gh.tmp, "git.log");
+  writeFileSync(log, "");
+  copyFileSync(resolve("tests/fixtures/fake-git.sh"), join(gh.tmp, "bin", "git"));
+  chmodSync(join(gh.tmp, "bin", "git"), 0o755);
+  Object.assign(process.env, { FAKE_GIT_REAL: real, FAKE_GIT_LOG: log, FAKE_GIT_URL: url });
+  return { log: () => readFileSync(log, "utf8") };
 }
 
 /**

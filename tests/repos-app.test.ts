@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type NewRepo, NEEDS_TOKEN, REPO_LIMIT, RepoError, addRepo, checkNewRepo, checkRepoAuth, listRepos, repoAccess, reposPath, setRepoAuth, setRepoConnection, getRepo, transferRepo } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
+import { createUser } from "../src/auth/users.js";
+import { TEST_PASSWORD } from "./helpers/session.js";
 import { credentialsPath, listCredentials, readSecret } from "../src/credentials/store.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
@@ -229,6 +231,12 @@ describe("using a github-app record", () => {
   it("refuses repoAccess: runs do not use the app yet", () => {
     app(ANN, "acme/app");
     expect(repoAccess(ANN, "acme/app")).toEqual({ kind: "refused", reason: NEEDS_TOKEN });
+  });
+
+  it("gives an admin the server's own access and says which method it did not use", async () => {
+    const admin = await createUser({ name: "Admin", email: "admin@example.com", password: TEST_PASSWORD, role: "admin" });
+    app(admin.id, "acme/app");
+    expect(repoAccess(admin.id, "acme/app")).toEqual({ kind: "server", unused: "github-app" });
   });
 
   it("moves with the transfer, with its id, and loses its status, without a Keychain call", () => {

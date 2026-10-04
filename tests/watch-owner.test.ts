@@ -8,7 +8,9 @@ import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
-import { claudeBin, fakeGithub, oldFlowFor } from "./helpers/fake-github.js";
+import { addRepo } from "../src/auth/repos.js";
+import { claudeBin, fakeGit, fakeGithub, oldFlowFor } from "./helpers/fake-github.js";
+import { fakeKeychain } from "./helpers/keychain.js";
 
 describe("watcher run owner", () => {
   let gh: ReturnType<typeof fakeGithub>;
@@ -45,12 +47,20 @@ describe("watcher run owner", () => {
     const queued = start({ owner: "ann@example.com" }, 0);
     await queued.w.tick();
     expect(queuedOwners(queued.scheduler)).toEqual([ann.id]);
-    const live = start({ owner: " ANN@example.com " }, 2);
-    await live.w.tick();
-    await live.scheduler.idle();
-    const run = live.scheduler.list()[0]!;
-    expect(run.owner).toBe(ann.id);
-    expect(JSON.parse(readFileSync(join(run.runDir, "run.json"), "utf8")).owner).toBe(ann.id);
+    // Ann's run reaches steps that sign in: she needs a repository with a token (and the fake git to clone it)
+    const kc = fakeKeychain();
+    try {
+      addRepo(ann.id, { url: "acme/app", method: "github-token", token: ["github", "pat", ""].join("_") + "Ab1".repeat(12) });
+      fakeGit(gh);
+      const live = start({ owner: " ANN@example.com " }, 2);
+      await live.w.tick();
+      await live.scheduler.idle();
+      const run = live.scheduler.list()[0]!;
+      expect(run.owner).toBe(ann.id);
+      expect(JSON.parse(readFileSync(join(run.runDir, "run.json"), "utf8")).owner).toBe(ann.id);
+    } finally {
+      kc.remove();
+    }
   });
 
   it("gives the run to the first admin without an owner, and with an e-mail of no account", async () => {

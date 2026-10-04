@@ -33,6 +33,7 @@ describe("classifyFailure", () => {
     "the token of this repository is missing; set it again under My repositories",
     "the stored token of this repository cannot be read; set it again under My repositories, or ask an admin",
     "GitHub refused the token of this repository; check its access to Contents and Issues",
+    "GitHub refused the token of this repository; reconnect the repository under My repositories",
     '"acme/app" is not one of your repositories',
     "this run has no owner, so the token of the repository cannot be looked up",
   ])("is factory for a repository that could not be read with its stored token: %s", (error) => {

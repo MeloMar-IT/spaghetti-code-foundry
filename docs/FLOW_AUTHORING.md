@@ -158,9 +158,12 @@ The output is stdout + stderr (long output is trimmed to the end).
 - Only shell steps have it.
 - Never set it on a step that runs the project's tests or build. Split a step that does both.
 - A step with it cannot have `sandbox: true` and cannot be listed in a `parallel` step.
-- Today the flag changes nothing. In a later version, in a run started by a user (not an admin),
-  steps without the flag and all agent steps lose the server's GitHub access. A flow that calls
-  `gh` or pushes in a step without the flag will then fail for users.
+- In a run with an owner, a marked step signs in with the stored token of the repository named by
+  `github_repo` (`GH_TOKEN` for `gh`, a credential helper for git) and `$FACTORY_REPO_URL` is its
+  address. Steps without the flag and agent steps never get the token.
+- A failed sign-in ends the run: `on_failure` is not followed. A refusal on stderr fails the step
+  even if the script goes on, so a call you tolerate on purpose must send its error output to
+  `/dev/null`.
 
 ### `approval` — wait for a human
 
@@ -275,6 +278,7 @@ these environment variables instead (always quote them: `"$FACTORY_TASK"`):
 | `$FACTORY_VAR_<NAME>` | A flow variable (`github_repo` → `$FACTORY_VAR_GITHUB_REPO`) |
 | `$FACTORY_RUN_ID`, `$FACTORY_WORKDIR`, `$FACTORY_BRANCH` | Run id, workspace, branch |
 | `$FACTORY_BASE_SHA` | The commit the run started from (`git diff $FACTORY_BASE_SHA` = everything the run changed) |
+| `$FACTORY_REPO_URL` | The stored address of the repository; set only in a marked step that uses a stored token |
 | `$FACTORY_TOOLS` | Folder with helper scripts (below) |
 | `$FACTORY_NEXT_<REASON>` | The closing "what to do next" sentence for a comment on the issue. `<REASON>` is `QUESTIONS`, `PLANNER_QUESTIONS`, `APPROVE_PLAN`, `APPROVE_SPLIT` or `APPROVAL`; e.g. `$FACTORY_NEXT_APPROVAL` is "It waits for your approval — reply /approve or /reject." The sentence is fixed per reason. Write `"_${FACTORY_NEXT_APPROVAL}_"` with braces when `_` follows |
 | `$FACTORY_FIRST_<REASON>`, `$FACTORY_FIRST_NOTHING` | The bold first line of a comment on the issue. `<REASON>` is the same five as above; e.g. `$FACTORY_FIRST_APPROVE_PLAN` is `**What you need to do:** Reply /approve or /reject.` `$FACTORY_FIRST_NOTHING` is for a comment that needs no answer: `**Nothing needed from you** — it is being worked on.` Print it first, then an empty line (`echo "$FACTORY_FIRST_APPROVAL"; echo`), and always quote it because it contains `*` |

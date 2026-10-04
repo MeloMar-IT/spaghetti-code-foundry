@@ -344,6 +344,13 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 - **Repositories per user**, each with its own way of signing in. Tokens are stored encrypted,
   with the key in the macOS Keychain; they never appear in API answers, logs or agent
   environments.
+- **Runs sign in with the repository's token.** `executeStep()` asks `stepRepoAccess()`
+  (`src/engine/repo-access.ts`) when a shell step has `repo_access` (or is the old by-name
+  refinement grant). The lookup happens when the step starts. `repoTokenEnv()` puts the token in
+  the step's environment only: `GH_TOKEN`, an empty `gh` folder, and git config entries added
+  after the engine's `core.hooksPath` (an empty `credential.helper`, a helper for the repository's
+  host that prints the name and token from the environment, no extra header), https only, no
+  prompt. A refusal ends the run (`Engine.accessFailed` skips `on_failure`).
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
