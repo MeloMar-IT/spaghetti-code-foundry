@@ -1228,6 +1228,23 @@ not told).
 **Bot identity** — by default commits and comments are made as you. Set a bot name/email and a
 token (or a GitHub App) to make them as a bot instead.
 
+**GitHub App** — one app for the whole Foundry. It lets users connect a repository without a personal
+token (the method "GitHub App" on My repositories). Set it up once:
+
+1. Create a GitHub App. Give it the repository permissions Contents, Issues and Pull requests, each
+   "Read and write". Download its private key (a `.pem` file) and keep it readable only by the server's account.
+2. Fill in Settings → GitHub App: **App ID**; **App name (slug)**, the last part of
+   `https://github.com/apps/<name>`; **Private key file**, the path of the `.pem`; and, only if you want the
+   bot identity, **Installation ID (optional)**. With an installation ID, runs commit and comment as the app
+   (this works as before). Without one, the app is used only for the repository method.
+3. Without an app ID, a key file and a name, the method is not offered, and the API answers 400.
+
+Install the app only on repositories that every Foundry user may work in, and choose "Only select
+repositories". The server finds the installation with the app's own key, so a user needs no rights on GitHub:
+if the app is installed on a whole organisation, any Foundry user can connect any repository of it and get push
+access through the app. The first account to add a repository gets it. A user cannot read these settings.
+After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
+
 **Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones here
 or with `scf clean` (branches in your repositories are kept).
 
@@ -1456,15 +1473,30 @@ owns it; for a user the test answers 409. For that method the test uses the serv
 sign-in; `GIT_*` variables of the server are not used. SSH host keys: the first key seen is trusted and kept in
 `known_hosts` in the data folder; remove the host's line there after a real key change (for "none", the file is
 `~/.ssh/known_hosts` of the server's account). The server's SSH configuration is not used for a deploy key.
+For the method "GitHub App" the test looks up the installation again and asks GitHub for a new short-lived token
+limited to that repository; clone, push check and API check use it (it is passed to git and `gh` through the
+environment only, and is never stored, logged or shown). If the app is no longer installed, the result says so
+(`app-not-installed`); if the app was removed from the settings, `app-not-set-up`; if its key or ID is wrong,
+`app-broken`. A changed installation ID is kept.
 
 **The My repositories page.** `#/repos` is in the top bar for every account. It lists your repositories
 with the URL, how the Foundry signs in (the authentication method) and the connection status, which is
 "Not tested yet" until you press **Test connection** (see below). **Add repository** asks for the URL and the method:
 a GitHub fine-grained personal access token (give it these repository permissions, each "Read and write":
-Contents, Issues and Pull requests), an HTTPS user name + token for other git hosts, or an SSH deploy key.
-The token is typed in a password field and is never shown again. **Change authentication** keeps the stored
+Contents, Issues and Pull requests), an HTTPS user name + token for other git hosts, an SSH deploy key, or
+the **GitHub App**. The token is typed in a password field and is never shown again. **Change authentication** keeps the stored
 token if you leave the token empty; a new method needs a new token. **Remove** asks first and deletes the
 stored token or key too.
+
+With **GitHub App** you need no token. It is offered only for a GitHub repository with an https address, and
+only when the administrator has set up the app; otherwise the dialog says "GitHub App is not available: the
+administrator has not set up the app (Settings → GitHub App)". The dialog shows **Install the app on GitHub**
+(`https://github.com/apps/<name>/installations/new`). Install the app on this repository (choose "Only select
+repositories" and pick it), then save, then press **Test connection**. When you save, the server looks up the
+installation of the app on the repository and keeps its ID with the repository; if the app is not installed
+there, it says so (409) and nothing is saved. The row keeps the link, to install the app on more repositories or
+change which ones it may use. If the administrator removes the app, the row says so; choose another
+authentication. **Remove** does not uninstall the app on GitHub.
 
 With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no
 secret. The Foundry makes a key pair, keeps the private key and shows the **public key** in the
@@ -1501,7 +1533,8 @@ owner), the URL, the authentication method and the connection status ("Not teste
   every `none` repository of an admin. The new owner sets the sign-in again. An SSH deploy key belongs to the
   repository, not to a person: it moves to the new owner with its public key, so the key that was added in the
   repository's settings keeps working (a missing key refuses the transfer with 409). A GitHub App installation
-  will be kept the same way when that method exists. The wipe of a token cannot be undone; transfer back and
+  is kept the same way: the method and the installation ID move with the repository (the connection status is
+  cleared). The wipe of a token cannot be undone; transfer back and
   type the token again.
 - Queued and running runs of the old owner are not stopped.
 
@@ -1511,7 +1544,16 @@ and `added`, and it may hold `settings`, which only an admin can read (`GET /api
 A deploy-key record also has `credentialId` and `publicKey`. It never holds a secret (a public key is not
 one). These calls manage it:
 
-- `GET /api/repos` lists your records, with the `publicKey` of a deploy key.
+- `GET /api/repos` lists your records, with the `publicKey` of a deploy key and the `installationId` of a
+  GitHub App record (a record with the method `github-app` has no credential).
+- `GET /api/repos/methods` answers `{methods, githubApp}`: the methods you may choose (`none` only for an admin,
+  `github-app` only when the app is set up) and `githubApp: {available: true, installUrl}` or
+  `{available: false}`. It never shows the app ID or the key path.
+- With `"method": "github-app"`, `POST /api/repos` and `PUT /api/repos/<id>/auth` take no token and no user name,
+  and the installation ID is never read from the request. The server checks the request first (a request it
+  refuses itself makes no call to GitHub), then asks GitHub for the installation. Answers: 400 when the app is
+  not set up on this server, 409 when it is not installed on the repository, 500 when the app does not work
+  (ask the administrator), 502 when GitHub cannot be asked.
 - `POST /api/repos {"url": …, "method": …, "username": …, "token": …}` adds one (201; 409 if you or
   another account has it; 400 for a bad URL or method; at most 50). `{"name": "owner/name"}` still works.
 - `PUT /api/repos/<id>/auth` changes the method, user name, token or address. What you do not give
@@ -1642,6 +1684,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
+| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
@@ -1657,7 +1700,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
 
-**What comes later.** Runs that use a user's stored credentials or a repository's token, runs that use a deploy key, the GitHub App, and pages for users (starting runs).
+**What comes later.** Runs that use a user's stored credentials or a repository's token, runs that use a deploy key, runs that use the GitHub App, and pages for users (starting runs).
 
 ### Access from other computers
 

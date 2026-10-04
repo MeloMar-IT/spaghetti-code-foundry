@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REPO_METHODS } from "../src/auth/repos.js";
-import { CODES, type ConnectInput, type ConnectOpts, ConnectError, classifyGh, classifyGit, ghEnv, gitAuth, messageFor, sweepConnectFolders, testConnection } from "../src/repos/connect.js";
+import { ConnectionSchema } from "../src/auth/repo-connection.js";
+import { CODES, type ConnectInput, type ConnectOpts, ConnectError, blockedResult, classifyGh, classifyGit, ghEnv, gitAuth, messageFor, sweepConnectFolders, testConnection } from "../src/repos/connect.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
@@ -154,6 +155,23 @@ describe("messageFor", () => {
     expect(messageFor("host-key-unknown", "none")).not.toContain("data folder");
   });
 
+  it("names the app, not a token, in the app's sentences", () => {
+    for (const code of ["bad-token", "not-found", "read-only", "no-issues", "no-pulls", "no-issues-pulls", "app-not-set-up", "app-not-installed", "app-broken"] as const) {
+      const m = messageFor(code, "github-app", "clone");
+      expect(m, code).toContain("GitHub App");
+      // the app's own short-lived token may be named; a personal token never
+      expect(m.toLowerCase().replace("app's token", ""), code).not.toMatch(/\btokens?\b/);
+    }
+    expect(messageFor("bad-token", "github-app")).toContain("app's token");
+  });
+
+  it("blockedResult fits the schema: the clone has the code, the other checks are skipped", () => {
+    const r = blockedResult("app-not-installed", "github-app");
+    expect(ConnectionSchema.parse(r)).toEqual(r);
+    expect(r.ok).toBe(false);
+    expect(r.checks.map((c) => [c.check, c.code, c.skipped ?? false])).toEqual([["clone", "app-not-installed", false], ["push", "skipped", true], ["github-api", "skipped", true]]);
+  });
+
   it("names the deploy key problem and what the Foundry needs", () => {
     expect(messageFor("read-only", "ssh-deploy-key", "push")).toContain("added without write access");
     for (const code of ["no-issues", "no-pulls", "no-issues-pulls"] as const) {
@@ -206,6 +224,17 @@ describe("gitAuth", () => {
     expect(ask("Username for 'https://github.com': ")).toBe("x-access-token\n");
     const other = gitAuth(dir, { method: "https-token", username: "bob", secret: TOKEN });
     expect(execFileSync(other.askpass, ["Username for 'https://x': "], { env: other.env, encoding: "utf8" })).toBe("bob\n");
+  });
+
+  it("the GitHub App's token: only in SCF_GIT_PASSWORD and GH_TOKEN, with an own gh configuration folder", () => {
+    const a = gitAuth(dir, { method: "github-app", secret: TOKEN });
+    expect(Object.entries(a.env).filter(([, v]) => v?.includes(TOKEN)).map(([k]) => k)).toEqual(["SCF_GIT_PASSWORD"]);
+    expect(a.args.join(" ")).not.toContain(TOKEN);
+    expect(execFileSync(a.askpass, ["Username for 'https://github.com': "], { env: a.env, encoding: "utf8" })).toBe("x-access-token\n");
+    const g = ghEnv("github-app", TOKEN, dir);
+    expect(g.GH_TOKEN).toBe(TOKEN);
+    expect(g.GH_CONFIG_DIR).toBe(join(dir, "gh-config"));
+    expect(Object.entries(g).filter(([, v]) => v?.includes(TOKEN)).map(([k]) => k)).toEqual(["GH_TOKEN"]);
   });
 
   it("a deploy key: a 0600 file, IdentitiesOnly, no agent", () => {

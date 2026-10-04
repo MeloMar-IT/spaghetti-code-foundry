@@ -287,8 +287,11 @@ export const ConfigSchema = z
     github_app: z
       .object({
         app_id: z.string(),
-        installation_id: z.string(),
+        /** Only for the bot identity (runs commit and comment as the app). */
+        installation_id: z.string().optional(),
         private_key_path: z.string(),
+        /** The app's name in https://github.com/apps/<slug>; needed for the repository method "GitHub App". */
+        slug: z.string().regex(/^[A-Za-z0-9-]{1,100}$/, "the app name may only have letters, digits and -").optional(),
       })
       .strict()
       .optional(),

@@ -397,7 +397,8 @@ describe("what a transfer does to a sign-in", () => {
     expect([...PERSONAL_METHODS].sort()).toEqual(["github-token", "https-token"]);
     // Before a method is listed here, add transfer tests with a real record of it: kept for the new owner, the repeat after
     // a failed record write, and a missing credential refused with "no-credential" (see "a deploy key moves with its repository").
-    expect(REPO_BOUND_METHODS).toEqual(["ssh-deploy-key"]);
+    // an app record has no credential of its own: it moves with its installation id (see the transfer tests)
+    expect(REPO_BOUND_METHODS).toEqual(["ssh-deploy-key", "github-app"]);
     expect([...PERSONAL_METHODS, ...REPO_BOUND_METHODS, "none"].sort()).toEqual([...REPO_METHODS].sort());
   });
 

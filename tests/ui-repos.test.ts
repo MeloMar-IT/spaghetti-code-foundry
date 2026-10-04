@@ -31,6 +31,11 @@ const connection = (ok: boolean, over: object = {}) => ({
     : [{ check: "clone", ok: false, code: "bad-token", message: "The host did not accept the token." }, { check: "push", ok: false, skipped: true, code: "skipped", message: "Not checked." }],
   ...over,
 });
+/** The answer of GET /api/repos/methods (undefined: the call fails, and the page behaves as before). */
+let methodsAnswer: any;
+let methodsCalls = 0;
+const APP_URL = "https://github.com/apps/foundry-app/installations/new";
+const appOptions = (over: object = {}) => ({ methods: ["github-token", "https-token", "ssh-deploy-key", "github-app"], githubApp: { available: true, installUrl: APP_URL }, ...over });
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
 let heldGets: (() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
@@ -56,7 +61,13 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+  methodsAnswer = undefined;
+  methodsCalls = 0;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (init.method === "GET" && url === "/api/repos/methods") {
+      methodsCalls++;
+      return methodsAnswer ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+    }
     if (init.method === "GET") {
       gets++;
       const snapshot = [...repos];
@@ -132,14 +143,21 @@ const choose = (id: string) => {
 
 describe("pure functions", () => {
   it("lists the methods", () => {
-    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "none"]);
+    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app", "none"]);
     for (const m of ui.METHODS) {
       expect(m.label).toBeTruthy();
       expect(Array.isArray(m.help)).toBe(true);
       expect(Array.isArray(m.fields)).toBe(true);
     }
     expect(ui.methodsFor(false).map((m: any) => m.id)).not.toContain("none");
+    // without the server's list the GitHub App is left out, because it may not be set up
     expect(ui.methodsFor(true)).toHaveLength(4);
+    expect(ui.methodsFor(true).map((m: any) => m.id)).not.toContain("github-app");
+    expect(ui.methodsFor(false, appOptions()).map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
+    expect(ui.methodsFor(false, appOptions({ methods: ["github-token"] })).map((m: any) => m.id)).toEqual(["github-token"]);
+    expect(ui.methodsFor(true, appOptions({ methods: ["github-token", "none"] })).map((m: any) => m.id)).toEqual(["github-token", "none"]);
+    // the server decides: a user never gets the server's own access, even when it is listed
+    expect(ui.methodsFor(false, appOptions({ methods: ["github-token", "none"] })).map((m: any) => m.id)).toEqual(["github-token"]);
     const help = ui.METHODS[0].help.join(" ");
     for (const w of ["Contents", "Issues", "Pull requests", '"Read and write"']) expect(help).toContain(w);
     expect(ui.METHODS.find((m: any) => m.id === "none").help.join(" ")).not.toContain("GitHub");
@@ -865,5 +883,108 @@ describe("wiring", () => {
     expect(e).toBeInstanceOf(Error);
     expect(e.message).toBe("taken");
     expect(e.status).toBe(409);
+  });
+});
+
+describe("the GitHub App", () => {
+  const anchors = (el: FakeElement) => walk(el).filter((e) => e.tag === "a");
+  const optionIds = () => field(root(), "method")!.children.map((o: any) => o.value);
+  const NOT_AVAILABLE = "GitHub App is not available";
+
+  it("asks the server for the methods", async () => {
+    methodsAnswer = appOptions();
+    const r = await api.repoMethods();
+    expect(r.githubApp.available).toBe(true);
+    expect(methodsCalls).toBe(1);
+  });
+
+  it("offers the method only when the app is set up, and says why not", async () => {
+    methodsAnswer = appOptions();
+    await show();
+    press(button(main(), "+ Add repository"));
+    expect(optionIds()).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
+    expect(root().textContent).not.toContain(NOT_AVAILABLE);
+    pressEscape();
+    await flush();
+
+    methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
+    await show();
+    press(button(main(), "+ Add repository"));
+    expect(optionIds()).not.toContain("github-app");
+    expect(root().textContent).toContain(`${NOT_AVAILABLE}: the administrator has not set up the app (Settings → GitHub App).`);
+  });
+
+  it("shows the link and no token field, and sends the url and the method", async () => {
+    methodsAnswer = appOptions();
+    await show();
+    press(button(main(), "+ Add repository"));
+    type("url", "https://github.com/o/a");
+    choose("github-app");
+    expect(field(root(), "token")).toBeUndefined();
+    const [link] = anchors(root());
+    expect(link!.attrs.href).toBe(APP_URL);
+    expect(link!.attrs.rel).toBe("noopener noreferrer");
+    expect(link!.attrs.target).toBe("_blank");
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://github.com/o/a", method: "github-app" } }]);
+  });
+
+  it("shows the server's sentence when the app is not installed", async () => {
+    methodsAnswer = appOptions();
+    answers = [{ status: 409, error: "the GitHub App is not installed on this repository; install it with the link on the page, then save again" }];
+    await show();
+    press(button(main(), "+ Add repository"));
+    type("url", "https://github.com/o/a");
+    choose("github-app");
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toContain("is not installed on this repository");
+    expect(root().children.length).toBeGreaterThan(0);
+  });
+
+  it("draws only a link to github.com/apps/<name>/installations/new", () => {
+    expect(ui.appInstallUrl(appOptions())).toBe(APP_URL);
+    for (const url of ["https://evil.example/apps/x/installations/new", "http://github.com/apps/x/installations/new", "https://github.com/apps/x/installations/new?next=1", "javascript:alert(1)", "https://github.com/apps//installations/new", 5, undefined]) {
+      expect(ui.appInstallUrl({ githubApp: { available: true, installUrl: url } }), String(url)).toBe("");
+    }
+    expect(ui.appInstallUrl(undefined)).toBe("");
+  });
+
+  it("does not draw a bad link in the dialog", async () => {
+    methodsAnswer = appOptions({ githubApp: { available: true, installUrl: "https://evil.example/x" } });
+    await show();
+    press(button(main(), "+ Add repository"));
+    choose("github-app");
+    expect(anchors(root())).toEqual([]);
+  });
+
+  it("shows the label and the link in the row", async () => {
+    methodsAnswer = appOptions();
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    expect(main().textContent).toContain("GitHub App");
+    expect(main().textContent).toContain("Install the app on this repository, or change which repositories it may use. Then press Test connection.");
+    expect(anchors(main())[0]!.attrs.href).toBe(APP_URL);
+    expect(errLine(main())).toEqual([]);
+  });
+
+  it("says when the administrator removed the app", async () => {
+    methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    expect(errLine(main()).map((e) => e.textContent)).toEqual(["The administrator removed the GitHub App. Choose another authentication."]);
+    expect(anchors(main())).toEqual([]);
+  });
+
+  it("tells that the app stays installed when the repository is removed", async () => {
+    methodsAnswer = appOptions();
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    const asked: string[] = [];
+    (globalThis as any).confirm = (q: string) => (asked.push(q), false);
+    press(button(main(), "Remove"));
+    expect(asked[0]).toContain("The app stays installed on GitHub.");
+    expect(asked[0]).not.toContain("token");
   });
 });

@@ -176,6 +176,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET audit/export": no("audit/export?user=x", 400),
   "DELETE credentials/:id": { path: `credentials/${UNKNOWN}`, user: 404, admin: 404 },
   "GET repos": { path: "repos", user: 200, admin: 200 },
+  "GET repos/methods": { path: "repos/methods", user: 200, admin: 200 },
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
@@ -207,6 +208,7 @@ describe("the table", () => {
     expect(findRule("GET", ["runs", "a", "diff"])?.path).toBe("runs/:id/diff");
     expect(findRule("DELETE", ["repos", "a", "b"])?.path).toBe("repos/:owner/:name");
     expect(findRule("DELETE", ["repos", "a"])?.path).toBe("repos/:id");
+    expect(findRule("GET", ["repos", "methods"])?.path).toBe("repos/methods");
     expect(findRule("PUT", ["repos", "a", "auth"])?.path).toBe("repos/:id/auth");
     expect(findRule("POST", ["repos", "a", "test"])?.path).toBe("repos/:id/test");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");

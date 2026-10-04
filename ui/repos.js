@@ -42,6 +42,18 @@ export const METHODS = [
     ],
   },
   {
+    id: "github-app",
+    https: true,
+    app: true,
+    label: "GitHub App",
+    fields: [],
+    help: [
+      "The Foundry signs in as the GitHub App the administrator set up. You need no personal token.",
+      "First install the app on this repository with the link below (choose Only select repositories and pick this one).",
+      "Then save here, and press Test connection.",
+    ],
+  },
+  {
     id: "none",
     label: "The server's own access",
     help: ["The server uses its own access to this repository. No token is stored."],
@@ -49,8 +61,25 @@ export const METHODS = [
   },
 ];
 
-/** The methods an account may choose: only an admin may use the server's own access. */
-export const methodsFor = (admin) => METHODS.filter((m) => admin || m.id !== "none");
+/**
+ * The methods an account may choose: only an admin may use the server's own access. With `options` (the answer of
+ * `GET /api/repos/methods`) the entries it lists; without, the GitHub App is left out because it may not be set up.
+ */
+export const methodsFor = (admin, options) =>
+  METHODS.filter((m) => (admin || m.id !== "none") && (Array.isArray(options?.methods) ? options.methods.includes(m.id) : m.id !== "github-app"));
+
+/** The link to install the app, only when it is a github.com/apps/<name>/installations/new address; else "". */
+export const appInstallUrl = (options) => {
+  const url = options?.githubApp?.installUrl;
+  return typeof url === "string" && /^https:\/\/github\.com\/apps\/[A-Za-z0-9-]+\/installations\/new$/.test(url) ? url : "";
+};
+
+const appAvailable = (options) => options?.githubApp?.available === true;
+
+const installLink = (options) => {
+  const href = appInstallUrl(options);
+  return href ? h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "Install the app on GitHub") : null;
+};
 
 /** How the repository signs in, in words. */
 export function methodLabel(repo, admin) {
@@ -139,7 +168,7 @@ export function plainError(e) {
  * Asks for the URL (when adding) and the method. Resolves once the dialog is closed and any request that
  * was started has finished; the caller then loads the list again.
  */
-export function repoDialog({ admin = false, methods = methodsFor(admin), repo } = {}) {
+export function repoDialog({ admin = false, options, methods = methodsFor(admin, options), repo } = {}) {
   let pending = null;
   let closed = false;
   const shown = modal(repo ? "Change authentication" : "Add repository", (close) => {
@@ -167,7 +196,7 @@ export function repoDialog({ admin = false, methods = methodsFor(admin), repo } 
         els.url = h("input", { name: "url", class: "mono", placeholder: toSsh ? SSH_EXAMPLE : HTTPS_EXAMPLE, autocomplete: "off", value: values.url ?? "" });
       }
       mount(area,
-        h("div", { class: "field" }, (m.help ?? []).map((t) => h("small", {}, t))),
+        h("div", { class: "field" }, (m.help ?? []).map((t) => h("small", {}, t)), m.app ? installLink(options) : null),
         els.url ? h("label", { class: "field" }, h("span", {}, toSsh ? "SSH address" : "HTTPS address"), els.url) : null,
         m.fields.map((f) => {
           const attrs = { name: f.key, autocomplete: f.secret ? "new-password" : "off" };
@@ -223,6 +252,7 @@ export function repoDialog({ admin = false, methods = methodsFor(admin), repo } 
     return h("div", { style: { display: "grid", gap: "12px" } },
       repo ? h("p", { class: "mono" }, repo.url) : h("label", { class: "field" }, h("span", {}, "Repository URL"), urlInput),
       h("label", { class: "field" }, h("span", {}, "Authentication"), select),
+      options && !appAvailable(options) ? h("small", {}, "GitHub App is not available: the administrator has not set up the app (Settings → GitHub App).") : null,
       area, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { closed = true; });
@@ -252,7 +282,7 @@ const onPage = () => {
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
 export async function renderRepos(main, { admin = false, notice } = {}) {
   const mine = ++generation;
-  const repos = await api.repos();
+  const [repos, options] = await Promise.all([api.repos(), api.repoMethods().catch(() => undefined)]);
   if (mine !== generation || !onPage()) return () => {};
   const reload = (next) => renderRepos(main, { admin, notice: next }).catch((e) => toast(plainError(e), "error"));
   const remove = async (id, again = false) => {
@@ -266,7 +296,7 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
     return reload();
   };
   const add = async () => {
-    await repoDialog({ admin });
+    await repoDialog({ admin, options });
     reload();
   };
   const copy = async (value) => {
@@ -308,20 +338,27 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
     h("code", { class: "mono", style: { wordBreak: "break-all", userSelect: "all" } }, repo.publicKey),
     h("button", { class: "small", onClick: () => copy(repo.publicKey) }, "Copy"),
     h("small", {}, DEPLOY_KEY_HINT));
+  const appBlock = () => appAvailable(options) || !options
+    ? h("div", { class: "field", style: { marginTop: "6px", maxWidth: "520px" } },
+      installLink(options),
+      h("small", {}, "Install the app on this repository, or change which repositories it may use. Then press Test connection."))
+    : h("div", { class: "status bad" }, "The administrator removed the GitHub App. Choose another authentication.");
   const row = (repo) => h("tr", {},
     h("td", { class: "mono" }, repo.url),
-    h("td", {}, methodLabel(repo, admin), repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null),
+    h("td", {}, methodLabel(repo, admin),
+      repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
+      repo.method === "github-app" ? appBlock() : null),
     connectionCell(repo),
     h("td", {},
       h("button", { class: "small", onClick: (e) => test(e, repo) }, "Test connection"), " ",
       h("button", { class: "small", onClick: async () => {
-        await repoDialog({ admin, repo });
+        await repoDialog({ admin, options, repo });
         reload();
       } }, "Change authentication"), " ",
       repo.method === "ssh-deploy-key" ? [h("button", { class: "small", onClick: (e) => newKey(e, repo) }, "Generate a new key"), " "] : null,
       h("button", { class: "small danger", onClick: (e) => {
         const btn = e.currentTarget;
-        if (!confirm(`Remove ${repo.url}? ${repo.method === "ssh-deploy-key" ? "Its stored key is deleted too." : "Its stored token is deleted too."}`)) return;
+        if (!confirm(`Remove ${repo.url}? ${repo.method === "ssh-deploy-key" ? "Its stored key is deleted too." : repo.method === "github-app" ? "The app stays installed on GitHub." : "Its stored token is deleted too."}`)) return;
         return whileBusy(btn, () => remove(repo.id));
       } }, "Remove")));
   mount(main,
