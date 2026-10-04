@@ -28,6 +28,7 @@ import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
 import { auditRoutes } from "./api-audit.js";
+import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
@@ -55,6 +56,8 @@ export interface ServerOptions {
   accountSweepMs?: number;
   /** How often dropped refinement sessions past their 30 days are removed, in ms (default 600000). */
   refinementSweepMs?: number;
+  /** How often old audit lines are removed, in ms (default one day). */
+  auditSweepMs?: number;
 }
 
 export interface ApiContext {
@@ -122,6 +125,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweep();
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
+  const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
+  auditSweep();
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     const method = req.method ?? "GET";
@@ -207,6 +212,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweepTimer.unref();
   const refinementTimer = setInterval(refinementSweep, opts.refinementSweepMs ?? REFINEMENT_SWEEP_MS);
   refinementTimer.unref();
+  const auditTimer = setInterval(auditSweep, opts.auditSweepMs ?? AUDIT_SWEEP_MS);
+  auditTimer.unref();
   if (opts.watchers !== false) watchers.sync();
   let notifier: TurnNotifier | undefined;
   if (process.env.FACTORY_NO_NOTIFY !== "1") {
@@ -224,6 +231,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(adoptTimer);
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
+      clearInterval(auditTimer);
       notifier?.stop();
       watchers.stopAll();
       server.close();

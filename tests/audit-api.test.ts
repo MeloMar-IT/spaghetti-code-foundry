@@ -368,3 +368,110 @@ describe("the audit API", () => {
     expect((await get(s, "/api/audit")).status).toBe(200);
   });
 });
+
+describe("the clean-up in the server", () => {
+  const DAY = 86_400_000;
+  const rel = (d: number) => new Date(Date.now() - d * DAY).toISOString();
+  const line = (d: number) => JSON.stringify(ev(rel(d)));
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const until = async (ok: () => boolean, ms = 3000) => {
+    for (const t = Date.now(); !ok() && Date.now() - t < ms; ) await wait(20);
+    return ok();
+  };
+  const text = () => readFileSync(auditPath(), "utf8");
+  const live: (() => void)[] = [];
+  afterAll(() => live.forEach((c) => c()));
+
+  async function start(extra: Partial<Parameters<typeof startServer>[0]> = {}, seed?: (home: string) => void) {
+    const tmp = mkdtempSync(join(tmpdir(), "audit-purge-api-"));
+    const repo = join(tmp, "repo");
+    mkdirSync(repo);
+    const home = join(tmp, "home");
+    process.env.FACTORY_HOME = home;
+    seed?.(home);
+    const logs: string[] = [];
+    for (let i = 0; ; i++) {
+      const port = 20000 + Math.floor(Math.random() * 20000);
+      try {
+        const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000, ...extra });
+        let closed = false;
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          started.close();
+          rmSync(tmp, { recursive: true, force: true });
+        };
+        live.push(close);
+        return { base: `http://127.0.0.1:${port}`, tmp, logs, close };
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
+      }
+    }
+  }
+  const put = (base: string, s: TestSession, body: unknown) =>
+    fetch(`${base}/api/config`, { method: "PUT", headers: { ...s.headers("PUT"), "content-type": "application/json" }, body: JSON.stringify(body) });
+  const seedLines = (...l: string[]) => (home: string) => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "audit.jsonl"), l.join("\n") + "\n");
+  };
+
+  it("removes old lines at start and keeps the rest", async () => {
+    const keep = [line(1), "{ not json"];
+    const s = await start({}, seedLines(line(200), ...keep));
+    const admin = await signInAs(s.base);
+    expect(text().split("\n").slice(0, 2)).toEqual(keep);
+    expect(s.logs).toContain("audit: removed 1 line(s) older than 180 days");
+    const r = await fetch(`${s.base}/api/audit`, { headers: admin.headers() });
+    expect(JSON.stringify(await r.json())).not.toContain(rel(200).slice(0, 10));
+    s.close();
+  });
+
+  it("keeps running when the lock is busy at start, and cleans up at a later round", async () => {
+    const fresh = line(1);
+    const s = await start({ auditSweepMs: 300 }, (home) => {
+      seedLines(line(200), fresh)(home);
+      mkdirSync(join(home, "auth.lock"));
+      writeFileSync(join(home, "auth.lock", "pid"), String(process.pid));
+    });
+    const before = text();
+    expect(s.logs).toContain("audit: auth.lock locked (clean-up)");
+    expect(before.split("\n").filter(Boolean)).toHaveLength(2);
+    rmSync(join(process.env.FACTORY_HOME!, "auth.lock"), { recursive: true });
+    expect((await fetch(`${s.base}/api/audit`)).status).toBe(401);
+    expect(await until(() => text().split("\n").filter(Boolean).length === 1)).toBe(true);
+    expect(text()).toBe(fresh + "\n");
+    const admin = await signInAs(s.base);
+    expect((await fetch(`${s.base}/api/config`, { headers: admin.headers() })).status).toBe(200);
+    s.close();
+  });
+
+  it("uses a changed setting on the timer and stops after close", async () => {
+    const s = await start({ auditSweepMs: 50 });
+    const admin = await signInAs(s.base);
+    writeFileSync(auditPath(), text() + line(100) + "\n");
+    await wait(200);
+    expect(text()).toContain(rel(100).slice(0, 10));
+    expect((await put(s.base, admin, { audit: { retention_days: 30 } })).status).toBe(200);
+    expect(await until(() => !text().includes(`"time":"${rel(100).slice(0, 10)}`))).toBe(true);
+    s.close();
+    const old = line(100);
+    seedLines(old)(process.env.FACTORY_HOME!);
+    await wait(300);
+    expect(text()).toBe(old + "\n");
+    rmSync(s.tmp, { recursive: true, force: true });
+  });
+
+  it("survives a failure on the timer and tries again", async () => {
+    const s = await start({ auditSweepMs: 50 });
+    const admin = await signInAs(s.base);
+    rmSync(auditPath(), { force: true });
+    mkdirSync(auditPath());
+    expect(await until(() => s.logs.includes("audit: audit.jsonl unreadable (clean-up)"))).toBe(true);
+    expect((await fetch(`${s.base}/api/config`, { headers: admin.headers() })).status).toBe(200);
+    rmSync(auditPath(), { recursive: true });
+    writeFileSync(auditPath(), line(200) + "\n");
+    expect(await until(() => text() === "")).toBe(true);
+    expect(s.logs.join("\n")).not.toContain("tmp");
+    s.close();
+  });
+});

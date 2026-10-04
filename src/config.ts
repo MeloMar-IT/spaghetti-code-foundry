@@ -206,6 +206,14 @@ const ServerSchema = z
   .strict()
   .prefault({});
 
+const AuditSchema = z
+  .object({
+    /** Audit lines older than this many days are removed (at start and once a day). */
+    retention_days: z.number().int().min(1).max(3650).default(180),
+  })
+  .strict()
+  .prefault({});
+
 const SelfUpdateSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -220,6 +228,8 @@ export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
     server: ServerSchema,
+    /** The audit log (`audit.jsonl`): how long lines are kept. */
+    audit: AuditSchema,
     /** Model spec for agent steps with no model anywhere (flow, step or router). */
     default_model: z.string().optional(),
     /** Extra or overridden providers; anthropic, openai, ollama and lmstudio are built in. */

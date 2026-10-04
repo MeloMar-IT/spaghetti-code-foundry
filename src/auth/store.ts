@@ -140,6 +140,48 @@ export function writeJsonFile(path: string, data: unknown): void {
   }
 }
 
+/**
+ * Replaces the file with what `fill` writes, through `<path>.tmp` (created 0600) and a rename. Only inside
+ * withAuthLock. A StoreError from `fill` comes out as it is; any other error is `cannot-write`. The old file stays as
+ * it was on every failure, and no `.tmp` is left.
+ */
+export function replaceFileLocked(path: string, fill: (write: (bytes: Uint8Array) => void) => void): void {
+  if (!held) throw new Error("replaceFileLocked must run inside withAuthLock");
+  if (dirname(path) !== dirname(held)) throw new Error("replaceFileLocked: the file is not in the locked folder");
+  const tmp = `${path}.tmp`;
+  const fail = (e: unknown) => new StoreError("cannot-write", path, `cannot be written (${(e as NodeJS.ErrnoException).code ?? "error"})`);
+  let fd: number | undefined;
+  try {
+    rmSync(tmp, { force: true });
+    fd = openSync(tmp, "wx", 0o600);
+    fchmodSync(fd, 0o600); // the umask must not decide the mode
+    const out = fd;
+    fill((bytes) => {
+      let off = 0;
+      while (off < bytes.length) off += writeSync(out, bytes, off, bytes.length - off);
+    });
+    closeSync(fd);
+    fd = undefined;
+    if (!lockHeldByUs(held)) throw new StoreError("locked", held, "was taken over while writing; try again");
+    renameSync(tmp, path);
+  } catch (e) {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // nothing more to do
+      }
+    }
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // nothing more to do
+    }
+    if (e instanceof StoreError) throw e;
+    throw fail(e);
+  }
+}
+
 export interface AppendFile {
   /** Appends one line (no newline in it); a cut-off last line in the file is first ended with a newline. */
   append(line: string): void;
