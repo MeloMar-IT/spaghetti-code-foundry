@@ -33,7 +33,97 @@ export function logText(entry) {
   if (entry.what === "renamed") return `${who} renamed it${entry.detail ? ` to "${entry.detail}"` : ""}`;
   if (entry.what === "dropped") return `${who} dropped the session`;
   if (entry.what === "restored") return `${who} restored the session`;
+  if (entry.what === "architect-started") return `${who} asked the architect to look at the code`;
+  if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
+  if (entry.what === "architect-brief") return "The architect wrote the context brief";
+  if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
   return `${who}: ${entry.what}`;
+}
+
+const ASK = "Ask the architect to look at the code";
+/** How often the session page asks again while the architect is queued or running, in ms. */
+export const POLL_MS = 5000;
+let poll; // one session page at a time
+const stopPoll = () => {
+  clearTimeout(poll);
+  poll = undefined;
+};
+const sentence = (t) => (/[.!?]$/.test(t) ? t : `${t}.`);
+
+/** What the step is, in words for the user: never a folder or file name of the run. */
+export function activityText(doing) {
+  const t = text(doing);
+  if (!t) return "";
+  if (/clone|check out/i.test(t)) return "Getting the code.";
+  if (/reads the code/i.test(t)) return "Reading the code and writing the brief.";
+  if (/issues/i.test(t) && /read/i.test(t)) return "Reading the open issues.";
+  if (/check/i.test(t) && /brief/i.test(t)) return "Checking the brief.";
+  if (/[\w.-]+\/|\.\w{1,4}\b/.test(t)) return "Working on the brief.";
+  return t;
+}
+
+/** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
+export function architectStatus(a) {
+  const state = a?.state;
+  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: "" };
+  if (state === "running") return { busy: true, text: "The architect is at work.", detail: activityText(a.doing) };
+  if (state === "paused") return { busy: false, text: "The architect paused.", detail: sentence(text(a.reason)) };
+  if (state === "failed") return { busy: false, bad: true, text: "The architect could not finish.", detail: sentence(text(a.reason)) };
+  return { busy: false, text: "", detail: "" };
+}
+
+/** The label of the ask button, or "" when there is none. */
+export function askLabel(s) {
+  if (!s?.mine || s.state === "dropped" || s.repoAvailable === false) return "";
+  const state = s.architect?.state;
+  if (state === "queued" || state === "running") return "";
+  if (state === "failed") return "Try again";
+  if (state === "paused") return "Ask again";
+  return s.brief ? "Refresh" : ASK;
+}
+
+/** The brief as parts: [{ title, body }], one per "## " heading. */
+export function briefParts(input) {
+  const parts = [];
+  let cur = { title: "", lines: [] };
+  for (const line of String(input ?? "").split(/\r?\n/)) {
+    const m = /^## +(.+?)\s*$/.exec(line);
+    if (m) {
+      parts.push(cur);
+      cur = { title: m[1], lines: [] };
+    } else cur.lines.push(line);
+  }
+  parts.push(cur);
+  return parts.map((p) => ({ title: p.title, body: p.lines.join("\n").trim() })).filter((p) => p.title || p.body);
+}
+
+/** "Made <date and time> · branch <name>"; the branch part only when there is one. */
+export function briefMeta(brief) {
+  return `Made ${new Date(brief.at).toLocaleString()}${brief.branch ? ` · branch ${brief.branch}` : ""}`;
+}
+
+/** The "Context brief" part: status line, button, brief. Returns nodes. */
+function briefSection(s, onAsk) {
+  const st = architectStatus(s.architect);
+  const label = askLabel(s);
+  const b = s.brief;
+  const line = st.busy
+    ? h("div", { class: "row" }, h("span", { class: "spinner" }), h("b", {}, st.text), h("span", { class: "muted" }, st.detail))
+    : st.text ? h("p", { class: st.bad ? "status bad" : "status" }, `${st.text} ${st.detail}`) : null;
+  return [
+    h("h2", {}, "Context brief"),
+    line,
+    s.briefHidden ? h("p", { class: "muted" }, "The brief is not shown while the repository is not in My repositories.") : null,
+    !b && !s.briefHidden && !st.text ? h("p", { class: "muted" }, "No context brief yet.") : null,
+    label ? h("button", { class: label === "Refresh" ? "" : "primary", onClick: (e) => onAsk(e.currentTarget) }, label) : null,
+    b && !s.briefHidden ? h("div", { class: "card" },
+      h("p", { class: "muted" }, briefMeta(b)),
+      b.cut ? h("p", { class: "muted" }, "The brief was too long to keep whole; the end is missing.") : null,
+      briefParts(b.text).map((p) => [
+        p.title ? h("h3", {}, p.title) : null,
+        h("p", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 } }, p.body),
+      ])) : null,
+  ];
 }
 
 /** The server's sentence for a failed call. */
@@ -145,6 +235,7 @@ function renameDialog(session, onRenamed) {
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
 export async function renderRefinement(main, { admin = false, id } = {}) {
   const mine = ++generation;
+  stopPoll();
   const current = () => mine === generation && onPage();
   const reload = () => renderRefinement(main, { admin, id }).catch((e) => toast(errorText(e), "error"));
   const restore = (btn, sid) =>
@@ -159,56 +250,98 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     });
   const cleanup = () => {
     generation++;
+    stopPoll();
   };
 
   if (id) {
+    const gone = (e) => mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
     let s;
     try {
       s = await api.refinementSession(id);
     } catch (e) {
       if (!current()) return () => {};
-      mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
+      gone(e);
       return cleanup;
     }
     if (!current()) return () => {};
-    const open = s.state !== "dropped";
-    const buttons = [];
-    if (s.mine && open) {
-      buttons.push(h("button", { class: "small", onClick: async (e) => {
-        const btn = e.currentTarget;
-        if (btn.disabled) return;
-        await renameDialog(s, () => current() && reload());
-      } }, "Rename"));
-    }
-    if (open && (s.mine || admin)) {
-      buttons.push(h("button", { class: "small danger", onClick: (e) => {
-        const btn = e.currentTarget;
-        if (!confirm(`Drop "${s.title}"? You can restore it for 30 days.`)) return;
-        return whileBusy(btn, async () => {
-          try {
-            await api.dropRefinement(s.id);
-            toast("Session dropped");
-          } catch (err) {
-            toast(errorText(err), "error");
-          }
-          await reload();
-        });
-      } }, "Drop"));
-    }
-    if (!open && s.mine) buttons.push(h("button", { class: "small", onClick: (e) => restore(e.currentTarget, s.id) }, "Restore"));
-    mount(main,
-      h("a", { href: "#/refinement" }, "← All sessions"),
-      h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
-        h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
-        h("span", { class: "spacer" }), buttons),
-      s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
-      !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
-      h("h2", {}, "Idea"),
-      h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
-      h("h2", {}, "Story drafts"),
-      s.drafts.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.title ?? "Draft")))) : h("p", { class: "muted" }, "No story drafts yet."),
-      h("h2", {}, "Log"),
-      h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+    let shown = "";
+    const show = (next) => {
+      const json = JSON.stringify(next);
+      if (json !== shown) {
+        shown = json;
+        draw(next);
+      }
+      stopPoll();
+      if (architectStatus(next.architect).busy) poll = setTimeout(tick, POLL_MS);
+    };
+    const tick = async () => {
+      poll = undefined;
+      if (!current()) return;
+      let next;
+      try {
+        next = await api.refinementSession(id);
+      } catch (e) {
+        if (!current()) return;
+        if (e?.status === 404) return gone(e);
+        poll = setTimeout(tick, POLL_MS); // the page stays; the next round asks again
+        return;
+      }
+      if (current()) show(next);
+    };
+    const ask = (btn) =>
+      whileBusy(btn, async () => {
+        let next;
+        try {
+          next = await api.askArchitect(id);
+        } catch (e) {
+          toast(errorText(e), "error");
+          if (current()) await reload();
+          return;
+        }
+        if (current()) show(next);
+      });
+    const draw = (s) => {
+      const open = s.state !== "dropped";
+      const buttons = [];
+      if (s.mine && open) {
+        buttons.push(h("button", { class: "small", onClick: async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
+          await renameDialog(s, () => current() && reload());
+        } }, "Rename"));
+      }
+      if (open && (s.mine || admin)) {
+        buttons.push(h("button", { class: "small danger", onClick: (e) => {
+          const btn = e.currentTarget;
+          if (!confirm(`Drop "${s.title}"? You can restore it for 30 days.`)) return;
+          return whileBusy(btn, async () => {
+            try {
+              await api.dropRefinement(s.id);
+              toast("Session dropped");
+            } catch (err) {
+              toast(errorText(err), "error");
+            }
+            await reload();
+          });
+        } }, "Drop"));
+      }
+      if (!open && s.mine) buttons.push(h("button", { class: "small", onClick: (e) => restore(e.currentTarget, s.id) }, "Restore"));
+      mount(main,
+        h("a", { href: "#/refinement" }, "← All sessions"),
+        h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
+          h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
+          h("span", { class: "spacer" }), buttons),
+        s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
+        !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
+        h("h2", {}, "Idea"),
+        h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
+        ...briefSection(s, ask),
+        h("h2", {}, "Story drafts"),
+        s.drafts.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.title ?? "Draft")))) : h("p", { class: "muted" }, "No story drafts yet."),
+        h("h2", {}, "Log"),
+        h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+    };
+    show(s);
     return cleanup;
   }
 
