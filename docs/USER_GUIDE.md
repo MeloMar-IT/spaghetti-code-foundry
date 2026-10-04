@@ -197,6 +197,8 @@ The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem",
 
 ### The runs list
 
+A run of the architect has the mark **refinement**; click it to open its session.
+
 ![Runs](images/runs.png)
 
 Runs whose next move is yours (the record says **You**) are listed under **Needs you**. Runs
@@ -2251,13 +2253,13 @@ The folder of your clone can keep its name.
 
 ## 12. Refinement
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. The server can start the architect from a session (see below).
+**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. On the session page you can ask the architect to look at the code (see below).
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
 
-**The session page.** It shows the idea, the story drafts ("No story drafts yet." for now) and the log: who did what, and when. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2277,7 +2279,7 @@ The flow `refine-brief` lets the architect read a repository and its open issues
 scf run refine-brief --task "your idea" --var github_repo=owner/name
 ```
 
-**From a session.** The owner of a session asks the architect with `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
+**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
 
 **What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
 

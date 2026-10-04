@@ -21,10 +21,13 @@ export const ownerRow = (s, names) => {
   return t ? [h("dt", {}, "Owner"), h("dd", {}, t)] : null;
 };
 
+/** The mark of an architect run: a pill that opens its refinement session, not the run. */
+export const refinementMark = (id) => h("a", { class: "pill refinement", href: `#/refinement/${encodeURIComponent(id)}`, title: "Open the refinement session", onClick: (e) => e.stopPropagation() }, "refinement");
+
 /** A row of the Runs list: the status name of the record with its "?", then flow, task, steps, cost, start. */
 export const runRow = (r, { owner = false, cost = true } = {}) => h("tr", { class: "link", onClick: () => (location.hash = `#/runs/${r.runId}`) },
   h("td", {}, r.next ? nextStatus(r.next) : null),
-  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), what(r) ? h("div", { class: "muted mono", style: { fontSize: "11.5px" } }, what(r)) : null),
+  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), r.refinement ? [" ", refinementMark(r.refinement)] : null, what(r) ? h("div", { class: "muted mono", style: { fontSize: "11.5px" } }, what(r)) : null),
   h("td", { class: "task", title: r.task }, r.task || h("span", { class: "muted" }, "—"),
     r.next ? h("div", { class: "muted", title: r.next.text }, r.next.text) : null,
     r.next && whenParts(r.next).length ? h("div", { class: "next-parts timing" }, whenParts(r.next)) : null),
@@ -38,7 +41,7 @@ export const aheadText = (n) => `${n} ${n === 1 ? "run" : "runs"} ahead of you`;
 
 /** A queued job: its status with "?", id, details, link and a Remove button. */
 export const queueRow = (p, onRemove) => h("div", { class: "row" },
-  p.next ? nextStatus(p.next) : null, p.priority ? h("span", { class: "pill first" }, "goes first") : null, h("span", { class: "mono" }, p.runId), h("span", { class: "muted" }, [p.kind, p.source, p.next?.text].filter(Boolean).join(" · ")),
+  p.next ? nextStatus(p.next) : null, p.priority ? h("span", { class: "pill first" }, "goes first") : null, p.refinement ? refinementMark(p.refinement) : null, h("span", { class: "mono" }, p.runId), h("span", { class: "muted" }, [p.kind, p.source, p.next?.text].filter(Boolean).join(" · ")),
   p.ahead ? h("span", { class: "muted" }, aheadText(p.ahead)) : null,
   ...(p.next ? whenParts(p.next) : []),
   p.next ? whereLink(p.next.where) : null,
