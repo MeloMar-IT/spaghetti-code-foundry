@@ -94,6 +94,31 @@ export interface Finding extends FindingInput {
   quietStart?: boolean;
   /** Bug stories this finding had before, which a newer story replaced (newest last, at most 10). */
   earlier?: { repo: string; issue: number; url?: string; closedAt?: string }[];
+  /** Bug stories made for this finding since the count started. Missing: 1 with a story, else 0. */
+  tries?: number;
+  /** Since when the finding needs a person: two stories did not fix it, so no third is made. */
+  needsYou?: string;
+}
+
+const MAX_EVIDENCE_LINES = 11;
+const cleanText = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
+
+/** The evidence as at most 11 plain lines for the admin: flows, watchers, counts (one line), times, steps, lines. Never throws. */
+export function evidenceLines(e: Evidence | undefined): string[] {
+  if (!e || typeof e !== "object") return [];
+  const list = (label: string, v: unknown, n: number): string[] => {
+    if (!Array.isArray(v)) return [];
+    const items = v.filter((x): x is string => typeof x === "string").slice(0, n).map(cleanText).filter(Boolean);
+    return items.length ? [cleanText(`${label}: ${items.join(", ")}`)] : [];
+  };
+  const out: string[] = [...list("Flows", e.flows, 5), ...list("Watchers", e.watchers, 5), ...list("Repositories", e.repos, 5)];
+  if (e.counts && typeof e.counts === "object" && !Array.isArray(e.counts)) {
+    const parts = Object.entries(e.counts).filter(([k, v]) => /^[\w.-]{1,40}$/.test(k) && typeof v === "number" && Number.isFinite(v)).slice(0, 6).map(([k, v]) => `${k} ${v}`);
+    if (parts.length) out.push(cleanText(`Counts: ${parts.join(", ")}`));
+  }
+  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5));
+  if (Array.isArray(e.lines)) for (const l of e.lines.filter((x): x is string => typeof x === "string").slice(0, 5)) if (cleanText(l)) out.push(cleanText(l));
+  return out.slice(0, MAX_EVIDENCE_LINES);
 }
 
 export const MAX_EARLIER = 10;
@@ -129,7 +154,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     if (seen.has(input.fingerprint)) continue;
     seen.add(input.fingerprint);
     const have = old.get(input.fingerprint);
-    const carry = have ? { ...(have.report ? { report: have.report } : {}), ...(have.due ? { due: have.due } : {}), ...(have.missedAt ? { missedAt: have.missedAt } : {}), ...(have.skipped ? { skipped: have.skipped } : {}), ...(have.fixFailed ? { fixFailed: have.fixFailed } : {}), ...(have.earlier ? { earlier: have.earlier } : {}) } : {};
+    const carry = have ? { ...(have.report ? { report: have.report } : {}), ...(have.due ? { due: have.due } : {}), ...(have.missedAt ? { missedAt: have.missedAt } : {}), ...(have.skipped ? { skipped: have.skipped } : {}), ...(have.fixFailed ? { fixFailed: have.fixFailed } : {}), ...(have.earlier ? { earlier: have.earlier } : {}), ...(have.tries !== undefined ? { tries: have.tries } : {}), ...(have.needsYou ? { needsYou: have.needsYou } : {}) } : {};
     const days = [...new Set([...(have?.days ?? []), dayOf(now)])].slice(-3);
     if (have && !have.gone) {
       out.push({ ...input, firstSeen: have.firstSeen, lastSeen: at, count: have.count + 1, gone: false, streak: (have.streak ?? have.count) + 1, days, ...(have.quietStart ? { quietStart: true } : {}), ...carry });
@@ -144,7 +169,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     const age = t - Date.parse(f.lastSeen);
     if (f.gone) {
       // A story that is made or owed is never pruned: it must survive a long outage of GitHub.
-      if (age <= PRUNE_AFTER_MS || f.report || f.due) out.push(f);
+      if (age <= PRUNE_AFTER_MS || f.report || f.due || f.needsYou) out.push(f);
     } else if (age >= GONE_AFTER_MS) {
       const g = { ...f, gone: true, streak: 0, ...(f.report ? { missedAt: at } : {}) };
       gone.push(g);
@@ -156,7 +181,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
   }
   let dropped = 0;
   // Findings that owe a story or have one are counted apart, so they never crowd out new findings (and are not evicted by them).
-  const held = (f: Finding) => !!(f.report || f.due);
+  const held = (f: Finding) => !!(f.report || f.due || f.needsYou);
   const plain = out.filter((f) => !held(f));
   const keptStories = out.filter(held);
   const drop = new Set<Finding>();
@@ -167,7 +192,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
   }
   if (keptStories.length > MAX_STORY_FINDINGS) {
     // Only archived ones (gone, story made, nothing owed) can go, the oldest first.
-    const archived = keptStories.filter((f) => f.gone && !f.due).sort(byLastSeen);
+    const archived = keptStories.filter((f) => f.gone && !f.due && !f.needsYou).sort(byLastSeen);
     for (const f of archived.slice(0, keptStories.length - MAX_STORY_FINDINGS)) drop.add(f);
   }
   if (drop.size) {
@@ -201,7 +226,7 @@ const validReport = (r: unknown): r is StoryRef => {
 };
 /** The optional fields of a stored finding: a malformed one is dropped, the finding stays. */
 function tidy(f: Finding): Finding {
-  const { days, due, report, missedAt, streak, skipped, fixFailed, quietStart, earlier, ...rest } = f;
+  const { days, due, report, missedAt, streak, skipped, fixFailed, quietStart, earlier, tries, needsYou, ...rest } = f;
   return {
     ...rest,
     ...(Number.isInteger(streak) && streak! >= 0 ? { streak } : {}),
@@ -212,6 +237,8 @@ function tidy(f: Finding): Finding {
     ...(fixFailed && typeof fixFailed === "object" && Number.isInteger(fixFailed.count) && fixFailed.count > 0 && isTime(fixFailed.at) ? { fixFailed: { count: fixFailed.count, at: fixFailed.at } } : {}),
     ...(quietStart === true ? { quietStart } : {}),
     ...(Array.isArray(earlier) && earlier.length <= MAX_EARLIER && earlier.every((e) => !!e && typeof e === "object" && typeof e.repo === "string" && Number.isInteger(e.issue)) ? { earlier: earlier.map((e) => ({ repo: e.repo, issue: e.issue, ...(typeof e.url === "string" ? { url: e.url } : {}), ...(isTime(e.closedAt) ? { closedAt: e.closedAt } : {}) })) } : {}),
+    ...(Number.isInteger(tries) && tries! >= 0 ? { tries } : {}),
+    ...(isTime(needsYou) ? { needsYou } : {}),
     ...(Array.isArray(skipped) && skipped.length <= 10 && skipped.every((x) => typeof x === "string" && x.length <= 40) ? { skipped } : {}),
   };
 }

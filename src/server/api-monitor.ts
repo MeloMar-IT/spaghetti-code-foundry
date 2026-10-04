@@ -1,6 +1,6 @@
-import { readFindings, type Finding, type StoryRef } from "../monitor/findings.js";
-import { fixState } from "../monitor/fix.js";
-import { breakerWhy, currentState, describeEntry, loadGuard, MAX_MUTE_HOURS, switchStories, validReason, type Mute, type StoriesState } from "../monitor/guard.js";
+import { readFindings, saveFindings, type Finding, type StoryRef } from "../monitor/findings.js";
+import { fixState, tryAgain, waitsForPerson } from "../monitor/fix.js";
+import { breakerWhy, currentState, describeEntry, loadGuard, MAX_MUTE_HOURS, switchStories, validReason, writeLog, type Mute, type StoriesState } from "../monitor/guard.js";
 import { activeMutes, addMute, endMute, muteFor, MuteError } from "../monitor/mutes.js";
 import { markerHash } from "../monitor/story.js";
 import { detectorInfo } from "../monitor/work-detectors.js";
@@ -53,6 +53,7 @@ function lists(target?: string) {
         gone: f.gone,
         ...(r ? { story: { issue: r.issue, url: r.url, state: r.muted ? "not_planned" : r.closedAt ? "closed" : "open", ...(fixOf(r, target) ? { fix: fixOf(r, target) } : {}) } } : {}),
         ...(f.due && !r ? { owed: true } : {}),
+        ...(waitsForPerson(f, target) ? { needsYou: true } : {}),
         ...(m ? { mute: { id: m.id, kind: m.kind, reason: m.reason, ...(m.until ? { until: m.until } : {}) } } : {}),
       };
     }),
@@ -122,6 +123,24 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
       return send(res, 200, { ...view(ctx), ...lists(ctx.config().monitor.report_to) }), true;
     }
     return false;
+  }
+  if (seg[1] === "retry" && seg.length === 2 && method === "POST") {
+    const body = await readJson(req);
+    const hash = typeof body.finding === "string" ? body.finding : "";
+    const target = ctx.config().monitor.report_to;
+    // Waits for a check in flight (also of a replaced monitor); then reads, changes and saves with no await in between.
+    const found = await ctx.watchers.monitorIdle(() => {
+      const { findings, broken } = readFindings();
+      const f = !broken && /^[0-9a-f]{16}$/.test(hash) ? findings.find((x) => markerHash(x.fingerprint) === hash) : undefined;
+      if (!f) return { status: 400, message: "unknown finding" } as const;
+      if (!waitsForPerson(f, target)) return { status: 409, message: "this finding does not wait for a person" } as const;
+      saveFindings(findings.map((x) => (x === f ? tryAgain(x) : x)));
+      writeLog({ event: "try-again", by: user.id, detector: f.detector, fingerprint: f.fingerprint, ...(target ? { repo: target } : {}) }, { onError: (m) => ctx.diagLog?.(m) });
+      return { status: 200, detector: f.detector } as const;
+    });
+    if (found.status !== 200) throw new HttpError(found.status, found.message);
+    ctx.watchers.monitorAct(describeEntry({ event: "try-again", detector: found.detector }));
+    return send(res, 200, { ...view(ctx), ...lists(target) }), true;
   }
   if (seg.length !== 2 || (seg[1] !== "off" && seg[1] !== "on") || method !== "POST") return false;
   const sub = seg[1];

@@ -3,7 +3,11 @@ import { evalsDir } from "../evals.js";
 import { dirname, join } from "node:path";
 import type { RunSummary } from "../engine/state.js";
 import { FACTORY_HOME } from "../flow/load.js";
-import { breakerNow, breakerWhy } from "../monitor/guard.js";
+import { evidenceLines, readFindings } from "../monitor/findings.js";
+import { waitsForPerson } from "../monitor/fix.js";
+import { breakerNow, breakerWhy, loadGuard } from "../monitor/guard.js";
+import { activeMutes, muteFor } from "../monitor/mutes.js";
+import { markerHash } from "../monitor/story.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
@@ -112,6 +116,29 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
   const open = mon ? breakerNow() : undefined;
   if (mon && open) {
     sources.push({ key: "monitor|breaker", next: nextStep("monitor_stopped", { title: "Monitor" }, { reason: breakerWhy(open) }), since: open.since, stamp: open.since, dismissable: false, watcher: mon.id });
+  }
+
+  // Two bug stories did not fix a problem: one item per finding for the admin, until "Try again", a mute or another end of the wait.
+  const target = cfg.monitor.report_to;
+  if (mon && target) {
+    const found = readFindings();
+    if (!found.broken) {
+      const mutes = activeMutes(loadGuard(), now);
+      for (const f of found.findings) {
+        if (!waitsForPerson(f, target) || muteFor(mutes, f)) continue;
+        const link = (s: { repo: string; issue: number; url?: string }) => ({ issue: s.issue, url: s.url ?? `https://github.com/${s.repo}/issues/${s.issue}` });
+        // The two newest distinct stories, oldest first (the current story and the earlier ones may overlap).
+        const seen = new Set<string>();
+        const stories = [...(f.earlier ?? []), ...(f.report ? [f.report] : [])]
+          .reverse()
+          .filter((s) => !seen.has(`${s.repo.toLowerCase()}#${s.issue}`) && !!seen.add(`${s.repo.toLowerCase()}#${s.issue}`))
+          .slice(0, 2)
+          .reverse()
+          .map(link);
+        const next = nextStep("monitor_needs_you", { title: "Monitor" }, { reason: f.summary, evidence: evidenceLines(f.evidence), stories });
+        sources.push({ key: `monitor|needs|${markerHash(f.fingerprint)}`, next, since: f.needsYou!, stamp: f.needsYou!, dismissable: false, watcher: mon.id });
+      }
+    }
   }
 
   // An issue closed on GitHub while its run is busy is no longer tracked: the watcher's hold is all there is.

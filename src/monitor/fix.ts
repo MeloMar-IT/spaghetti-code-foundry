@@ -47,6 +47,28 @@ export function forgetFix(r: StoryRef): StoryRef {
   return rest;
 }
 
+/** Bug stories for one finding before the monitor hands it to a person. */
+export const MAX_TRIES = 2;
+
+/** The bug stories made for a finding since the count started. A story from before the count (not fixed) counts as one. */
+export function triesOf(f: Pick<Finding, "tries" | "report">): number {
+  return f.tries ?? (f.report && !f.report.fixedAt ? 1 : 0);
+}
+
+/** The finding needs a person now: it is marked, still there, and no story is open or fixed in the target. */
+export function waitsForPerson(f: Finding, target: string | undefined): boolean {
+  if (!f.needsYou || f.gone || !target) return false;
+  const m = f.report;
+  if (!m || !same(m.repo, target)) return true;
+  return !!(m.closedAt || m.muted) && !m.fixedAt;
+}
+
+/** "Try again": the count starts anew and the finding no longer needs a person. */
+export function tryAgain(f: Finding): Finding {
+  const { needsYou, ...rest } = f;
+  return { ...rest, tries: 0 };
+}
+
 export type FixState = "waiting" | "watched" | "fixed";
 
 /** What the list shows for a story closed as completed; undefined for any other story. */
@@ -143,6 +165,8 @@ export function checkFixes(findings: Finding[], o: FixOptions): { findings: Find
         // A fix that was waited for a long time gets no comment: it may never have run (and the close is old news).
         r = { ...r, fixedAt: stamp, ...(clock - closed < o.waitDays * DAY ? { fixNote: "due" as const } : {}) };
         events.push({ event: "fixed", finding: f, issue: r.issue });
+        // A fixed problem that is seen again starts a new count of tries.
+        return { ...f, report: r, tries: 0 };
       }
     }
     return r === m ? f : { ...f, report: r };

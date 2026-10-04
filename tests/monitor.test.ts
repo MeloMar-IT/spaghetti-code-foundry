@@ -414,6 +414,40 @@ describe("the monitor in the WatcherManager", () => {
     await new Promise((r) => setTimeout(r, 100));
   };
 
+  describe("monitorIdle", () => {
+    afterEach(() => {
+      delete process.env.FAKE_GH_SLEEP;
+    });
+    it("runs at once without a monitor, returns the value and rejects on a throw", async () => {
+      const m = setup([]);
+      expect(await m.monitorIdle(() => 7)).toBe(7);
+      await expect(m.monitorIdle(() => { throw new Error("boom"); })).rejects.toThrow("boom");
+    });
+    it("waits for a check in flight", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      expect(status.lastTick).toBeUndefined();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+    it("waits for the check of a monitor that was stopped mid-check", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      m.stopAll();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+    it("waits for the check of a monitor that was replaced mid-check", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      delete process.env.FAKE_GH_SLEEP;
+      cfg = ConfigSchema.parse({ watchers: [{ ...mon, every: "2h" }], monitor: {} });
+      m.sync();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+  });
+
   it("starts no Watcher for it; its status is listed; Check now runs a check; stopAll stops it", async () => {
     const m = setup([mon]);
     await settled(m, ["mon"]);

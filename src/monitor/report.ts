@@ -4,7 +4,7 @@ import { commentOnIssue, createIssue, createLabelIfMissing, ghLogin, issueCommen
 import { LABEL_WORDS } from "../words.js";
 import { cleanLines, type CleanDeps, type Names } from "./clean.js";
 import { dayOf, type Finding, type Severity, type StoryRef } from "./findings.js";
-import { cameBack as fixCameBack, fixState, forgetFix } from "./fix.js";
+import { cameBack as fixCameBack, fixState, forgetFix, MAX_TRIES, triesOf } from "./fix.js";
 import type { LogEntry, Mute, Verdict } from "./guard.js";
 import { muteFor } from "./mutes.js";
 import { buildStory, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment, type BuiltinSteps } from "./story.js";
@@ -101,11 +101,14 @@ export class Reporter {
     /** The problem is back after its story was closed as completed: the fix runs (the clock started), new proof was seen, and the usual rule is met. */
     const cameBack = (f: Finding): boolean => fixCameBack(f, { target, stamp });
     /** A story is owed for this finding (it is seen now, lasts, and has no story or a closed one). */
-    const owes = (f: Finding): boolean => {
+    const wouldOwe = (f: Finding): boolean => {
       if (!seenNow(f) || muted(f)) return false;
       const m = mine(f);
       return (!m && ripe(f)) || (!!m?.closedAt && cameBack(f));
     };
+    /** Two bug stories were made since the count started: a third is not made, a person decides. */
+    const spent = (f: Finding): boolean => triesOf(f) >= MAX_TRIES;
+    const owes = (f: Finding): boolean => wouldOwe(f) && !spent(f);
     /** The gate: once it has said no in this check, it stays no. */
     let shut = undefined as Extract<Verdict, { go: false }> | undefined; // set by go(); the cast keeps TypeScript from narrowing it to undefined
     const go = (): boolean => {
@@ -162,6 +165,8 @@ export class Reporter {
       skipMuted(f);
     }
 
+    /** Findings that would be owed a story but have used their tries: they become "needs you" once GitHub has been asked. */
+    const handOver = () => findings.filter((f) => wouldOwe(f) && spent(f) && !f.needsYou && !muteOf(f));
     const queueOf = () => findings.filter((f) => f.due && !muted(f) && !open(f) && !muteOf(f)).sort((a, b) => RANK[a.severity] - RANK[b.severity] || Date.parse(a.due!) - Date.parse(b.due!));
     const madeToday = () => findings.filter((f) => f.report && dayOf(new Date(f.report.at)) === dayOf(now)).length;
     const allowedNow = () => Math.max(0, Math.min(per_check, per_day - madeToday()));
@@ -189,7 +194,7 @@ export class Reporter {
     // 7. Nothing to ask GitHub?
     const dayNote = (left: number) => `${plural(left)}: at most ${stories(per_day)} a day.`;
     const checkNote = (left: number) => `${plural(left)}: at most ${stories(per_check)} per check.`;
-    if (!look.length && !quiet.length && !note && (!queue.length || allowedNow() === 0)) {
+    if (!look.length && !quiet.length && !note && !handOver().length && (!queue.length || allowedNow() === 0)) {
       if (queue.length) {
         notes.push(dayNote(queue.length));
         for (const f of queue) skip(f, "day_limit");
@@ -233,6 +238,12 @@ export class Reporter {
       /** Applies what GitHub says about the story of a finding. */
       const apply = (f: Finding, issue: RestIssue) => {
         const m = mine(f);
+        const known = m?.issue === issue.number || (f.earlier ?? []).some((e) => same(e.repo, target) && e.issue === issue.number);
+        // A story that was made but whose save was lost is adopted here: it counts as a try (before it is assigned).
+        if (!known) {
+          f.tries = triesOf(f) + 1;
+          delete f.needsYou;
+        }
         const r: StoryRef = m && m.issue === issue.number ? { ...m } : { repo: target, issue: issue.number, url: issue.html_url, at: issue.created_at, seen: 0, lookedAt: stamp };
         let next: StoryRef = r;
         if (issue.state === "open") {
@@ -265,7 +276,7 @@ export class Reporter {
         }
         const m = mine(f);
         // Quiet stories outside the newest 100 are read after the comments, with what is left of the budget.
-        if (!m || !(queue.includes(f) || look.includes(f) || f === note)) continue;
+        if (!m || !(queue.includes(f) || look.includes(f) || f === note || handOver().includes(f))) continue;
         // Not in the newest 100: read it, before a successor or a comment is decided from the local state.
         if (!go() || !spend(1)) {
           unresolved.add(f);
@@ -274,6 +285,7 @@ export class Reporter {
         const issue = await restIssue(target, m.issue, CALL_TIMEOUT_MS);
         if (issue) apply(f, issue);
         else {
+          f.tries = triesOf(f); // a story from before the count still counts as one try
           delete f.report;
           touched = true;
         }
@@ -286,6 +298,16 @@ export class Reporter {
           delete f.due;
           touched = true;
         }
+      }
+
+      // Two tries, then a person: the finding is marked once, and the third story is not made.
+      if (handOver().length) mutes = this.d.mutes?.(now) ?? mutes;
+      for (const f of handOver()) {
+        if (shut) break;
+        f.needsYou = stamp;
+        delete f.due;
+        touched = true;
+        this.d.record?.({ event: "story-skipped", reason: "two_tries", detector: f.detector, fingerprint: f.fingerprint, repo: target, ...(mine(f) ? { issue: mine(f)!.issue } : {}) });
       }
 
       // Recount: adopted stories count against the limits.
@@ -336,6 +358,8 @@ export class Reporter {
         }
         // Written before the local save: a story that exists on GitHub must show in the log even when the save fails.
         this.d.record?.({ event: "story-made", detector: f.detector, fingerprint: f.fingerprint, repo: target, issue: issue.number });
+        f.tries = triesOf(f) + 1;
+        delete f.needsYou;
         f.report = { repo: target, issue: issue.number, url: issue.html_url, at: stamp, seen: 0, lookedAt: stamp };
         delete f.due;
         delete f.skipped;
@@ -436,6 +460,7 @@ export class Reporter {
           const issue = await restIssue(target, m.issue, CALL_TIMEOUT_MS);
           if (issue) apply(f, issue);
           else {
+            f.tries = triesOf(f);
             delete f.report;
             touched = true;
           }

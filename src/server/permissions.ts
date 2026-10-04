@@ -33,6 +33,7 @@ export const RULES: Rule[] = [
   r("POST", "monitor/on", "no", "let the monitor make bug stories again"),
   r("POST", "monitor/mutes", "no", "mute one detector or one finding of the monitor, with a reason, for a time or for good"),
   r("DELETE", "monitor/mutes/:id", "no", "end a mute"),
+  r("POST", "monitor/retry", "no", "let the monitor try again for a finding that waits for a person (two bug stories did not fix it)"),
   r("POST", "clean", "no", "clean up old runs"),
   r("GET", "providers", "no", "agent providers"),
   r("POST", "providers/test", "no", "test a provider"),

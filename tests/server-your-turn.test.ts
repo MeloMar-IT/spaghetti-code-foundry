@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { saveFindings } from "../src/monitor/findings.js";
 import { saveGuard, switchStories } from "../src/monitor/guard.js";
+import { markerHash } from "../src/monitor/story.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
 import { TurnNotifier } from "../src/server/notifier.js";
@@ -185,6 +187,72 @@ describe("Your turn dismissals", () => {
     });
   });
 
+  describe("a finding that needs a person", () => {
+    const monitor = { id: "mon", source: "monitor", every: "1h", enabled: true };
+    const conf = (report_to: string | undefined = "acme/app") => ConfigSchema.parse({ monitor: report_to ? { report_to } : {} });
+    const S = "restart-loop|secret-fingerprint";
+    const story = (issue: number, over: Record<string, unknown> = {}) => ({ repo: "acme/app", issue, url: `https://github.com/acme/app/issues/${issue}`, at: ago(3), seen: 1, ...over });
+    const needy = (over: Record<string, unknown> = {}) => ({
+      detector: "restart-loop", fingerprint: S, severity: "critical", summary: "Runs of flow x are resumed again and again.", about: "foundry",
+      evidence: { flows: ["x"], repos: ["acme/app"], lines: ["exit code 1"] }, firstSeen: ago(3), lastSeen: ago(0.1), count: 5, gone: false,
+      tries: 2, needsYou: ago(0.5), earlier: [{ repo: "acme/app", issue: 101, closedAt: ago(2) }], report: story(102, { closedAt: ago(1) }), ...over,
+    }) as never as import("../src/monitor/findings.js").Finding;
+    const seed = (...list: ReturnType<typeof needy>[]) => saveFindings(list);
+    const turn = (c = conf(), statuses: unknown[] = [monitor]) => items(stub({ config: c, statuses }));
+
+    it("shows one item with the sentence, the evidence and both links, and no fingerprint", () => {
+      seed(needy());
+      const out = turn();
+      expect(out).toHaveLength(1);
+      const n = out[0]!.next;
+      expect(out[0]).toMatchObject({ key: `monitor|needs|${markerHash(S)}`, dismissable: false, since: ago(0.5) });
+      expect(n).toMatchObject({ kind: "monitor_needs_you", where: { url: "#/watchers" } });
+      expect(n.why).toContain("Runs of flow x are resumed again and again");
+      expect(n.evidence).toEqual(["Flows: x", "Repositories: acme/app", "exit code 1"]);
+      expect(n.stories).toEqual([
+        { issue: 101, url: "https://github.com/acme/app/issues/101" },
+        { issue: 102, url: "https://github.com/acme/app/issues/102" },
+      ]);
+      expect(n.text).not.toContain("exit code 1");
+      expect(JSON.stringify(out)).not.toContain(S);
+      expect(() => dismissTurn(stub({ config: conf(), statuses: [monitor] }), out[0]!.key, NOW)).toThrow(expect.objectContaining({ status: 404 }));
+    });
+    it("takes the two newest distinct stories when the current one is also in the history", () => {
+      seed(needy({ earlier: [{ repo: "acme/app", issue: 100 }, { repo: "ACME/app", issue: 101 }, { repo: "acme/app", issue: 102 }], report: story(102, { closedAt: ago(1) }) }));
+      expect(turn()[0]!.next.stories!.map((s) => s.issue)).toEqual([101, 102]);
+      seed(needy({ earlier: [{ repo: "acme/app", issue: 101 }, { repo: "acme/app", issue: 102 }], report: undefined }));
+      expect(turn()[0]!.next.stories!.map((s) => s.issue)).toEqual([101, 102]);
+    });
+    it("shows one item per finding", () => {
+      seed(needy(), needy({ fingerprint: "restart-loop|other" }));
+      expect(turn()).toHaveLength(2);
+    });
+    it("shows a story closed as not planned or no story, and hides the rest", () => {
+      seed(needy({ report: story(102, { muted: true }) }));
+      expect(turn()).toHaveLength(1);
+      seed(needy({ report: undefined }));
+      expect(turn()).toHaveLength(1);
+      for (const hidden of [needy({ gone: true }), needy({ report: story(102) }), needy({ report: story(102, { closedAt: ago(1), fixedAt: ago(0.5) }) })]) {
+        seed(hidden);
+        expect(turn()).toEqual([]);
+      }
+      seed(needy());
+      expect(turn(conf(), [])).toEqual([]);
+      expect(turn(conf(), [{ ...monitor, enabled: false }])).toEqual([]);
+      expect(turn(conf(""))).toEqual([]);
+    });
+    it("a mute hides the item and a mute that ended shows it again", () => {
+      seed(needy());
+      const mute = (over: Record<string, unknown>) => ({ id: "0123456789abcdef", kind: "finding", detector: "restart-loop", fingerprint: S, reason: "r", since: ago(1), by: "cli", ...over });
+      saveGuard({ version: 1, mutes: [mute({}) as never] });
+      expect(turn()).toEqual([]);
+      saveGuard({ version: 1, mutes: [mute({ kind: "detector", fingerprint: undefined }) as never] });
+      expect(turn()).toEqual([]);
+      saveGuard({ version: 1, mutes: [mute({ until: ago(0.01) }) as never] });
+      expect(turn()).toHaveLength(1);
+    });
+  });
+
   it("keeps an earlier dismissal when the watchers are not there yet", () => {
     const both = withHolds(failedHold(ago(1)), q(3, { since: ago(2) }));
     const [a, b] = [items(both).find((i) => i.next.issue === 8)!, items(both).find((i) => i.next.issue === 3)!];
@@ -287,6 +355,20 @@ describe("Your turn notifications", () => {
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0]).toMatchObject({ title: "Foundry · your turn", url: issueUrl(3) });
     expect(t.sent[0]!.message).toContain("acme/app#3 T3");
+  });
+
+  it("tells about a finding that needs a person with its sentence and without the evidence", async () => {
+    const t = rig();
+    t.state.config = ConfigSchema.parse({ watchers: [issuesWatcher], notify: channel, monitor: { report_to: "acme/app" } });
+    (t.ctx as unknown as { watchers: unknown }).watchers = { tracked: () => [], statuses: () => [{ id: "mon", source: "monitor", every: "1h", enabled: true }] };
+    saveFindings([{
+      detector: "restart-loop", fingerprint: "restart-loop|n", severity: "critical", summary: "Runs of flow x are resumed again and again.", about: "foundry",
+      evidence: { lines: ["exit code 1"] }, firstSeen: ago(3), lastSeen: ago(0.1), count: 5, gone: false, tries: 2, needsYou: ago(0.5),
+    }]);
+    await t.notifier.check(min(0));
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]!.message).toContain("Runs of flow x are resumed again and again");
+    expect(t.sent[0]!.message).not.toContain("exit code 1");
   });
 
   it("links each kind of item", async () => {

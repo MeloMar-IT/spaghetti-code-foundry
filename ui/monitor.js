@@ -19,10 +19,11 @@ export function muteBody(target, reason, hours) {
 }
 
 /** The story as a link (only for an https address), else "#12" as text; null without a story. */
-export function storyCell(story) {
-  if (!story) return null;
+export function storyCell(story, needsYou) {
+  if (!story) return needsYou ? h("span", {}, "needs you") : null;
   const fix = { waiting: "waiting for the update", watched: "being watched", fixed: "fixed" }[story.fix];
-  const state = story.state === "not_planned" ? " (closed as not planned)" : story.state === "closed" ? ` (closed${fix ? `, ${fix}` : ""})` : "";
+  const state = story.state === "not_planned" ? ` (closed as not planned${needsYou ? ", needs you" : ""})`
+    : story.state === "closed" ? ` (closed${needsYou ? ", needs you" : fix ? `, ${fix}` : ""})` : "";
   const link = typeof story.url === "string" && story.url.startsWith("https://")
     ? h("a", { href: story.url, target: "_blank", rel: "noopener noreferrer" }, `#${story.issue}`)
     : h("span", {}, `#${story.issue}`);
@@ -90,6 +91,15 @@ const findingsTable = (m, reload, redraw) => {
   const mute = async (f) => {
     if (await muteForm({ finding: f.id }, m.detectors)) await reload();
   };
+  const retry = async (f) => {
+    try {
+      await api.retryMonitor(f.id);
+      toast(f.story?.state === "not_planned" ? "The count starts anew. No new story while the story is closed as not planned" : "The monitor may try again");
+    } catch (e) {
+      toast(e.message, "error");
+    }
+    await reload();
+  };
   const table = h("table", { class: "table compact" },
     h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted", ""].map((c) => h("th", {}, c)))),
     h("tbody", {}, rows.map((f) => h("tr", {},
@@ -98,9 +108,9 @@ const findingsTable = (m, reload, redraw) => {
       h("td", {}, f.summary),
       h("td", {}, when(f.firstSeen)),
       h("td", {}, when(f.lastSeen)),
-      h("td", {}, storyCell(f.story)),
+      h("td", {}, storyCell(f.story, f.needsYou)),
       h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : ""),
-      h("td", {}, f.mute ? null : h("button", { class: "small", onClick: () => mute(f) }, "Mute"))))));
+      h("td", {}, f.needsYou ? h("button", { class: "small", onClick: () => retry(f) }, "Try again") : null, f.mute ? null : h("button", { class: "small", onClick: () => mute(f) }, "Mute"))))));
   const left = m.findings.length - rows.length;
   return h("div", {},
     table,

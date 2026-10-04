@@ -84,6 +84,7 @@ export const api = {
   monitorOff: () => req("POST", "/api/monitor/off", {}),
   monitorOn: () => req("POST", "/api/monitor/on", {}),
   muteMonitor: (body) => req("POST", "/api/monitor/mutes", body),
+  retryMonitor: (finding) => req("POST", "/api/monitor/retry", { finding }),
   unmuteMonitor: (id) => req("DELETE", `/api/monitor/mutes/${enc(id)}`),
   tickWatcher:(id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
   providers: () => req("GET", "/api/providers"),

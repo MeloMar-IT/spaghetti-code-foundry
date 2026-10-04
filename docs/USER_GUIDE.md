@@ -141,6 +141,7 @@ When a run finishes, its branch stays in your repository. Review it, merge it, o
 
 **Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 
+- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (see "Two tries, then a person").
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. Runs of older versions have no record of who started them and are treated like watcher runs.
@@ -379,6 +380,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
+| waiting for you — two fixes did not work | The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page. |
 | watcher silent | The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page. |
 | closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
 | restarting soon | The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done. |
@@ -753,6 +755,21 @@ monitor:
   If the problem is seen again after the clock started, with new proof, "fixed" is not said. The
   findings list shows: waiting for the update, being watched, fixed. A story whose problem is not
   seen is still checked on GitHub every 6 hours, so a close or a reopen is noticed.
+- **Two tries, then a person.** The monitor counts the bug stories it made for a finding. After
+  two that did not fix it, it makes no third: the finding *needs you*, the log says so once
+  (`story-skipped`, reason `two_tries`), and **Your turn** shows one item for it. A story that
+  existed before the upgrade counts as one. Nothing becomes "needs you" while bug stories are off,
+  quiet after a restart or stopped by the breaker, or while the finding is muted.
+  - **Try again or mute.** On the Watchers page the findings list shows "needs you" and a **Try
+    again** button (admin only). It starts the count anew; the next check may make a story, which
+    links the newest earlier story. A mute (see above) also makes the item go away; when the mute
+    ends and the finding still needs a person, the item is back.
+  - **When the item is hidden.** While the finding is *gone* (not seen for 24 hours), while its
+    story is open again, and once it is *fixed*. The count is kept, so no third story is made when
+    it returns. A story closed as not planned does not hide the item: **Try again** then starts the
+    count anew, but no story is made until that story is reopened.
+  - **A new count.** A finding that became *fixed* and is seen again later starts a new count. A
+    finding that needs you is kept (never pruned) until someone acts.
 - **Limits.** 3 new stories a day, 1 per check (most severe first). The rest waits and the card
   says how many. At most 6 GitHub calls per check. If GitHub cannot be reached or its request limit
   is used up, nothing is lost; the stories are made at a later check.
@@ -792,8 +809,8 @@ One switch stops the monitor from making bug stories. It needs no GitHub.
   too (the mutes as well), and the card and the log say so. "Off" does nothing on an unreadable file.
 - **The log.** `monitor-log.jsonl` in the data folder has one JSON line per event: `off`, `on`,
   `story-made`, `story-skipped`, `breaker-open`, `breaker-closed`, `fix-failed`, `clock-started` (reason `update`, `restart` or `waited`), `fixed`,
-  `came-back`, `mute-made` and `mute-ended`, with the reason for a skipped story (`off`, `cooldown`, `unreadable`, `breaker`,
-  `muted`, `day_limit`, `check_limit`, `request_limit`, `github`). A story skipped because of a
+  `came-back`, `try-again` (with `by`, the account id), `mute-made` and `mute-ended`, with the reason for a skipped story (`off`, `cooldown`, `unreadable`, `breaker`,
+  `muted`, `two_tries`, `day_limit`, `check_limit`, `request_limit`, `github`). A story skipped because of a
   mute also has the mute's id and its reason text. A skipped story is written once per finding and reason, not at every
   check (and again each time the circuit breaker opens). The file moves to `monitor-log.1.jsonl` at 512 KiB, so it keeps
   between 512 KiB and 1 MiB of history. Lines from the server also show in the card's recent
@@ -1762,6 +1779,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/on` | yes | no | let the monitor make bug stories again |
 | `POST /api/monitor/mutes` | yes | no | mute one detector or one finding of the monitor, with a reason, for a time or for good |
 | `DELETE /api/monitor/mutes/:id` | yes | no | end a mute |
+| `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
 | `POST /api/providers/test` | yes | no | test a provider |

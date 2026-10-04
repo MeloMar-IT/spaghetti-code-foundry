@@ -8,7 +8,7 @@ import { statusHelp, statusName } from "./words.js";
 export type NextKind =
   | "questions" | "planner_questions" | "approve_plan" | "approve_split" | "approval"
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
-  | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "watcher_stale" | "closed_elsewhere"
+  | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
   | "superseded" | "bug_first";
 
@@ -47,6 +47,9 @@ export interface NextStep {
   cause?: FailureCause;
   /** A failed run explained: what, why, what was tried and the four options. */
   failure?: FailureSummary;
+  /** `monitor_needs_you`: the finding's evidence as plain lines, and its bug stories. Never in `text`. */
+  evidence?: string[];
+  stories?: { issue: number; url?: string }[];
 }
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
@@ -125,6 +128,9 @@ export interface NextData {
   /** `failed`: what went wrong, and the suggested fix. */
   what?: string;
   fix?: string;
+  /** `monitor_needs_you`: the evidence lines and the bug stories of the finding. */
+  evidence?: string[];
+  stories?: { issue: number; url?: string }[];
 }
 
 export interface NextBase {
@@ -465,6 +471,14 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       w = WATCHERS;
       break;
     }
+    case "monitor_needs_you": {
+      who = "Something is wrong";
+      why = `The monitor gave up after two bug stories: ${clean(d.reason) || "a problem it cannot fix"}`;
+      action = "Press Try again or mute the finding on the Watchers page";
+      say = "press Try again or mute the finding on the Watchers page";
+      w = WATCHERS;
+      break;
+    }
     case "watcher_stale": {
       who = "Something is wrong";
       why = `The watcher for ${base.repo || "this repository"} has not checked since ${hhmm(d.lastCheck, d)}`;
@@ -535,6 +549,8 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
+    ...(kind === "monitor_needs_you" && d.evidence?.length ? { evidence: d.evidence } : {}),
+    ...(kind === "monitor_needs_you" && d.stories?.length ? { stories: d.stories } : {}),
   };
 }
 

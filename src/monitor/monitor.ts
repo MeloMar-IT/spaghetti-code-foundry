@@ -188,6 +188,11 @@ export class Monitor {
     this.status.nextTick = undefined;
   }
 
+  /** The check in flight, if any (it never rejects). */
+  busy(): Promise<void> | undefined {
+    return this.inFlight;
+  }
+
   /** Writes a line to the server log and to the card's recent activity. */
   act(msg: string) {
     this.d.log(`[${this.cfg.id}] ${msg}`);
