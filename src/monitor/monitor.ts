@@ -11,7 +11,8 @@ import type { Scheduler } from "../queue/scheduler.js";
 import { runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
 import { decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
-import { findingsFile, loadFindings, mergeFindings, saveFindings } from "./findings.js";
+import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
+import { findingsFile, loadFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
 import { describeEntry, inQuietTime, loadGuard, openBreaker, storiesState, writeLog, type Loaded } from "./guard.js";
 import { activeMutes, expireMutes, muteFor } from "./mutes.js";
 import type { Reporter } from "./report.js";
@@ -38,11 +39,15 @@ export interface MonitorDeps {
   selfUpdate?: () => { state: UpdateState; broken: boolean };
   /** The guard rails: without it there is no circuit breaker and no counting of failed fixes. `beforeOpen` is for tests. */
   guard?: { startedAt?: Date; onLogError?: (msg: string) => void; beforeOpen?: () => void };
+  /** The running Foundry's own build: its GitHub repository and whether it contains a commit. Without it, the fix commit is not known. */
+  self?: { repo: string; contains: (commit: string) => boolean };
 }
 
 /** At most this many runs are loaded in one check. */
 export const MAX_RUNS = 1000;
 const YIELD_EVERY = 25;
+/** A run of a story that cannot be read is tried this many times before it is given up for the fix commit. */
+const READ_TRIES = 3;
 const HOUR = 3_600_000;
 /** How many succeeded runs make the usual step times (as many as the estimates read). */
 export const USUAL_RUNS = 500;
@@ -137,7 +142,10 @@ export class Monitor {
   private stopped = false;
   private inFlight?: Promise<void>;
   private prevEnd?: number;
+  private prevStart?: number;
   private manual = false;
+  /** Run folder of a story's run → "none" (read, no commit line) or the number of failed reads so far. */
+  private fixRuns = new Map<string, "none" | number>();
   /** Area lock key → when the monitor first saw it without a running owner. */
   private orphans = new Map<string, string>();
   /** When the server last woke up from a sleep (as far as the monitor saw). */
@@ -193,7 +201,7 @@ export class Monitor {
 
   private async check(): Promise<void> {
     try {
-      await this.run();
+      this.prevStart = await this.run();
       this.status.lastError = undefined;
       this.status.errorSince = undefined;
       this.status.errorCount = undefined;
@@ -202,6 +210,7 @@ export class Monitor {
       this.status.lastError = errorLine((e as Error).message);
       this.status.errorSince ??= new Date().toISOString();
       this.status.errorCount = (this.status.errorCount ?? 0) + 1;
+      this.prevStart = undefined; // the time of a check that did not finish was not observed
       this.d.log(`[${this.cfg.id}] ! ${this.status.lastError}`);
     } finally {
       this.status.lastTick = new Date().toISOString();
@@ -210,10 +219,14 @@ export class Monitor {
     }
   }
 
-  private async run() {
+  /** Runs one check and returns its start (ms), which counts as observed only because the check finished. */
+  private async run(): Promise<number> {
     const start = this.now();
     const every = parseInterval(this.cfg.every);
-    const asleep = !this.manual && this.prevEnd !== undefined && start.getTime() - this.prevEnd > every + 60_000;
+    const gap = this.prevEnd !== undefined && start.getTime() - this.prevEnd > every + 60_000;
+    const asleep = !this.manual && gap;
+    // Normal work: the time since the last check began, unless the monitor did not look in between (a manual check is judged by the gap too).
+    const worked = this.prevStart !== undefined && !gap ? Math.max(0, start.getTime() - this.prevStart) : 0;
     // Kept for the later checks too: the detectors that skip the check after a sleep must not judge old times right after it.
     if (asleep) this.wokeAt = start.toISOString();
     const config = this.d.thresholds();
@@ -254,10 +267,17 @@ export class Monitor {
     let findings = merged.findings;
     const guard = this.d.guard;
     let failed: FixFailure[] = [];
+    let fixEvents: FixEvent[] = [];
     let loaded: Loaded | undefined;
     if (guard) {
       if (inQuietTime(start, guard.startedAt, config.cooldown_minutes)) for (const f of merged.fresh) f.quietStart = true;
       ({ findings, failed } = failedFixes(findings, storyRuns));
+      if (config.report_to) {
+        const target = config.report_to;
+        const contains = this.d.self && this.d.self.repo.toLowerCase() === target.toLowerCase() ? this.d.self.contains : undefined;
+        const looked = contains ? await this.fixCommits(findings, storyRuns, target, start, config.fix_wait_days) : { findings, pending: new Set<string>() };
+        ({ findings, events: fixEvents } = checkFixes(looked.findings, { target, now: start, startedAt: guard.startedAt, waitDays: config.fix_wait_days, worked, contains, pending: looked.pending }));
+      }
       for (const m of expireMutes(start, { now: start, onLogError: guard.onLogError })) this.act(describeEntry({ event: "mute-ended", reason: "expired", detector: m.detector }));
       loaded = loadGuard();
       // The breaker is closed again: stories that were skipped because of it are written to the log again if it reopens.
@@ -267,6 +287,11 @@ export class Monitor {
     for (const x of failed) {
       writeLog({ event: "fix-failed", detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.repo, issue: x.issue, count: x.count }, { now: start, onError: guard?.onLogError });
       this.act(describeEntry({ event: "fix-failed", detector: x.finding.detector, issue: x.issue, count: x.count }));
+    }
+    for (const x of fixEvents) {
+      const entry = { event: x.event, detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.finding.report?.repo, issue: x.issue, ...(x.reason ? { reason: x.reason } : {}), ...(x.count !== undefined ? { count: x.count } : {}) };
+      writeLog(entry, { now: start, onError: guard?.onLogError });
+      this.act(describeEntry(entry));
     }
     for (const f of merged.fresh) this.act(`new finding (${f.severity}) ${f.detector}: ${f.summary}`);
     for (const f of merged.gone) this.act(`finding gone: ${f.detector}: ${f.summary}`);
@@ -298,6 +323,49 @@ export class Monitor {
       this.noted = new Set(r.notes);
       this.status.notes = r.notes.length ? r.notes : undefined;
     }
+    return start.getTime();
+  }
+
+  /**
+   * Finds the fix commit of the stories that wait for the update: the newest succeeded run that built the story and printed
+   * one. At most one run is read per story and check. A story is `pending` while a run that might hold the commit is left,
+   * so a restart does not start its clock too early.
+   */
+  private async fixCommits(findings: Finding[], storyRuns: RunBrief[], target: string, now: Date, waitDays: number): Promise<{ findings: Finding[]; pending: Set<string> }> {
+    const pending = new Set<string>();
+    let loads = 0;
+    const out: Finding[] = [];
+    for (const f of findings) {
+      const m = f.report;
+      out.push(f);
+      if (!m || m.repo.toLowerCase() !== target.toLowerCase() || !m.closedAt || m.muted || m.clockAt || m.fixCommit) continue;
+      if (now.getTime() - Date.parse(m.closedAt) >= waitDays * 24 * HOUR) continue; // the wait is over: the clock starts anyway
+      const left = fixRunsOf(m, storyRuns).filter((b) => this.fixRuns.get(b.dirName) !== "none");
+      const first = left[0];
+      if (!first) continue;
+      if (loads > 0 && loads % YIELD_EVERY === 0) await new Promise<void>((r) => setImmediate(r));
+      loads++;
+      let commit: string | undefined;
+      let read = false;
+      try {
+        const run = this.d.scheduler.get(first.dirName);
+        if (run) {
+          read = true;
+          commit = fixCommitOf(run);
+        }
+      } catch {
+        // counted below
+      }
+      if (commit) {
+        out[out.length - 1] = { ...f, report: { ...m, fixCommit: commit } };
+        continue;
+      }
+      const before = this.fixRuns.get(first.dirName);
+      const failedReads = (typeof before === "number" ? before : 0) + 1;
+      this.fixRuns.set(first.dirName, read || failedReads >= READ_TRIES ? "none" : failedReads);
+      if (left.some((b) => this.fixRuns.get(b.dirName) !== "none")) pending.add(f.fingerprint);
+    }
+    return { findings: out, pending };
   }
 
   /**

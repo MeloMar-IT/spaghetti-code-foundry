@@ -68,6 +68,10 @@ describe("gitflow pipeline", () => {
     expect(gh.remoteGit("log", "--format=%s", "main")).not.toContain("#5"); // main untouched
     // Merged into develop, so the feature branch is deleted on the remote.
     expect(run.history.find((h) => h.id === "push_develop")!.output).toContain("deleted the merged branch feature/5-add-a-feature");
+    // the full commit goes on a line of its own (the monitor reads it); the PUSHED line stays as it was
+    const pushed = run.history.find((h) => h.id === "push_develop")!.output;
+    expect(pushed).toMatch(/^COMMIT: [0-9a-f]{40}$/m);
+    expect(pushed).toMatch(/^PUSHED: /m);
     expect(gh.remoteGit("branch", "--list", "feature/*").trim()).toBe("");
     expect(log0()).toMatch(/gh issue close 5 --repo acme\/app --reason completed/); // done = merged into develop
     const log = gh.ghLog();

@@ -205,13 +205,13 @@ export function storiesVerdict(o: StateOptions = {}): Verdict {
 // ── the log ──
 
 export interface LogEntry {
-  event: "off" | "on" | "story-made" | "story-skipped" | "breaker-open" | "breaker-closed" | "fix-failed" | "mute-made" | "mute-ended";
+  event: "off" | "on" | "story-made" | "story-skipped" | "breaker-open" | "breaker-closed" | "fix-failed" | "mute-made" | "mute-ended" | "clock-started" | "fixed" | "came-back";
   by?: string;
   /** breaker-open: findings or failed_fixes (in `reason`), how many, and within how many minutes. fix-failed: how many times. */
   count?: number;
   minutes?: number;
   reset?: boolean;
-  /** Why a story was skipped: off, cooldown, unreadable, muted, day_limit, check_limit, request_limit, github. mute-ended: `expired` for a mute that ran out. */
+  /** clock-started: `update`, `restart` or `waited` in `reason`; `count` is then the days waited. Why a story was skipped: off, cooldown, unreadable, muted, day_limit, check_limit, request_limit, github. mute-ended: `expired` for a mute that ran out. */
   reason?: string;
   /** The id of a mute, its reason text, and when it ends (for mute-made, mute-ended and a story skipped because of a mute). */
   mute?: string;
@@ -240,6 +240,14 @@ export function describeEntry(e: LogEntry): string {
       return "circuit breaker closed";
     case "fix-failed":
       return `the fix failed: bug story #${e.issue ?? "?"} (${e.detector ?? ""}), ${e.count ?? 1} ${e.count === 1 ? "time" : "times"}`;
+    case "clock-started": {
+      const why = e.reason === "update" ? "the running Foundry has the fix" : e.reason === "restart" ? "the server was restarted after the story was closed" : `no update came within ${e.count ?? 7} days`;
+      return `watching bug story #${e.issue ?? "?"} (${e.detector ?? ""}) for 24 hours: ${why}`;
+    }
+    case "fixed":
+      return `fixed: bug story #${e.issue ?? "?"} (${e.detector ?? ""}) was not seen for 24 hours after the fix`;
+    case "came-back":
+      return `came back: bug story #${e.issue ?? "?"} (${e.detector ?? ""}) was seen again after the fix`;
     case "mute-made":
       return `muted ${e.fingerprint ? `a finding of ${e.detector ?? ""}` : (e.detector ?? "")} ${e.until ? `until ${e.until}` : "for good"}: ${e.text ?? ""}`;
     case "mute-ended":

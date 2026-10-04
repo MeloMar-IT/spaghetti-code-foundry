@@ -187,6 +187,13 @@ describe("the findings and mutes of the monitor's card", () => {
     }
     expect(mod.storyCell({ issue: 5, url: "https://x/5", state: "not_planned" }).textContent).toBe("#5 (closed as not planned)");
     expect(mod.storyCell(undefined)).toBeNull();
+    // what became of the fix of a closed story
+    const closed = (fix?: string) => mod.storyCell({ issue: 5, url: "https://x/5", state: "closed", fix }).textContent;
+    expect(closed()).toBe("#5 (closed)");
+    expect(closed("waiting")).toBe("#5 (closed, waiting for the update)");
+    expect(closed("watched")).toBe("#5 (closed, being watched)");
+    expect(closed("fixed")).toBe("#5 (closed, fixed)");
+    expect(mod.storyCell({ issue: 5, url: "https://x/5", state: "open", fix: "fixed" }).textContent).toBe("#5");
   });
 
   it("with 150 findings it draws 100 rows and Show 50 more draws the rest", async () => {

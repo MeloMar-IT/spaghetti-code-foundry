@@ -1498,6 +1498,7 @@ write("issue-plan", {
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"',
       'if git push -q origin "$dev"; then',
       '  echo "PUSHED: $dev $(git rev-parse --short HEAD)"; "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null',
+      '  echo "COMMIT: $(git rev-parse HEAD)"',
       '  # Gitflow: the merged feature branch is no longer needed (its commits are in develop).',
       '  f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)',
       '  if [ "$FACTORY_VAR_DELETE_MERGED_BRANCHES" != no ] && [ -n "$f" ] && git merge-base --is-ancestor "$f" HEAD 2>/dev/null; then',

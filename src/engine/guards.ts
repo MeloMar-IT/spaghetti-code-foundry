@@ -201,7 +201,9 @@ const selfCache = new Map<string, { sha: string; repo: string } | undefined>();
  * The commit a checkout was at when first asked (once per process) and its GitHub repository as
  * "owner/name" in lower case. Undefined for a folder that is not a git checkout with a GitHub origin.
  */
-export function selfBuild(dir = process.env.FACTORY_SELF_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), "../..")): { sha: string; repo: string } | undefined {
+export const selfDir = (): string => process.env.FACTORY_SELF_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+export function selfBuild(dir = selfDir()): { sha: string; repo: string } | undefined {
   if (selfCache.has(dir)) return selfCache.get(dir);
   let found: { sha: string; repo: string } | undefined;
   try {
@@ -214,6 +216,27 @@ export function selfBuild(dir = process.env.FACTORY_SELF_DIR ?? resolve(dirname(
   }
   selfCache.set(dir, found);
   return found;
+}
+
+const containsYes = new Set<string>();
+
+/**
+ * Does the running build (the commit `selfBuild()` read) contain this commit? False for anything but 40 lower-case hex digits,
+ * when the build is unknown, and on any error. Only a "yes" is remembered: a "no" is asked again at the next check.
+ */
+export function selfContains(commit: string, dir = selfDir()): boolean {
+  if (!/^[0-9a-f]{40}$/.test(commit)) return false;
+  const key = `${dir}\0${commit}`;
+  if (containsYes.has(key)) return true;
+  const build = selfBuild(dir);
+  if (!build) return false;
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", commit, build.sha], { cwd: dir, stdio: "ignore", timeout: 10_000 });
+    containsYes.add(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** FACTORY_SELF_SHA and FACTORY_SELF_REPO for steps ("" when unknown). */

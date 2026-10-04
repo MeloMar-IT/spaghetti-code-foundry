@@ -70,6 +70,30 @@ describe("GET /api/monitor", () => {
     expect(m.findings[0]).toMatchObject({ id: markerHash(SECRET), detector: "restart-loop", severity: "critical", count: 3, story: { issue: 7, url: "https://github.com/acme/app/issues/7", state: "closed" } });
   });
 
+  it("says what became of the fix of a closed story in the repository the monitor writes to, and nothing for others", async () => {
+    const cfg = (await (await call("GET", "/api/config")).json()) as { monitor: Record<string, unknown> };
+    expect((await call("PUT", "/api/config", { ...cfg, monitor: { ...cfg.monitor, report_to: "Acme/App" } })).status).toBe(200);
+    try {
+      const t = new Date().toISOString();
+      const story = (issue: number, over: Record<string, unknown> = {}, repo = "acme/app") => ({ repo, issue, url: `https://github.com/${repo}/issues/${issue}`, at: t, seen: 1, ...over });
+      seed([
+        finding("restart-loop|w", { report: story(1, { closedAt: t }) }),
+        finding("restart-loop|b", { report: story(2, { closedAt: t, clockAt: t, clockWhy: "restart" }) }),
+        finding("restart-loop|f", { report: story(3, { closedAt: t, clockAt: t, clockWhy: "restart", fixedAt: t }) }),
+        finding("restart-loop|o", { report: story(4) }),
+        finding("restart-loop|x", { report: story(5, { closedAt: t }, "other/repo") }),
+      ]);
+      const stories = Object.fromEntries((await get()).findings.map((f: { story: { issue: number } }) => [f.story.issue, f.story]));
+      expect(stories[1].fix).toBe("waiting");
+      expect(stories[2].fix).toBe("watched");
+      expect(stories[3].fix).toBe("fixed");
+      expect("fix" in stories[4]).toBe(false);
+      expect("fix" in stories[5]).toBe(false);
+    } finally {
+      expect((await call("PUT", "/api/config", cfg)).status).toBe(200);
+    }
+  });
+
   it("answers all of 250 findings", async () => {
     seed(Array.from({ length: 250 }, (_, i) => finding(`restart-loop|n${i}`)));
     expect((await get()).findings).toHaveLength(250);

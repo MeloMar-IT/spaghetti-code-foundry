@@ -21,7 +21,8 @@ export function muteBody(target, reason, hours) {
 /** The story as a link (only for an https address), else "#12" as text; null without a story. */
 export function storyCell(story) {
   if (!story) return null;
-  const state = story.state === "not_planned" ? " (closed as not planned)" : story.state === "closed" ? " (closed)" : "";
+  const fix = { waiting: "waiting for the update", watched: "being watched", fixed: "fixed" }[story.fix];
+  const state = story.state === "not_planned" ? " (closed as not planned)" : story.state === "closed" ? ` (closed${fix ? `, ${fix}` : ""})` : "";
   const link = typeof story.url === "string" && story.url.startsWith("https://")
     ? h("a", { href: story.url, target: "_blank", rel: "noopener noreferrer" }, `#${story.issue}`)
     : h("span", {}, `#${story.issue}`);

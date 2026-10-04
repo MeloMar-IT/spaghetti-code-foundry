@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fixState } from "../src/monitor/fix.js";
 import { dayOf, loadFindings, mergeFindings, readFindings, saveFindings, type FindingInput } from "../src/monitor/findings.js";
 
 const HOUR = 3_600_000;
@@ -186,6 +187,57 @@ describe("bug story state in findings", () => {
     expect(r.findings).toHaveLength(1000);
     expect(r.findings.some((f) => f.fingerprint === "r2000")).toBe(true);
     expect(r.findings.some((f) => f.fingerprint === "r0")).toBe(false);
+  });
+
+  describe("the fix state of a story", () => {
+    const withFile = (list: unknown[], check: (file: string) => void) => {
+      const dir = mkdtempSync(join(tmpdir(), "monitor-findings-"));
+      try {
+        const file = join(dir, "f.json");
+        writeFileSync(file, JSON.stringify({ version: 1, findings: list }));
+        check(file);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const sha = "c".repeat(40);
+    const T = T0.toISOString();
+    const fix = { fixCommit: sha, clockAt: T, clockWhy: "update", workedMs: 5, seenAfter: T, fixedAt: T, fixNote: "due", notedAt: T };
+
+    it("a report with valid fix fields loads and survives a re-sighting", () => {
+      withFile([{ ...base()[0]!, report: { ...report, closedAt: T, ...fix } }], (file) => {
+        const r = loadFindings(file).findings[0]!;
+        expect(r.report).toMatchObject(fix);
+        expect(mergeFindings([r], [input("x")], at(HOUR)).findings[0]!.report).toMatchObject(fix);
+      });
+    });
+
+    it("a report with a malformed fix field is dropped, the finding stays", () => {
+      const bad = [{ fixCommit: "abc" }, { fixCommit: sha.toUpperCase() }, { clockAt: "x" }, { workedMs: -1 }, { workedMs: "5" }, { clockWhy: "never" }, { fixNote: "yes" }, { notedAt: 5 }, { seenAfter: "no" }, { fixedAt: {} }];
+      withFile(bad.map((b, i) => ({ ...base()[0]!, fingerprint: `f${i}`, report: { ...report, ...b } })), (file) => {
+        const r = loadFindings(file);
+        expect(r.broken).toBe(false);
+        expect(r.findings).toHaveLength(bad.length);
+        for (const f of r.findings) expect(f.report).toBeUndefined();
+      });
+    });
+
+    it("earlier loads with and without url and closedAt; a malformed one is dropped, the entry stays", () => {
+      const earlier = [{ repo: "a/b", issue: 3 }, { repo: "a/b", issue: 4, url: "https://github.com/a/b/issues/4", closedAt: T }, { repo: "a/b", issue: 5, url: 7, closedAt: "x" }];
+      withFile([{ ...base()[0]!, earlier }], (file) => {
+        expect(loadFindings(file).findings[0]!.earlier).toEqual([{ repo: "a/b", issue: 3 }, earlier[1], { repo: "a/b", issue: 5 }]);
+      });
+    });
+
+    it("a file written by the version before loads unchanged, and its closed story is waiting", () => {
+      const old = { ...base()[0]!, report: { ...report, closedAt: T }, earlier: [{ repo: "a/b", issue: 2 }] };
+      withFile([old], (file) => {
+        const r = loadFindings(file).findings[0]!;
+        expect(r.report).toEqual(old.report);
+        expect(r.earlier).toEqual(old.earlier);
+        expect(fixState(r.report!)).toBe("waiting");
+      });
+    });
   });
 
   it("a file without the new fields loads; malformed ones are dropped and the file stays", () => {

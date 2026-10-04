@@ -68,11 +68,13 @@ describe("story runs", () => {
     expect(same[0]).toBe(before[0]);
     const after = [{ ...before[0]!, report: story(13) }, { ...before[1]!, report: story(5, "new/repo") }];
     const out = keepEarlier(before, after);
-    expect(out[0]!.earlier).toEqual([{ repo: TARGET, issue: 12 }]);
-    expect(out[1]!.earlier).toEqual([{ repo: TARGET, issue: 5 }]);
-    expect(keepEarlier(before, out)[0]!.earlier).toEqual([{ repo: TARGET, issue: 12 }]); // no doubles
+    expect(out[0]!.earlier).toEqual([{ repo: TARGET, issue: 12, url: story(12).url }]);
+    expect(out[1]!.earlier).toEqual([{ repo: TARGET, issue: 5, url: story(5).url }]);
+    expect(keepEarlier(before, out)[0]!.earlier).toEqual([{ repo: TARGET, issue: 12, url: story(12).url }]); // no doubles
     const gone = keepEarlier(before, [{ ...before[0]!, report: undefined }]);
-    expect(gone[0]!.earlier).toEqual([{ repo: TARGET, issue: 12 }]);
+    expect(gone[0]!.earlier).toEqual([{ repo: TARGET, issue: 12, url: story(12).url }]);
+    const closed = [finding("c", { report: { ...story(7), closedAt: iso(-5) } })];
+    expect(keepEarlier(closed, [{ ...closed[0]!, report: story(8) }])[0]!.earlier).toEqual([{ repo: TARGET, issue: 7, url: story(7).url, closedAt: iso(-5) }]);
     let chain = before[0]!;
     for (let i = 20; i < 35; i++) chain = keepEarlier([chain], [{ ...chain, report: story(i) }])[0]!;
     expect(chain.earlier).toHaveLength(10);

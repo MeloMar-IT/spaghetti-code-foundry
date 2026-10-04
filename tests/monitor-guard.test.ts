@@ -596,6 +596,14 @@ describe("the circuit breaker in the state file", () => {
     expect(describeEntry({ event: "fix-failed", issue: 12, detector: "restart-loop", count: 2 })).toBe("the fix failed: bug story #12 (restart-loop), 2 times");
     expect(describeEntry({ event: "fix-failed", issue: 12, detector: "restart-loop", count: 1 })).toBe("the fix failed: bug story #12 (restart-loop), 1 time");
     expect(describeEntry({ event: "story-skipped", reason: "breaker", detector: "d" })).toBe("bug story skipped (d): the circuit breaker is open");
+    const watching = (reason: string) => describeEntry({ event: "clock-started", reason, issue: 12, detector: "restart-loop", count: 7 });
+    expect(watching("update")).toBe("watching bug story #12 (restart-loop) for 24 hours: the running Foundry has the fix");
+    expect(watching("restart")).toBe("watching bug story #12 (restart-loop) for 24 hours: the server was restarted after the story was closed");
+    expect(watching("waited")).toBe("watching bug story #12 (restart-loop) for 24 hours: no update came within 7 days");
+    expect(describeEntry({ event: "fixed", issue: 12, detector: "restart-loop" })).toBe("fixed: bug story #12 (restart-loop) was not seen for 24 hours after the fix");
+    expect(describeEntry({ event: "came-back", issue: 12, detector: "restart-loop" })).toBe("came back: bug story #12 (restart-loop) was seen again after the fix");
+    expect(JSON.parse(logLine({ event: "clock-started", reason: "update", issue: 12, detector: "d", count: 7 }, at(0)))).toMatchObject({ event: "clock-started", reason: "update", issue: 12, count: 7 });
+    expect(JSON.parse(logLine({ event: "fixed", issue: 12, detector: "d", repo: "a/b" }, at(0)))).toMatchObject({ event: "fixed", issue: 12, repo: "a/b" });
     expect(JSON.parse(logLine({ event: "fix-failed", count: 2, minutes: 1.5 }, at(0)))).toMatchObject({ count: 2 });
     expect(JSON.parse(logLine({ event: "fix-failed", count: 2, minutes: 1.5 }, at(0))).minutes).toBeUndefined();
   });
