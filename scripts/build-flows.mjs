@@ -319,10 +319,13 @@ const RUN_HINT = "You may run the build and the tests yourself (e.g. `./gradlew 
 
 // ── Label-driven pipeline: issue-plan → issue-code-daily → daily-pr ──
 // Watchers move issues through labels (e.g. Factory_ready → Factory_planned → Factory_code → Factory_done).
+// Clone with plain git from $FACTORY_REPO_URL when the engine sets it (nothing does yet), else with gh as before.
+const CLONE_ELSE = 'elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi';
 const clone = {
   id: "clone",
   type: "shell",
-  run: 'if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi\ngit log --oneline -1',
+  repo_access: true,
+  run: 'if [ -d .git ]; then git fetch -q origin; ' + CLONE_ELSE + '\ngit log --oneline -1',
 };
 
 // The plan text: the revised plan when it finished as READY, else the first draft.
@@ -529,6 +532,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
     {
       id: "send_back",
       type: "shell",
+      repo_access: true,
       jump_only: true,
       description: "Post why the issue can't be planned yet, then stop (resumes when someone replies)",
       resume_from: "pull_ticket",
@@ -582,6 +586,7 @@ write("issue-plan", {
     {
       id: "post_plan",
       type: "shell",
+      repo_access: true,
       jump_only: true,
       run: [
         PICK_PLAN,
@@ -708,9 +713,10 @@ write("issue-plan", {
     {
       id: "daily_branch",
       type: "shell",
+      repo_access: true,
       description: "Clone, then check out today's branch — or wait while the daily PR is unmerged",
       // On a resume or retry, throw away half-done work from the failed attempt first.
-      run: 'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi\n"$FACTORY_TOOLS/daily-branch" prepare --wait-for-merge',
+      run: 'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; ' + CLONE_ELSE + '\n"$FACTORY_TOOLS/daily-branch" prepare --wait-for-merge',
       routes: [{ if: "^WAIT:", goto: "wait_for_merge" }],
     },
     { ...tests("baseline_tests", "baseline_failed")[0], run: testsRunRetry, description: "Tests must pass before we change anything (a failing run is tried once more)", on_failure: "baseline_failed" },
@@ -782,6 +788,7 @@ write("issue-plan", {
     {
       id: "commit",
       type: "shell",
+      repo_access: true,
       run: [
         "git add -A",
         'title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)',
@@ -792,6 +799,7 @@ write("issue-plan", {
     {
       id: "push",
       type: "shell",
+      repo_access: true,
       run: [
         "branch=$(git branch --show-current)",
         'if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then git pull -q --rebase origin "$branch"; fi',
@@ -801,6 +809,7 @@ write("issue-plan", {
     {
       id: "report",
       type: "shell",
+      repo_access: true,
       run: [
         "branch=$(git branch --show-current); sha=$(git rev-parse HEAD)",
         'verdict() { printf \'%s\\n\' "$1" | sed -n \'s/^VERDICT: *//p\' | tail -1; }',
@@ -865,6 +874,7 @@ write("issue-plan", {
   const riskGate = {
     id: "risk_gate",
     type: "shell",
+    repo_access: true,
     description: "Post the plan with its risk score; above the threshold (or with the review label) a human approves first",
     run: [
       PICK_PLAN,
@@ -910,6 +920,7 @@ write("issue-plan", {
     {
       id: "split_gate",
       type: "shell",
+      repo_access: true,
       jump_only: true,
       description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner",
       run: [
@@ -944,6 +955,7 @@ write("issue-plan", {
     {
       id: "create_split",
       type: "shell",
+      repo_access: true,
       jump_only: true,
       description: "Create the parts as issues (in order, with Depends on and the build label), then close this issue",
       run: `printf '%s\\n' ${SPLIT_OUT} | "$FACTORY_TOOLS/create-split"`,
@@ -1061,9 +1073,10 @@ write("issue-plan", {
   const featureBranch = {
     id: "feature_branch",
     type: "shell",
+    repo_access: true,
     description: "Clone, make sure develop exists, and start (or continue) this issue's feature branch from develop",
     run: [
-      'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi',
+      'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; ' + CLONE_ELSE,
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"',
       'if ! git ls-remote --exit-code --heads origin "$dev" >/dev/null 2>&1; then',
       '  # From main — or, when switching over from the rolling pull request, from its unmerged branch.',
@@ -1110,7 +1123,7 @@ write("issue-plan", {
       '[ "$(git branch --show-current)" = "$b" ] || { echo "not on $b"; exit 1; }',
       'git log --oneline -1',
     ].join("\n"),
-    routes: [{ if: "^HOTFIX: yes", goto: "baseline_main" }],
+    routes: [{ if: "^HOTFIX: yes", goto: "fetch_main" }],
   };
   // ── Hotfix path: a hotfix/<issue>-<title> branch from main, merged into main and then into develop ──
   // Every hotfix step first checks that this run is a hotfix and that the engine allows it (FACTORY_HOTFIX=on).
@@ -1118,13 +1131,22 @@ write("issue-plan", {
     '[ -f "{{run.dir}}/hotfix" ] || { echo "this run is not a hotfix — nothing is merged into $FACTORY_VAR_MAIN_BRANCH"; exit 1; }',
     '[ "$FACTORY_HOTFIX" = on ] || { echo "hotfixes to $FACTORY_VAR_MAIN_BRANCH are not allowed for this run (the setting is off, or the flow is a changed copy) — nothing was pushed"; exit 1; }',
   ].join("\n");
+  const fetchMain = {
+    id: "fetch_main",
+    type: "shell",
+    repo_access: true,
+    jump_only: true,
+    description: "Hotfix: fetch the newest main; the tests run on it in the next step",
+    run: 'git fetch -q origin || { echo "cannot fetch from GitHub"; exit 1; }',
+    on_success: "baseline_main",
+  };
   const baselineMain = {
     ...byId("baseline_tests"),
     id: "baseline_main",
     jump_only: true,
     description: "Hotfix: the tests must pass on the newest main before we change anything",
     // The commit that is tested here is the one the hotfix branch starts from (see hotfix_branch).
-    run: 'git fetch -q origin && git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }\n' +
+    run: 'git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }\n' +
       'rm -f "{{run.dir}}/baseline-sha"; git rev-parse HEAD > "{{run.dir}}/baseline-sha.new"\n' +
       testsRunRetry.replace('exit "$code"', 'if [ "$code" -eq 0 ]; then mv "{{run.dir}}/baseline-sha.new" "{{run.dir}}/baseline-sha"; fi\nexit "$code"'),
     on_success: "hotfix_branch",
@@ -1133,6 +1155,7 @@ write("issue-plan", {
   const hotfixBranch = {
     id: "hotfix_branch",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     description: "Start (or continue) this issue's hotfix branch from the newest main",
     run: [
@@ -1156,6 +1179,7 @@ write("issue-plan", {
   const mergeMain = {
     id: "merge_main",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     max_visits: 4,
     timeout_sec: 7200,
@@ -1208,6 +1232,7 @@ write("issue-plan", {
   const pushMain = {
     id: "push_main",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     description: "Hotfix: push main (the only step that may); if main moved meanwhile, merge and test again",
     run: [
@@ -1239,6 +1264,7 @@ write("issue-plan", {
   const mergeBack = {
     id: "merge_back",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     max_visits: 4,
     timeout_sec: 7200,
@@ -1309,6 +1335,7 @@ write("issue-plan", {
   const pushBack = {
     id: "push_back",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     description: "Hotfix: push develop; if it moved meanwhile, merge again",
     run: [
@@ -1325,6 +1352,7 @@ write("issue-plan", {
   const hotfixDone = {
     id: "hotfix_done",
     type: "shell",
+    repo_access: true,
     jump_only: true,
     description: "Hotfix: free the locks, delete the merged branch, check whether the running Foundry has the fix",
     run: [
@@ -1375,6 +1403,7 @@ write("issue-plan", {
   const pushFeature = {
     id: "push_feature",
     type: "shell",
+    repo_access: true,
     run: [
       'b=$(git branch --show-current)',
       'if [ -f "{{run.dir}}/hotfix" ]; then',
@@ -1391,6 +1420,7 @@ write("issue-plan", {
   const mergeDevelop = {
     id: "merge_develop",
     type: "shell",
+    repo_access: true,
     max_visits: 4,
     timeout_sec: 7200,
     description: "Merge the feature branch into develop (one merge at a time); conflicts go to an agent",
@@ -1493,6 +1523,7 @@ write("issue-plan", {
   const pushDevelop = {
     id: "push_develop",
     type: "shell",
+    repo_access: true,
     description: "Push develop; if it moved meanwhile, merge again",
     run: [
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"',
@@ -1518,6 +1549,7 @@ write("issue-plan", {
   const gitflowReport = {
     id: "report",
     type: "shell",
+    repo_access: true,
     run: [
       'main="$FACTORY_VAR_MAIN_BRANCH"; dev="$FACTORY_VAR_DEVELOP_BRANCH"; warn=""; closed=""; note=$(cat "{{run.dir}}/hotfix-note" 2>/dev/null)',
       'if [ ! -f "{{run.dir}}/hotfix-branch" ]; then',
@@ -1609,6 +1641,7 @@ write("issue-plan", {
     byId("pull_ticket"),
     featureBranch,
     byId("baseline_tests"),
+    fetchMain,
     baselineMain,
     hotfixBranch,
     ...planPhase("size_gate", { risk: true, split: true, sized: true, reviseAbove: true }),
@@ -1725,6 +1758,7 @@ write("release-daily", {
     {
       id: "release_pr",
       type: "shell",
+      repo_access: true,
       description: "Open or update the pull request develop → main, comment the checks, draft while red",
       run: [
         'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"; day=$(date +%Y-%m-%d)',
@@ -1775,6 +1809,7 @@ write("epic-questions", {
     {
       id: "read_issues",
       type: "shell",
+      repo_access: true,
       run: [
         'for n in $FACTORY_VAR_ISSUES; do',
         '  case "$n" in *[!0-9]*) echo "not an issue number: $n"; exit 1;; esac',
@@ -1825,6 +1860,7 @@ write("epic-questions", {
     {
       id: "post",
       type: "shell",
+      repo_access: true,
       run: 'printf \'%s\\n\' "$FACTORY_OUT_ASK" | "$FACTORY_TOOLS/post-questions"',
     },
   ],
@@ -1850,6 +1886,7 @@ write("daily-pr", {
     {
       id: "find_branch",
       type: "shell",
+      repo_access: true,
       run: '"$FACTORY_TOOLS/daily-branch" latest',
       routes: [{ if: "^NONE$", goto: "end" }],
     },
@@ -1873,6 +1910,7 @@ write("daily-pr", {
     {
       id: "report",
       type: "shell",
+      repo_access: true,
       description: "Open the PR if there is none yet; comment the checks on it; draft while they fail",
       run: [
         'branch=$(printf \'%s\\n\' "$FACTORY_OUT_FIND_BRANCH" | head -1)',
@@ -1924,14 +1962,17 @@ write("refine-brief", {
     {
       id: "clone",
       type: "shell",
+      repo_access: true,
       description: "Clone the repository into repo/ and check out develop (or the default branch)",
       run: [
         'r="$FACTORY_VAR_GITHUB_REPO"; ok=no',
         'case "$r" in */*) ok=yes ;; esac',
         'case "$r" in ""|-*|/*|*/|*/*/*|*[!A-Za-z0-9._/-]*) ok=no ;; esac',
         '[ "$ok" = yes ] || { echo "set the variable github_repo to owner/name"; exit 1; }',
-        // An https address and gh as git's only credential helper, so no token is in the command line or in .git/config.
-        `gh repo clone "https://github.com/$r" repo -- -q -c credential.helper= -c 'credential.helper=!gh auth git-credential' || { echo "could not clone $r"; exit 1; }`,
+        // With $FACTORY_REPO_URL (nothing sets it yet), plain git clones that address. Otherwise: an https address and gh as
+        // git's only credential helper, so no token is in the command line or in .git/config.
+        'if [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" repo || { echo "could not clone $r"; exit 1; }',
+        `else gh repo clone "https://github.com/$r" repo -- -q -c credential.helper= -c 'credential.helper=!gh auth git-credential' || { echo "could not clone $r"; exit 1; }; fi`,
         // The clone fetched every branch, so ask the local copy: a network failure can't pass for "no develop".
         'if git -C repo show-ref --verify --quiet refs/remotes/origin/develop; then branch=develop; else branch=$(git -C repo symbolic-ref --short HEAD); fi',
         'git -C repo checkout -q "$branch" || { echo "could not check out $branch"; exit 1; }',
@@ -1941,6 +1982,7 @@ write("refine-brief", {
     {
       id: "list_issues",
       type: "shell",
+      repo_access: true,
       description: "Read the open issues with their comments into issues.md",
       run: [
         'r="$FACTORY_VAR_GITHUB_REPO"',

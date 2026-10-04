@@ -17,6 +17,15 @@ describe("block library", () => {
     for (const b of blocks) expect(b.error, b.id).toBeUndefined();
   });
 
+  it("checks repo_access in a block, and pull-ticket has it", () => {
+    const sandboxed = "name: x\nsteps:\n  - {id: a, type: shell, run: x, repo_access: true, sandbox: true}";
+    expect(() => parseBlock(sandboxed)).toThrow(/cannot also have sandbox: true/);
+    const listed = "name: x\nsteps:\n  - {id: p, type: parallel, steps: [a, b]}\n  - {id: a, type: shell, run: x, repo_access: true}\n  - {id: b, type: shell, run: x}";
+    expect(() => parseBlock(listed)).toThrow(/has repo_access, so it cannot be listed in a parallel step/);
+    const pull = parseBlock(readFileSync("blocks/pull-ticket.yaml", "utf8"));
+    expect(pull.steps.find((s) => s.id === "pull_ticket")).toMatchObject({ repo_access: true });
+  });
+
   it("rejects jumps out of the block", () => {
     const y = "name: x\nsteps:\n  - {id: a, type: shell, run: x, on_failure: elsewhere}";
     expect(() => parseBlock(y)).toThrow(/only jump to their own steps/);

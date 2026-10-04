@@ -72,6 +72,7 @@ vars:
 steps:
   - id: pull_ticket
     type: shell
+    repo_access: true
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
@@ -80,9 +81,10 @@ steps:
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
   - id: daily_branch
     type: shell
+    repo_access: true
     description: Clone, then check out the branch of the open factory PR (or a new one from main)
     run: |-
-      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       "$FACTORY_TOOLS/daily-branch" prepare
   - id: baseline_tests
     type: shell
@@ -272,6 +274,7 @@ steps:
     max_budget_usd: 8
   - id: send_back
     type: shell
+    repo_access: true
     jump_only: true
     description: Post why the issue can't be planned yet, then stop (resumes when someone replies)
     resume_from: pull_ticket
@@ -293,6 +296,7 @@ steps:
     on_success: stop
   - id: split_gate
     type: shell
+    repo_access: true
     jump_only: true
     description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner"
     run: |-
@@ -326,12 +330,14 @@ steps:
     on_failure: pull_ticket
   - id: create_split
     type: shell
+    repo_access: true
     jump_only: true
     description: Create the parts as issues (in order, with Depends on and the build label), then close this issue
     run: printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}" | "$FACTORY_TOOLS/create-split"
     on_success: end
   - id: risk_gate
     type: shell
+    repo_access: true
     description: Post the plan with its risk score; above the threshold (or with the review label) a human approves first
     run: |-
       out="$FACTORY_OUT_PLAN"; notes=""
@@ -621,6 +627,7 @@ steps:
     on_failure: docs
   - id: commit
     type: shell
+    repo_access: true
     run: |-
       git add -A
       title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)
@@ -628,6 +635,7 @@ steps:
       git log --oneline -1
   - id: push
     type: shell
+    repo_access: true
     run: |-
       branch=$(git branch --show-current)
       if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then git pull -q --rebase origin "$branch"; fi
@@ -638,6 +646,7 @@ steps:
     run: '"$FACTORY_TOOLS/daily-branch" ensure-pr "$(git branch --show-current)"'
   - id: report
     type: shell
+    repo_access: true
     run: |-
       branch=$(git branch --show-current); sha=$(git rev-parse HEAD)
       verdict() { printf '%s\n' "$1" | sed -n 's/^VERDICT: *//p' | tail -1; }

@@ -25,6 +25,7 @@ vars:
 steps:
   - id: pull_ticket
     type: shell
+    repo_access: true
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
@@ -33,8 +34,9 @@ steps:
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
   - id: clone
     type: shell
+    repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
       b=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE)
       if [ "$b" != NONE ] && git checkout -q --detach "origin/$b"; then echo "Code: main plus unmerged work on $b"; else echo "Code: main"; fi
@@ -168,6 +170,7 @@ steps:
     on_failure: post_plan
   - id: send_back
     type: shell
+    repo_access: true
     jump_only: true
     description: Post why the issue can't be planned yet, then stop (resumes when someone replies)
     resume_from: pull_ticket
@@ -189,6 +192,7 @@ steps:
     on_success: stop
   - id: post_plan
     type: shell
+    repo_access: true
     jump_only: true
     run: |-
       out="$FACTORY_OUT_PLAN"; notes=""
