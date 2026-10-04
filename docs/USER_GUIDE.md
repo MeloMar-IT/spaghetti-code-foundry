@@ -189,6 +189,11 @@ A line under the top bar of every page says **All good**, or the number of probl
 
 The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
+When the monitor has stored findings, the line also links to the [Problems page](#the-problems-page):
+"N open findings of the monitor", or "Findings of the monitor (none open)". It does not change
+**All good**. In `GET /api/health` this is `monitorFindings` (`open`, `total`, and `unreadable`
+when the findings file cannot be read): counts only, never a name.
+
 ### The board
 
 ![The board of a repository](images/board.png)
@@ -728,7 +733,8 @@ evidence, when it was first and last seen and how often. A finding not seen for 
 owed one). A file that cannot be read is kept as `monitor-findings.json.broken`. If the monitor's
 own check fails, the Health line says so. The monitor's card on the Watchers page shows what waits
 or is wrong with its bug stories, and lists the findings and the mutes (see
-[Mute a detector or a finding](#mute-a-detector-or-a-finding)).
+[Mute a detector or a finding](#mute-a-detector-or-a-finding)). The
+[Problems page](#the-problems-page) shows the same with the state of each finding.
 
 #### Bug stories from the monitor
 
@@ -882,6 +888,50 @@ does not become a bug story.
 - **Limits.** One mute per detector and one per finding at a time (a finding can be muted next to
   its detector; the mute of the finding wins). At most 200 mutes. Mutes are kept in
   `monitor-guard.json` as account ids, never names or e-mail addresses.
+
+#### The Problems page
+
+**Problems** (`#/problems`, admins only; users do not see it) shows what the monitor found and what
+happens to each problem.
+
+- **The sentence at the top.** One sentence says whether the monitor is running, whether bug
+  stories are on, off, quiet or stopped, when it last checked, how many bug stories it made today
+  and the daily limit, and whether the circuit breaker is open, with its reason. The count comes
+  from the monitor's log, so it can be above the limit: "Make a story now" does not count against
+  the limit. "Last checked" is kept in memory: after a server restart it says "has not checked
+  since the server started" until the monitor runs again.
+- **The findings.** Newest and most severe first (gone ones last), at most 100 at first and then
+  **Show N more**. Each row has the summary, the severity, since when, how often ("seen in N
+  checks"), the state and the bug story. **Details** opens the evidence, the bug stories (links;
+  "(earlier)" for older ones) and the runs that build them. If the findings file cannot be read,
+  the page says so instead of "No findings."
+
+| State | What it says |
+|---|---|
+| seen | seen, no story yet |
+| waiting | bug story #N is waiting (open, no run builds it) |
+| building | bug story #N is being built (a run builds it now) |
+| fixed-watching | fixed, watching: the story is closed and the fix is being watched |
+| came-back | came back: the problem was seen again after the fix |
+| needs-you | needs you: two stories did not fix it |
+| muted | muted by an admin (with the reason), or the story was closed as not planned |
+| gone | gone: not seen for 24 hours |
+
+- **Actions.** **Switch the monitor off / on** (the same as on the Watchers page; while it is off
+  the monitor still records problems, but makes no bug story and writes no comment). **Mute** and
+  **End mute**. **Try again** for *needs you*. **This is not a problem** mutes the finding for
+  good with a reason you give; you can end it here later.
+- **Make a story now.** For a finding that is *seen, no story yet*. It skips the waiting rules:
+  the severity, "longer than one check", 3 days for minor, the daily and per-check limits, the
+  quiet time and an open circuit breaker. It never skips the off switch, the mutes, "only once"
+  (a story already on GitHub is taken up, not made again) or the two tries; the cleaning of
+  private text applies too. It makes only that one story. The button says why it cannot be used:
+  the monitor is off, is not running, or no repository is set. The API answers 409 when the
+  monitor is off or not running, or the finding has a story, is muted, used its two tries, is
+  gone or has no repository; 502 when GitHub fails.
+- **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
+  last found something and whether it is muted. Change a number and press **Save**; this changes
+  the setting `monitor.<detector>` like the Settings page.
 
 ### How issue watchers use labels
 
@@ -1801,7 +1851,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/config` | yes | no | change the settings |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
-| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), its findings and its mutes |
+| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
+| `GET /api/monitor/findings/:id` | yes | no | the evidence, bug stories and runs of one finding of the monitor |
+| `POST /api/monitor/story` | yes | no | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
 | `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |
 | `POST /api/monitor/on` | yes | no | let the monitor make bug stories again |
 | `POST /api/monitor/mutes` | yes | no | mute one detector or one finding of the monitor, with a reason, for a time or for good |

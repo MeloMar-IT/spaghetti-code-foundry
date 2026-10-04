@@ -31,21 +31,21 @@ export function storyCell(story, needsYou) {
 }
 
 /** The mute form in a modal; resolves true when a mute was made. */
-export function muteForm(target, detectors) {
+export function muteForm(target, detectors, { notProblem = false } = {}) {
   const what = target.finding ? "this finding" : "this detector";
-  return modal(target.finding ? "Mute a finding" : "Mute a detector", (close) => {
+  return modal(notProblem ? "This is not a problem" : target.finding ? "Mute a finding" : "Mute a detector", (close) => {
     const err = h("p", { class: "status bad", style: { margin: 0 } });
     const detector = target.detector === undefined && target.pick
       ? h("select", {}, (detectors ?? []).map((d) => h("option", { value: d.name }, d.name)))
       : null;
-    const reason = h("input", { maxlength: REASON_MAX, placeholder: "Why is this known noise?" });
+    const reason = h("input", { maxlength: REASON_MAX, placeholder: notProblem ? "Why is this not a problem?" : "Why is this known noise?" });
     const hours = h("select", {}, DURATIONS.map(([label, v]) => h("option", { value: v }, label)));
     const field = (label, el) => h("label", { class: "field" }, h("span", {}, label), el);
     const go = async () => {
       err.textContent = "";
       try {
         const t = target.finding ? { finding: target.finding } : { detector: detector ? detector.value : target.detector };
-        const body = muteBody(t, reason.value, hours.value);
+        const body = muteBody(t, reason.value, notProblem ? "" : hours.value);
         await api.muteMonitor(body);
         toast("Muted");
         close(true);
@@ -54,19 +54,21 @@ export function muteForm(target, detectors) {
       }
     };
     return h("div", { class: "modal-body" },
-      h("p", {}, `No bug story is made for ${what} while it is muted. It is still recorded.`),
+      h("p", {}, notProblem
+        ? "The monitor still records it, but never makes a bug story for it. You can end this on the Problems page."
+        : `No bug story is made for ${what} while it is muted. It is still recorded.`),
       detector ? field("Detector", detector) : null,
       field("Reason", reason),
-      field("For", hours),
+      notProblem ? null : field("For", hours),
       err,
-      h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { class: "primary", onClick: go }, "Mute")));
+      h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { class: "primary", onClick: go }, notProblem ? "This is not a problem" : "Mute")));
   }).then((v) => v === true);
 }
 
 let isOpen = false;
 let shown = PAGE;
 
-const mutesTable = (m, reload) => {
+export const mutesTable = (m, reload) => {
   const end = async (x) => {
     try {
       await api.unmuteMonitor(x.id);

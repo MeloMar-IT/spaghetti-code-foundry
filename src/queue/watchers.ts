@@ -8,7 +8,7 @@ import { collectNames } from "../monitor/clean.js";
 import type { DetectorInput, LogLine } from "../monitor/detectors.js";
 import { describeEntry, loadGuard, storiesVerdict, writeLog } from "../monitor/guard.js";
 import { activeMutes } from "../monitor/mutes.js";
-import { Monitor } from "../monitor/monitor.js";
+import { Monitor, type MonitorStoryResult } from "../monitor/monitor.js";
 import { buildLabelFor, Reporter } from "../monitor/report.js";
 import type { BuiltinSteps } from "../monitor/story.js";
 import type { RunSummary } from "../engine/state.js";
@@ -51,6 +51,8 @@ export class WatcherManager {
   private monitor?: { monitor: Monitor; key: string };
   /** Monitors that were stopped or replaced; a check of theirs may still run and write the findings. */
   private retired = new Set<Monitor>();
+  /** The monitor that was stopped or replaced last: its last check is still the last one while no other has run. */
+  private lastMonitor?: Monitor;
   /** The last reading of GitHub's request limit, and when one was last tried (a try counts, so a failing call is not repeated). */
   private rate?: RateReading;
   private rateTried = 0;
@@ -166,6 +168,22 @@ export class WatcherManager {
     }
   }
 
+  /** Is a monitor running (enabled in the watchers)? */
+  monitorRunning(): boolean {
+    return !!this.monitor;
+  }
+
+  /** When the monitor last finished a check, as far as this process knows (also after the monitor was stopped). Undefined: none since the start. */
+  monitorLastCheck(): string | undefined {
+    return this.monitor?.monitor.status.lastTick ?? this.lastMonitor?.status.lastTick;
+  }
+
+  /** "Make a story now" through the running monitor; "not_running" when none runs. A monitor replaced meanwhile still finishes the call. */
+  async storyNow(hash: string, by: string): Promise<MonitorStoryResult | { ok: false; code: "not_running" }> {
+    const m = this.monitor?.monitor;
+    return m ? m.storyNow(hash, by) : { ok: false, code: "not_running" };
+  }
+
   /** Puts a line in the monitor's recent activity; does nothing when no monitor runs. */
   monitorAct(msg: string) {
     this.monitor?.monitor.act(msg);
@@ -261,6 +279,7 @@ export class WatcherManager {
 
   /** Keeps a stopped monitor only while its check still runs. */
   private retire(m: Monitor) {
+    this.lastMonitor = m;
     const b = m.busy();
     if (!b) return;
     this.retired.add(m);

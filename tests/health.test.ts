@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary } from "../src/engine/state.js";
+import { findingsFile, saveFindings, type Finding } from "../src/monitor/findings.js";
+import { saveGuard } from "../src/monitor/guard.js";
 import { nextStep } from "../src/next-step.js";
 import { toHold } from "../src/queue/watcher.js";
 import { health } from "../src/server/health.js";
@@ -256,6 +258,38 @@ describe("health()", () => {
       const h = health(ctxOf({ watchers: [w], active: ["r-busy"], restart: { why: "data_folder", since: ago(MIN) } }), NOW);
       expect(h.problems.find((p) => p.kind === "closed_elsewhere")!.where.url).toBe("#/runs");
       for (const p of h.problems) expect(p.where.url).toMatch(/^(https:\/\/|#\/)/);
+    });
+  });
+
+  describe("the findings of the monitor", () => {
+    const f = (id: string, over: Partial<Finding> = {}): Finding => ({
+      detector: "restart-loop", fingerprint: `restart-loop|${id}`, severity: "major", summary: "other-owner/secret-repo", about: "foundry", evidence: {},
+      firstSeen: ago(MIN), lastSeen: ago(MIN), count: 1, gone: false, ...over,
+    });
+    const story = (over: Record<string, unknown> = {}) => ({ repo: "acme/app", issue: 3, url: "https://github.com/acme/app/issues/3", at: ago(MIN), seen: 1, ...over });
+    const config = { monitor: { report_to: "acme/app" } };
+
+    it("counts the open and the stored findings, and nothing else changes", () => {
+      const before = health(ctxOf({ config }), NOW);
+      saveFindings([f("a"), f("b", { gone: true }), f("c", { report: story({ muted: true }) }), f("d", { report: story({ closedAt: ago(MIN) }) })]);
+      saveGuard({ version: 1, mutes: [{ id: "0123456789abcdef", kind: "finding", detector: "restart-loop", fingerprint: "restart-loop|d", reason: "r", since: ago(MIN), by: "cli" }] });
+      const h = health(ctxOf({ config }), NOW);
+      expect(h.monitorFindings).toEqual({ open: 1, total: 4 });
+      expect({ ok: h.ok, summary: h.summary }).toEqual({ ok: before.ok, summary: before.summary });
+      expect(JSON.stringify(h)).not.toContain("secret-repo");
+    });
+    it("is open 0 when only gone or muted findings are stored", () => {
+      saveFindings([f("a", { gone: true }), f("b", { report: story({ muted: true }) })]);
+      expect(health(ctxOf({ config }), NOW).monitorFindings).toEqual({ open: 0, total: 2 });
+    });
+    it("says so when the findings file cannot be read", () => {
+      writeFileSync(findingsFile(), "{ nope");
+      expect(health(ctxOf({ config }), NOW).monitorFindings).toEqual({ open: 0, total: 0, unreadable: true });
+      expect(existsSync(`${findingsFile()}.broken`)).toBe(false);
+    });
+    it("is absent when no finding is stored", () => {
+      saveFindings([]);
+      expect(health(ctxOf({ config }), NOW)).not.toHaveProperty("monitorFindings");
     });
   });
 });
