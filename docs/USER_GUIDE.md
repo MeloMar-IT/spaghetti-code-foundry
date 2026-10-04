@@ -1233,7 +1233,8 @@ request to `main` at 17:00, and no new coding starts while it is open.
 Two delivery pipelines, what supports them, and the standalone refinement flow: `epic-questions`,
 `issue-gitflow` and `release-daily` (gitflow), `issue-plan`, `issue-code-daily` and `daily-pr`
 (human in the loop), and `refine-brief` (the architect's context brief, see
-[Refinement](#12-refinement); it can't be deleted, because Refinement uses it). Build anything else yourself in the editor, with **✨ Draft flow with Claude**, or with any
+[Refinement](#12-refinement); it can't be deleted, because Refinement uses it) and `refine-round`
+(the architect's question round, same section). Build anything else yourself in the editor, with **✨ Draft flow with Claude**, or with any
 AI assistant ([Let any AI write a flow](#let-any-ai-write-a-flow)). **A flow that a watcher uses —
 enabled or disabled, or as its questions check — or that another flow runs as a step can't be
 deleted**; the Foundry says which watchers or flows use it.
@@ -2305,3 +2306,27 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 **Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on the Models page.
 
 **Cannot be deleted.** Refinement uses the flow, so `DELETE /api/flows/refine-brief` is refused (also for a copy an admin saved).
+
+### The architect's question round
+
+The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand; starting it from a session comes later. Give it the talk so far as the task:
+
+```
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]
+```
+
+**What it reads.** The code of the repository only (the `develop` branch when there is one, else the default branch). The open issues are not read again: what the talk says about the backlog is what the architect knows of it.
+
+**`ask=round` (the default).** The answer is one JSON object. `questions` has at most 5 entries, the most important first. Each has a `view` (`need`, `build` or `test`), a `text`, a `why`, 2 to 4 `options` (each with a `text` and a `tradeoff`) and `recommended`, the position of the recommended option counted from 1. In the first round there is at least one question from each view. `proposals` has at most 20 entries for the lists of the story: a `list` (`rule`, `example` or `open`) and a `text`, from the answers the talk marks as new. `done` is one sentence; it is required when there are no questions, because the architect has nothing important left to ask.
+
+**`ask=question`.** The answer is `{ "answer": "…" }`, with no questions and no proposals. Every claim about the code names its file.
+
+**Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
+
+**When it fails.** The run fails with one plain sentence when the answer is not JSON of this form, or when a question has no `why`, fewer than 2 or more than 4 options, an option without a trade-off, a `recommended` that is not one of its options or a `view` outside the three; also when there are no questions and no `done`, or when `ask` is not `round` or `question`. There is no second try.
+
+**It only reads, and whose access it uses.** As the brief: the tools `Read`, `Glob` and `Grep`, nothing is written to GitHub, and the talk is never put into a shell command. In a run the server started for a refinement session, only the clone uses the token you stored under **My repositories**; the architect and `check_round` never get it. A run by hand gets no stored token.
+
+**Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on the Models page.
+
+**Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.

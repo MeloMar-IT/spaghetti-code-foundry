@@ -4,6 +4,7 @@
 // "ERROR" returns an error result; "DENY <Tool> <text>" adds a refused tool call to the result's
 // permission_denials (command for Bash, file_path otherwise); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
+// The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -66,6 +67,22 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
   ].join("\n");
   const b = process.env.FAKE_BRIEF;
   canned = b === "ECHO" ? `${brief}\nargs=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` : b ?? brief;
+} else if (prompt.includes("This is a question round of a refinement session.")) {
+  // The architect's question round (refine-round). FAKE_ROUND replaces the answer; FAKE_ROUND=ECHO adds the CLI arguments, the working folder and the prompt.
+  const found = `The README is ${existsSync("repo/README.md") ? "found" : "missing"} (README.md).`;
+  const round = prompt.includes("What is asked of you now: question")
+    ? { answer: found }
+    : {
+        questions: [
+          { view: "need", text: "Who uses it?", why: "It sets the value.", options: [{ text: "Everyone", tradeoff: "Broad" }, { text: "Admins", tradeoff: "Narrow" }], recommended: 1 },
+          { view: "build", text: "What does it touch?", why: "It sets the risk.", options: [{ text: "The API", tradeoff: "Wide" }, { text: "The UI", tradeoff: "Small" }, { text: "Both", tradeoff: "Most work" }], recommended: 2 },
+          { view: "test", text: "Which edge case matters?", why: "It sets the tests.", options: [{ text: "Empty input", tradeoff: "Cheap" }, { text: "Huge input", tradeoff: "Slow" }], recommended: 2 },
+        ],
+        proposals: [{ list: "example", text: found }],
+        done: "",
+      };
+  const r = process.env.FAKE_ROUND;
+  canned = r === "ECHO" ? JSON.stringify({ ...round, echo: `args=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` }) : r ?? JSON.stringify(round);
 } else if (prompt.includes("You triage tickets")) canned = process.env.FAKE_TRIAGE ?? "Small change.\nROUTE: SMALL";
 else if (prompt.includes("PLAN_STATUS: NEEDS_INFO")) canned = process.env.FAKE_PLAN ?? "1. change feature.txt\nPLAN_STATUS: READY";
 else if (prompt.includes("VERDICT: APPROVE")) canned = "Looks good.\nVERDICT: APPROVE";

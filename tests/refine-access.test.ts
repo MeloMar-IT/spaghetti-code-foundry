@@ -6,10 +6,10 @@ import { adoptRuns, isRefinementRun } from "../src/auth/run-owner.js";
 import { removeCredential, listCredentials } from "../src/credentials/store.js";
 import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
-import { REPO_READ_FLOW, TOKEN_REFUSED_REASON, isRepoReadStep, repoReadEnv, tokenRefused } from "../src/engine/guards.js";
+import { REPO_READ_STEPS, TOKEN_REFUSED_REASON, isRepoReadStep, repoReadEnv, tokenRefused } from "../src/engine/guards.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
-import { REFINE_BRIEF_FLOW } from "../src/flow/usage.js";
+import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../src/flow/usage.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
@@ -118,16 +118,25 @@ describe("repoAccess", () => {
 describe("guards", () => {
   const src = "refinement 123";
   it("grants only the clone and the issue list, at the top level, of the refinement flow", () => {
-    expect(isRepoReadStep({ id: "clone" }, 0, REPO_READ_FLOW, src)).toBe(true);
-    expect(isRepoReadStep({ id: "list_issues" }, 0, REPO_READ_FLOW, src)).toBe(true);
-    for (const id of ["brief", "check_brief"]) expect(isRepoReadStep({ id }, 0, REPO_READ_FLOW, src)).toBe(false);
-    expect(isRepoReadStep({ id: "clone" }, 1, REPO_READ_FLOW, src)).toBe(false);
+    expect(isRepoReadStep({ id: "clone" }, 0, REFINE_BRIEF_FLOW, src)).toBe(true);
+    expect(isRepoReadStep({ id: "list_issues" }, 0, REFINE_BRIEF_FLOW, src)).toBe(true);
+    for (const id of ["brief", "check_brief"]) expect(isRepoReadStep({ id }, 0, REFINE_BRIEF_FLOW, src)).toBe(false);
+    expect(isRepoReadStep({ id: "clone" }, 1, REFINE_BRIEF_FLOW, src)).toBe(false);
     expect(isRepoReadStep({ id: "clone" }, 0, "refine-brief-2", src)).toBe(false);
-    for (const s of ["ui", "cli", "watcher w issue #1", "refinement", "Refinement x", undefined]) expect(isRepoReadStep({ id: "clone" }, 0, REPO_READ_FLOW, s)).toBe(false);
+    for (const s of ["ui", "cli", "watcher w issue #1", "refinement", "Refinement x", undefined]) expect(isRepoReadStep({ id: "clone" }, 0, REFINE_BRIEF_FLOW, s)).toBe(false);
     expect(isRefinementRun("refinement x")).toBe(true);
   });
 
-  it("names the shipped flow", () => expect(REPO_READ_FLOW).toBe(REFINE_BRIEF_FLOW));
+  it("grants only the clone of refine-round", () => {
+    expect(isRepoReadStep({ id: "clone" }, 0, REFINE_ROUND_FLOW, src)).toBe(true);
+    for (const id of ["list_issues", "round", "check_round"]) expect(isRepoReadStep({ id }, 0, REFINE_ROUND_FLOW, src)).toBe(false);
+    expect(isRepoReadStep({ id: "clone" }, 1, REFINE_ROUND_FLOW, src)).toBe(false);
+    for (const s of ["ui", "cli", "watcher w issue #1", "refinement", undefined]) expect(isRepoReadStep({ id: "clone" }, 0, REFINE_ROUND_FLOW, s)).toBe(false);
+    for (const name of ["refine-round-2", "constructor", "__proto__"]) expect(isRepoReadStep({ id: "clone" }, 0, name, src)).toBe(false);
+  });
+
+  it("pins the grant to the names of the shipped flows", () =>
+    expect([...REPO_READ_STEPS]).toEqual([[REFINE_BRIEF_FLOW, ["clone", "list_issues"]], [REFINE_ROUND_FLOW, ["clone"]]]));
 
   it("repoReadEnv holds the isolation variables only for a token", () => {
     expect(repoReadEnv({ kind: "server" }, {})).toEqual({});
@@ -219,6 +228,25 @@ describe("a refinement run", { timeout: 60_000 }, () => {
     process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
     const s = await go(probe(), { source, owner: user.id });
     for (const id of ["clone", "list_issues", "other"]) expect(out(s, id)).toBe("none");
+    expect(lastUsed(r, user.id)).toBeNull();
+  });
+
+  it("refine-round: the clone gets the stored token, the other steps and the agent do not", async () => {
+    tokenRepo(user);
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
+    const s = await go(probe(REFINE_ROUND_FLOW), { source: REFINE, owner: user.id });
+    expect(s.status).toBe("succeeded");
+    expect(out(s, "clone")).toBe("stored host=github.com");
+    expect(out(s, "list_issues")).toBe("none");
+    expect(out(s, "other")).toBe("none");
+    expect(out(s, "brief")).toContain("gh_token=none");
+  });
+
+  it.each([["ui"], ["cli"], [undefined]])("refine-round run with the source %s gets no token", async (source) => {
+    const r = tokenRepo(user);
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
+    const s = await go(probe(REFINE_ROUND_FLOW), { source, owner: user.id });
+    expect(out(s, "clone")).toBe("none");
     expect(lastUsed(r, user.id)).toBeNull();
   });
 
@@ -423,6 +451,39 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
     const s = await shipUser();
     expect(s.reason).toBe(`step "clone" failed: ${TOKEN_UNREADABLE}`);
     expect(gh.ghLog()).toBe("");
+  });
+
+  it("a run by hand gets no stored token", async () => {
+    tokenRepo(user);
+    process.env.FAKE_GH_EXPECT_TOKEN = "";
+    const s = await ship({ source: "ui", owner: user.id });
+    expect(s.status).toBe("succeeded");
+  });
+});
+
+describe("the shipped refine-round flow", { timeout: 60_000 }, () => {
+  const ship = (extra: { source?: string; owner?: string }) =>
+    runFlow(loadFlow("refine-round", gh.tmp).flow, { task: "Let people export CSV", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: ConfigSchema.parse({ protected_branches: [] }), ...extra });
+
+  it("succeeds with the stored token, keeps it from the agent and from .git/config", async () => {
+    tokenRepo(user);
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
+    process.env.FAKE_ROUND = "ECHO";
+    const s = await ship({ source: REFINE, owner: user.id });
+    expect(s.status).toBe("succeeded");
+    expect(JSON.parse(out(s, "round")).echo).toContain("gh_token=none");
+    expect(out(s, "check_round")).not.toContain(TOKEN);
+    const conf = readFileSync(join(s.workdir!, "repo", ".git", "config"), "utf8");
+    expect(conf).not.toContain(TOKEN);
+  });
+
+  it("fails with the refused sentence when GitHub refuses the token", async () => {
+    tokenRepo(user);
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN2;
+    const s = await ship({ source: REFINE, owner: user.id });
+    expect(s.status).toBe("failed");
+    expect(s.history.map((h) => h.id)).toEqual(["clone"]);
+    expect(s.reason).toBe(`step "clone" failed: ${TOKEN_REFUSED_REASON}`);
   });
 
   it("a run by hand gets no stored token", async () => {

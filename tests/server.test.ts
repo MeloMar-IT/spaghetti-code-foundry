@@ -76,15 +76,15 @@ describe("ui server", () => {
     expect((await json("DELETE", "/api/flows/used-by-step")).status).toBe(200);
   });
 
-  it("won't delete refine-brief: refinement uses it", async () => {
-    expect((await json("DELETE", "/api/flows/refine-brief")).status).toBe(403);
+  it.each(["refine-brief", "refine-round"])("won't delete %s: refinement uses it", async (name) => {
+    expect((await json("DELETE", `/api/flows/${name}`)).status).toBe(403);
     for (const scope of ["repo", "global"]) {
-      const put = await json("PUT", "/api/flows/refine-brief", { yaml: readFileSync("flows/refine-brief.yaml", "utf8"), scope });
+      const put = await json("PUT", `/api/flows/${name}`, { yaml: readFileSync(`flows/${name}.yaml`, "utf8"), scope });
       expect(put.status).toBe(200);
       const { path } = (await put.json()) as { path: string };
-      const del = await json("DELETE", "/api/flows/refine-brief");
+      const del = await json("DELETE", `/api/flows/${name}`);
       expect(del.status).toBe(409);
-      expect(((await del.json()) as { error: string }).error).toContain('flow "refine-brief" is in use by refinement (the architect)');
+      expect(((await del.json()) as { error: string }).error).toContain(`flow "${name}" is in use by refinement (the architect)`);
       expect(existsSync(path)).toBe(true);
       rmSync(path); // so other tests see the built-in flow again
     }

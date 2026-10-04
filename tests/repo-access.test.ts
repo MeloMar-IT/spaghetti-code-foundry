@@ -105,6 +105,7 @@ describe("clone steps", { timeout: 60_000 }, () => {
     ["release-daily", "clone", "."],
     ["epic-questions", "clone", "."],
     ["refine-brief", "clone", "repo"],
+    ["refine-round", "clone", "repo"],
   ] as const;
   let gh: ReturnType<typeof fakeGithub>;
   const saved = process.env.FACTORY_REPO_URL;

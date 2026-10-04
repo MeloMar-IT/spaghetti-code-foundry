@@ -28,6 +28,8 @@ export async function runShell(o: {
   dockerEnv?: string[];
   /** Secrets of this step, hidden for its whole life. */
   pinnedSecrets?: string[];
+  /** Characters of output to keep (default 20,000). */
+  maxOutput?: number;
 }): Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -48,7 +50,7 @@ export async function runShell(o: {
     pinnedSecrets: o.pinnedSecrets,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
-  const output = (res.stdout + res.stderr).replace(ANSI, "").slice(-MAX_OUTPUT);
+  const output = (res.stdout + res.stderr).replace(ANSI, "").slice(-(o.maxOutput ?? MAX_OUTPUT));
   if (res.aborted) return { ok: false, output, exitCode: res.exitCode, error: "cancelled" };
   if (res.timedOut) return { ok: false, output, exitCode: res.exitCode, error: "timed out" };
   return {
