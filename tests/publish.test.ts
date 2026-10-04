@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseFlow } from "../src/flow/load.js";
-import { sameDefinition, stampVersion, userFlow, userVars } from "../src/flow/publish.js";
+import { sameDefinition, stampVersion, userFlow, userVars, usesTask } from "../src/flow/publish.js";
 
 const STEP = "steps:\n  - {id: a, type: shell, run: echo}\n";
 const flow = (head: string, steps = STEP) => parseFlow(`name: t\n${head}${steps}`);
@@ -128,6 +128,26 @@ describe("userFlow", () => {
     expect(u.fields[0]).toEqual({ name: "c", mode: "input", label: "C", help: "help c", value: "bc", required: true });
     expect(u.fields[1]).toEqual({ name: "b", mode: "fixed", label: "b", value: "bb", required: false });
     expect(u.fields[2]!.value).toBe("");
+  });
+});
+
+describe("usesTask", () => {
+  const one = (step: string) => flow("", `steps:\n  - ${step}\n`);
+  it("is true when a prompt, system prompt, message or script reads the task", () => {
+    expect(usesTask(one("{id: a, type: claude, prompt: 'Do {{task}}'}"))).toBe(true);
+    expect(usesTask(one("{id: a, type: claude, prompt: 'x', system_prompt: 'Do {{ task }}'}"))).toBe(true);
+    expect(usesTask(one("{id: a, type: approval, message: 'Ok {{task}}?'}"))).toBe(true);
+    expect(usesTask(one("{id: a, type: shell, run: 'echo $FACTORY_TASK'}"))).toBe(true);
+    expect(usesTask(one("{id: a, type: shell, run: 'echo $SCF_TASK'}"))).toBe(true);
+  });
+  it("is false for other names", () => {
+    expect(usesTask(one("{id: a, type: claude, prompt: 'Do {{vars.task}}'}"))).toBe(false);
+    expect(usesTask(one("{id: a, type: shell, run: 'cat $FACTORY_TASK_FILE'}"))).toBe(false);
+    expect(usesTask(flow(""))).toBe(false);
+  });
+  it("shows in userFlow", () => {
+    expect(userFlow("f", flow(""), {}).usesTask).toBe(false);
+    expect(userFlow("f", one("{id: a, type: shell, run: 'echo $FACTORY_TASK'}"), {}).usesTask).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { listRepos, ownsRepo } from "../auth/repos.js";
-import { tryParseRepoUrl } from "../auth/repo-url.js";
+import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
@@ -60,8 +60,8 @@ const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, re
 function githubNames(userId: string): string[] {
   const out: string[] = [];
   for (const r of listRepos(userId)) {
-    const p = tryParseRepoUrl(r.url);
-    if (p?.github !== undefined) out.push(p.key.slice("github.com/".length));
+    const name = githubNameOf(r.url);
+    if (name !== undefined) out.push(name);
   }
   return out;
 }

@@ -65,9 +65,25 @@ describe("repositories API", () => {
     const r = await call(ann, "POST", "/api/repos", { url: "https://github.com/Acme/App", method: "github-token", token: TOKEN });
     expect(r.status).toBe(201);
     rec = r.json();
-    expect(Object.keys(rec).sort()).toEqual(["added", "credentialId", "id", "method", "owner", "url"]);
+    expect(Object.keys(rec).sort()).toEqual(["added", "credentialId", "github", "id", "method", "owner", "url"]);
+    expect((rec as { github?: string }).github).toBe("acme/app");
     expect(await list(ann)).toEqual([rec]);
     expect((await creds(ann)).map((c) => [c.id, c.name])).toEqual([[rec.credentialId, `repo:${rec.id}`]]);
+  });
+
+  it("adds github for GitHub records only: ssh without .git, none on another host, and on the auth answer", async () => {
+    const ssh = await call(ann, "POST", "/api/repos", { url: "git@github.com:Acme/Tool.git" });
+    expect(ssh.json().github).toBe("acme/tool");
+    const other = await call(ann, "POST", "/api/repos", { url: "https://gitlab.com/acme/app" });
+    expect(other.status).toBe(201);
+    expect("github" in other.json()).toBe(false);
+    const mine = await list(ann);
+    expect(mine.find((r) => r.id === other.json().id)).not.toHaveProperty("github");
+    expect(mine.find((r) => r.id === ssh.json().id)).toHaveProperty("github", "acme/tool");
+    const rows = (await call(admin, "GET", "/api/admin/repos")).json() as object[];
+    for (const r of rows) expect(r).not.toHaveProperty("github");
+    // leave the list as it was for the tests that follow
+    for (const r of [ssh, other]) expect((await call(ann, "DELETE", `/api/repos/${r.json().id}`)).status).toBe(200);
   });
 
   it("keeps the old {name} call and the {url} short form, with method none", async () => {
@@ -100,7 +116,7 @@ describe("repositories API", () => {
   it("changes the token, the user name and the method", async () => {
     const t = await call(ann, "PUT", `/api/repos/${rec.id}/auth`, { token: TOKEN2 });
     expect(t.status).toBe(200);
-    expect(t.json()).toMatchObject({ id: rec.id, method: "github-token" });
+    expect(t.json()).toMatchObject({ id: rec.id, method: "github-token", github: "acme/app" });
     expect(t.json().credentialId).not.toBe(rec.credentialId);
     expect((await creds(ann)).map((c) => c.id)).toEqual([t.json().credentialId]);
 

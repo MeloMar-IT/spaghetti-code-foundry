@@ -518,11 +518,11 @@ describe("lists", () => {
     writeFileSync(join(dir, "unpub.yaml"), PRIVATE("unpub"));
     try {
       const list = (await call(ann, "GET", "/api/flows")).json() as Record<string, unknown>[];
-      for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "version"]);
+      for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "usesTask", "version"]);
       const names = list.map((f) => f.name);
       expect(names).toContain("walk");
       for (const hidden of ["bad", "my flow", "a.b", "unpub", "feature"]) expect(names).not.toContain(hidden);
-      expect(list.find((f) => f.name === "walk")).toEqual({ name: "walk", title: "walk", description: "", version: 1, fields: [] });
+      expect(list.find((f) => f.name === "walk")).toEqual({ name: "walk", title: "walk", description: "", version: 1, usesTask: false, fields: [] });
       const adminList = (await call(admin, "GET", "/api/flows")).json() as Record<string, unknown>[];
       expect(adminList.map((f) => f.name)).toEqual(expect.arrayContaining(["bad", "my flow", "a.b"]));
       expect(adminList.find((f) => f.name === "walk")).toMatchObject({ scope: "repo", published: true });

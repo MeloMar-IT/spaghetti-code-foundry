@@ -538,9 +538,18 @@ describe("roles in the page", () => {
     expect(auth.userHash("#/audit/x")).toBe("#/runs");
   });
 
-  it("isUserHash is true for the five pages of the user display", () => {
-    for (const h of ["#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) expect(auth.isUserHash(h), h).toBe(true);
+  it("isUserHash is true for the pages of the user display", () => {
+    for (const h of ["#/start", "#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) expect(auth.isUserHash(h), h).toBe(true);
     for (const h of ["", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
+  });
+
+  it("start is a page, isNoHash knows an empty address", () => {
+    expect(auth.userHash("#/start/x")).toBe("#/runs");
+    expect(auth.userPage("#/start")).toEqual({ hash: "#/start", section: "start", id: undefined });
+    for (const h of ["", undefined, "#", "#/"]) expect(auth.isNoHash(h), String(h)).toBe(true);
+    expect(auth.isNoHash("#/runs")).toBe(false);
+    expect(auth.otherDisplay({ role: "user" }, "admin", "#/start")).toBe("/user/#/start");
+    expect(auth.otherDisplay({ role: "admin" }, "user", "#/start")).toBe("/");
   });
 
   it("userPage gives the hash, the section and the id", () => {

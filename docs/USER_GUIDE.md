@@ -90,7 +90,9 @@ admin for a new one.
 | **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
 
-An account with the role `user` works on its own display at `/user/`, with **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Runs, one run, My repositories, Refinement or one session, and dropped otherwise. An admin who opens `/user/` is sent to `/`.
+An account with the role `user` works on its own display at `/user/`, with **Start work**, **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
+
+**Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
 **Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box.
 
@@ -1527,9 +1529,9 @@ Every account has a role, `admin` or `user`. The server checks it on every call.
 not in the table below answers 404, also for an admin.
 
 - **An admin** may make every call and sees every page.
-- **A user** sees only the **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
+- **A user** sees only the **Start work**, **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
   table. Every other call answers `403 {"error":"not allowed for your role"}`. Pages other than
-  Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
+  Start work, Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
   opens `/` is sent to `/user/`, and any other address there goes to `#/runs`.
 
 **What a user does not see.** The server cuts these from every answer a user gets, so the page
@@ -1653,7 +1655,8 @@ A deploy-key record also has `credentialId` and `publicKey`. It never holds a se
 one). These calls manage it:
 
 - `GET /api/repos` lists your records, with the `publicKey` of a deploy key and the `installationId` of a
-  GitHub App record (a record with the method `github-app` has no credential).
+  GitHub App record (a record with the method `github-app` has no credential). A GitHub record also has
+  `github`, its `owner/name` in lower case without `.git`; so do the answers of adding and changing a record.
 - `GET /api/repos/methods` answers `{methods, githubApp}`: the methods you may choose (`none` only for an admin,
   `github-app` only when the app is set up) and `githubApp: {available: true, installUrl}` or
   `{available: false}`. It never shows the app ID or the key path.
@@ -1702,7 +1705,8 @@ editor"). Built-in flows are not published; save a copy and publish it. After an
 see no flows until you publish some. An unpublished flow answers 404.
 
 `GET /api/flows` shows a user the published, valid flows as `{name, title, description,
-version, fields}`. `fields` lists the variables that are *fixed* (shown with their value) or
+version, usesTask, fields}`. `usesTask` is true when a step reads the task (`{{task}}`,
+`FACTORY_TASK` or `SCF_TASK`); the Start work page shows a Task box only when it is not false. `fields` lists the variables that are *fixed* (shown with their value) or
 *user fills in* (with label, help text, default and whether it is required); hidden variables
 are not listed. In `vars` a user may set only the inputs (403 `you cannot set the var "<name>"`
 for any other). A required input that is empty gives 400 `fill in "<label>"`. Hidden and fixed

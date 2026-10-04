@@ -375,3 +375,13 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 @media (max-width: 760px) {
   .user-display .top { position: static; overflow-x: visible; }
 }
+
+/* Start work */
+.start-form { display: grid; gap: 16px; max-width: 640px; }
+.start-form .start-rest { display: grid; gap: 16px; }
+.start-form fieldset { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 14px; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.start-form legend { font-weight: 600; padding: 0 6px; }
+.start-form .choice { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; cursor: pointer; }
+.start-form .choice input { width: auto; margin-top: 3px; }
+.start-form .choice span { grid-column: 2; }
+.start-form .req { color: var(--fail); }

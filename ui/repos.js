@@ -166,10 +166,12 @@ export function plainError(e) {
 
 /**
  * Asks for the URL (when adding) and the method. Resolves once the dialog is closed and any request that
- * was started has finished; the caller then loads the list again.
+ * was started has finished; the caller then loads the list again. Resolves with the record the server made
+ * when a repository was added (undefined otherwise).
  */
 export function repoDialog({ admin = false, options, methods = methodsFor(admin, options), repo } = {}) {
   let pending = null;
+  let created;
   let closed = false;
   const shown = modal(repo ? "Change authentication" : "Add repository", (close) => {
     const HTTPS_EXAMPLE = "https://github.com/owner/name";
@@ -236,7 +238,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       pending = (async () => {
         try {
           if (repo) await api.setRepoAuth(repo.id, body);
-          else await api.addRepo(body);
+          else created = await api.addRepo(body);
         } catch (e) {
           busy = false;
           if (closed) return toast(plainError(e), "error");
@@ -256,7 +258,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       area, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { closed = true; });
-  return shown.then(() => pending);
+  return shown.then(() => pending).then(() => created);
 }
 
 async function whileBusy(btn, fn) {
