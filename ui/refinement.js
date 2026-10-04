@@ -174,7 +174,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     const open = s.state !== "dropped";
     const buttons = [];
     if (s.mine && open) {
-      buttons.push(h("button", { class: "small", onClick: async (e) => {
+      buttons.push(h("button", { class: "small", "data-focus": "rename", onClick: async (e) => {
         const btn = e.currentTarget;
         if (btn.disabled) return;
         await renameDialog(s, () => current() && reload());
@@ -223,7 +223,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
   const { sessions, repos } = listed;
   const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
-    h("td", {}, s.title),
+    h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
     h("td", {}, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
       s.state === "dropped" ? [" ", h("span", { class: "muted" }, `removed on ${date(s.removedOn)}`)] : null,
@@ -249,9 +249,9 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         });
       } }, "New session")),
     shown.length
-      ? h("table", { class: "table" },
+      ? h("div", { class: "table-box" }, h("table", { class: "table" },
         h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
-        h("tbody", {}, shown.map(row)))
+        h("tbody", {}, shown.map(row))))
       : h("div", { class: "empty" }, showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
   return cleanup;
 }

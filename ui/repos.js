@@ -351,7 +351,7 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
     connectionCell(repo),
     h("td", {},
       h("button", { class: "small", onClick: (e) => test(e, repo) }, "Test connection"), " ",
-      h("button", { class: "small", onClick: async () => {
+      h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
         await repoDialog({ admin, options, repo });
         reload();
       } }, "Change authentication"), " ",
@@ -364,17 +364,17 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
       h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
-      h("span", { class: "spacer" }), h("button", { class: "primary", onClick: add }, "+ Add repository")),
+      h("span", { class: "spacer" }), h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
     notice ? h("p", { class: "status bad" }, notice.text,
       notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
         const btn = e.currentTarget;
         return whileBusy(btn, () => remove(notice.retryId, true));
       } }, "Try again")] : null) : null,
     repos.length
-      ? h("table", { class: "table" },
+      ? h("div", { class: "table-box" }, h("table", { class: "table" },
         h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", ""].map((t) => h("th", {}, t)))),
-        h("tbody", {}, repos.map(row)))
-      : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", h("div", {}, h("button", { class: "primary", onClick: add }, "+ Add repository"))));
+        h("tbody", {}, repos.map(row))))
+      : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
   return () => {
     generation++;
   };

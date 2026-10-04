@@ -195,7 +195,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       return;
     }
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
-    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path.slice(1));
+    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
   });
 
   await new Promise<void>((ok, fail) => {

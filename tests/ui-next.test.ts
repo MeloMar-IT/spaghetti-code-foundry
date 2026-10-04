@@ -558,6 +558,25 @@ describe("the Runs pages for a user", () => {
     expect(runs.runRow({ ...RUN, ownerName: "Ann" }, { owner: true }).all("td")).toHaveLength(7);
   });
 
+  it("runRow has one link to the run; its click does not reach the row, a click on a cell still opens the run", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const g = globalThis as any;
+    const saved = g.location;
+    g.location = { hash: "" };
+    try {
+      const row = runs.runRow(RUN) as FakeElement;
+      const links = row.all("a");
+      expect(links).toHaveLength(1);
+      expect(links[0]!.attrs.href).toBe(`#/runs/${RUN.runId}`);
+      links[0]!.click();
+      expect(g.location.hash).toBe("");
+      row.all("td")[2]!.click();
+      expect(g.location.hash).toBe(`#/runs/${RUN.runId}`);
+    } finally {
+      g.location = saved;
+    }
+  });
+
   it("the watcher form leaves 'owner' out of the config when the field is empty", async () => {
     const { ownerSetting } = (await import("../ui/admin.js" as string)) as any;
     expect({ id: "w", owner: ownerSetting(" ann@example.com ") }).toEqual({ id: "w", owner: "ann@example.com" });

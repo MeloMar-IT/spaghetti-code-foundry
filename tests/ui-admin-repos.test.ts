@@ -277,9 +277,7 @@ describe("wiring", () => {
 
   it("never gives the page to a user", () => {
     expect(auth.userHash("#/all-repos")).toBe("#/runs");
-    const replaced: string[] = [];
-    expect(auth.allowedHash(false, "#/all-repos", (to: string) => replaced.push(to))).toBe("#/runs");
-    expect(replaced).toEqual(["#/runs"]);
-    expect(auth.allowedHash(true, "#/all-repos", () => {})).toBe("#/all-repos");
+    expect(auth.otherDisplay({ role: "user" }, "admin", "#/all-repos")).toBe("/user/");
+    expect(auth.otherDisplay({ role: "admin" }, "admin", "#/all-repos")).toBe("");
   });
 });

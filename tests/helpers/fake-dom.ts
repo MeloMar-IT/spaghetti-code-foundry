@@ -46,7 +46,31 @@ export class FakeElement extends FakeNode {
     return this.children.map((c) => (typeof c === "string" ? c : c instanceof FakeElement ? c.textContent : "")).join("");
   }
   set textContent(v: string) { this.children = []; this.text = v; }
-  querySelector(_selector: string): FakeElement | null { return null; }
+  getAttribute(k: string): string | null { return this.attrs[k] ?? null; }
+  focus(): void { (globalThis as unknown as { document: { activeElement: FakeElement | null } }).document.activeElement = this; }
+  contains(other: FakeElement | null): boolean {
+    for (let el = other; el; el = el.parent ?? null) if (el === this) return true;
+    return false;
+  }
+  /** All descendants in page order matching a comma list of `tag`, `[attr]` and `tag[attr]`; any other form throws. */
+  querySelectorAll(selector: string): FakeElement[] {
+    const parts = selector.split(",").map((p) => p.trim()).map((p) => {
+      const m = /^([a-z0-9]*)(?:\[([a-z-]+)\])?$/.exec(p);
+      if (!m || !p) throw new Error(`fake querySelectorAll: unsupported selector "${p}"`);
+      return { tag: m[1], attr: m[2] };
+    });
+    const out: FakeElement[] = [];
+    const walk = (el: FakeElement) => {
+      for (const c of el.children) {
+        if (!(c instanceof FakeElement)) continue;
+        if (parts.some((p) => (!p.tag || p.tag === c.tag) && (!p.attr || p.attr in c.attrs))) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  querySelector(selector: string): FakeElement | null { return this.querySelectorAll(selector)[0] ?? null; }
   all(tag: string): FakeElement[] {
     return this.children.flatMap((c) => (c instanceof FakeElement ? [...(c.tag === tag ? [c] : []), ...c.all(tag)] : []));
   }
@@ -65,6 +89,7 @@ export function installFakeDom(): () => void {
     createElementNS: (_ns: string, tag: string) => make(tag),
     getElementById: (id: string) => byId.get(id) ?? byId.set(id, make("div")).get(id),
     title: "",
+    activeElement: null as FakeElement | null,
     visibilityState: "visible",
     listeners,
     addEventListener: (type: string, fn: Listener) => { (listeners[type] ??= []).push(fn); },

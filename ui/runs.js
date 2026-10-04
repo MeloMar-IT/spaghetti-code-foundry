@@ -24,7 +24,7 @@ export const ownerRow = (s, names) => {
 /** A row of the Runs list: the status name of the record with its "?", then flow, task, steps, cost, start. */
 export const runRow = (r, { owner = false, cost = true } = {}) => h("tr", { class: "link", onClick: () => (location.hash = `#/runs/${r.runId}`) },
   h("td", {}, r.next ? nextStatus(r.next) : null),
-  h("td", {}, h("b", {}, r.flow), what(r) ? h("div", { class: "muted mono", style: { fontSize: "11.5px" } }, what(r)) : null),
+  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), what(r) ? h("div", { class: "muted mono", style: { fontSize: "11.5px" } }, what(r)) : null),
   h("td", { class: "task", title: r.task }, r.task || h("span", { class: "muted" }, "—"),
     r.next ? h("div", { class: "muted", title: r.next.text }, r.next.text) : null,
     r.next && whenParts(r.next).length ? h("div", { class: "next-parts timing" }, whenParts(r.next)) : null),
@@ -65,9 +65,9 @@ export async function renderRunsList(main, { admin = true } = {}) {
     if (!main.isConnected) return;
     const yours = needsYou(runs);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
-    const table = (list) => h("table", { class: "table" },
+    const table = (list) => h("div", { class: "table-box" }, h("table", { class: "table" },
       h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
-      h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin }))));
+      h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin })))));
     const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", onChange: (e) => { owner = e.target.value; draw(); } },
       h("option", { value: "" }, "All owners"),
       owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;

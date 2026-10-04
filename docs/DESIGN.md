@@ -337,7 +337,8 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   accounts are never dropped for room. A restart clears waits and locks.
 - **Two roles.** An **admin** makes flows, watchers and settings and sees everything. A **user**
   runs the flows an admin published, on their own repositories, and sees only their own runs —
-  no costs, no setup.
+  no costs, no setup. Each role has its own display (`/` for admins, `/user/` for users); the
+  server still decides what a call may do.
 - **Published flows.** An admin decides per flow which variables a user may fill in, which are
   shown read-only and which stay hidden.
 - **Repositories per user**, each with its own way of signing in. Tokens are stored encrypted,
@@ -347,8 +348,6 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
 - An audit log records sign-ins, account changes and what signed-in people do in the web interface. Lines older than `audit.retention_days` (default 180) are removed by the server, in a chunked scan under `auth.lock`.
-
-![The user display: only Runs and My repositories](images/user-home.png)
 
 ---
 
@@ -425,6 +424,10 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 | Settings | Budget, network, safety, notifications |
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
+
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js`; the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and no admin module; a test checks this. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+
+Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 
 ---
 

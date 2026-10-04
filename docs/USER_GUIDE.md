@@ -90,11 +90,11 @@ admin for a new one.
 | **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
 
-An account with the role `user` sees only **Refinement**, **Runs** and **My repositories**:
+An account with the role `user` works on its own display at `/user/`, with **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Runs, one run, My repositories, Refinement or one session, and dropped otherwise. An admin who opens `/user/` is sent to `/`.
 
-![What a user sees: Runs and My repositories](images/user-home.png)
+**Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box.
 
-**Under the top bar** is the health line. It says "All good", or names what is wrong with the
+**Under the top bar of the admin page** (not on the user display) is the health line. It says "All good", or names what is wrong with the
 Foundry itself, and on the right when each repository was last checked.
 
 #### The day in four steps
@@ -1480,7 +1480,7 @@ that is gone shows as "deleted user". A detail, such as `user -> admin` for a ro
 - The page shows the newest 500 lines. When there are more, it says so: narrow the filters or use **Export CSV**.
 - An empty result says "No entries." An error, such as a log that cannot be read, shows on the page.
 
-An account with the role `user` never sees the link or the page; `#/audit` goes to `#/runs`.
+An account with the role `user` never sees the link or the page; a user who opens `/#/audit` lands on My runs.
 
 **Reading the audit log over the API.** Admins only; a user gets 403. `GET /api/audit` answers `{entries, more}`. An `actor` is `{type: "cli"}`, `{type: "anonymous"}` or `{type: "account", id, name}`; a `target` is an account in the same form, `{type: "text", text}`, or `null`. Account lines show `result: "ok"` and the account as target; a role change has `detail` like `user -> admin`, and a block that stops work has `stop work`. `name` is the current name, or `deleted user`; the file keeps ids only. Filters: `user` (the account id exactly as stored; it matches the actor or the target account), `action`, `from` and `to` (ISO times with seconds, such as `2026-10-02T09:00:00Z`; both are included). A `+` in an offset must be written `%2B`. An unknown, empty or repeated filter, a `user` that is not an id, an `action` that is not an audit action, a bad time, or `from` after `to` answers 400. At most 500 entries come back, newest first by the order of the lines; when `more` is true, narrow the filters or use the export. `GET /api/audit/export` takes the same filters and downloads every matching line as `audit.csv`, in the order of the file (oldest first), with the header row `time,actor,actor_name,action,target,target_name,result,detail`. A cell that starts with `=`, `+`, `-` or `@` gets a `'` in front. Stored secrets are hidden as in every other answer; a CSV row that would show one is hidden whole. Lines that do not parse are left out. An unreadable file answers a plain 500, and the log says `audit: audit.jsonl unreadable`. A download that breaks half-way is cut off, not ended early.
 
@@ -1529,7 +1529,8 @@ not in the table below answers 404, also for an admin.
 - **An admin** may make every call and sees every page.
 - **A user** sees only the **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
   table. Every other call answers `403 {"error":"not allowed for your role"}`. Pages other than
-  Refinement, Runs and My repositories are not drawn; the address bar goes back to `#/runs`.
+  Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
+  opens `/` is sent to `/user/`, and any other address there goes to `#/runs`.
 
 **What a user does not see.** The server cuts these from every answer a user gets, so the page
 cannot show them: costs, tokens, budgets and prices; the model, provider and agent; step output

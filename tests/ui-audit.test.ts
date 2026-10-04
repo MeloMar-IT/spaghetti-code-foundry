@@ -336,7 +336,7 @@ describe("wiring", () => {
     expect(read("index.html")).toContain('<a href="#/audit" data-nav="audit">Audit</a>');
     expect(read("app.js")).toContain('from "./audit.js"');
     expect(read("app.js")).toContain('section === "audit"');
-    expect(read("style.css")).toContain('.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"]):not([data-nav="refinement"])');
+    expect(read("user/index.html")).not.toContain("#/audit");
   });
   it("api builds the queries", async () => {
     await api.audit({ user: "a b", action: "sign-in" });
