@@ -434,7 +434,10 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 
 ## 17. Where it is going
 
-- **Refinement:** help people write good stories before they reach the backlog, in the role of
+- **Refinement:** (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
+  queues the shipped flow `refine-brief` with source `refinement <session id>`, the only way in;
+  the scheduler's `onFinished` hook and every session read settle the end of the run into the
+  session, which keeps the latest brief and the current run.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
 - **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has

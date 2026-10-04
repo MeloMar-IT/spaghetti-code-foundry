@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { isRefinementRun } from "../auth/run-owner.js";
 import type { MonitorConfig, WatcherConfig } from "../config.js";
 import { pidAlive, runFile, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, GITHUB_LIMIT_RE } from "../errors.js";
@@ -291,7 +292,9 @@ export class Monitor {
     const resumedFrom = t - config.restart_loop.within_minutes * 60_000;
     const failedFrom = t - Math.max(config.unexplained_failure.within_hours, config.same_step_failing.within_hours, 1) * HOUR;
     const recentFrom = t - Math.max(config.develop_red.within_hours, config.slow_step.within_hours) * HOUR;
+    // The architect's reads are not judged: a failure shows in the session only.
     const picked = briefs
+      .filter((b) => !isRefinementRun(b.source))
       .filter((b) => written(b) >= resumedFrom || (b.status === "failed" && Date.parse(b.finishedAt ?? b.startedAt) >= failedFrom) || written(b) >= recentFrom)
       .sort((a, b) => written(b) - written(a))
       .slice(0, MAX_RUNS);

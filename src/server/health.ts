@@ -3,6 +3,7 @@ import { AGENTS } from "../flow/schema.js";
 import { briefFailure, FAILURE_SHOWN_MS, LIMIT_SHOWN_MS, nextStep, type NextStep } from "../next-step.js";
 import type { UpdateView } from "../self-update.js";
 import { supersededRuns } from "../stats.js";
+import { runOrigin } from "../your-turn.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
@@ -101,7 +102,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
 
   const next = nextFor(ctx, runs);
   problems.push(...runs
-    .filter((r) => r.status === "failed" && !replaced.has(r.runId) && t - ended(r) <= FAILURE_SHOWN_MS)
+    .filter((r) => r.status === "failed" && runOrigin(r.source) !== "refinement" && !replaced.has(r.runId) && t - ended(r) <= FAILURE_SHOWN_MS)
     .map(next)
     .filter((n) => n.kind === "failed" && n.cause === "factory")
     .slice(0, MAX_FAILURES)

@@ -6,6 +6,7 @@ import type { Config } from "./config.js";
 import type { RunSummary } from "./engine/state.js";
 import { releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "./next-step.js";
 import { labelNames } from "./queue/watcher.js";
+import { runOrigin } from "./your-turn.js";
 
 export function runMessage(config: Config, s: RunSummary): string {
   const what = s.vars.issue ? `${s.vars.github_repo}#${s.vars.issue}` : s.task.split("\n")[0] || s.flow;
@@ -193,6 +194,7 @@ export async function notifyRun(config: Config, s: RunSummary): Promise<void> {
   if (process.env.FACTORY_NO_NOTIFY === "1") return;
   const n = config.notify;
   if (s.status === "running" || !n.command || !n.on.includes(s.status)) return;
+  if (runOrigin(s.source) === "refinement") return; // an architect read: its session shows how it went
   const msg = runMessage(config, s);
   await new Promise((r) => {
     const child = spawn("/bin/sh", ["-c", n.command!], {

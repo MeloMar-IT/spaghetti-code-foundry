@@ -71,7 +71,7 @@ export function candidatesFor(ctx: ApiContext, now = new Date()): Candidate[] {
     const recent = now.getTime() - Date.parse(b.finishedAt ?? b.startedAt) <= CANDIDATE_RECENT_MS;
     if (!(b.status === "waiting" || ((b.status === "failed" || b.status === "stopped") && recent))) continue;
     const origin = runOrigin(b.source);
-    if (origin === "eval") continue;
+    if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue;
     const run = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
     if (!run) continue;

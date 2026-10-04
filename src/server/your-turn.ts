@@ -134,7 +134,7 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     if (!(b.status === "waiting" || ((b.status === "failed" || b.status === "stopped") && recent))) continue;
     if (covered.has(b.runId)) continue;
     const origin = runOrigin(b.source);
-    if (origin === "eval") continue;
+    if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
     const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
     if (!run) continue;

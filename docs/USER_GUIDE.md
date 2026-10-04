@@ -1560,7 +1560,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
-| `POST /api/runs/:id/resume` | yes | own runs | resume a run |
+| `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session) |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
@@ -1598,10 +1598,11 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
-| `GET /api/refinement/:id` | yes | yes | read your refinement session (an admin: any session) |
+| `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state (an admin: any session) |
 | `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
-| `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days |
+| `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
+| `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
 
 **What comes later.** Runs that use a user's stored credentials or a repository's token, changing
 your own password in the UI, a connection test for repositories, runs that use a deploy key, the GitHub App, and pages for users (starting runs).
@@ -2012,7 +2013,7 @@ The folder of your clone can keep its name.
 
 ## 12. Refinement
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. For now the page keeps the idea, its state and a log. Nothing on this page calls an AI agent or GitHub yet.
+**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. The server can start the architect from a session (see below).
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
@@ -2032,11 +2033,13 @@ The folder of your clone can keep its name.
 
 ### The architect's context brief
 
-The flow `refine-brief` lets the architect read a repository and its open issues and write a **context brief** for an idea, so that refining starts from the code and the backlog instead of guesses. The Refinement page does not start it yet; for now run it by hand:
+The flow `refine-brief` lets the architect read a repository and its open issues and write a **context brief** for an idea, so that refining starts from the code and the backlog instead of guesses. You can run it by hand:
 
 ```
 scf run refine-brief --task "your idea" --var github_repo=owner/name
 ```
+
+**From a session.** The owner of a session asks the architect with `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
 
 **What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
 

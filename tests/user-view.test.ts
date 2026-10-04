@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
-import { USER_ERROR, hidePaths, movedText, userError, userLogLine, userRecord, userRun } from "../src/server/user-view.js";
+import { USER_ERROR, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -61,6 +61,15 @@ describe("userRun", () => {
     expect(u.state).toEqual({ next: "sh" });
     expect(keys(u.waiting!)).toEqual(["message", "since", "stepId"]);
     expect(JSON.stringify(u)).not.toMatch(/SECRET|opus|claude|cost|tokens|sessionId|logFile/i);
+  });
+
+  it("names the refinement session of an architect run, only for a valid source", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(refinementSessionOf(`refinement ${id}`)).toBe(id);
+    for (const bad of [undefined, "ui", "refinement ", "refinement x", `refinement ${id} extra`, `watcher refinement ${id}`]) expect(refinementSessionOf(bad)).toBeUndefined();
+    expect(userRun({ ...full, source: `refinement ${id}` } as unknown as RunSummary).refinement).toBe(id);
+    expect(keys(userRun({ ...full, source: `refinement ${id}` } as unknown as RunSummary))).toContain("refinement");
+    expect(keys(userRun({ ...full, source: "refinement nope" } as unknown as RunSummary))).not.toContain("refinement");
   });
 
   it("keeps fixed, input, github_repo and issue; drops hidden and unlisted variables", () => {

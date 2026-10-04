@@ -3,6 +3,8 @@ import { listRepos, ownsRepo } from "../auth/repos.js";
 import { tryParseRepoUrl } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
+import { auditAction } from "../auth/audit.js";
+import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps } from "../refinement/architect.js";
 import {
   DROP_KEEP_MS,
   RefinementError,
@@ -31,6 +33,8 @@ const STATUS: Record<RefinementErrorCode, number> = {
   "not-found": 404,
   "not-owner": 403,
   "bad-state": 409,
+  busy: 409,
+  "no-repo": 409,
 };
 
 /** How often the server removes dropped sessions that are past their 30 days, in ms. */
@@ -50,6 +54,8 @@ function guarded<T>(ctx: ApiContext, fn: () => T): T {
   }
 }
 
+const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog });
+
 /** The GitHub repositories of an account, as the names a new session takes. */
 function githubNames(userId: string): string[] {
   const out: string[] = [];
@@ -61,7 +67,8 @@ function githubNames(userId: string): string[] {
 }
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
-function view(s: Session, viewer: User) {
+function view(ctx: ApiContext, s: Session, viewer: User) {
+  const repoAvailable = ownsRepo(s.owner, s.repo);
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -72,11 +79,15 @@ function view(s: Session, viewer: User) {
   return {
     id: s.id,
     repo: s.repo,
-    repoAvailable: ownsRepo(s.owner, s.repo),
+    repoAvailable,
     title: s.title,
     idea: s.idea,
     state: s.state,
     drafts: s.drafts,
+    architect: architectView(deps(ctx), s),
+    // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
+    ...(s.brief && repoAvailable ? { brief: s.brief } : {}),
+    ...(s.brief && !repoAvailable ? { briefHidden: true } : {}),
     log: s.log.map((l) => ({ at: l.at, what: l.what, who: who(l.by), ...(l.detail !== undefined ? { detail: l.detail } : {}) })),
     created: s.created,
     updated: s.updated,
@@ -140,19 +151,39 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
-    const s = guarded(ctx, () => view(createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title }), user));
+    const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title }), user));
     return send(res, 201, s), true;
   }
-  if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(find(seg[1]!), user))), true;
+  /** The session when the caller may see it, after the end of its architect run was taken in. */
+  const settled = (id: string) => {
+    find(id);
+    return settleSession(deps(ctx), id) ?? find(id);
+  };
+  if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(ctx, settled(seg[1]!), user))), true;
   if (seg.length === 2 && method === "PUT") {
     const body = await readJson(req);
-    return send(res, 200, guarded(ctx, () => view(renameSession(actor, seg[1]!, body.title), user))), true;
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(renameSession(actor, seg[1]!, body.title).id), user))), true;
   }
   if (seg.length === 3 && seg[2] === "drop" && method === "POST") {
-    return send(res, 200, guarded(ctx, () => view(dropSession(actor, seg[1]!), user))), true;
+    return send(res, 200, guarded(ctx, () => {
+      // Cancel first: if the process stops after this, a retry of the drop still works and the read is already gone.
+      const id = find(seg[1]!).id;
+      const runId = getSession(id)?.architect?.runId;
+      if (stopArchitect(deps(ctx), id) && runId) auditAction(ctx.diagLog, user.id, "run-cancel", runId);
+      dropSession(actor, id);
+      return view(ctx, settled(id), user);
+    })), true;
   }
   if (seg.length === 3 && seg[2] === "restore" && method === "POST") {
-    return send(res, 200, guarded(ctx, () => view(restoreSession(actor, seg[1]!), user))), true;
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(restoreSession(actor, seg[1]!).id), user))), true;
+  }
+  if (seg.length === 3 && seg[2] === "architect" && method === "POST") {
+    const body = guarded(ctx, () => {
+      const r = askArchitect(deps(ctx), actor, seg[1]!);
+      auditAction(ctx.diagLog, user.id, r.resumed ? "run-resume" : "run-start", r.runId);
+      return view(ctx, settled(seg[1]!), user);
+    });
+    return send(res, 202, body), true;
   }
   return false;
 };

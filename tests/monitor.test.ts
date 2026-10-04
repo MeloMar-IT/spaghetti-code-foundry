@@ -67,6 +67,16 @@ describe("monitor", () => {
     expect(loadFindings(file).findings.map((f) => f.fingerprint)).toContain("github-limit|core");
   });
 
+  it("does not judge the architect's failed reads, but judges the same runs from the UI", async () => {
+    const limited = { reason: 'step "x" failed: internal error: boom', history: [{ id: "x", type: "shell", visit: 1, ok: false, output: "API rate limit exceeded", error: "exit code 1", startedAt: ago(MIN), durationMs: 1, logFile: "x" }] as never };
+    for (let i = 0; i < 3; i++) makeRun({ ...limited, source: "refinement 11111111-1111-4111-8111-111111111111" });
+    await monitor({ serverLog: () => [] }).tick();
+    expect(loadFindings(file).findings).toEqual([]);
+    for (let i = 0; i < 3; i++) makeRun({ ...limited, source: "ui" });
+    await monitor({ serverLog: () => [] }).tick();
+    expect(loadFindings(file).findings.map((f) => f.fingerprint)).toContain("github-limit|core");
+  });
+
   it("shares one check between two calls at once", async () => {
     loop();
     const m = monitor();

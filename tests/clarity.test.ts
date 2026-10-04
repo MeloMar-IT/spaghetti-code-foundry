@@ -334,6 +334,7 @@ describe("the candidates", () => {
 
   it("leave out an eval run, an old failed run, a stale watcher while restarting, and a waiting watcher run before the watcher's first good check", () => {
     expect(ids({ config: c0, runs: [handFailed("e1", 1 / 24, { source: "eval smoke" })], tracked: [] })).toEqual([]);
+    expect(ids({ config: c0, runs: [handFailed("rf", 1 / 24, { source: "refinement 11111111-1111-4111-8111-111111111111" })], tracked: [] })).toEqual([]);
     expect(ids({ config: c0, runs: [handFailed("h2", 2)], tracked: [] })).toEqual([]);
     const stale = { config: c0, runs: [], tracked: [track(c0, [], [], { lastTick: ago(5) })] };
     expect(ids(stale)).toHaveLength(1);

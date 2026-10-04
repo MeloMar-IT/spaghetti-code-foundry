@@ -184,6 +184,12 @@ describe("health()", () => {
       expect(h.problems.map((p) => p.runId)).toEqual(runs.slice(0, 5).map((r) => r.runId));
     });
 
+    it("leaves out a failed read of the architect: its session shows it", () => {
+      const read = factoryFailure({ source: "refinement 11111111-1111-4111-8111-111111111111" });
+      expect(kinds(health(ctxOf({ runs: [read] }), NOW))).toEqual([]);
+      expect(health(ctxOf({ runs: [read, factoryFailure()] }), NOW).problems).toHaveLength(1);
+    });
+
     it("leaves out old, replaced, code and interrupted failures", () => {
       const oldRun = factoryFailure({ startedAt: ago(8 * DAY + MIN), finishedAt: ago(8 * DAY) });
       const first = factoryFailure({ vars: { github_repo: "acme/app", issue: "9" }, startedAt: ago(30 * MIN) });
