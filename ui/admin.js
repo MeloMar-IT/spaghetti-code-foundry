@@ -319,11 +319,13 @@ export async function renderSettings(main) {
   listenSel.value = net.listen;
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
+  const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
   const err = h("div");
 
   const save = async () => {
     const next = {
       ...c,
+      audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
       cost_limits: limits.el.checked,
@@ -374,7 +376,8 @@ export async function renderSettings(main) {
       selfUpdate.row,
       f("Repository the Foundry may update from", selfRepo, "owner/name. Updates come only when the checkout's origin is this repository. Needs one stop and start of the Foundry after upgrading."),
       sbxClaude.row,
-      f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted.")),
+      f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted."),
+      f("Keep the audit log for … days", auditDays, "1 to 3650. Older lines are removed when the server starts and once a day.")),
     section("Notifications",
       macos.row,
       h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } },

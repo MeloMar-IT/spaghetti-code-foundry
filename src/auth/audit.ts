@@ -1,8 +1,9 @@
-import { createReadStream, lstatSync } from "node:fs";
+import { isUtf8 } from "node:buffer";
+import { closeSync, createReadStream, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { basename, join } from "node:path";
 import { z } from "zod";
-import { dataHome, openAppendLocked, StoreError, withAuthLock } from "./store.js";
+import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock } from "./store.js";
 
 /**
  * The audit log: one JSON line per account change or event (a sign-in), in `audit.jsonl` (not `.json`, so the
@@ -284,6 +285,171 @@ export async function* scanAudit(filter: AuditFilter = {}): AsyncGenerator<Audit
     }
     yield r;
   }
+}
+
+// ---- clean-up ----------------------------------------------------------------------------------------
+
+/** How often the server removes old lines: one day. */
+export const AUDIT_SWEEP_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const PURGE_CHUNK = 64 * 1024;
+
+/**
+ * True when the line (without its newline) is one a reader can read and its time is before `before`. Bytes that are
+ * not valid UTF-8 never count: the reader would turn them into U+FFFD, but they are not ours to remove.
+ */
+function oldLine(line: Buffer, before: number): boolean {
+  if (!isUtf8(line)) return false;
+  const text = line.toString("utf8");
+  if (!text.trim()) return false;
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  const parsed = AuditEntrySchema.safeParse(json);
+  if (!parsed.success) return false;
+  const t = Date.parse(parsed.data.time);
+  return !Number.isNaN(t) && t < before;
+}
+
+interface Piece {
+  /** The bytes of the line, with its newline when it has one. */
+  bytes: Buffer;
+  old: boolean;
+}
+
+/**
+ * The lines of a file, in order, each with the bytes to keep and whether it is old. `read(buf, pos)` fills `buf` from
+ * `pos` and returns the bytes read (0 at the end). A line longer than MAX_LINE is never old, as the reader skips it.
+ */
+function* purgePieces(read: (buf: Buffer, pos: number) => number, before: number, chunk: number): Generator<Piece> {
+  let parts: Buffer[] = [];
+  let size = 0; // bytes of the line so far, without the newline
+  let passing = false; // the line is over MAX_LINE: its bytes go out at once
+  for (let pos = 0; ; ) {
+    const buf = Buffer.allocUnsafe(chunk); // a new one each time: `parts` keeps views of it
+    const n = read(buf, pos);
+    if (n === 0) break;
+    pos += n;
+    const data = buf.subarray(0, n);
+    for (let start = 0; start < n; ) {
+      const nl = data.indexOf(10, start);
+      const end = nl === -1 ? n : nl;
+      const next = nl === -1 ? n : nl + 1;
+      if (!passing && size + (end - start) > MAX_LINE) {
+        passing = true;
+        for (const p of parts) yield { bytes: p, old: false };
+        parts = [];
+      }
+      if (passing) yield { bytes: data.subarray(start, next), old: false };
+      else {
+        parts.push(data.subarray(start, next));
+        size += end - start;
+      }
+      if (nl !== -1) {
+        if (!passing) {
+          const line = Buffer.concat(parts);
+          yield { bytes: line, old: oldLine(line.subarray(0, line.length - 1), before) };
+        }
+        parts = [];
+        size = 0;
+        passing = false;
+      }
+      start = next;
+    }
+  }
+  if (parts.length > 0) {
+    const line = Buffer.concat(parts); // a last line without a newline
+    yield { bytes: line, old: oldLine(line, before) };
+  }
+}
+
+/**
+ * Removes the lines older than `days` days and returns how many. Only a line a reader can read goes; every other byte
+ * stays, in order. The file is read in chunks, replaced in one step, and not touched when no line goes; a missing file
+ * stays missing. Throws a StoreError. The short lock wait keeps a busy lock from holding the event loop; the caller
+ * tries again later. `chunk` is for tests.
+ */
+export function purgeAudit(days: number, opts: { now?: number; waitMs?: number; chunk?: number } = {}): number {
+  if (!Number.isInteger(days) || days < 1) throw new Error("audit: the days to keep must be a whole number from 1");
+  const now = opts.now ?? Date.now();
+  const waitMs = opts.waitMs ?? 500;
+  const chunk = opts.chunk ?? PURGE_CHUNK;
+  const file = auditPath();
+  try {
+    lstatSync(file);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    // anything else is found again under the lock
+  }
+  const before = now - days * DAY_MS;
+  const unreadable = () => new StoreError("unreadable", file, "cannot be read");
+  return withAuthLock(() => {
+    let fd: number;
+    try {
+      if (!lstatSync(file).isFile()) throw unreadable();
+      fd = openSync(file, "r");
+    } catch (e) {
+      if (e instanceof StoreError) throw e;
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return 0;
+      throw unreadable();
+    }
+    try {
+      try {
+        if (!fstatSync(fd).isFile()) throw unreadable();
+      } catch {
+        throw unreadable();
+      }
+      const read = (buf: Buffer, pos: number) => {
+        try {
+          return readSync(fd, buf, 0, buf.length, pos);
+        } catch {
+          throw unreadable();
+        }
+      };
+      const pieces = () => purgePieces(read, before, chunk);
+      let any = false;
+      for (const p of pieces()) {
+        if (p.old) {
+          any = true;
+          break;
+        }
+      }
+      if (!any) return 0;
+      let removed = 0;
+      replaceFileLocked(file, (write) => {
+        for (const p of pieces()) {
+          if (p.old) removed++;
+          else write(p.bytes);
+        }
+      });
+      return removed;
+    } finally {
+      closeSync(fd);
+    }
+  }, waitMs);
+}
+
+/**
+ * The clean-up for the timer. Best effort: never throws. `days` is read on every round. A problem is named in `log`
+ * (fixed words: a file name and the kind); the next round tries again.
+ */
+export function auditSweeper(days: () => number, log: ((msg: string) => void) | undefined): () => void {
+  return () => {
+    try {
+      const d = days();
+      const n = purgeAudit(d);
+      if (n > 0) log?.(`audit: removed ${n} line(s) older than ${d} days`);
+    } catch (e) {
+      try {
+        log?.(e instanceof StoreError ? `audit: ${basename(e.file)} ${e.kind} (clean-up)` : "audit: audit.jsonl unexpected (clean-up)");
+      } catch {
+        /* the log itself must not stop the server */
+      }
+    }
+  };
 }
 
 /** The last `limit` matches, newest first (by the order of the lines), and whether there were more. */

@@ -1,5 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ConfigSchema, loadConfig, saveConfig } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { outputEnvName, render } from "../src/engine/template.js";
 
@@ -59,5 +62,34 @@ describe("template", () => {
 
   it("builds env names", () => {
     expect(outputEnvName("run-tests")).toBe("FACTORY_OUT_RUN_TESTS");
+  });
+});
+
+describe("config: audit.retention_days", () => {
+  it("defaults to 180", () => {
+    expect(ConfigSchema.parse({}).audit).toEqual({ retention_days: 180 });
+    expect(ConfigSchema.parse({ audit: {} }).audit).toEqual({ retention_days: 180 });
+  });
+
+  it("accepts 1 to 3650 whole numbers only", () => {
+    for (const n of [1, 30, 3650]) expect(ConfigSchema.parse({ audit: { retention_days: n } }).audit.retention_days).toBe(n);
+    for (const bad of [0, 3651, 1.5, -1, "30", null]) expect(ConfigSchema.safeParse({ audit: { retention_days: bad } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ audit: { retention_days: 30, extra: 1 } }).success).toBe(false);
+  });
+
+  it("loads a config.yaml without the key unchanged, and saves and loads the key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    try {
+      const path = join(dir, "config.yaml");
+      writeFileSync(path, "concurrency: 3\n");
+      const c = loadConfig(path);
+      expect(c.concurrency).toBe(3);
+      expect(c.audit.retention_days).toBe(180);
+      expect(readFileSync(path, "utf8")).toBe("concurrency: 3\n");
+      saveConfig({ audit: { retention_days: 30 } }, path);
+      expect(loadConfig(path).audit.retention_days).toBe(30);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
