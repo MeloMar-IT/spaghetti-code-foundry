@@ -90,7 +90,13 @@ admin for a new one.
 | **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
 
-An account with the role `user` works on its own display at `/user/`, with **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Runs, one run, My repositories, Refinement or one session, and dropped otherwise. An admin who opens `/user/` is sent to `/`.
+An account with the role `user` works on its own display at `/user/`, with **Start work**, **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
+
+**Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
+
+**My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes every 30 seconds. With no runs it says so and offers **Start work**.
+
+**The run page.** It shows the status, **Now** (what happens next, and the step the run is at, with what that step does), the task, the repository, the branch and the flow version. Three parts: **Log** (live), **Steps** (the finished steps; they cannot be opened) and **Changes** (what the run changed, or a line that there is nothing). Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry** is for a run that failed, stopped or was cancelled, and continues at the step where it stopped. **Cancel** is for a run that is running, waiting or queued, and asks first; a run that is queued can only be cancelled. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. Resume, "Retry from step…", costs and raw details belong to the admin display.
 
 **Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box.
 
@@ -197,6 +203,8 @@ The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem",
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
 
 ### The runs list
+
+A run of the architect has the mark **refinement**; click it to open its session.
 
 ![Runs](images/runs.png)
 
@@ -464,6 +472,13 @@ current format.
 | **Parallel** | Runs several agent/shell steps at once; succeeds when all succeed |
 | **Sub-flow** | Runs another flow inline, in the same workspace |
 
+**Repository access (shell steps).** Tick **Needs repository access** (`repo_access: true`) on a
+shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
+helper script that does. Never tick it on a step that runs tests or the build, and not together
+with **Run in Docker** or in a parallel step. It changes nothing today, and the built-in flows and the blocks of the library are
+already marked. **Flows you wrote yourself that call `gh` or push will fail for users (not admins)
+without the flag once the repository's own credentials are used, so mark those steps now.**
+
 ### Controlling the path
 
 Steps run top to bottom. Each step can change that:
@@ -543,7 +558,9 @@ Blocks are ready-made groups of steps: pull a GitHub issue, plan, code, run test
 loop, code review, cross-review by Codex, commit, push, open a PR, wait for CI, secret scan,
 Jira and Linear, and more. The block **Architect (charter)** holds the architect's role as one
 text; the architect steps of Refinement take it from there. Insert one with **+ From library** in the editor. Turn any step into
-your own block with **☆ Save as block**.
+your own block with **☆ Save as block**. Blocks that call `gh` or the remote come with **Needs
+repository access** ticked. A flow built from blocks before this version has copies without it, so
+tick it there or insert the block again.
 
 ---
 
@@ -1300,6 +1317,8 @@ it; paused runs continue the next day. Flows can also cap one run (`limits.max_c
   reviews. This is the one exception to **Protected branches**: only the merge-to-`main` step of
   the unchanged built-in flow may push `main`; flows you write never can. Stored as
   `hotfix_to_main` in `config.yaml` (an older build rejects that key).
+- **Repository access** — shell steps that call `gh` or the remote carry `repo_access: true`, so
+  only they will get the repository's credential (see [Step types](#step-types)).
 - **Self-update** — off by default. When on, the Foundry builds and tests new commits of `main` of
   the repository you name and restarts on them without a person (see [Self-update](#self-update)).
   Stored as `self_update` in `config.yaml` (an older build rejects that key).
@@ -1561,9 +1580,9 @@ Every account has a role, `admin` or `user`. The server checks it on every call.
 not in the table below answers 404, also for an admin.
 
 - **An admin** may make every call and sees every page.
-- **A user** sees only the **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
+- **A user** sees only the **Start work**, **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
   table. Every other call answers `403 {"error":"not allowed for your role"}`. Pages other than
-  Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
+  Start work, Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
   opens `/` is sent to `/user/`, and any other address there goes to `#/runs`.
 
 **What a user does not see.** The server cuts these from every answer a user gets, so the page
@@ -1687,7 +1706,8 @@ A deploy-key record also has `credentialId` and `publicKey`. It never holds a se
 one). These calls manage it:
 
 - `GET /api/repos` lists your records, with the `publicKey` of a deploy key and the `installationId` of a
-  GitHub App record (a record with the method `github-app` has no credential).
+  GitHub App record (a record with the method `github-app` has no credential). A GitHub record also has
+  `github`, its `owner/name` in lower case without `.git`; so do the answers of adding and changing a record.
 - `GET /api/repos/methods` answers `{methods, githubApp}`: the methods you may choose (`none` only for an admin,
   `github-app` only when the app is set up) and `githubApp: {available: true, installUrl}` or
   `{available: false}`. It never shows the app ID or the key path.
@@ -1736,7 +1756,8 @@ editor"). Built-in flows are not published; save a copy and publish it. After an
 see no flows until you publish some. An unpublished flow answers 404.
 
 `GET /api/flows` shows a user the published, valid flows as `{name, title, description,
-version, fields}`. `fields` lists the variables that are *fixed* (shown with their value) or
+version, usesTask, fields}`. `usesTask` is true when a step reads the task (`{{task}}`,
+`FACTORY_TASK` or `SCF_TASK`); the Start work page shows a Task box only when it is not false. `fields` lists the variables that are *fixed* (shown with their value) or
 *user fills in* (with label, help text, default and whether it is required); hidden variables
 are not listed. In `vars` a user may set only the inputs (403 `you cannot set the var "<name>"`
 for any other). A required input that is empty gives 400 `fill in "<label>"`. Hidden and fixed
@@ -2269,13 +2290,13 @@ The folder of your clone can keep its name.
 
 ## 12. Refinement
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. The server can start the architect from a session (see below).
+**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log and the architect's brief. On the session page you can ask the architect to look at the code (see below).
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
 
-**The session page.** It shows the idea, the story drafts ("No story drafts yet." for now) and the log: who did what, and when. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2295,7 +2316,7 @@ The flow `refine-brief` lets the architect read a repository and its open issues
 scf run refine-brief --task "your idea" --var github_repo=owner/name
 ```
 
-**From a session.** The owner of a session asks the architect with `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
+**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
 
 **What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
 

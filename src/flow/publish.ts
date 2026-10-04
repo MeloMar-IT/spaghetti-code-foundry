@@ -17,12 +17,25 @@ export interface UserFlow {
   title: string;
   description: string;
   version: number;
+  /** True when a step reads the task. */
+  usesTask: boolean;
   fields: UserField[];
 }
 
 export type UserVars = { ok: true; vars: Record<string, string> } | { ok: false; status: 400 | 403; error: string };
 
 export const isPublished = (flow: Flow): boolean => flow.publish?.enabled === true;
+
+const TASK_RE = /\{\{\s*task\s*\}\}|\b(?:FACTORY|SCF)_TASK\b/;
+
+/** True when a step reads the task: {{task}} in a prompt or message, or FACTORY_TASK / SCF_TASK. */
+export function usesTask(flow: Flow): boolean {
+  return flow.steps.some((s) => {
+    if (s.type === "flow") return true;
+    const texts = s.type === "claude" ? [s.prompt, s.system_prompt] : s.type === "shell" ? [s.run] : s.type === "approval" ? [s.message] : [];
+    return texts.some((t) => t !== undefined && TASK_RE.test(t));
+  });
+}
 
 /** The user's view of a flow. `base` holds the values the flow and the folder give, before the user fills in anything. */
 export function userFlow(name: string, flow: Flow, base: Record<string, string>): UserFlow {
@@ -44,6 +57,7 @@ export function userFlow(name: string, flow: Flow, base: Record<string, string>)
     title: flow.publish?.name ?? flow.name,
     description: flow.publish?.description ?? flow.description ?? "",
     version: flow.publish?.version ?? 1,
+    usesTask: usesTask(flow),
     fields,
   };
 }

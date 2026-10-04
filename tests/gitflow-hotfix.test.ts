@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -84,7 +84,10 @@ describe("gitflow hotfix path", { timeout: 240_000 }, () => {
     expect(out(r, "hotfix_branch")).toContain("BRANCH: hotfix/5-add-a-feature (new, from main)");
     expect(branches()[0]).toBe("main"); // the tests before the change ran on main
     const h = ids(r);
-    expect(h).toEqual(expect.arrayContaining(["baseline_main", "hotfix_branch", "merge_main", "test_main", "push_main", "merge_back", "test_back", "push_back", "hotfix_done", "report"]));
+    expect(h.indexOf("fetch_main")).toBeGreaterThan(-1);
+    expect(h.indexOf("fetch_main")).toBeLessThan(h.indexOf("baseline_main"));
+    expect(h.indexOf("baseline_main")).toBeLessThan(h.indexOf("hotfix_branch"));
+    expect(h).toEqual(expect.arrayContaining(["fetch_main", "baseline_main", "hotfix_branch", "merge_main", "test_main", "push_main", "merge_back", "test_back", "push_back", "hotfix_done", "report"]));
     for (const no of ["baseline_tests", "merge_develop", "push_develop"]) expect(h).not.toContain(no);
     expect(h.indexOf("test_back")).toBeLessThan(h.indexOf("push_back"));
     expect(gh.remoteGit("log", "-1", "--format=%s", "main").trim()).toBe("Merge #5: Add a feature (hotfix/5-add-a-feature)");
@@ -213,7 +216,7 @@ describe("gitflow hotfix path", { timeout: 240_000 }, () => {
     const r = await run("5");
     expect(r.status, r.reason).toBe("succeeded");
     expect(ids(r).slice(0, 3)).toEqual(["pull_ticket", "feature_branch", "baseline_tests"]);
-    for (const no of ["baseline_main", "hotfix_branch", "merge_main", "push_main", "merge_back", "hotfix_done"]) expect(ids(r)).not.toContain(no);
+    for (const no of ["fetch_main", "baseline_main", "hotfix_branch", "merge_main", "push_main", "merge_back", "hotfix_done"]) expect(ids(r)).not.toContain(no);
     expect(out(r, "feature_branch")).toContain("BRANCH: feature/5-add-a-feature (new, from develop)");
     expect(gh.remoteGit("log", "--format=%s", "develop")).toMatch(/^Merge #5: Add a feature \(feature\/5-add-a-feature\)/);
     expect(rev("main")).toBe(mainBefore);
@@ -275,6 +278,18 @@ describe("gitflow hotfix path", { timeout: 240_000 }, () => {
     expect(r.waiting?.stepId).toBe("approve_plan");
     expect(gh.ghLog()).toContain("This is a hotfix: after the reviews it goes straight to `main`");
     expect(ids(r)).not.toContain("implement");
+  });
+
+  it("23. main cannot be fetched: the run fails at fetch_main with the reason", async () => {
+    process.env.FAKE_RISK = "90";
+    const r = await run("5");
+    expect(r.status).toBe("waiting");
+    renameSync(gh.remote, `${gh.remote}.gone`);
+    const bad = await resume(r, "fetch_main");
+    expect(bad.status).toBe("failed");
+    expect(bad.reason).toContain("fetch_main");
+    expect(ids(bad).at(-1)).toBe("fetch_main");
+    expect(out(bad, "fetch_main")).toContain("cannot fetch from GitHub");
   });
 
   it("13. when GitHub only accepts pull requests on main, the run fails with a clear message", async () => {

@@ -146,6 +146,22 @@ Leave `model` out to use the flow default / the user's routing rules.
 
 The output is stdout + stderr (long output is trimmed to the end).
 
+```yaml
+- id: push
+  type: shell
+  repo_access: true                 # this step talks to the repository's host (gh, git clone/fetch/pull/push/ls-remote)
+  run: git push -q -u origin HEAD
+```
+
+- Set `repo_access: true` on every shell step that calls `gh`, uses the remote with git (`clone`,
+  `fetch`, `pull`, `push`, `ls-remote`), or calls a helper script that does.
+- Only shell steps have it.
+- Never set it on a step that runs the project's tests or build. Split a step that does both.
+- A step with it cannot have `sandbox: true` and cannot be listed in a `parallel` step.
+- Today the flag changes nothing. In a later version, in a run started by a user (not an admin),
+  steps without the flag and all agent steps lose the server's GitHub access. A flow that calls
+  `gh` or pushes in a step without the flag will then fail for users.
+
 ### `approval` — wait for a human
 
 ```yaml
@@ -370,6 +386,7 @@ feature (everything else):  develop ──► feature/42-… ──► develop  
     git commit -q -m "$FACTORY_TASK" && git log --oneline -1
 - id: push
   type: shell
+  repo_access: true
   run: git push -q -u origin HEAD && echo "pushed $(git branch --show-current)"
 ```
 
@@ -378,6 +395,7 @@ feature (everything else):  develop ──► feature/42-… ──► develop  
 ```yaml
 - id: open_pr
   type: shell
+  repo_access: true
   run: |
     printf '%s\n\n%s\n' "$FACTORY_TASK" "$FACTORY_OUT_IMPLEMENT" > "{{run.dir}}/pr.md"
     gh pr create --fill --body-file "{{run.dir}}/pr.md"
@@ -391,9 +409,11 @@ vars: {github_repo: owner/repo, issue: ""}
 steps:
   - id: clone
     type: shell
+    repo_access: true
     run: gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q && git checkout -q -b "factory/issue-$FACTORY_VAR_ISSUE"
   - id: issue
     type: shell
+    repo_access: true
     run: gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --comments
   - id: implement
     type: claude
@@ -403,6 +423,7 @@ steps:
   # … tests, review, commit, push, then:
   - id: report
     type: shell
+    repo_access: true
     run: gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body "Done on branch $(git branch --show-current)"
 ```
 
@@ -421,6 +442,8 @@ steps:
 7. Nothing pushes to `main`; there is no `git push --force`.
 8. Regexes in YAML strings escape backslashes: `"^VERDICT: APPROVE\\s*$"`.
 9. Flows that change code have `one_per_repo: true`.
+10. Every shell step that calls `gh` or the remote has `repo_access: true`; steps that run tests or
+    the build do not; no such step has `sandbox: true` or is in a `parallel` step.
 
 ## Complete example
 

@@ -76,6 +76,7 @@ export const api = {
   renameRefinement: (id, body) => req("PUT", `/api/refinement/${enc(id)}`, body),
   dropRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/drop`, {}),
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),
+  askArchitect: (id) => req("POST", `/api/refinement/${enc(id)}/architect`, {}),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
   saveConfig: (config) => req("PUT", "/api/config", config),

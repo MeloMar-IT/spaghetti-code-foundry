@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RepoError, githubKey, parseRepoUrl, tryParseRepoUrl } from "../src/auth/repo-url.js";
+import { RepoError, githubKey, githubNameOf, parseRepoUrl, tryParseRepoUrl } from "../src/auth/repo-url.js";
 
 const ok: [string, { url: string; scheme: string; host: string; key: string; github?: string }][] = [
   ["acme/app", { url: "https://github.com/acme/app", scheme: "https", host: "github.com", key: "github.com/acme/app", github: "acme/app" }],
@@ -73,6 +73,12 @@ describe("parseRepoUrl", () => {
     expect(parseRepoUrl("git@host:team/app.git").url).toBe("git@host:team/app.git");
     expect(parseRepoUrl("git@host:/abs/app").url).toBe("git@host:/abs/app");
     expect(parseRepoUrl("git@host:team/app").key).toBe(parseRepoUrl("ssh://git@host/team/app.git").key);
+  });
+
+  it("githubNameOf gives owner/name in lower case for GitHub only", () => {
+    for (const u of ["https://github.com/Acme/App", "https://github.com/acme/app.git", "git@github.com:ACME/App.git", "ssh://git@github.com/acme/app"]) expect(githubNameOf(u), u).toBe("acme/app");
+    expect(githubNameOf("https://gitlab.com/acme/app")).toBeUndefined();
+    expect(githubNameOf("not a url")).toBeUndefined();
   });
 
   it("githubKey ignores case and a final .git", () => {

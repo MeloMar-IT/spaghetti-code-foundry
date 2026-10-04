@@ -285,6 +285,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(!priority && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
+          flow: job.kind === "run" ? job.flow.name : undefined,
           repo: job.kind === "run" ? job.repo : undefined, task: job.kind === "run" ? job.task : undefined,
         };
       }),

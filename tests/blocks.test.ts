@@ -17,6 +17,15 @@ describe("block library", () => {
     for (const b of blocks) expect(b.error, b.id).toBeUndefined();
   });
 
+  it("checks repo_access in a block, and pull-ticket has it", () => {
+    const sandboxed = "name: x\nsteps:\n  - {id: a, type: shell, run: x, repo_access: true, sandbox: true}";
+    expect(() => parseBlock(sandboxed)).toThrow(/cannot also have sandbox: true/);
+    const listed = "name: x\nsteps:\n  - {id: p, type: parallel, steps: [a, b]}\n  - {id: a, type: shell, run: x, repo_access: true}\n  - {id: b, type: shell, run: x}";
+    expect(() => parseBlock(listed)).toThrow(/has repo_access, so it cannot be listed in a parallel step/);
+    const pull = parseBlock(readFileSync("blocks/pull-ticket.yaml", "utf8"));
+    expect(pull.steps.find((s) => s.id === "pull_ticket")).toMatchObject({ repo_access: true });
+  });
+
   it("rejects jumps out of the block", () => {
     const y = "name: x\nsteps:\n  - {id: a, type: shell, run: x, on_failure: elsewhere}";
     expect(() => parseBlock(y)).toThrow(/only jump to their own steps/);
@@ -338,13 +347,22 @@ describe("generated ticket flows", () => {
       ["jira-push-result", "jira_push_result", ["jira-ticket"]],
       ["linear-push-plan", "linear_push_plan", ["linear-ticket"]],
       ["linear-push-result", "linear_push_result", ["linear-ticket"]],
+      ["github-repo", "check_repo", [...flows, "chore", "ci-fix"]],
+      ["pull-repo", "pull_repo", [...flows, "chore", "ci-fix"]],
+      ["push", "push", [...flows, "chore", "ci-fix"]],
+      ["open-pr", "open_pr", ["github-pr", "github-auto", "chore", "ci-fix"]],
+      ["ci", "wait_ci", ["github-pr", "github-auto", "chore", "ci-fix"]],
+      ["pr-comments", "checkout_pr", ["pr-feedback"]],
+      ["pr-comments", "pr_comments", ["pr-feedback"]],
     ];
-    const runOf = (steps: { id: string }[], id: string) => (steps.find((s) => s.id === id) as { run?: string } | undefined)?.run;
+    const of = (steps: { id: string }[], id: string) => steps.find((s) => s.id === id) as { run?: string; repo_access?: boolean } | undefined;
     for (const [block, step, inFlows] of pairs) {
-      const expected = runOf(parseBlock(readFileSync(`blocks/${block}.yaml`, "utf8")).steps, step);
-      expect(expected, `${block}/${step}`).toBeTruthy();
+      const expected = of(parseBlock(readFileSync(`blocks/${block}.yaml`, "utf8")).steps, step);
+      expect(expected?.run, `${block}/${step}`).toBeTruthy();
       for (const f of inFlows) {
-        expect(runOf(parseFlow(text(f), f).steps, step), `${f}/${step}`).toBe(expected);
+        const got = of(parseFlow(text(f), f).steps, step);
+        expect(got?.run, `${f}/${step}`).toBe(expected!.run);
+        expect(got?.repo_access, `${f}/${step} repo_access`).toBe(expected!.repo_access);
       }
     }
   });

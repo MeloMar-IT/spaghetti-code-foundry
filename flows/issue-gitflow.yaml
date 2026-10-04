@@ -80,6 +80,7 @@ vars:
 steps:
   - id: pull_ticket
     type: shell
+    repo_access: true
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
@@ -88,9 +89,10 @@ steps:
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
   - id: feature_branch
     type: shell
+    repo_access: true
     description: Clone, make sure develop exists, and start (or continue) this issue's feature branch from develop
     run: |-
-      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"
       if ! git ls-remote --exit-code --heads origin "$dev" >/dev/null 2>&1; then
         # From main — or, when switching over from the rolling pull request, from its unmerged branch.
@@ -138,7 +140,7 @@ steps:
       git log --oneline -1
     routes:
       - if: "^HOTFIX: yes"
-        goto: baseline_main
+        goto: fetch_main
   - id: baseline_tests
     type: shell
     timeout_sec: 3600
@@ -157,11 +159,18 @@ steps:
       exit "$code"
     on_failure: baseline_failed
     description: Tests must pass before we change anything (a failing run is tried once more)
+  - id: fetch_main
+    type: shell
+    repo_access: true
+    jump_only: true
+    description: "Hotfix: fetch the newest main; the tests run on it in the next step"
+    run: git fetch -q origin || { echo "cannot fetch from GitHub"; exit 1; }
+    on_success: baseline_main
   - id: baseline_main
     type: shell
     timeout_sec: 3600
     run: |-
-      git fetch -q origin && git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }
+      git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }
       rm -f "{{run.dir}}/baseline-sha"; git rev-parse HEAD > "{{run.dir}}/baseline-sha.new"
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
@@ -182,6 +191,7 @@ steps:
     on_success: hotfix_branch
   - id: hotfix_branch
     type: shell
+    repo_access: true
     jump_only: true
     description: Start (or continue) this issue's hotfix branch from the newest main
     run: |-
@@ -406,6 +416,7 @@ steps:
     max_budget_usd: 8
   - id: send_back
     type: shell
+    repo_access: true
     jump_only: true
     description: Post why the issue can't be planned yet, then stop (resumes when someone replies)
     resume_from: pull_ticket
@@ -427,6 +438,7 @@ steps:
     on_success: stop
   - id: split_gate
     type: shell
+    repo_access: true
     jump_only: true
     description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner"
     run: |-
@@ -461,6 +473,7 @@ steps:
     on_failure: pull_ticket
   - id: create_split
     type: shell
+    repo_access: true
     jump_only: true
     description: Create the parts as issues (in order, with Depends on and the build label), then close this issue
     run: printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}" | "$FACTORY_TOOLS/create-split"
@@ -524,6 +537,7 @@ steps:
     on_failure: risk_gate
   - id: risk_gate
     type: shell
+    repo_access: true
     description: Post the plan with its risk score; above the threshold (or with the review label) a human approves first
     run: |-
       out="$FACTORY_OUT_PLAN"; notes=""
@@ -849,6 +863,7 @@ steps:
     on_failure: docs
   - id: commit
     type: shell
+    repo_access: true
     run: |-
       git add -A
       title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)
@@ -856,6 +871,7 @@ steps:
       git log --oneline -1
   - id: push_feature
     type: shell
+    repo_access: true
     run: |-
       b=$(git branch --show-current)
       if [ -f "{{run.dir}}/hotfix" ]; then
@@ -871,6 +887,7 @@ steps:
     on_success: merge_develop
   - id: merge_develop
     type: shell
+    repo_access: true
     max_visits: 4
     timeout_sec: 7200
     description: Merge the feature branch into develop (one merge at a time); conflicts go to an agent
@@ -970,6 +987,7 @@ steps:
     on_success: test_develop
   - id: push_develop
     type: shell
+    repo_access: true
     description: Push develop; if it moved meanwhile, merge again
     run: |-
       dev="$FACTORY_VAR_DEVELOP_BRANCH"
@@ -992,6 +1010,7 @@ steps:
     on_success: report
   - id: merge_main
     type: shell
+    repo_access: true
     jump_only: true
     max_visits: 4
     timeout_sec: 7200
@@ -1049,6 +1068,7 @@ steps:
       echo "The hotfix branch is kept. Fix the problem on it, or remove the hotfix label and build this issue as a feature."; exit 1
   - id: push_main
     type: shell
+    repo_access: true
     jump_only: true
     description: "Hotfix: push main (the only step that may); if main moved meanwhile, merge and test again"
     run: |-
@@ -1078,6 +1098,7 @@ steps:
     on_success: merge_back
   - id: merge_back
     type: shell
+    repo_access: true
     jump_only: true
     max_visits: 4
     timeout_sec: 7200
@@ -1197,6 +1218,7 @@ steps:
     on_success: test_back
   - id: push_back
     type: shell
+    repo_access: true
     jump_only: true
     description: "Hotfix: push develop; if it moved meanwhile, merge again"
     run: |-
@@ -1214,6 +1236,7 @@ steps:
     on_success: hotfix_done
   - id: hotfix_done
     type: shell
+    repo_access: true
     jump_only: true
     description: "Hotfix: free the locks, delete the merged branch, check whether the running Foundry has the fix"
     run: |-
@@ -1234,6 +1257,7 @@ steps:
     on_success: report
   - id: report
     type: shell
+    repo_access: true
     run: |-
       main="$FACTORY_VAR_MAIN_BRANCH"; dev="$FACTORY_VAR_DEVELOP_BRANCH"; warn=""; closed=""; note=$(cat "{{run.dir}}/hotfix-note" 2>/dev/null)
       if [ ! -f "{{run.dir}}/hotfix-branch" ]; then

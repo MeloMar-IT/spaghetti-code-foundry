@@ -220,9 +220,12 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
+const USER_HASH = /^#\/(start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
 
-/** True for a hash the user display has a page for: Runs, one run, My repositories, Refinement, one session. */
+/** True when the address names no page at all: no hash, "#" or "#/". */
+export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
+
+/** True for a hash the user display has a page for: Start work, Runs, one run, My repositories, Refinement, one session. */
 export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
 
 /** The hash the user display draws: the given one when it has that page, else the Runs list. */
@@ -242,7 +245,8 @@ export function userPage(hash) {
 export function otherDisplay(user, display, hash) {
   const admin = isAdmin(user);
   if (admin === (display === "admin")) return "";
-  return (admin ? "/" : "/user/") + (isUserHash(hash) ? hash : "");
+  // the admin display has no Start work page
+  return (admin ? "/" : "/user/") + (isUserHash(hash) && !(admin && hash === "#/start") ? hash : "");
 }
 
 /**

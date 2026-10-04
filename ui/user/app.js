@@ -1,8 +1,9 @@
-import { enterDisplay, linkToken, userPage } from "/auth.js";
+import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { renderRefinement } from "/refinement.js";
 import { renderRepos } from "/repos.js";
-import { renderRunDetail, renderRunsList } from "/runs.js";
+import { renderMyRun, renderMyRuns } from "/user/runs.js";
+import { homeHash, renderStart } from "/user/start.js";
 
 const main = document.getElementById("main");
 let cleanup = null;
@@ -11,10 +12,16 @@ let generation = 0;
 async function route() {
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
-  const page = userPage(location.hash);
+  const mine = ++generation;
+  let hash = location.hash;
+  if (isNoHash(hash)) {
+    hash = await homeHash();
+    // A hash change during the lookup has taken over.
+    if (mine !== generation) return;
+  }
+  const page = userPage(hash);
   // A hash without a page here is never drawn: the address bar goes to the Runs list.
-  if (page.hash !== location.hash) history.replaceState(null, "", page.hash);
-  cleanup?.();
+  if (page.hash !== location.hash) history.replaceState(null, "", page.hash);  cleanup?.();
   cleanup = null;
   for (const a of document.querySelectorAll("[data-nav]")) {
     const on = a.dataset.nav === page.section;
@@ -23,15 +30,15 @@ async function route() {
     else a.removeAttribute("aria-current");
   }
   // Each call draws into its own box, so a slow page that finishes after a hash change cannot touch the current one.
-  const mine = ++generation;
   const box = h("div", {});
   mount(main, box);
   let done = null;
   try {
-    if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id });
+    if (page.section === "start") done = await renderStart(box);
+    else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false });
-    else if (page.id) done = renderRunDetail(box, page.id, { admin: false });
-    else done = await renderRunsList(box, { admin: false });
+    else if (page.id) done = renderMyRun(box, page.id);
+    else done = await renderMyRuns(box);
   } catch (e) {
     if (mine === generation) mount(box, h("div", { class: "errors" }, e.message));
     return;

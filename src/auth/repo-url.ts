@@ -128,3 +128,9 @@ export function tryParseRepoUrl(input: unknown): ParsedRepoUrl | undefined {
     return undefined;
   }
 }
+
+/** The GitHub "owner/name" of an address as runs and sessions use it (lower case, no ".git"); undefined for another host or a bad address. */
+export function githubNameOf(url: string): string | undefined {
+  const p = tryParseRepoUrl(url);
+  return p?.github !== undefined ? p.key.slice("github.com/".length) : undefined;
+}
