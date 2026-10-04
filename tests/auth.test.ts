@@ -134,7 +134,18 @@ describe("every route needs a session", () => {
   });
 
   it("serves static files without a session", async () => {
-    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/vendor/yaml/index.js"]) expect((await fetch(s.base + p)).status, p).toBe(200);
+    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/vendor/yaml/index.js", "/user", "/user/", "/user/app.js"]) expect((await fetch(s.base + p)).status, p).toBe(200);
+  });
+
+  it("serves the user display at /user and /user/ with the policy header, and 404 for an unknown file", async () => {
+    const a = await fetch(s.base + "/user");
+    const b = await fetch(s.base + "/user/");
+    const text = await a.text();
+    expect(text).toContain('<body class="user-display signed-out">');
+    expect(await b.text()).toBe(text);
+    expect(a.headers.get("content-security-policy")).toBeTruthy();
+    expect(b.headers.get("content-security-policy")).toBe(a.headers.get("content-security-policy"));
+    expect((await fetch(s.base + "/user/nope.js")).status).toBe(404);
   });
 
   it("the same routes work with a session", async () => {

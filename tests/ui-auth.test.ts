@@ -471,9 +471,10 @@ describe("ensureSignedIn on the fake DOM", () => {
 describe("the page", () => {
   it("app.js signs in before it reads the info", () => {
     const app = readFileSync("ui/app.js", "utf8");
-    const at = app.indexOf("await ensureSignedIn();");
+    const at = app.indexOf('await enterDisplay("admin");');
     expect(at).toBeGreaterThan(0);
     expect(at).toBeLessThan(app.indexOf("S.info = await api.info();"));
+    expect(at).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
   });
 
   it("app.js loads the page again for a set-password link before it picks a page", () => {
@@ -481,14 +482,22 @@ describe("the page", () => {
     const route = app.slice(app.indexOf("async function route()"));
     const at = route.indexOf("if (linkToken(location.hash)) return location.reload();");
     expect(at).toBeGreaterThan(0);
-    expect(at).toBeLessThan(route.indexOf("allowedHash("));
+    expect(at).toBeLessThan(route.indexOf("const hash ="));
+  });
+
+  it("the admin page has no user branch and index.html starts signed out", () => {
+    for (const file of ["ui/app.js", "ui/auth.js", "ui/style.css"]) {
+      const text = readFileSync(file, "utf8");
+      for (const word of ["allowedHash", "startApp", "role-user"]) expect(text.includes(word), `${file} ${word}`).toBe(false);
+    }
+    expect(readFileSync("ui/index.html", "utf8")).toContain('<body class="signed-out">');
   });
 
   it("index.html has the place for the user name", () => {
     expect(readFileSync("ui/index.html", "utf8")).toContain('id="user"');
   });
 
-  it("app.js starts the admin parts only inside startAdmin, and style.css hides the rest for a user", () => {
+  it("app.js starts the admin parts only inside startAdmin", () => {
     const app = readFileSync("ui/app.js", "utf8");
     const start = app.indexOf("async function startAdmin()");
     expect(start).toBeGreaterThan(0);
@@ -496,7 +505,6 @@ describe("the page", () => {
       expect(app.split(text).length - 1, text).toBe(1);
       expect(app.indexOf(text), text).toBeGreaterThan(start);
     }
-    expect(readFileSync("ui/style.css", "utf8")).toContain(".role-user");
   });
 });
 
@@ -505,8 +513,6 @@ describe("roles in the page", () => {
     restore();
     restore = installFakeDom();
   });
-  const bodyHas = () => (document.body as unknown as FakeElement).classList.contains("role-user");
-
   it("isAdmin is true for the role admin only", () => {
     expect(auth.isAdmin({ role: "admin" })).toBe(true);
     expect(auth.isAdmin({ role: "user" })).toBe(false);
@@ -532,38 +538,63 @@ describe("roles in the page", () => {
     expect(auth.userHash("#/audit/x")).toBe("#/runs");
   });
 
-  it("allowedHash replaces a page a user may not open, and leaves the rest", () => {
-    const replace = vi.fn();
-    expect(auth.allowedHash(false, "#/settings", replace)).toBe("#/runs");
-    expect(replace).toHaveBeenCalledWith("#/runs");
-    replace.mockClear();
-    expect(auth.allowedHash(false, "#/runs/abc", replace)).toBe("#/runs/abc");
-    expect(auth.allowedHash(true, "#/settings", replace)).toBe("#/settings");
-    expect(auth.allowedHash(false, "#/repos", replace)).toBe("#/repos");
-    expect(replace).not.toHaveBeenCalled();
-    expect(auth.allowedHash(true, "#/users", replace)).toBe("#/users");
-    expect(replace).not.toHaveBeenCalled();
-    expect(auth.allowedHash(false, "#/users", replace)).toBe("#/runs");
-    expect(replace).toHaveBeenCalledWith("#/runs");
-    replace.mockClear();
-    expect(auth.allowedHash(true, "#/audit", replace)).toBe("#/audit");
-    expect(replace).not.toHaveBeenCalled();
-    expect(auth.allowedHash(false, "#/audit", replace)).toBe("#/runs");
-    expect(replace).toHaveBeenCalledWith("#/runs");
+  it("isUserHash is true for the five pages of the user display", () => {
+    for (const h of ["#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) expect(auth.isUserHash(h), h).toBe(true);
+    for (const h of ["", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
   });
 
-  it("startApp gives a user only the route, and an admin the whole start-up", async () => {
-    const user = { startAdmin: vi.fn(), route: vi.fn() };
-    await auth.startApp({ role: "user" }, user);
-    expect(user.startAdmin).not.toHaveBeenCalled();
-    expect(user.route).toHaveBeenCalledTimes(1);
-    expect(bodyHas()).toBe(true);
-    restore();
-    restore = installFakeDom();
-    const admin = { startAdmin: vi.fn(), route: vi.fn() };
-    await auth.startApp({ role: "admin" }, admin);
-    expect(admin.startAdmin).toHaveBeenCalledTimes(1);
-    expect(admin.route).not.toHaveBeenCalled();
-    expect(bodyHas()).toBe(false);
+  it("userPage gives the hash, the section and the id", () => {
+    expect(auth.userPage("#/runs")).toEqual({ hash: "#/runs", section: "runs", id: undefined });
+    expect(auth.userPage("#/runs/abc")).toEqual({ hash: "#/runs/abc", section: "runs", id: "abc" });
+    expect(auth.userPage("#/repos")).toEqual({ hash: "#/repos", section: "repos", id: undefined });
+    expect(auth.userPage("#/refinement/s-1")).toEqual({ hash: "#/refinement/s-1", section: "refinement", id: "s-1" });
+    expect(auth.userPage("#/flows/x")).toEqual({ hash: "#/runs", section: "runs", id: undefined });
+    expect(auth.userPage("")).toEqual({ hash: "#/runs", section: "runs", id: undefined });
+  });
+
+  it("otherDisplay sends an account to the display of its role and keeps a hash only when the user display has it", () => {
+    const user = { role: "user" };
+    const admin = { role: "admin" };
+    for (const h of ["#/runs/abc", "#/repos", "#/refinement/s-1"]) expect(auth.otherDisplay(user, "admin", h)).toBe(`/user/${h}`);
+    for (const h of ["#/settings", "", "#/flows/x"]) expect(auth.otherDisplay(user, "admin", h)).toBe("/user/");
+    expect(auth.otherDisplay(admin, "user", "")).toBe("/");
+    expect(auth.otherDisplay(admin, "user", "#/runs/abc")).toBe("/#/runs/abc");
+    expect(auth.otherDisplay(admin, "admin", "#/flows")).toBe("");
+    expect(auth.otherDisplay(user, "user", "#/runs")).toBe("");
+    expect(auth.otherDisplay(undefined, "user", "")).toBe("");
+    expect(auth.otherDisplay(undefined, "admin", "")).toBe("/user/");
+  });
+
+  describe("enterDisplay", () => {
+    const signedOut = () => (document.body as unknown as FakeElement).classList.contains("signed-out");
+    const settle = () => new Promise((r) => setTimeout(r, 5));
+
+    it("resolves with the account and shows the top bar on the right display", async () => {
+      (document.body as unknown as FakeElement).classList.add("signed-out");
+      const go = vi.fn();
+      const user = { id: "u1", role: "user" };
+      await expect(auth.enterDisplay("user", { signIn: async () => user, go, hash: () => "" })).resolves.toBe(user);
+      expect(go).not.toHaveBeenCalled();
+      expect(signedOut()).toBe(false);
+    });
+
+    it("sends the account to its own display once and never resolves on the wrong one", async () => {
+      (document.body as unknown as FakeElement).classList.add("signed-out");
+      const go = vi.fn();
+      const done = vi.fn();
+      void auth.enterDisplay("admin", { signIn: async () => ({ role: "user" }), go, hash: () => "#/repos" }).then(done);
+      await settle();
+      expect(go).toHaveBeenCalledTimes(1);
+      expect(go).toHaveBeenCalledWith("/user/#/repos");
+      expect(done).not.toHaveBeenCalled();
+      expect(signedOut()).toBe(true);
+    });
+
+    it("does not redirect while the sign-in is pending", async () => {
+      const go = vi.fn();
+      void auth.enterDisplay("user", { signIn: () => new Promise(() => {}), go, hash: () => "" });
+      await settle();
+      expect(go).not.toHaveBeenCalled();
+    });
   });
 });

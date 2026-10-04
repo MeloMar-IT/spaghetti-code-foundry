@@ -20,8 +20,31 @@ export function h(tag, props = {}, ...children) {
 
 export const svg = (tag, props = {}, ...children) => h(tag, { ...props, svg: true }, ...children);
 
+const TAB_STOPS = "a[href], button, input, select, textarea, summary, [tabindex]";
+const shown = (el) => typeof el.getClientRects !== "function" || el.getClientRects().length > 0;
+
+/** The controls of `box` that Tab stops at, in page order. */
+export const tabStops = (box) => [...box.querySelectorAll(TAB_STOPS)].filter((el) => !el.disabled && el.getAttribute("tabindex") !== "-1" && shown(el));
+
+/**
+ * Where Tab must go so the focus stays in a dialog: the first stop after the last one, the last before the first
+ * (`back`: Shift+Tab), and an end stop when the focus is on none of them. Null: the browser moves the focus itself.
+ */
+export function trapTarget(stops, current, back) {
+  if (!stops.length) return null;
+  const i = stops.indexOf(current);
+  if (i < 0) return back ? stops[stops.length - 1] : stops[0];
+  if (back && i === 0) return stops[stops.length - 1];
+  if (!back && i === stops.length - 1) return stops[0];
+  return null;
+}
+
 export function mount(target, ...nodes) {
+  // A page that draws itself again keeps the focus on the control with the same `data-focus` name.
+  const active = document.activeElement;
+  const name = active && target.contains(active) ? active.getAttribute("data-focus") : null;
   target.replaceChildren(...nodes.flat().filter(Boolean));
+  if (name) [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name)?.focus();
 }
 
 export function debounce(fn, ms) {
@@ -45,18 +68,32 @@ export function toast(msg, kind = "info") {
 export function modal(title, build) {
   return new Promise((resolve) => {
     const root = document.getElementById("modal-root");
+    const opener = document.activeElement;
+    let closed = false;
     const close = (v) => {
+      // A dialog can finish its work after Escape closed it: a second call must not touch a newer dialog.
+      if (closed) return;
+      closed = true;
       root.replaceChildren();
       document.removeEventListener("keydown", onKey);
+      opener?.focus?.();
       resolve(v);
     };
-    const onKey = (e) => e.key === "Escape" && close(undefined);
+    const onKey = (e) => {
+      if (e.key === "Escape") return close(undefined);
+      if (e.key !== "Tab") return;
+      const to = trapTarget(tabStops(box), document.activeElement, e.shiftKey);
+      if (to) {
+        e.preventDefault();
+        to.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
-    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && close(undefined) },
-      h("div", { class: "modal", role: "dialog", "aria-label": title },
-        h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: () => close(undefined), "aria-label": "Close" }, "✕")),
-        build(close))));
-    root.querySelector("textarea, input")?.focus();
+    const box = h("div", { class: "modal", role: "dialog", "aria-label": title, "aria-modal": "true", tabindex: "-1" },
+      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: () => close(undefined), "aria-label": "Close" }, "✕")),
+      build(close));
+    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && close(undefined) }, box));
+    (box.querySelector("textarea, input") ?? box).focus();
   });
 }
 

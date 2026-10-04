@@ -220,22 +220,43 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-/** The pages a user may open: Refinement (and one session), Runs, a run page and My repositories. Anything else becomes the Runs list. */
-export function userHash(hash) {
-  return /^#\/(runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/.test(hash ?? "") ? hash : "#/runs";
-}
+const USER_HASH = /^#\/(runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
 
-/** The hash to draw. A user never gets a page they may not open; `replace(to)` puts the allowed hash in the address bar. */
-export function allowedHash(admin, hash, replace) {
-  if (admin) return hash;
+/** True for a hash the user display has a page for: Runs, one run, My repositories, Refinement, one session. */
+export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
+
+/** The hash the user display draws: the given one when it has that page, else the Runs list. */
+export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
+
+/** The page of the user display for a hash: { hash, section, id }. `id` is undefined for a list. */
+export function userPage(hash) {
   const to = userHash(hash);
-  if (to !== hash) replace(to);
-  return to;
+  const [, section, id] = to.split("/");
+  return { hash: to, section, id };
 }
 
-/** Starts the app for the signed-in account: an admin gets the whole start-up, a user only Runs and My repositories. */
-export async function startApp(user, { startAdmin, route }) {
-  if (isAdmin(user)) return startAdmin();
-  document.body.classList.add("role-user");
-  return route();
+/**
+ * Where an account must go when it opened the display of the other role, or "" when it is in the right place.
+ * `display` is "admin" (the page at /) or "user" (the page at /user/). A hash is kept only when the user display has that page.
+ */
+export function otherDisplay(user, display, hash) {
+  const admin = isAdmin(user);
+  if (admin === (display === "admin")) return "";
+  return (admin ? "/" : "/user/") + (isUserHash(hash) ? hash : "");
+}
+
+/**
+ * Signs in and keeps only the account that belongs on this display: resolves with it and shows the top bar links.
+ * An account of the other role is sent to its own display and this never resolves, so no page is drawn here.
+ * `signIn`, `go` and `hash` are arguments so tests can run this without a browser.
+ */
+export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash } = {}) {
+  const user = await signIn();
+  const to = otherDisplay(user, display, hash());
+  if (to) {
+    go(to);
+    return new Promise(() => {});
+  }
+  document.body.classList.remove("signed-out");
+  return user;
 }

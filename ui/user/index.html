@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spaghetti Code Foundry</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="user-display signed-out">
+  <header class="top">
+    <a class="brand" href="#/runs"><span class="logo">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
+    <nav aria-label="Pages">
+      <a href="#/runs" data-nav="runs">My runs</a>
+      <a href="#/repos" data-nav="repos">My repositories</a>
+      <a href="#/refinement" data-nav="refinement">Refinement</a>
+    </nav>
+    <span id="user" class="user" hidden></span>
+  </header>
+  <main id="main"></main>
+  <div id="modal-root"></div>
+  <div id="toast"></div>
+  <script type="module" src="/user/app.js"></script>
+</body>
+</html>

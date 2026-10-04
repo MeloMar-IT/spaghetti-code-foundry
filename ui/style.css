@@ -79,8 +79,6 @@ body > * { flex: none; }
 .user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .signed-out .top nav, .signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health { display: none; }
 .signed-out .layout { grid-template-columns: 1fr; }
-.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"]):not([data-nav="refinement"]), .role-user .repo, .role-user aside { display: none; }
-.role-user .layout { grid-template-columns: 1fr; }
 .auth-card { max-width: 380px; margin: 60px auto; }
 aside { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--panel); }
 main { padding: 20px 24px 80px; min-width: 0; }
@@ -358,3 +356,22 @@ td > .help > .help-mark { margin-left: 6px; }
 .card.failure { border-color: var(--fail); }
 .card.failure ul.options { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .card.failure details.raw summary { cursor: pointer; color: var(--muted); }
+
+/* ── keyboard focus ── */
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
+.modal:focus-visible { outline: none; }
+
+/* ── a wide table scrolls in its own box ── */
+.table-box { overflow-x: auto; }
+.table tr.link td > a { text-decoration: none; }
+
+/* ── the user display (ui/user/) ── */
+.user-display .top { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; padding-bottom: 6px; }
+.user-display .top nav { flex-wrap: wrap; }
+.user-display .user { margin-left: auto; flex-wrap: wrap; white-space: normal; min-width: 0; }
+.user-display .user > span { overflow-wrap: anywhere; min-width: 0; }
+.user-display main { overflow-wrap: break-word; }
+@media (max-width: 760px) {
+  .user-display .top { position: static; overflow-x: visible; }
+}

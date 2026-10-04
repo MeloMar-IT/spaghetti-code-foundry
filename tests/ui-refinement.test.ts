@@ -305,6 +305,30 @@ describe("the session page", () => {
     await flush();
     expect(sent).toEqual([{ method: "PUT", url: "/api/refinement/s1", body: { title: "New name" } }]);
   });
+  it("puts the focus on the new Rename button after a rename", async () => {
+    sessions = [session()];
+    await showPage();
+    const old = button(main(), "Rename")!;
+    old.focus();
+    press(old);
+    await flush();
+    field(root(), "title")!.value = "New name";
+    press(button(root(), "Save"));
+    await flush();
+    await flush();
+    const now = button(main(), "Rename")!;
+    expect(now).not.toBe(old);
+    expect((document as any).activeElement).toBe(now);
+  });
+  it("lists the sessions in a scroll box with a link on the title", async () => {
+    sessions = [session()];
+    await showList();
+    const box = walk(main()).filter((e) => (e.attrs.class ?? "").split(" ").includes("table-box"));
+    expect(box).toHaveLength(1);
+    expect(box[0]!.all("table")).toHaveLength(1);
+    const links = walk(main()).filter((e) => e.tag === "a" && e.attrs.href === "#/refinement/s1");
+    expect(links).toHaveLength(1);
+  });
   it("does not send a blank title and keeps the dialog on a conflict", async () => {
     sessions = [session()];
     await showPage();
@@ -433,8 +457,8 @@ describe("wiring", () => {
     const app = read("app.js");
     expect(app).toContain('from "./refinement.js"');
     expect(app).toContain('section === "refinement"');
-    expect(read("style.css")).toContain(':not([data-nav="refinement"])');
-    expect(read("style.css")).toContain('.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"])');
+    expect(read("user/index.html")).toContain('href="#/refinement" data-nav="refinement">Refinement<');
+    expect(read("user/app.js")).toContain('from "/refinement.js"');
   });
   it("uses the right routes", async () => {
     const seen: string[] = [];

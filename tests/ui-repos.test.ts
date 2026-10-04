@@ -309,6 +309,43 @@ describe("the page", () => {
     expect(button(main(), "+ Add repository")).toBeDefined();
   });
 
+  it("puts the table in its own scroll box", async () => {
+    repos = [rec()];
+    await show();
+    const box = byClass(main(), "table-box");
+    expect(box).toHaveLength(1);
+    expect(box[0]!.all("table")).toHaveLength(1);
+  });
+
+  it("gives the focus back to the new + Add repository button of the toolbar and of the empty list", async () => {
+    await show();
+    const adds = () => walk(main()).filter((e) => e.tag === "button" && e.textContent === "+ Add repository");
+    expect(adds().map((b) => b.attrs["data-focus"])).toEqual(["add-toolbar", "add-empty"]);
+    for (const i of [0, 1]) {
+      const opener = adds()[i]!;
+      opener.focus();
+      press(opener);
+      pressEscape();
+      await flush();
+      const now = adds()[i]!;
+      expect(now).not.toBe(opener);
+      expect((document as any).activeElement).toBe(now);
+    }
+  });
+
+  it("gives the focus back to Change authentication of the second repository", async () => {
+    repos = [rec(), rec({ url: "https://github.com/o/b" })];
+    await show();
+    const changes = () => walk(main()).filter((e) => e.tag === "button" && e.textContent === "Change authentication");
+    const opener = changes()[1]!;
+    opener.focus();
+    press(opener);
+    pressEscape();
+    await flush();
+    expect((document as any).activeElement).toBe(changes()[1]);
+    expect((document as any).activeElement).not.toBe(opener);
+  });
+
   it("adds a repository as a user", async () => {
     await show();
     press(button(main(), "+ Add repository"));
@@ -865,7 +902,8 @@ describe("wiring", () => {
     const app = read("app.js");
     expect(app).toContain('from "./repos.js"');
     expect(app).toContain('section === "repos"');
-    expect(read("style.css")).toContain('.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"])');
+    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos">My repositories<');
+    expect(read("user/app.js")).toContain('from "/repos.js"');
   });
 
   it("api calls use the right routes and errors carry the status", async () => {
