@@ -1,18 +1,17 @@
 import type { MonitorConfig } from "../config.js";
 import { errorLine } from "../errors.js";
-import { commentOnIssue, createIssue, createLabelIfMissing, listIssuesByLabel, restIssue, type RateReading, type RestIssue } from "../github.js";
+import { commentOnIssue, createIssue, createLabelIfMissing, ghLogin, issueComments, listIssuesByLabel, restIssue, type RateReading, type RestIssue } from "../github.js";
 import { LABEL_WORDS } from "../words.js";
 import { cleanLines, type CleanDeps, type Names } from "./clean.js";
 import { dayOf, type Finding, type Severity, type StoryRef } from "./findings.js";
+import { cameBack as fixCameBack, fixState, forgetFix } from "./fix.js";
 import type { LogEntry, Mute, Verdict } from "./guard.js";
 import { muteFor } from "./mutes.js";
-import { buildStory, hashIn, markerHash, seenAgainComment, type BuiltinSteps } from "./story.js";
+import { buildStory, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment, type BuiltinSteps } from "./story.js";
 
 const HOUR = 3_600_000;
 const RANK: Record<Severity, number> = { critical: 0, major: 1, minor: 2 };
-/** A problem that comes back is only written up again this long after its story was closed (the fix has to be running). */
-export const COME_BACK_AFTER_MS = 24 * HOUR;
-/** The "seen again" comment goes out at most this often per story. */
+/** The "seen again" comment goes out at most this often per story. It is also how often a story of a finding that is not seen is looked at. */
 export const COMMENT_EVERY_MS = 6 * HOUR;
 /** At most this many calls to GitHub in one check (the manager's own reads of the request limit come on top). */
 export const CALL_BUDGET = 6;
@@ -99,17 +98,8 @@ export class Reporter {
     const open = (f: Finding) => !!mine(f) && !mine(f)!.closedAt && !mine(f)!.muted;
     const muted = (f: Finding) => !!mine(f)?.muted;
     const ripe = (f: Finding) => (f.severity === "minor" ? (f.days?.length ?? 0) >= 3 : (f.streak ?? f.count) >= 2);
-    /** The problem is back after its story was closed as completed: 24 hours on, with proof from after the close. */
-    const cameBack = (f: Finding): boolean => {
-      const closed = mine(f)?.closedAt;
-      if (!closed) return false;
-      const c = Date.parse(closed);
-      if (t - c < COME_BACK_AFTER_MS) return false;
-      const proof = Date.parse(f.firstSeen) > c || (f.missedAt !== undefined && Date.parse(f.missedAt) > c) || (f.evidence?.times ?? []).some((x) => Date.parse(x) > c);
-      if (!proof) return false;
-      if (f.severity === "minor") return (f.days ?? []).filter((d) => d > dayOf(new Date(c))).length >= 3;
-      return true;
-    };
+    /** The problem is back after its story was closed as completed: the fix runs (the clock started), new proof was seen, and the usual rule is met. */
+    const cameBack = (f: Finding): boolean => fixCameBack(f, { target, stamp });
     /** A story is owed for this finding (it is seen now, lasts, and has no story or a closed one). */
     const owes = (f: Finding): boolean => {
       if (!seenNow(f) || muted(f)) return false;
@@ -177,6 +167,11 @@ export class Reporter {
     const allowedNow = () => Math.max(0, Math.min(per_check, per_day - madeToday()));
     let queue = queueOf();
     const look = findings.filter((f) => seenNow(f) && !muteOf(f) && mine(f) && t - Date.parse(mine(f)!.lookedAt ?? mine(f)!.at) >= COMMENT_EVERY_MS);
+    const lookedAt = (f: Finding) => Date.parse(mine(f)!.lookedAt ?? mine(f)!.at);
+    /** Stories of findings that are not seen now, not asked about for 6 hours (a close or a reopen is noticed this way), oldest first. */
+    const quiet = findings.filter((f) => !seenNow(f) && mine(f) && !mine(f)!.muted && !muteOf(f) && t - lookedAt(f) >= COMMENT_EVERY_MS).sort((a, b) => lookedAt(a) - lookedAt(b));
+    /** The finding whose "not seen since the fix" comment is owed (one per check, the oldest first). */
+    const note = findings.filter((f) => mine(f)?.fixNote && !muteOf(f)).sort((a, b) => Date.parse(mine(a)!.fixedAt ?? stamp) - Date.parse(mine(b)!.fixedAt ?? stamp))[0];
 
     // 6. Notes that need no call.
     const label = this.d.buildLabel(target);
@@ -194,7 +189,7 @@ export class Reporter {
     // 7. Nothing to ask GitHub?
     const dayNote = (left: number) => `${plural(left)}: at most ${stories(per_day)} a day.`;
     const checkNote = (left: number) => `${plural(left)}: at most ${stories(per_check)} per check.`;
-    if (!look.length && (!queue.length || allowedNow() === 0)) {
+    if (!look.length && !quiet.length && !note && (!queue.length || allowedNow() === 0)) {
       if (queue.length) {
         notes.push(dayNote(queue.length));
         for (const f of queue) skip(f, "day_limit");
@@ -215,6 +210,16 @@ export class Reporter {
     const spend = (n: number) => (calls + n <= CALL_BUDGET ? ((calls += n), true) : false);
     const unresolved = new Set<Finding>();
     try {
+      // The quiet stories are marked as asked before the call: a failed call waits another 6 hours. A story that is skipped only
+      // for lack of budget gets its old time back below.
+      const oldLooked = new Map<Finding, string | undefined>();
+      if (quiet.length) {
+        for (const f of quiet) {
+          oldLooked.set(f, mine(f)!.lookedAt);
+          f.report = { ...mine(f)!, lookedAt: stamp };
+        }
+        commit();
+      }
       spend(1);
       const byHash = new Map<string, RestIssue>();
       for (const i of await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS)) {
@@ -229,22 +234,29 @@ export class Reporter {
       const apply = (f: Finding, issue: RestIssue) => {
         const m = mine(f);
         const r: StoryRef = m && m.issue === issue.number ? { ...m } : { repo: target, issue: issue.number, url: issue.html_url, at: issue.created_at, seen: 0, lookedAt: stamp };
+        let next: StoryRef = r;
         if (issue.state === "open") {
-          delete r.closedAt;
-          delete r.muted;
+          // Open again: the clock and the verdict are forgotten.
+          next = forgetFix(r);
+          delete next.closedAt;
+          delete next.muted;
           delete f.due;
         } else if (!issue.state_reason || issue.state_reason === "completed") {
-          r.closedAt = issue.closed_at ?? stamp;
-          delete r.muted;
+          const closed = issue.closed_at ?? r.closedAt ?? stamp;
+          // Closed at another time (reopened and closed again): the fix state starts over.
+          next = r.closedAt !== undefined && Date.parse(r.closedAt) !== Date.parse(closed) ? forgetFix(r) : r;
+          next.closedAt = closed;
+          delete next.muted;
         } else {
-          r.muted = true;
+          next = forgetFix(r);
+          next.muted = true;
           delete f.due;
           actions.push(`bug story #${issue.number} was closed as not planned: muted`);
         }
-        f.report = r;
+        f.report = next;
         touched = true;
       };
-      const syncing = findings.filter((f) => !muteOf(f) && (queue.includes(f) || (seenNow(f) && mine(f))));
+      const syncing = findings.filter((f) => !muteOf(f) && (queue.includes(f) || (seenNow(f) && mine(f)) || quiet.includes(f) || f === note));
       for (const f of syncing) {
         const match = byHash.get(markerHash(f.fingerprint));
         if (match) {
@@ -252,7 +264,8 @@ export class Reporter {
           continue;
         }
         const m = mine(f);
-        if (!m || !(queue.includes(f) || look.includes(f))) continue;
+        // Quiet stories outside the newest 100 are read after the comments, with what is left of the budget.
+        if (!m || !(queue.includes(f) || look.includes(f) || f === note)) continue;
         // Not in the newest 100: read it, before a successor or a comment is decided from the local state.
         if (!go() || !spend(1)) {
           unresolved.add(f);
@@ -268,7 +281,8 @@ export class Reporter {
       go(); // switched off while GitHub answered: nothing new becomes owed
       for (const f of findings) {
         markDue(f);
-        if (mine(f)?.closedAt && f.due && !cameBack(f)) {
+        // A story that is owed stays owed (also when the problem goes away) as long as the problem was seen after the fix started running.
+        if (mine(f)?.closedAt && f.due && !(mine(f)!.clockAt && mine(f)!.seenAfter)) {
           delete f.due;
           touched = true;
         }
@@ -356,6 +370,83 @@ export class Reporter {
           commit();
         }
       }
+
+      // "Not seen since the fix": at most one comment, on a story the sync just confirmed is still closed. Saved before the post.
+      const owed = note && !unresolved.has(note) && mine(note)?.fixNote ? note : undefined;
+      if (owed) mutes = this.d.mutes?.(now) ?? mutes;
+      if (owed && !muteOf(owed) && go()) {
+        const number = mine(owed)!.issue;
+        const setNote = (v: "due" | "tried" | undefined) => {
+          const { fixNote, ...rest } = mine(owed)!;
+          owed.report = v ? { ...rest, fixNote: v } : rest;
+        };
+        const written = () => {
+          setNote(undefined);
+          owed.report = { ...mine(owed)!, notedAt: stamp };
+          commit();
+        };
+        let post = true;
+        if (mine(owed)!.fixNote === "tried") {
+          // A post was started before and the answer was lost: look for our comment first (once is all there is).
+          if (spend(2)) {
+            let found = false;
+            let login: string | undefined;
+            for (const c of await issueComments(target, number, CALL_TIMEOUT_MS)) {
+              if (!isFixedComment(c)) continue;
+              if (c.viewerDidAuthor === undefined && login === undefined) {
+                if (!spend(1)) {
+                  post = false; // cannot tell whose it is: wait
+                  break;
+                }
+                login = await ghLogin(CALL_TIMEOUT_MS);
+              }
+              if (c.viewerDidAuthor === true || (c.viewerDidAuthor === undefined && c.author?.login === login)) {
+                found = true;
+                break;
+              }
+            }
+            if (found) {
+              written();
+              post = false;
+              calls -= 1; // the post was not needed
+            }
+          } else post = false;
+        } else if (!spend(1)) post = false;
+        if (post) {
+          setNote("tried");
+          commit(); // saved first: a lost answer must not mean a second comment
+          if (go()) {
+            await commentOnIssue(target, number, fixedComment(), CALL_TIMEOUT_MS);
+            written();
+            actions.push(`commented on bug story #${number}: not seen since the fix`);
+          } else {
+            setNote("due"); // switched off while saving: no comment
+            commit();
+          }
+        }
+      }
+
+      // Quiet stories that were not in the newest 100: open and unsettled ones are read, as far as the budget goes.
+      for (const f of quiet) {
+        const m = mine(f);
+        if (!m || m.lookedAt !== stamp || byHash.has(markerHash(f.fingerprint)) || (f === note && !unresolved.has(f))) continue;
+        const state = fixState(m);
+        if (!(open(f) || state === "waiting" || state === "watched")) continue;
+        if (go() && spend(1)) {
+          const issue = await restIssue(target, m.issue, CALL_TIMEOUT_MS);
+          if (issue) apply(f, issue);
+          else {
+            delete f.report;
+            touched = true;
+          }
+        } else {
+          const { lookedAt: _now, ...kept } = m;
+          const was = oldLooked.get(f);
+          f.report = was ? { ...kept, lookedAt: was } : kept;
+          touched = true;
+        }
+      }
+      // Settled stories outside the newest 100 are not read one by one (that would cost calls for good): they were asked about as far as the list reaches.
 
       // Notes for what waits.
       const rest = queueOf();

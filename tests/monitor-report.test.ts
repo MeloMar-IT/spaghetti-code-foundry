@@ -35,10 +35,13 @@ describe("bug stories from the monitor", () => {
   });
   const cfg = () => ConfigSchema.parse({ monitor: { ...(report_to ? { report_to } : {}), report_limits: limits } }).monitor;
   const newReporter = () => new Reporter({ config: cfg, buildLabel: () => label, names: () => NAMES, builtinSteps: () => ({ "issue-gitflow": ["claim_areas"] }), rateLimit: () => rate?.(), log: (m) => logLines.push(m) });
-  const newMonitor = (reporter = newReporter()) =>
-    new Monitor(WatcherSchema.parse({ id: "mon", source: "monitor", every: "5m" }), {
+  const newMonitor = (reporter = newReporter(), startedAt?: Date) =>
+    new Monitor(WatcherSchema.parse({ id: "mon", source: "monitor", every: startedAt ? "1h" : "5m" }), {
       scheduler, watchers: () => [], thresholds: cfg, log: () => {}, file, now: () => clock, reporter, detectors: [{ name: "t", description: "test", run: () => found }],
+      ...(startedAt ? { guard: { startedAt } } : {}),
     });
+  /** The server restarts at hour h: a monitor with the guard (the 24-hour clock needs a server start) that checks every hour. */
+  const restart = (h: number) => (monitor = newMonitor(newReporter(), at(h)));
   let monitor: Monitor;
   const check = async (h: number, m = monitor) => {
     clock = at(h);
@@ -200,8 +203,14 @@ describe("bug stories from the monitor", () => {
 
     it("a closed completed match: a successor that links it", async () => {
       gh.setBugIssues([issue(40, "a", { state: "closed", state_reason: "completed", closed_at: at(-48).toISOString() })]);
+      restart(-1);
       await check(0);
-      await check(1);
+      await check(1); // adopted: closed, no story
+      expect(gh.createdBodies()).toHaveLength(0);
+      await check(2); // the clock starts at the restart; the problem was first seen after it
+      expect(gh.createdBodies()).toHaveLength(0);
+      expect(stored()[0]!.report).toMatchObject({ issue: 40, clockWhy: "restart", seenAfter: at(2).toISOString() });
+      await check(3);
       const made = gh.createdBodies();
       expect(made).toHaveLength(1);
       expect(made[0]!.body).toContain("Came back after the fix");
@@ -256,43 +265,59 @@ describe("bug stories from the monitor", () => {
 
     it("is not a new story while the problem is seen but there is no new evidence", async () => {
       await made();
-      await check(8);
+      restart(5);
+      await check(8); // the close is noticed
+      await check(9); // the clock starts at the restart
       await check(30);
       await check(50);
       expect(gh.createdBodies()).toHaveLength(1);
-      expect(stored()[0]!.report?.closedAt).toBeDefined();
+      expect(stored()[0]!.report).toMatchObject({ closedAt: at(2).toISOString(), clockAt: at(5).toISOString(), clockWhy: "restart" });
+      expect(stored()[0]!.report?.seenAfter).toBeUndefined();
+      expect(stored()[0]!.report?.fixedAt).toBeUndefined(); // seen all the time: never fixed
     });
 
-    it("needs 24 hours after the close and evidence from after it", async () => {
-      found = [fi("a", "critical", { evidence: { counts: { runs: 2 }, times: [at(3).toISOString()], flows: ["issue-gitflow"] } })];
+    it("needs new evidence from after the clock: a sighting at the clock check, the story at the next", async () => {
+      found = [fi("a", "critical", { evidence: { counts: { runs: 2 }, times: [at(6).toISOString()], flows: ["issue-gitflow"] } })];
       await made();
+      restart(5);
       await check(8);
       expect(gh.createdBodies()).toHaveLength(1);
-      await check(27);
+      await check(9);
+      expect(gh.createdBodies()).toHaveLength(1);
+      expect(stored()[0]!.report?.seenAfter).toBe(at(9).toISOString());
+      await check(10);
       const bodies = gh.createdBodies();
       expect(bodies).toHaveLength(2);
       expect(bodies[1]!.body).toContain("Came back after the fix");
       expect(bodies[1]!.body).toContain("#101");
     });
 
-    it("counts a missed check after the close as proof", async () => {
+    it("counts a missed check after the clock as proof", async () => {
       await made();
+      restart(5);
       await check(8);
+      await check(9);
       found = [];
       await check(10);
       found = [fi("a")];
-      await check(30);
+      await check(11);
+      expect(gh.createdBodies()).toHaveLength(1);
+      await check(12);
       expect(gh.createdBodies()).toHaveLength(2);
     });
 
-    it("counts a gone and reopened finding as proof", async () => {
+    it("counts a gone and fresh finding as proof", async () => {
       await made();
+      restart(5);
       await check(8);
+      await check(9);
       found = [];
       await check(10);
       await check(35); // not seen for more than 24 hours: gone
       found = [fi("a")];
-      await check(40);
+      await check(36);
+      expect(gh.createdBodies()).toHaveLength(1);
+      await check(37);
       expect(gh.createdBodies()).toHaveLength(2);
     });
 
@@ -328,12 +353,13 @@ describe("bug stories from the monitor", () => {
       expect(gh.createdBodies()).toHaveLength(1);
     });
 
-    it("come back after 3 days after the close", async () => {
+    it("come back after 3 different days after the clock started", async () => {
       await check(0);
       await check(24);
       await check(48);
       close(101, 49);
-      found = [fi("m", "minor", { evidence: { counts: { runs: 2 }, times: [at(50).toISOString()], flows: ["issue-gitflow"] } })];
+      found = [fi("m", "minor", { evidence: { counts: { runs: 2 }, times: [at(51).toISOString()], flows: ["issue-gitflow"] } })];
+      restart(50);
       await check(72);
       await check(96);
       expect(gh.createdBodies()).toHaveLength(1);
@@ -506,5 +532,8 @@ describe("bug stories from the monitor", () => {
     expect(ConfigSchema.safeParse({ monitor: { cooldown_minutes: 0 } }).success).toBe(true);
     expect(ConfigSchema.safeParse({ monitor: { cooldown_minutes: -1 } }).success).toBe(false);
     expect(ConfigSchema.safeParse({ monitor: { cooldown_minutes: 1.5 } }).success).toBe(false);
+    expect(m.fix_wait_days).toBe(7);
+    expect(ConfigSchema.safeParse({ monitor: { fix_wait_days: 1 } }).success).toBe(true);
+    for (const bad of [0, 1.5, 366]) expect(ConfigSchema.safeParse({ monitor: { fix_wait_days: bad } }).success).toBe(false);
   });
 });

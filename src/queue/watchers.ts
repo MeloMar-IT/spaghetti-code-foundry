@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config, WatcherConfig } from "../config.js";
+import { selfBuild, selfContains } from "../engine/guards.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { readRateLimit, type RateReading } from "../github.js";
 import { collectNames } from "../monitor/clean.js";
@@ -51,6 +52,9 @@ export class WatcherManager {
   /** The last reading of GitHub's request limit, and when one was last tried (a try counts, so a failing call is not repeated). */
   private rate?: RateReading;
   private rateTried = 0;
+
+  /** The running build, read when the manager is built (the commit the process started with). */
+  private self = selfBuild();
 
   constructor(private o: WatcherManagerOptions) {}
 
@@ -115,6 +119,7 @@ export class WatcherManager {
       beforeCheck: () => this.noteRateLimit(),
       log: this.o.log,
       guard: { startedAt: this.o.startedAt, onLogError: (m) => this.o.log(`[${cfg.id}] ${m}`) },
+      self: this.self ? { repo: this.self.repo, contains: (c) => selfContains(c) } : undefined,
       reporter: new Reporter({
         config: () => this.o.config().monitor,
         buildLabel: (r) => buildLabelFor(this.o.config().watchers, r),

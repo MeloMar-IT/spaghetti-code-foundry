@@ -719,6 +719,7 @@ monitor:
   report_to: your-name/your-foundry-repo
   report_limits: { per_day: 3, per_check: 1 }   # per_check: at most 3
   cooldown_minutes: 10                          # quiet time after a server start; 0: none
+  fix_wait_days: 7                              # watch a closed story anyway after this many days
   breaker: { new_findings: 5, within_minutes: 60, failed_fixes: 3 }   # the circuit breaker
 ```
 
@@ -733,9 +734,25 @@ monitor:
   story says the evidence is left out.
 - **Only once.** A hidden marker in the story tells the monitor it exists. While it is open, a
   comment "Seen again: N times since …" is added at most every 6 hours.
-- **Came back.** If the story was closed as completed and the problem returns (at least 24 hours
-  after the close, with new proof), a new story links the old one. Closed as *not planned* means
-  muted: reopen the story to unmute it. (That is not an admin's mute; see below.)
+- **Came back.** If the story was closed as completed and the problem returns after the fix runs
+  (new proof from after the 24-hour clock started, see "Did the fix work?"), and the usual rule is
+  met (2 checks in a row; minor: 3 different days after the clock started), a new story links the
+  old one. Closed as *not planned* means muted: reopen the story to unmute it. (That is not an
+  admin's mute; see below.) A story that is reopened is open again: its clock and verdict are
+  forgotten.
+- **Did the fix work?** A story closed as completed is *waiting for the update* until the fix is
+  running. Sightings then are not "came back" and make no story. The 24-hour clock starts: when the
+  running Foundry contains the fix commit (the full commit is read from the run that built the
+  story); else at the first server start after the close (no git checkout, fix commit not known,
+  or `report_to` is not the Foundry's own repository); and in any case `fix_wait_days` (default 7)
+  after the close (the log says "waited"). If the problem is not seen for 24 hours of normal work
+  (time with no check, such as a sleep, does not count), the finding is *fixed* and the story gets
+  one comment "Not seen since the fix." It is written once, also after a lost answer or when GitHub
+  could not be reached; while bug stories are off, quiet or stopped by the breaker, or the finding is
+  muted, it waits. A story closed long before the clock (`fix_wait_days` or more) gets no comment.
+  If the problem is seen again after the clock started, with new proof, "fixed" is not said. The
+  findings list shows: waiting for the update, being watched, fixed. A story whose problem is not
+  seen is still checked on GitHub every 6 hours, so a close or a reopen is noticed.
 - **Limits.** 3 new stories a day, 1 per check (most severe first). The rest waits and the card
   says how many. At most 6 GitHub calls per check. If GitHub cannot be reached or its request limit
   is used up, nothing is lost; the stories are made at a later check.
@@ -774,8 +791,8 @@ One switch stops the monitor from making bug stories. It needs no GitHub.
   …), starts a fresh file and switches on. Later parts add other state to this file; it is reset
   too (the mutes as well), and the card and the log say so. "Off" does nothing on an unreadable file.
 - **The log.** `monitor-log.jsonl` in the data folder has one JSON line per event: `off`, `on`,
-  `story-made`, `story-skipped`, `breaker-open`, `breaker-closed`, `fix-failed`, `mute-made` and
-  `mute-ended`, with the reason for a skipped story (`off`, `cooldown`, `unreadable`, `breaker`,
+  `story-made`, `story-skipped`, `breaker-open`, `breaker-closed`, `fix-failed`, `clock-started` (reason `update`, `restart` or `waited`), `fixed`,
+  `came-back`, `mute-made` and `mute-ended`, with the reason for a skipped story (`off`, `cooldown`, `unreadable`, `breaker`,
   `muted`, `day_limit`, `check_limit`, `request_limit`, `github`). A story skipped because of a
   mute also has the mute's id and its reason text. A skipped story is written once per finding and reason, not at every
   check (and again each time the circuit breaker opens). The file moves to `monitor-log.1.jsonl` at 512 KiB, so it keeps

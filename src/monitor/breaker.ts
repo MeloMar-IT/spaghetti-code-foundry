@@ -11,7 +11,8 @@ import type { LockFile } from "./monitor.js";
  * a failed one counts as "the fix failed", and many new findings or failed fixes in a row stop the stories.
  */
 
-const key = (repo: string, issue: number | string) => `${repo.toLowerCase()}#${issue}`;
+export const storyKey = (repo: string, issue: number | string) => `${repo.toLowerCase()}#${issue}`;
+const key = storyKey;
 
 /** The bug stories of the findings: the current one and the earlier ones (repository ignores case). */
 export function storyKeys(findings: Finding[]): Set<string> {
@@ -68,7 +69,7 @@ export function keepEarlier(before: Finding[], after: Finding[]): Finding[] {
     if (!was || (f.report && key(f.report.repo, f.report.issue) === key(was.repo, was.issue))) return f;
     const earlier = f.earlier ?? [];
     if (earlier.some((e) => key(e.repo, e.issue) === key(was.repo, was.issue))) return f;
-    return { ...f, earlier: [...earlier, { repo: was.repo, issue: was.issue }].slice(-MAX_EARLIER) };
+    return { ...f, earlier: [...earlier, { repo: was.repo, issue: was.issue, url: was.url, ...(was.closedAt ? { closedAt: was.closedAt } : {}) }].slice(-MAX_EARLIER) };
   });
 }
 

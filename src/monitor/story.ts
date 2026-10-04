@@ -188,3 +188,11 @@ export function seenAgainComment(f: Finding): string {
   const since = f.report ? f.report.at.slice(0, 10) : f.firstSeen.slice(0, 10);
   return `Seen again: ${n} time${n === 1 ? "" : "s"} since ${since}.\n\n<!-- claude-factory monitor-seen -->`;
 }
+
+export const FIXED_MARKER = "<!-- claude-factory monitor-fixed -->";
+
+/** The one short comment on a story whose problem stayed away after the fix. */
+export const fixedComment = (): string => `Not seen since the fix.\n\n${FIXED_MARKER}`;
+
+/** Is this comment the "fixed" comment? Its last line that is not empty is the marker; a comment that only quotes it is not one. */
+export const isFixedComment = (c: { body: string }): boolean => c.body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) === FIXED_MARKER;

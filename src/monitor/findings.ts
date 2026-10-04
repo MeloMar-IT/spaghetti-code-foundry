@@ -50,6 +50,21 @@ export interface StoryRef {
   closedAt?: string;
   /** The story was closed as not planned: no new story, until it is reopened. */
   muted?: boolean;
+  /** The commit that fixed it (40 hex digits), from the run that built the story. */
+  fixCommit?: string;
+  /** When the 24-hour clock started, and why: the running Foundry has the fix, the server restarted, or the wait ran out. */
+  clockAt?: string;
+  clockWhy?: "update" | "restart" | "waited";
+  /** Milliseconds of normal work (checks that did not see the problem) since the clock started. */
+  workedMs?: number;
+  /** The first check after the clock started that saw the problem with new proof: the fix did not work. */
+  seenAfter?: string;
+  /** When the finding became fixed. */
+  fixedAt?: string;
+  /** The "not seen since the fix" comment: `due` (to write), `tried` (a post was started and may be lost). */
+  fixNote?: "due" | "tried";
+  /** When the "not seen since the fix" comment was written (or found). */
+  notedAt?: string;
 }
 
 /** The local day of a time, as YYYY-MM-DD. */
@@ -78,7 +93,7 @@ export interface Finding extends FindingInput {
   /** First seen during the quiet time after a restart: it does not count for the circuit breaker. */
   quietStart?: boolean;
   /** Bug stories this finding had before, which a newer story replaced (newest last, at most 10). */
-  earlier?: { repo: string; issue: number }[];
+  earlier?: { repo: string; issue: number; url?: string; closedAt?: string }[];
 }
 
 export const MAX_EARLIER = 10;
@@ -176,7 +191,13 @@ const validReport = (r: unknown): r is StoryRef => {
   const x = r as StoryRef;
   return !!x && typeof x === "object" && typeof x.repo === "string" && Number.isInteger(x.issue) && typeof x.url === "string" && isTime(x.at)
     && typeof x.seen === "number" && (x.lookedAt === undefined || isTime(x.lookedAt)) && (x.closedAt === undefined || isTime(x.closedAt))
-    && (x.muted === undefined || typeof x.muted === "boolean");
+    && (x.muted === undefined || typeof x.muted === "boolean")
+    && (x.fixCommit === undefined || (typeof x.fixCommit === "string" && /^[0-9a-f]{40}$/.test(x.fixCommit)))
+    && (x.clockAt === undefined || isTime(x.clockAt)) && (x.seenAfter === undefined || isTime(x.seenAfter))
+    && (x.fixedAt === undefined || isTime(x.fixedAt)) && (x.notedAt === undefined || isTime(x.notedAt))
+    && (x.workedMs === undefined || (typeof x.workedMs === "number" && Number.isFinite(x.workedMs) && x.workedMs >= 0))
+    && (x.clockWhy === undefined || x.clockWhy === "update" || x.clockWhy === "restart" || x.clockWhy === "waited")
+    && (x.fixNote === undefined || x.fixNote === "due" || x.fixNote === "tried");
 };
 /** The optional fields of a stored finding: a malformed one is dropped, the finding stays. */
 function tidy(f: Finding): Finding {
@@ -190,7 +211,7 @@ function tidy(f: Finding): Finding {
     ...(isTime(missedAt) ? { missedAt } : {}),
     ...(fixFailed && typeof fixFailed === "object" && Number.isInteger(fixFailed.count) && fixFailed.count > 0 && isTime(fixFailed.at) ? { fixFailed: { count: fixFailed.count, at: fixFailed.at } } : {}),
     ...(quietStart === true ? { quietStart } : {}),
-    ...(Array.isArray(earlier) && earlier.length <= MAX_EARLIER && earlier.every((e) => !!e && typeof e === "object" && typeof e.repo === "string" && Number.isInteger(e.issue)) ? { earlier: earlier.map((e) => ({ repo: e.repo, issue: e.issue })) } : {}),
+    ...(Array.isArray(earlier) && earlier.length <= MAX_EARLIER && earlier.every((e) => !!e && typeof e === "object" && typeof e.repo === "string" && Number.isInteger(e.issue)) ? { earlier: earlier.map((e) => ({ repo: e.repo, issue: e.issue, ...(typeof e.url === "string" ? { url: e.url } : {}), ...(isTime(e.closedAt) ? { closedAt: e.closedAt } : {}) })) } : {}),
     ...(Array.isArray(skipped) && skipped.length <= 10 && skipped.every((x) => typeof x === "string" && x.length <= 40) ? { skipped } : {}),
   };
 }

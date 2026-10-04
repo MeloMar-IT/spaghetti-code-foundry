@@ -4,7 +4,7 @@ import { DETECTORS } from "../src/monitor/detectors.js";
 import type { Finding } from "../src/monitor/findings.js";
 import { cleanLines, type Names } from "../src/monitor/clean.js";
 import { makeRedactor } from "../src/credentials/redact.js";
-import { buildStory, hashIn, markerHash, seenAgainComment } from "../src/monitor/story.js";
+import { buildStory, FIXED_MARKER, fixedComment, hashIn, isFixedComment, markerHash, seenAgainComment } from "../src/monitor/story.js";
 
 const TOKEN = "ghp_" + "a1B2c3D4e5".repeat(4);
 const steps = { "issue-gitflow": ["claim_areas", "build"], daily: ["go"] };
@@ -83,6 +83,17 @@ describe("buildStory", () => {
     const c = seenAgainComment(f);
     expect(c).toContain("Seen again: 7 times since 2026-10-01");
     expect(isBot({ body: c })).toBe(true);
+  });
+
+  it("writes the fixed comment with its own marker, and knows it only when the marker is the last line", () => {
+    const c = fixedComment();
+    expect(c).toBe(`Not seen since the fix.\n\n${FIXED_MARKER}`);
+    expect(FIXED_MARKER).toBe("<!-- claude-factory monitor-fixed -->");
+    expect(isBot({ body: c })).toBe(true);
+    expect(isFixedComment({ body: c })).toBe(true);
+    expect(isFixedComment({ body: `${c}\n\n` })).toBe(true);
+    expect(isFixedComment({ body: `> ${FIXED_MARKER}\nthanks` })).toBe(false);
+    expect(isFixedComment({ body: seenAgainComment(finding({})) })).toBe(false);
   });
 
   it("proves the cleaning: a private repository, an e-mail address, a path with a user name and a token do not get into a story", async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { grantPush, hotfixState, protectedBranchEnv, pushAllowEnv, selfBuild } from "../src/engine/guards.js";
+import { grantPush, hotfixState, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains } from "../src/engine/guards.js";
 import { runFlow } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { Flow } from "../src/flow/schema.js";
@@ -196,5 +196,52 @@ describe("selfBuild", () => {
     git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "two");
     expect(selfBuild(dir)).toEqual(before);
     expect(before!.sha).not.toBe(git(dir, "rev-parse", "HEAD"));
+  });
+});
+
+describe("selfContains", () => {
+  const commit = (dir: string, msg: string) => {
+    git(dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", msg);
+    return git(dir, "rev-parse", "HEAD");
+  };
+  const clone = () => {
+    const dir = mkdtempSync(join(tmp, "self-"));
+    git(dir, "init", "-q", "-b", "main");
+    const first = commit(dir, "one");
+    git(dir, "remote", "add", "origin", "https://github.com/acme/app.git");
+    return { dir, first };
+  };
+
+  it("is true for the running commit and an ancestor, false for a later one", () => {
+    const { dir, first } = clone();
+    const second = commit(dir, "two");
+    expect(selfBuild(dir)!.sha).toBe(second);
+    expect(selfContains(second, dir)).toBe(true);
+    expect(selfContains(first, dir)).toBe(true);
+    expect(selfContains(commit(dir, "three"), dir)).toBe(false); // made after the build was read
+  });
+
+  it("is false for anything that is not 40 lower-case hex digits, for an unknown commit and for a folder without git", () => {
+    const { dir } = clone();
+    selfBuild(dir);
+    for (const bad of ["HEAD", "--help", "-h", "", "ABCDEF0123456789ABCDEF0123456789ABCDEF01", "0".repeat(40), "a".repeat(39)]) expect(selfContains(bad, dir)).toBe(false);
+    const plain = mkdtempSync(join(tmp, "plain-"));
+    expect(selfContains(git(dir, "rev-parse", "HEAD"), plain)).toBe(false);
+  });
+
+  it("does not remember a no: it is asked again", () => {
+    const { dir, first } = clone();
+    const side = (() => {
+      git(dir, "checkout", "-q", "-b", "side");
+      const s = commit(dir, "side");
+      git(dir, "checkout", "-q", "main");
+      return s;
+    })();
+    const tip = commit(dir, "tip");
+    expect(selfBuild(dir)!.sha).toBe(tip);
+    expect(selfContains(side, dir)).toBe(false);
+    git(dir, "replace", "--graft", tip, git(dir, "rev-parse", `${tip}^`), side); // the history becomes whole
+    expect(first).toBeTruthy();
+    expect(selfContains(side, dir)).toBe(true);
   });
 });

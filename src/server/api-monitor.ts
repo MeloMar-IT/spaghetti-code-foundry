@@ -1,4 +1,5 @@
-import { readFindings, type Finding } from "../monitor/findings.js";
+import { readFindings, type Finding, type StoryRef } from "../monitor/findings.js";
+import { fixState } from "../monitor/fix.js";
 import { breakerWhy, currentState, describeEntry, loadGuard, MAX_MUTE_HOURS, switchStories, validReason, type Mute, type StoriesState } from "../monitor/guard.js";
 import { activeMutes, addMute, endMute, muteFor, MuteError } from "../monitor/mutes.js";
 import { markerHash } from "../monitor/story.js";
@@ -29,8 +30,11 @@ function muteView(m: Mute, byFingerprint: Map<string, Finding>) {
   };
 }
 
+/** Did the fix work? Only for a story in the repository the monitor writes to. */
+const fixOf = (r: StoryRef, target?: string) => (target && r.repo.toLowerCase() === target.toLowerCase() ? fixState(r) : undefined);
+
 /** The findings of the monitor (every stored one), the mutes in force and the detector names. */
-function lists() {
+function lists(target?: string) {
   const findings = readFindings().findings;
   const byFingerprint = new Map(findings.map((f) => [f.fingerprint, f]));
   const mutes = activeMutes(loadGuard(), new Date());
@@ -47,7 +51,7 @@ function lists() {
         lastSeen: f.lastSeen,
         count: f.count,
         gone: f.gone,
-        ...(r ? { story: { issue: r.issue, url: r.url, state: r.muted ? "not_planned" : r.closedAt ? "closed" : "open" } } : {}),
+        ...(r ? { story: { issue: r.issue, url: r.url, state: r.muted ? "not_planned" : r.closedAt ? "closed" : "open", ...(fixOf(r, target) ? { fix: fixOf(r, target) } : {}) } } : {}),
         ...(f.due && !r ? { owed: true } : {}),
         ...(m ? { mute: { id: m.id, kind: m.kind, reason: m.reason, ...(m.until ? { until: m.until } : {}) } } : {}),
       };
@@ -70,7 +74,7 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
   if (seg[0] !== "monitor" || seg.length > 3) return false;
   if (seg.length === 1) {
     if (method !== "GET") throw new HttpError(405, "method not allowed");
-    return send(res, 200, { ...view(ctx), ...lists() }), true;
+    return send(res, 200, { ...view(ctx), ...lists(ctx.config().monitor.report_to) }), true;
   }
   if (seg[1] === "mutes") {
     if (seg.length === 2 && method === "POST") {
@@ -105,7 +109,7 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
         return muteFailure(e);
       }
       ctx.watchers.monitorAct(describeEntry({ event: "mute-made", detector: mute.detector, ...(mute.fingerprint ? { fingerprint: mute.fingerprint } : {}), text: mute.reason, ...(mute.until ? { until: mute.until } : {}) }));
-      return send(res, 201, { ...view(ctx), ...lists(), mute: muteView(mute, new Map(stored.map((f) => [f.fingerprint, f]))) }), true;
+      return send(res, 201, { ...view(ctx), ...lists(ctx.config().monitor.report_to), mute: muteView(mute, new Map(stored.map((f) => [f.fingerprint, f]))) }), true;
     }
     if (seg.length === 3 && method === "DELETE") {
       let mute: Mute;
@@ -115,7 +119,7 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
         return muteFailure(e);
       }
       ctx.watchers.monitorAct(describeEntry({ event: "mute-ended", detector: mute.detector }));
-      return send(res, 200, { ...view(ctx), ...lists() }), true;
+      return send(res, 200, { ...view(ctx), ...lists(ctx.config().monitor.report_to) }), true;
     }
     return false;
   }
