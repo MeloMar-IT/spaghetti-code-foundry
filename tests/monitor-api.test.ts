@@ -200,3 +200,74 @@ describe("DELETE /api/monitor/mutes/:id", () => {
     expect(((await again.json()) as { error: string }).error).toBe("mute not found");
   });
 });
+
+describe("POST /api/monitor/retry", () => {
+  const story = (issue: number, over: Record<string, unknown> = {}) => ({ repo: "acme/app", issue, url: `https://github.com/acme/app/issues/${issue}`, at: new Date().toISOString(), seen: 1, ...over });
+  const needy = (fingerprint: string, over: Partial<Finding> = {}) => finding(fingerprint, { tries: 2, needsYou: new Date().toISOString(), report: story(2, { closedAt: new Date().toISOString() }), ...over });
+  const stored = () => (JSON.parse(readFileSync(join(home(), "monitor-findings.json"), "utf8")) as { findings: Finding[] }).findings;
+  const turnKeys = async () => ((await (await call("GET", "/api/your-turn")).json()) as { groups: { items: { key: string }[] }[] }).groups.flatMap((g) => g.items.map((i) => i.key));
+  const withTarget = async (fn: () => Promise<void>) => {
+    const cfg = (await (await call("GET", "/api/config")).json()) as { monitor: Record<string, unknown> };
+    expect((await call("PUT", "/api/config", { ...cfg, monitor: { ...cfg.monitor, report_to: "acme/app" } })).status).toBe(200);
+    try {
+      await fn();
+    } finally {
+      expect((await call("PUT", "/api/config", cfg)).status).toBe(200);
+    }
+  };
+
+  it("lists needsYou, lets the monitor try again, logs who did it, and the item goes away", async () => {
+    await withTarget(async () => {
+      seed([needy(A), finding(B)]);
+      const m = await get();
+      expect(m.findings.map((f: { needsYou?: boolean }) => !!f.needsYou).sort()).toEqual([false, true]);
+      expect(await turnKeys()).toContain(`monitor|needs|${markerHash(A)}`);
+      const res = await call("POST", "/api/monitor/retry", { finding: markerHash(A) });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain(A);
+      expect(JSON.parse(text).findings.some((f: { needsYou?: boolean }) => f.needsYou)).toBe(false);
+      expect(stored().find((f) => f.fingerprint === A)).toMatchObject({ tries: 0 });
+      expect(stored().find((f) => f.fingerprint === A)!.needsYou).toBeUndefined();
+      expect(log().filter((l) => l.event === "try-again")).toMatchObject([{ by: session.user.id }]);
+      expect((await activity())[0]).toContain("try again");
+      expect(await turnKeys()).not.toContain(`monitor|needs|${markerHash(A)}`);
+    });
+  });
+  it("also works when the story is closed as not planned", async () => {
+    await withTarget(async () => {
+      seed([needy(A, { report: story(2, { muted: true }) })]);
+      expect((await call("POST", "/api/monitor/retry", { finding: markerHash(A) })).status).toBe(200);
+    });
+  });
+  it("answers 400 for bad input and an unknown finding", async () => {
+    await withTarget(async () => {
+      seed([needy(A)]);
+      for (const body of [{}, { finding: "x" }, { finding: "0123456789abcdef" }]) expect((await call("POST", "/api/monitor/retry", body)).status).toBe(400);
+    });
+  });
+  it("answers 409 for a finding that does not wait for a person", async () => {
+    await withTarget(async () => {
+      seed([needy(A, { needsYou: undefined }), needy(B, { report: story(3) }), needy(SECRET, { gone: true })]);
+      for (const f of [A, B, SECRET]) {
+        const res = await call("POST", "/api/monitor/retry", { finding: markerHash(f) });
+        expect(res.status).toBe(409);
+        expect(await res.text()).not.toContain(f);
+      }
+    });
+  });
+  it("answers 403 without the CSRF token", async () => {
+    await withTarget(async () => {
+      seed([needy(A)]);
+      expect((await call("POST", "/api/monitor/retry", { finding: markerHash(A) }, { cookie: session.cookie })).status).toBe(403);
+    });
+  });
+  it("answers 400 for a broken findings file and does not rename it", async () => {
+    await withTarget(async () => {
+      writeFileSync(join(home(), "monitor-findings.json"), "{ nope");
+      expect((await call("POST", "/api/monitor/retry", { finding: markerHash(A) })).status).toBe(400);
+      expect(existsSync(join(home(), "monitor-findings.json"))).toBe(true);
+      expect(existsSync(join(home(), "monitor-findings.json.broken"))).toBe(false);
+    });
+  });
+});

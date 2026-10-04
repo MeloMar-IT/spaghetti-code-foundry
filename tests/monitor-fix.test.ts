@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import type { RunBrief } from "../src/engine/state.js";
 import type { Names } from "../src/monitor/clean.js";
-import { checkFixes, cameBack, fixCommitOf, fixRunsOf, fixState, forgetFix } from "../src/monitor/fix.js";
-import { loadFindings, type Finding, type FindingInput, type StoryRef } from "../src/monitor/findings.js";
-import { logFile, type Mute, type Verdict } from "../src/monitor/guard.js";
+import { checkFixes, cameBack, fixCommitOf, fixRunsOf, fixState, forgetFix, tryAgain } from "../src/monitor/fix.js";
+import { loadFindings, saveFindings, type Finding, type FindingInput, type StoryRef } from "../src/monitor/findings.js";
+import { logFile, type LogEntry, type Mute, type Verdict } from "../src/monitor/guard.js";
 import { Monitor } from "../src/monitor/monitor.js";
 import { Reporter } from "../src/monitor/report.js";
 import { FIXED_MARKER, markerFor } from "../src/monitor/story.js";
@@ -201,6 +201,7 @@ describe("did the fix work? (Monitor and Reporter)", () => {
   let mutes: Mute[];
   let perCheck: number;
   let waitDays: number;
+  let recorded: LogEntry[] = [];
 
   const NAMES: Names = { target: TARGET, users: [], emails: [], repos: [], watchers: [], complete: true };
   const fi = (id: string, over: Partial<FindingInput> = {}): FindingInput => ({
@@ -227,7 +228,7 @@ describe("did the fix work? (Monitor and Reporter)", () => {
   const newReporter = () =>
     new Reporter({
       config: cfg, buildLabel: () => "go", names: () => NAMES, builtinSteps: () => ({ "issue-gitflow": ["claim_areas"] }),
-      guard: () => verdict, mutes: () => mutes, record: () => {},
+      guard: () => verdict, mutes: () => mutes, record: (e) => void recorded.push(e),
     });
   const newMonitor = (startedAt: Date) =>
     new Monitor(WatcherSchema.parse({ id: "mon", source: "monitor", every: "1h" }), {
@@ -263,6 +264,7 @@ describe("did the fix work? (Monitor and Reporter)", () => {
 
   beforeEach(() => {
     gh = fakeGithub();
+    recorded = [];
     process.env.FACTORY_HOME = join(gh.tmp, "home");
     file = join(gh.tmp, "monitor-findings.json");
     found = [fi("a")];
@@ -695,5 +697,77 @@ describe("did the fix work? (Monitor and Reporter)", () => {
     await closedStory();
     expect(fixState(rep())).toBe("waiting");
     expect(rep().fixCommit).toBeUndefined();
+  });
+
+  describe("two tries, then a person", () => {
+    const sight = async (h: number) => {
+      found = [fi("a", { evidence: { counts: { runs: 2 }, times: [iso(h)] } })];
+      await check(h);
+    };
+    /** Stories #101 and #102 are made and #102 is closed; the problem is seen again until the monitor decides. */
+    const twoStories = async () => {
+      await closedStory();
+      restart(4);
+      for (let h = 5; h <= 8; h++) await sight(h);
+      expect(gh.createdBodies()).toHaveLength(2);
+      expect(rep()).toMatchObject({ issue: 102 });
+      expect(stored().tries).toBe(2);
+      close(102, 9);
+      restart(12);
+      for (let h = 13; h <= 20; h++) await sight(h);
+    };
+    const skips = () => recorded.filter((e) => e.event === "story-skipped" && e.reason === "two_tries");
+    it("makes no third story and marks the finding once", async () => {
+      await twoStories();
+      expect(gh.createdBodies()).toHaveLength(2);
+      expect(stored().needsYou).toBeDefined();
+      expect(stored().due).toBeUndefined();
+      expect(skips()).toMatchObject([{ issue: 102 }]);
+      await sight(21);
+      expect(skips()).toHaveLength(1);
+      expect(gh.createdBodies()).toHaveLength(2);
+    });
+    it("makes no mark while stories are off", async () => {
+      verdict = { go: false, reason: "off", note: "bug stories are switched off" };
+      await twoStories().catch(() => {});
+      expect(stored().needsYou).toBeUndefined();
+      expect(skips()).toHaveLength(0);
+    });
+    it("lets a third story be made after try again, and links the newest earlier story", async () => {
+      await twoStories();
+      const f = loadFindings(file).findings;
+      saveFindings(f.map((x) => tryAgain(x)), file);
+      await sight(21);
+      await sight(22);
+      const bodies = gh.createdBodies();
+      expect(bodies).toHaveLength(3);
+      expect(bodies[2]!.body).toContain("#102");
+      expect(stored()).toMatchObject({ tries: 1 });
+      expect(stored().needsYou).toBeUndefined();
+    });
+    it("counts a successor story that was made but whose save was lost, when it is adopted", async () => {
+      await closedStory();
+      expect(stored().tries).toBe(1);
+      const first = gh.bugIssues().find((i) => i.number === 101)!;
+      gh.setBugIssues([...gh.bugIssues(), { ...first, number: 102, state: "open", state_reason: null, closed_at: null, html_url: `https://github.com/${TARGET}/issues/102`, body: `lost\n\n${markerFor("restart-loop|a")}` } as FakeIssue]);
+      await check(7);
+      expect(rep()).toMatchObject({ issue: 102 });
+      expect(stored().tries).toBe(2);
+      expect(gh.createdBodies()).toHaveLength(1);
+    });
+    it("keeps the count of a story from before the upgrade when GitHub no longer has the story", async () => {
+      await closedStory();
+      const old = loadFindings(file).findings.map((x) => {
+        const { tries: _tries, ...rest } = x;
+        return rest as Finding;
+      });
+      saveFindings(old, file);
+      process.env.FAKE_GH_BUG_ISSUES = "[]";
+      rmSync(`${process.env.FAKE_GH_LOG}.issues.json`, { force: true });
+      found = [];
+      await check(7);
+      expect(stored().report).toBeUndefined();
+      expect(stored().tries).toBe(1);
+    });
   });
 });

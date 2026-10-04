@@ -99,6 +99,14 @@ export function fakeGithub() {
     /** The names of the labels that exist in the fake repository. */
     labels: (): string[] => (existsSync(labelsFile) ? readFileSync(labelsFile, "utf8").split("\n").filter(Boolean) : []),
     setLabels: (list: string[]) => writeFileSync(labelsFile, list.map((l) => `${l}\n`).join("")),
+    /** Makes the calls that contain `on` (all when empty) wait until the returned function is called. */
+    hold: (on = ""): (() => void) => {
+      const file = join(tmp, "hold");
+      writeFileSync(file, "");
+      process.env.FAKE_GH_HOLD = file;
+      process.env.FAKE_GH_HOLD_ON = on;
+      return () => rmSync(file, { force: true });
+    },
     remoteGit: (...a: string[]) => git(remote, ...a),
     restore: () => {
       process.env = { ...env };

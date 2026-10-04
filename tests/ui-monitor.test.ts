@@ -28,6 +28,7 @@ beforeEach(() => {
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     sent.push({ method: init.method, url });
     bodies.push(init.body ? JSON.parse(init.body) : undefined);
+    if (url === "/api/monitor/retry") return muteFails ? { ok: false, status: 409, statusText: "x", json: async () => ({ error: muteFails }) } : { ok: true, status: 200, statusText: "x", json: async () => ({}) };
     if (url.startsWith("/api/monitor/mutes")) return muteFails ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: muteFails }) } : { ok: true, status: 200, statusText: "x", json: async () => ({}) };
     const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
     if (url === "/api/watchers") {
@@ -196,6 +197,12 @@ describe("the findings and mutes of the monitor's card", () => {
     expect(mod.storyCell({ issue: 5, url: "https://x/5", state: "open", fix: "fixed" }).textContent).toBe("#5");
   });
 
+  it("a story of a finding that needs a person says so", () => {
+    expect(mod.storyCell({ issue: 5, url: "https://x/5", state: "closed" }, true).textContent).toBe("#5 (closed, needs you)");
+    expect(mod.storyCell({ issue: 5, url: "https://x/5", state: "not_planned" }, true).textContent).toBe("#5 (closed as not planned, needs you)");
+    expect(mod.storyCell(undefined, true).textContent).toBe("needs you");
+  });
+
   it("with 150 findings it draws 100 rows and Show 50 more draws the rest", async () => {
     withLists(Array.from({ length: 150 }, (_, i) => finding(i + 1)));
     const p = panel(await draw());
@@ -277,6 +284,31 @@ describe("the findings and mutes of the monitor's card", () => {
     await wait();
     expect(sent[0]).toEqual({ method: "DELETE", url: "/api/monitor/mutes/abcdef0123456789" });
     expect(sent.some((s) => s.url === "/api/watchers")).toBe(true);
+  });
+
+  it("a finding that needs a person shows it and a Try again button that sends the POST and reloads", async () => {
+    withLists([finding(1, { needsYou: true, story: { issue: 12, url: "https://github.com/o/a/issues/12", state: "closed" } }), finding(2)]);
+    const p = panel(await draw());
+    const row = p.all("tr").find((r) => r.textContent.includes("sentence 1"))!;
+    expect(row.textContent).toContain("needs you");
+    expect(button(row, "Try again")).toBeDefined();
+    expect(button(p.all("tr").find((r) => r.textContent.includes("sentence 2"))!, "Try again")).toBeUndefined();
+    sent = [];
+    button(row, "Try again")!.click();
+    await wait();
+    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/retry" });
+    expect(sent.some((s) => s.url === "/api/watchers")).toBe(true);
+  });
+
+  it("an API error of Try again does not break the page", async () => {
+    withLists([finding(1, { needsYou: true })]);
+    const p = panel(await draw());
+    muteFails = "this finding does not wait for a person";
+    sent = [];
+    button(p, "Try again")!.click();
+    await wait();
+    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/retry" });
+    muteFails = "";
   });
 
   it("muteBody and untilText", () => {

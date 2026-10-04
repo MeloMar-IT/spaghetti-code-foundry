@@ -49,6 +49,8 @@ export class WatcherManager {
 
   /** The monitor (source "monitor"), when one is enabled; it has no repository and no Watcher. */
   private monitor?: { monitor: Monitor; key: string };
+  /** Monitors that were stopped or replaced; a check of theirs may still run and write the findings. */
+  private retired = new Set<Monitor>();
   /** The last reading of GitHub's request limit, and when one was last tried (a try counts, so a failing call is not repeated). */
   private rate?: RateReading;
   private rateTried = 0;
@@ -105,6 +107,7 @@ export class WatcherManager {
     const key = cfg ? JSON.stringify(cfg) : undefined;
     if (this.monitor && this.monitor.key !== key) {
       this.monitor.monitor.stop();
+      this.retire(this.monitor.monitor);
       this.o.log(`[${this.monitor.monitor.cfg.id}] monitor stopped`);
       this.monitor = undefined;
     }
@@ -144,6 +147,23 @@ export class WatcherManager {
   /** When the server started, if it told us. */
   get startedAt(): Date | undefined {
     return this.o.startedAt;
+  }
+
+  /**
+   * Runs `fn` when no check of the monitor is in flight: the running monitor's, and the checks of monitors that were stopped or
+   * replaced meanwhile. `fn` runs at once after the last wait, so it may read, change and save a file with no await in it.
+   */
+  async monitorIdle<T>(fn: () => T): Promise<T> {
+    for (;;) {
+      const busy: Promise<void>[] = [];
+      for (const m of [...(this.monitor ? [this.monitor.monitor] : []), ...this.retired]) {
+        const b = m.busy();
+        if (b) busy.push(b);
+        else this.retired.delete(m);
+      }
+      if (!busy.length) return fn();
+      await Promise.allSettled(busy);
+    }
   }
 
   /** Puts a line in the monitor's recent activity; does nothing when no monitor runs. */
@@ -232,8 +252,19 @@ export class WatcherManager {
     for (const r of this.running.values()) r.watcher.stop();
     this.running.clear();
     if (keepMonitor) return;
-    this.monitor?.monitor.stop();
+    if (this.monitor) {
+      this.monitor.monitor.stop();
+      this.retire(this.monitor.monitor);
+    }
     this.monitor = undefined;
+  }
+
+  /** Keeps a stopped monitor only while its check still runs. */
+  private retire(m: Monitor) {
+    const b = m.busy();
+    if (!b) return;
+    this.retired.add(m);
+    void b.then(() => this.retired.delete(m));
   }
 
   /** Stops the watchers and keeps the monitor running, so a restart that takes too long is seen. */
