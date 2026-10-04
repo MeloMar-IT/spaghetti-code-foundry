@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
 /** The states of a refinement session, in words. Later steps move a session along; for now only Drop and Restore change it. */
 export const STATE_LABELS = {
@@ -37,7 +38,7 @@ export function logText(entry) {
   if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
   if (entry.what === "architect-brief") return "The architect wrote the context brief";
   if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
-  return `${who}: ${entry.what}`;
+  return talkLogText(entry) || `${who}: ${entry.what}`;
 }
 
 const ASK = "Ask the architect to look at the code";
@@ -51,9 +52,17 @@ const stopPoll = () => {
 const sentence = (t) => (/[.!?]$/.test(t) ? t : `${t}.`);
 
 /** What the step is, in words for the user: never a folder or file name of the run. */
-export function activityText(doing) {
+export function activityText(doing, kind = "brief") {
   const t = text(doing);
   if (!t) return "";
+  if (kind !== "brief") {
+    // A round or an answer: fixed sentences only, never the words of the step.
+    if (/clone|check out/i.test(t)) return "Getting the code.";
+    if (/reads the code/i.test(t)) return "Reading the code.";
+    if (/^check/i.test(t)) return "Checking the answer.";
+    if (/^getting ready/i.test(t)) return "Getting ready.";
+    return "";
+  }
   if (/clone|check out/i.test(t)) return "Getting the code.";
   if (/reads the code/i.test(t)) return "Reading the code and writing the brief.";
   if (/issues/i.test(t) && /read/i.test(t)) return "Reading the open issues.";
@@ -62,11 +71,15 @@ export function activityText(doing) {
   return t;
 }
 
+const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question." };
+const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question." };
+
 /** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
 export function architectStatus(a) {
   const state = a?.state;
-  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: "" };
-  if (state === "running") return { busy: true, text: "The architect is at work.", detail: activityText(a.doing) };
+  const kind = kindOf(a);
+  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: QUEUED_DETAIL[kind] };
+  if (state === "running") return { busy: true, text: RUNNING_TEXT[kind], detail: activityText(a.doing, kind) };
   if (state === "paused") return { busy: false, text: "The architect paused.", detail: sentence(text(a.reason)) };
   if (state === "failed") return { busy: false, bad: true, text: "The architect could not finish.", detail: sentence(text(a.reason)) };
   return { busy: false, text: "", detail: "" };
@@ -77,8 +90,9 @@ export function askLabel(s) {
   if (!s?.mine || s.state === "dropped" || s.repoAvailable === false) return "";
   const state = s.architect?.state;
   if (state === "queued" || state === "running") return "";
-  if (state === "failed") return "Try again";
-  if (state === "paused") return "Ask again";
+  const own = kindOf(s.architect) === "brief"; // a round or a question is asked again in the talk
+  if (state === "paused") return own ? "Ask again" : "";
+  if (state === "failed" && own) return "Try again";
   return s.brief ? "Refresh" : ASK;
 }
 
@@ -102,14 +116,19 @@ export function briefMeta(brief) {
   return `Made ${new Date(brief.at).toLocaleString()}${brief.branch ? ` · branch ${brief.branch}` : ""}`;
 }
 
+/** The line for the state of the architect: a spinner while it works, its words otherwise; null when idle. */
+function statusLine(st) {
+  if (st.busy) return h("div", { class: "row" }, h("span", { class: "spinner" }), h("b", {}, st.text), h("span", { class: "muted" }, st.detail));
+  return st.text ? h("p", { class: st.bad ? "status bad" : "status" }, `${st.text} ${st.detail}`) : null;
+}
+
 /** The "Context brief" part: status line, button, brief. Returns nodes. */
 function briefSection(s, onAsk) {
-  const st = architectStatus(s.architect);
+  // Only a run for the brief draws its line here; a round or a question is shown in the talk.
+  const st = architectStatus(kindOf(s.architect) === "brief" ? s.architect : undefined);
   const label = askLabel(s);
   const b = s.brief;
-  const line = st.busy
-    ? h("div", { class: "row" }, h("span", { class: "spinner" }), h("b", {}, st.text), h("span", { class: "muted" }, st.detail))
-    : st.text ? h("p", { class: st.bad ? "status bad" : "status" }, `${st.text} ${st.detail}`) : null;
+  const line = statusLine(st);
   return [
     h("h2", {}, "Context brief"),
     line,
@@ -265,7 +284,9 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     }
     if (!current()) return () => {};
     let shown = "";
+    let draws = 0; // counts the pages drawn: a poll that began before one is out of date
     const show = (next) => {
+      draws++;
       const json = JSON.stringify(next);
       if (json !== shown) {
         shown = json;
@@ -277,29 +298,37 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     const tick = async () => {
       poll = undefined;
       if (!current()) return;
+      const before = draws;
       let next;
       try {
         next = await api.refinementSession(id);
       } catch (e) {
         if (!current()) return;
         if (e?.status === 404) return gone(e);
-        poll = setTimeout(tick, POLL_MS); // the page stays; the next round asks again
+        if (before === draws) poll = setTimeout(tick, POLL_MS); // the page stays; the next round asks again
         return;
       }
-      if (current()) show(next);
+      if (current() && before === draws) show(next);
     };
-    const ask = (btn) =>
-      whileBusy(btn, async () => {
-        let next;
-        try {
-          next = await api.askArchitect(id);
-        } catch (e) {
-          toast(errorText(e), "error");
-          if (current()) await reload();
-          return;
-        }
+    let sending = false; // one change at a time
+    const send = async (btn, call) => {
+      if (sending || btn.disabled) return false;
+      sending = true;
+      btn.disabled = true;
+      try {
+        const next = await call();
         if (current()) show(next);
-      });
+        return true;
+      } catch (e) {
+        toast(errorText(e), "error");
+        if (current()) await reload();
+        return false;
+      } finally {
+        sending = false;
+        btn.disabled = false;
+      }
+    };
+    const ask = (btn) => send(btn, () => api.askArchitect(id));
     const draw = (s) => {
       const open = s.state !== "dropped";
       const buttons = [];
@@ -336,6 +365,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         h("h2", {}, "Idea"),
         h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
         ...briefSection(s, ask),
+        ...talkSection(s, { send, errorText, line: kindOf(s.architect) === "brief" ? null : statusLine(architectStatus(s.architect)) }),
         h("h2", {}, "Story drafts"),
         s.drafts.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.title ?? "Draft")))) : h("p", { class: "muted" }, "No story drafts yet."),
         h("h2", {}, "Log"),

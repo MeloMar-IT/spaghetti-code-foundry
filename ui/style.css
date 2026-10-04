@@ -398,3 +398,14 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .run-now h2 { margin: 0 0 8px; font-size: 15px; }
 .run-dialog { display: grid; gap: 12px; }
 .user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }
+
+/* The talk of a refinement session (ui/refinement-talk.js) */
+.talk { display: grid; gap: 10px; margin: 14px 0; min-width: 0; }
+.talk > *, .talk .card > *, .talk li { min-width: 0; }
+.talk p { margin: 0; }
+.talk p, .talk li, .talk h3, .talk b, .talk label { overflow-wrap: anywhere; }
+.talk .said { white-space: pre-wrap; }
+.talk ul, .talk ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.talk .entry > button { margin-left: 6px; }
+.talk .open-line { font-weight: 550; }
+.talk textarea { font-family: var(--sans); font-size: inherit; }
