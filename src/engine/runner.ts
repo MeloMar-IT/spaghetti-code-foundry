@@ -23,7 +23,8 @@ import {
 } from "./execute.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
-import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, TOOLS_DIR } from "./guards.js";
+import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { removeSignInDir } from "./repo-access.js";
 import { appendLiveLog, loadRun, saveRun, spentToday, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { prepareWorkspace } from "./workspace.js";
@@ -174,6 +175,8 @@ async function drive(
     appendLiveLog(summary.runDir, line);
     opts.log?.(line);
   };
+  // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
+  if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
   try {
     requireRedaction();
   } catch (e) {
@@ -265,6 +268,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   s.reason = "cancelled by user";
   s.waiting = undefined;
   s.finishedAt = new Date().toISOString();
+  if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
   saveRun(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
@@ -272,6 +276,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
 }
 
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {
+  if (!removeSignInDir(summary.runDir)) appendLiveLog(summary.runDir, "! the sign-in folder of this run could not be removed");
   summary.status = r.outcome;
   summary.reason = r.reason === undefined ? undefined : redactText(r.reason);
   summary.state.next = r.next;

@@ -1,5 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { KEY_MISSING, KEY_UNREADABLE } from "../src/auth/repos.js";
+import {
+  APP_BROKEN_RUN, APP_FAILED_RUN, APP_NOT_INSTALLED_RUN, APP_NOT_SET_UP_RUN, APP_RATE_LIMIT_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, APP_UNREACHABLE_RUN,
+  DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, SIGN_IN_NOT_REMOVED,
+} from "../src/engine/guards.js";
 import { errorLine, explainError, type ErrorAbout } from "../src/errors.js";
 
 type Row = [string, string, ErrorAbout, string, boolean?];
@@ -22,6 +27,20 @@ const rows: Row[] = [
   ['step "push" failed: set a token for this repository under My repositories', "The step push failed", "run", "the repository has no token for runs; set one under My repositories"],
   ['step "push" failed: the token of this repository is missing; set it again under My repositories', "The step push failed", "run", "the repository's token is missing or refused; set it again under My repositories"],
   ['step "push" failed: GitHub refused the token of this repository; reconnect the repository under My repositories', "The step push failed", "run", "the repository's token is missing or refused; set it again under My repositories"],
+  [`step "m" failed: ${DEPLOY_KEY_NO_GH}`, "The step m failed", "run", "the repository signs in with a deploy key, which cannot use issues or pull requests"],
+  [`step "m" failed: ${KEY_MISSING}`, "The step m failed", "run", "the repository's sign-in is missing or refused; reconnect it under My repositories"],
+  [`step "m" failed: ${KEY_UNREADABLE}`, "The step m failed", "run", "the repository's sign-in is missing or refused; reconnect it under My repositories"],
+  [`step "m" failed: ${KEY_REFUSED_RUN}`, "The step m failed", "run", "the repository's sign-in is missing or refused; reconnect it under My repositories"],
+  [`step "m" failed: ${APP_REFUSED_RUN}`, "The step m failed", "run", "the repository's sign-in is missing or refused; reconnect it under My repositories"],
+  [`step "m" failed: ${APP_NOT_SET_UP_RUN}`, "The step m failed", "run", "the GitHub App cannot sign in to this repository"],
+  [`step "m" failed: ${APP_NOT_INSTALLED_RUN}`, "The step m failed", "run", "the GitHub App cannot sign in to this repository"],
+  [`step "m" failed: ${APP_BROKEN_RUN}`, "The step m failed", "run", "the GitHub App cannot sign in to this repository"],
+  [`step "m" failed: ${APP_UNREACHABLE_RUN}`, "The step m failed", "run", "the repository's sign-in was not available for the step"],
+  [`step "m" failed: ${APP_RATE_LIMIT_RUN}`, "The step m failed", "run", "the repository's sign-in was not available for the step"],
+  [`step "m" failed: ${APP_FAILED_RUN}`, "The step m failed", "run", "the repository's sign-in was not available for the step"],
+  [`step "m" failed: ${APP_TOKEN_EXPIRED}`, "The step m failed", "run", "the repository's sign-in was not available for the step"],
+  [`step "m" failed: ${KEY_NOT_READY}`, "The step m failed", "run", "the repository's sign-in was not available for the step"],
+  [`step "m" failed: ${SIGN_IN_NOT_REMOVED}`, "The step m failed", "run", "a folder with the repository's sign-in was left in the run folder"],
   ['step "x" failed: exit code null', "The step x failed", "run", "its command ended with an error"],
   ['step "plan" failed: timed out', "The step plan failed", "run", "it ran longer than its time limit"],
   ['step "plan" failed: claude exited with code 1 and no result. boom\nline 2', "The step plan failed", "run", "the agent stopped without a result"],

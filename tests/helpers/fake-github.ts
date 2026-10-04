@@ -33,6 +33,21 @@ export function fakeGit(gh: { tmp: string }, url = "https://github.com/acme/app"
 }
 
 /**
+ * Puts a fake `ssh` next to the fake `gh` (see tests/fixtures/fake-ssh.sh): it serves the fake remote over ssh and logs every call.
+ * Call it after fakeGithub(); that one's restore() undoes it.
+ */
+export function fakeSsh(gh: { tmp: string }) {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const log = join(gh.tmp, "ssh.log");
+  writeFileSync(log, "");
+  copyFileSync(resolve("tests/fixtures/fake-ssh.sh"), join(gh.tmp, "bin", "ssh"));
+  chmodSync(join(gh.tmp, "bin", "ssh"), 0o755);
+  Object.assign(process.env, { FAKE_GIT_REAL: real, FAKE_SSH_LOG: log });
+  delete process.env.FAKE_SSH_FAIL;
+  return { log: () => readFileSync(log, "utf8") };
+}
+
+/**
  * A temp dir with a bare git remote (one commit on main) and a fake `gh` on PATH that
  * clones that remote and logs every call. Call restore() when done.
  */

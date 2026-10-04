@@ -37,6 +37,9 @@ const PUSH_GUARD = /^(?:Spaghetti Code Foundry|claude-factory): pushing to prote
 const NOT_FEATURE = /^refusing to push .+: not a feature branch$/;
 
 const SETTINGS_FIX = "check the provider and model in Settings or in the flow";
+// the sentences of a deploy key or the GitHub App in a run (src/engine/guards.ts), matched by their starts
+const SIGN_IN_USED = /^(?:the (?:stored )?deploy key of this repository (?:is missing|cannot be read)|GitHub refused the (?:deploy key of this repository|app's token for this repository)|a deploy key gives git access only|the GitHub App (?:is not set up on this server|is not installed on this repository|of this server is not working))/;
+const SIGN_IN_LATER = /^(?:the deploy key could not be made ready|GitHub could not be reached for the app's token|GitHub's request limit is used up, so no app token|the app's token (?:could not be made|ran out during the step))/;
 const SETUP_ERRORS: { re: RegExp; what: string; fix: string }[] = [
   { re: /^unknown provider "/, what: "the flow names a provider that is not set up", fix: SETTINGS_FIX },
   { re: /^Claude Code can't use the /, what: "the model and provider settings do not fit together", fix: SETTINGS_FIX },
@@ -44,6 +47,9 @@ const SETUP_ERRORS: { re: RegExp; what: string; fix: string }[] = [
   { re: /^provider \S+ needs (?:a model|base_url)/, what: "a provider is missing a model or an address", fix: SETTINGS_FIX },
   { re: /^claude CLI not found/, what: "the Claude Code tool is not installed", fix: "install Claude Code on the computer that runs the Foundry" },
   { re: /^codex CLI not found/, what: "the Codex tool is not installed", fix: "install Codex on the computer that runs the Foundry" },
+  { re: SIGN_IN_USED, what: "the repository's sign-in could not be used", fix: "reconnect the repository under My repositories, or ask an admin" },
+  { re: SIGN_IN_LATER, what: "the repository's sign-in was not available for the step", fix: "resume the run" },
+  { re: /^the sign-in folder of this run could not be removed/, what: "the sign-in folder of the run could not be removed", fix: "ask an admin to delete the folder \"sign-in\" in the run folder, then resume the run" },
   { re: /^(?:set a token for this repository|the (?:stored )?token of this repository|GitHub refused the token of this repository|"[^"]+" is not one of your repositories|this run has no owner)/, what: "the repository could not be read with its stored token", fix: "set the token of the repository again under My repositories, or ask an admin when it cannot be read" },
 ];
 const LOGIN_FIX = "log in again with `gh auth login`, or check the token the Foundry uses";
