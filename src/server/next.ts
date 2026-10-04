@@ -199,7 +199,7 @@ export function hideForeign<T>(value: T, mine: (runId: string) => boolean): T {
 }
 
 /** What a user sees of a queued job: not the folder, the source, the locks or how many runs work at once. */
-export interface OwnJob { runId: string; kind: string; enqueuedAt: string; waitingFor?: string; githubRepo?: string; issue?: string; task?: string; priority?: true; next: NextStep; ahead: number }
+export interface OwnJob { runId: string; kind: string; enqueuedAt: string; waitingFor?: string; flow?: string; githubRepo?: string; issue?: string; task?: string; priority?: true; next: NextStep; ahead: number }
 
 /** GET /api/queue for a user: their own queued jobs, each with the number of other accounts' jobs in front of it. */
 export function ownQueue(ctx: ApiContext, userId: string): { pending: OwnJob[]; active: { runId: string }[] } {
@@ -215,6 +215,7 @@ export function ownQueue(ctx: ApiContext, userId: string): { pending: OwnJob[]; 
     pending.push({
       runId: p.runId, kind: p.kind, enqueuedAt: p.enqueuedAt,
       ...(p.waitingFor && mine(p.waitingFor) ? { waitingFor: p.waitingFor } : {}),
+      ...(p.flow !== undefined ? { flow: p.flow } : {}),
       ...(p.githubRepo !== undefined ? { githubRepo: p.githubRepo } : {}),
       ...(p.issue !== undefined ? { issue: p.issue } : {}),
       ...(p.task !== undefined ? { task: p.task } : {}),

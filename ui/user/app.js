@@ -2,7 +2,7 @@ import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { renderRefinement } from "/refinement.js";
 import { renderRepos } from "/repos.js";
-import { renderRunDetail, renderRunsList } from "/runs.js";
+import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { homeHash, renderStart } from "/user/start.js";
 
 const main = document.getElementById("main");
@@ -37,8 +37,8 @@ async function route() {
     if (page.section === "start") done = await renderStart(box);
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false });
-    else if (page.id) done = renderRunDetail(box, page.id, { admin: false });
-    else done = await renderRunsList(box, { admin: false });
+    else if (page.id) done = renderMyRun(box, page.id);
+    else done = await renderMyRuns(box);
   } catch (e) {
     if (mine === generation) mount(box, h("div", { class: "errors" }, e.message));
     return;

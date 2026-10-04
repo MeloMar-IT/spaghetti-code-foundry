@@ -58,7 +58,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "auth.js", "runs.js", "repos.js", "refinement.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -84,8 +84,11 @@ describe("ui/user/app.js", () => {
   });
 
   it("gives every renderer admin: false", () => {
-    const calls = app.match(/render(Refinement|Repos|RunDetail|RunsList)\(box[^)]*\)/g) ?? [];
-    expect(calls).toHaveLength(4);
+    const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
+    expect(calls).toHaveLength(2);
+    expect(app).toContain("renderMyRun(box, page.id)");
+    expect(app).toContain("await renderMyRuns(box)");
+    expect(app).not.toContain('"/runs.js"');
     for (const c of calls) expect(c, c).toContain("{ admin: false");
   });
 });

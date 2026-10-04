@@ -93,7 +93,7 @@ export async function renderRunsList(main, { admin = true } = {}) {
   return () => clearInterval(timer);
 }
 
-function logLine(line) {
+export function logLine(line) {
   const cls = line.startsWith("▶") ? "step" : line.startsWith("✔") ? "ok" : line.startsWith("✘") ? "fail" : line.startsWith("    ·") || line.startsWith("  ") ? "dim" : line.startsWith("⏸") || line.startsWith("↻") ? "step" : null;
   return h("span", { class: cls }, line + "\n");
 }
@@ -211,8 +211,8 @@ export const versionRow = (s) => (s.flowDef?.publish?.enabled ? [h("dt", {}, "Fl
 
 export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { style: { whiteSpace: "pre-wrap" } }, s.reason)] : null);
 
-function diffView(d) {
-  if (!d.patch) return h("p", { class: "muted" }, "No changes (or the workspace is not a git checkout).");
+export function diffView(d, { none = "No changes (or the workspace is not a git checkout)." } = {}) {
+  if (!d.patch) return h("p", { class: "muted" }, none);
   return h("div", {},
     h("pre", { class: "mono diffstat" }, d.stat),
     d.truncated ? h("p", { class: "status bad" }, "Diff truncated (very large).") : null,

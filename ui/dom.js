@@ -65,7 +65,7 @@ export function toast(msg, kind = "info") {
 }
 
 /** Show a modal; `build(close)` returns its content. Resolves with the value passed to close(). */
-export function modal(title, build) {
+export function modal(title, build, { busy = () => false } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById("modal-root");
     const opener = document.activeElement;
@@ -79,8 +79,10 @@ export function modal(title, build) {
       opener?.focus?.();
       resolve(v);
     };
+    // `busy()`: a request is in flight, so Escape, ✕ and the backdrop do nothing until it is answered.
+    const dismiss = () => (busy() ? undefined : close(undefined));
     const onKey = (e) => {
-      if (e.key === "Escape") return close(undefined);
+      if (e.key === "Escape") return dismiss();
       if (e.key !== "Tab") return;
       const to = trapTarget(tabStops(box), document.activeElement, e.shiftKey);
       if (to) {
@@ -90,9 +92,9 @@ export function modal(title, build) {
     };
     document.addEventListener("keydown", onKey);
     const box = h("div", { class: "modal", role: "dialog", "aria-label": title, "aria-modal": "true", tabindex: "-1" },
-      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: () => close(undefined), "aria-label": "Close" }, "✕")),
+      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, "✕")),
       build(close));
-    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && close(undefined) }, box));
+    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
     (box.querySelector("textarea, input") ?? box).focus();
   });
 }
