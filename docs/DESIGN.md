@@ -351,6 +351,18 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   after the engine's `core.hooksPath` (an empty `credential.helper`, a helper for the repository's
   host that prints the name and token from the environment, no extra header), https only, no
   prompt. A refusal ends the run (`Engine.accessFailed` skips `on_failure`).
+  A **deploy key** step gets `<runDir>/sign-in/` (0700) with `key` (0600, via `sshKeyEnv()`), a
+  `holder` note (pid and start time) and a `gh` stand-in that leaves a marker and fails with a
+  fixed sentence; `repoKeyEnv()` sets ssh-only git, no agent and no `GH_TOKEN`, and the marker
+  fails the step after it ends, whatever the script did with the exit code. A **GitHub App** step
+  asks `appTokenAccess()` for a fresh token limited to the repository (never cached), used like a
+  token; a refusal after its expiry gives the one-hour sentence. A step that holds a credential
+  runs in its own process group, killed when the step ends. The folder is removed (key first, one
+  chmod retry, a link removed as a link) in the step's `finally`, in `finish()`, in
+  `cancelWaitingRun()`, at the start of `drive()` and by `sweepSignInDirs()` at server start,
+  which keeps a folder only while its holder's pid runs with the recorded start time. Removal
+  fails closed: a folder that stays fails the step or the resume (`SIGN_IN_NOT_REMOVED`).
+  Limits: the `gh` stand-in catches `gh` by name only, and a process that leaves its group is not stopped.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.

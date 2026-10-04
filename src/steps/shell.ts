@@ -34,6 +34,8 @@ export async function runShell(o: {
   pinnedSecrets?: string[];
   /** A check made on the complete output (not only its tail). */
   scan?: (text: string) => boolean;
+  /** The step holds a credential: its whole process group is killed when it ends. */
+  ownGroup?: boolean;
 }): Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -52,6 +54,7 @@ export async function runShell(o: {
     signal: o.signal,
     logFile: o.logFile,
     pinnedSecrets: o.pinnedSecrets,
+    ownGroup: o.ownGroup,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
   const fullOut = (res.stdout + res.stderr).replace(ANSI, "");

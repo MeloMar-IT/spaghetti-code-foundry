@@ -14,6 +14,8 @@ export class GithubAppError extends Error {
   constructor(
     public code: AppErrorCode,
     public status?: number,
+    /** The status was GitHub's request limit (429, or 403 with no requests left). */
+    public rateLimited = false,
   ) {
     super(
       code === "key"
@@ -86,11 +88,20 @@ export interface TokenOpts {
   timeoutMs?: number;
 }
 
+/** Is this answer GitHub's request limit? 429, or 403 with no requests left. */
+export const limited = (res: Pick<Response, "status" | "headers">): boolean =>
+  res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0");
+
 /** A short-lived token of an installation, cached per app, installation and repository until 5 minutes before it ends. */
 export async function installationToken(app: AppCredentials, installationId: string, opts: TokenOpts = {}): Promise<string> {
+  return (await installationTokenInfo(app, installationId, opts)).token;
+}
+
+/** Like `installationToken`, with the time the token ends (ms). A `fresh` token is not cached: it goes to one step only. */
+export async function installationTokenInfo(app: AppCredentials, installationId: string, opts: TokenOpts = {}): Promise<{ token: string; expires: number }> {
   const key = `${app.app_id}/${installationId}/${opts.repository ?? ""}`;
   const hit = cache.get(key);
-  if (!opts.fresh && hit && hit.expires - Date.now() > 5 * 60_000) return hit.token;
+  if (!opts.fresh && hit && hit.expires - Date.now() > 5 * 60_000) return hit;
   const jwt = jwtFor(app);
   const res = await call(
     `${API}/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
@@ -99,7 +110,7 @@ export async function installationToken(app: AppCredentials, installationId: str
       : { method: "POST", headers: headers(jwt) },
     opts.timeoutMs,
   );
-  if (!res.ok) throw new GithubAppError("status", res.status);
+  if (!res.ok) throw new GithubAppError("status", res.status, limited(res));
   let body: { token?: unknown; expires_at?: unknown } | undefined;
   try {
     body = (await res.json()) as typeof body;
@@ -108,8 +119,8 @@ export async function installationToken(app: AppCredentials, installationId: str
   }
   const expires = typeof body?.expires_at === "string" ? new Date(body.expires_at).getTime() : NaN;
   if (typeof body?.token !== "string" || !body.token || !Number.isFinite(expires) || expires <= Date.now()) throw new GithubAppError("answer");
-  cache.set(key, { token: body.token, expires });
-  return body.token;
+  if (!opts.fresh) cache.set(key, { token: body.token, expires });
+  return { token: body.token, expires };
 }
 
 /** Forgets the cached tokens (tests). */
@@ -130,7 +141,7 @@ export async function repoInstallation(app: AppCredentials, github: string, opts
     const res = await call(`${API}/repos/${github.split("/").map(encodeURIComponent).join("/")}/installation`, { method: "GET", headers: headers(jwt) }, timeoutMs);
     if (res.status === 404) return { ok: false, problem: "not-installed" };
     if (res.status === 401) return { ok: false, problem: "app-broken" };
-    if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) return { ok: false, problem: "rate-limit" };
+    if (limited(res)) return { ok: false, problem: "rate-limit" };
     if (!res.ok) return { ok: false, problem: "failed" };
     let id: unknown;
     try {
@@ -152,7 +163,7 @@ export async function repoInstallation(app: AppCredentials, github: string, opts
     if (e.code === "answer") return { ok: false, problem: "failed" };
     if (e.status === 401) return { ok: false, problem: "app-broken" };
     if (e.status === 404) return { ok: false, problem: "not-installed" };
-    if (e.status === 429) return { ok: false, problem: "rate-limit" };
+    if (e.rateLimited) return { ok: false, problem: "rate-limit" };
     return { ok: false, problem: "failed" };
   }
 }

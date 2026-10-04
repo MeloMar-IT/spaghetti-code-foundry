@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, addRepo } from "../src/auth/repos.js";
-import { TOKEN_REFUSED_REASON } from "../src/engine/guards.js";
+import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, addRepo } from "../src/auth/repos.js";
+import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../src/engine/guards.js";
 import type { RunSummary } from "../src/engine/state.js";
 import {
   GETTING_READY,
@@ -90,13 +90,16 @@ const started = (runId = "r1", s = session()) => (setArchitectRun(owner, s.id, r
 
 describe("architectReason", () => {
   const failedStep = (id: string, text: string) => ({ status: "failed" as const, reason: `step "${id}" failed: ${text}` });
-  it.each([
+  it.each<[Pick<RunSummary, "status" | "reason">, string]>([
     [{ status: "cancelled" as const, reason: 'cancelled during step "brief"' }, "It was cancelled"],
     [{ status: "failed" as const, reason: "interrupted — resume it to continue" }, "The server stopped while the architect was reading"],
     [failedStep("clone", NEEDS_TOKEN), "Set a token for this repository under My repositories"],
     [failedStep("clone", TOKEN_MISSING), "The token of this repository is missing; set it again under My repositories"],
     [failedStep("list_issues", TOKEN_UNREADABLE), "The stored token of this repository cannot be read; set it again under My repositories, or ask an admin"],
-    [failedStep("clone", NO_RUN_OWNER), "This run has no owner, so the token of the repository cannot be looked up"],
+    [failedStep("clone", KEY_MISSING), `${KEY_MISSING[0]!.toUpperCase()}${KEY_MISSING.slice(1)}`],
+    [failedStep("clone", KEY_UNREADABLE), `${KEY_UNREADABLE[0]!.toUpperCase()}${KEY_UNREADABLE.slice(1)}`],
+    ...SIGN_IN_SENTENCES.map((s): [Pick<RunSummary, "status" | "reason">, string] => [failedStep("clone", s), `${s[0]!.toUpperCase()}${s.slice(1)}`]),
+    [failedStep("clone", NO_RUN_OWNER),"This run has no owner, so the token of the repository cannot be looked up"],
     [failedStep("clone", TOKEN_REFUSED_REASON), "GitHub refused the token of this repository; check its access to Contents and Issues, or set a new token under My repositories"],
     [failedStep("clone", '"acme/app" is not one of your repositories'), "The repository is not in My repositories any more"],
     [failedStep("brief", "output did not match pass_if"), "The brief did not have its five parts"],

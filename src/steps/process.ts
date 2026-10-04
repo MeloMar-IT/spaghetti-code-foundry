@@ -24,6 +24,8 @@ export interface ProcessOptions {
   redactor?: Redactor;
   /** Secrets of this process, hidden for its whole life even when the stored credentials change meanwhile. Used with the stored ones. */
   pinnedSecrets?: string[];
+  /** Run in a process group of its own and kill the whole group when the process ends (steps that hold a credential). */
+  ownGroup?: boolean;
 }
 
 /**
@@ -69,7 +71,18 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       cwd: opts.cwd,
       env: mergeEnv(opts.env),
       stdio: ["pipe", "pipe", "pipe"],
+      ...(opts.ownGroup ? { detached: true } : {}),
     });
+    // a signal to the child, or to its whole group when it has one
+    const signalTree = (sig: NodeJS.Signals) => {
+      try {
+        if (opts.ownGroup && child.pid) process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch {
+        // already gone
+      }
+    };
+    if (opts.ownGroup) child.on("exit", () => signalTree("SIGKILL")); // background children must not outlive the step
 
     let stdout = "";
     let stderr = "";
@@ -78,8 +91,8 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     let aborted = false;
 
     const kill = () => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+      signalTree("SIGTERM");
+      setTimeout(() => signalTree("SIGKILL"), 5000).unref();
     };
     const onAbort = () => {
       aborted = true;

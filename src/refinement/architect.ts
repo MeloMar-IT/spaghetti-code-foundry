@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, ownsRepo } from "../auth/repos.js";
+import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, ownsRepo } from "../auth/repos.js";
 import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
-import { TOKEN_REFUSED_REASON } from "../engine/guards.js";
+import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
 import { saveRun, type RunSummary } from "../engine/state.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { REFINE_BRIEF_FLOW } from "../flow/usage.js";
@@ -50,7 +50,7 @@ export const GETTING_READY = "Getting ready";
 const upper = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const sourceOf = (id: string) => REFINEMENT_SOURCE + id;
 
-const TOKEN_SENTENCES = [NEEDS_TOKEN, TOKEN_MISSING, TOKEN_UNREADABLE, NO_RUN_OWNER, TOKEN_REFUSED_REASON];
+const TOKEN_SENTENCES = [NEEDS_TOKEN, TOKEN_MISSING, TOKEN_UNREADABLE, NO_RUN_OWNER, TOKEN_REFUSED_REASON, KEY_MISSING, KEY_UNREADABLE, ...SIGN_IN_SENTENCES];
 
 /** A fixed sentence for why a read failed: no folder, cost, model or command. */
 export function architectReason(run: Pick<RunSummary, "status" | "reason">): string {

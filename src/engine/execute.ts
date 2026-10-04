@@ -6,8 +6,9 @@ import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
 import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
-import { TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, pushAllowEnv, tokenRefused } from "./guards.js";
-import { ghConfigDir, removeGhConfigDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
+import { KEY_UNREADABLE } from "../auth/repos.js";
+import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, tokenRefused } from "./guards.js";
+import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
@@ -61,8 +62,6 @@ export interface Engine {
   runLoop: (scope: Scope, startAt: string | null) => Promise<LoopResult>;
   /** Set when a token step could not sign in: the run ends there, `on_failure` is not followed. */
   accessFailed?: boolean;
-  /** The note about a repository whose method runs do not use yet was written. */
-  unusedNoted?: boolean;
   /** A human decision for the approval step the run is waiting at (consumed on use). */
   decision?: ApprovalDecision & { stepId: string };
 }
@@ -148,25 +147,51 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const env = stepEnv(scope, engine, step);
       // The stored token of the repository, looked up now, only for a step with repo_access (or the old grant by name).
       const access = stepRepoAccess(step, scope.depth, scope.flow.name, engine.summary, ctx.vars);
-      if (access?.kind === "refused") {
-        if (access.detail) engine.log(`    ! ${step.id}: the stored token could not be read: ${access.detail}`);
+      // A step that cannot sign in ends the run there: `on_failure` is not followed.
+      const refuse = (reason: string): StepResult => {
         engine.accessFailed = true;
-        return { ok: false, output: access.reason, error: access.reason };
+        return { ok: false, output: reason, error: reason };
+      };
+      if (access?.kind === "refused") {
+        if (access.detail) engine.log(`    ! ${step.id}: the stored ${access.reason === KEY_UNREADABLE ? "deploy key" : "token"} could not be read: ${access.detail}`);
+        return refuse(access.reason);
       }
-      if (access?.kind === "server" && access.unused && !engine.unusedNoted) {
-        engine.unusedNoted = true;
-        engine.log(`    · ${step.id}: this repository uses ${access.unused === "github-app" ? "the GitHub App" : "a deploy key"}, which runs do not use yet; the server's own access is used`);
+      // The GitHub App: a new token limited to this repository, for this step only (never stored).
+      let tokenAccess = access?.kind === "token" ? access : undefined;
+      let appExpires: number | undefined;
+      if (access?.kind === "app") {
+        const t = await appTokenAccess(access, engine.config);
+        if (!t.ok) return refuse(t.reason);
+        tokenAccess = { kind: "token", token: t.token, url: access.url, username: "x-access-token" };
+        appExpires = t.expires;
       }
+      const keyAccess = access?.kind === "key" ? access : undefined;
       const refinement = isRefinementRun(engine.summary.source);
-      const ghDir = access?.kind === "token" ? ghConfigDir() : undefined;
-      const readEnv = access ? repoTokenEnv(access, env, ghDir) : {};
+      const ghDir = tokenAccess || keyAccess ? ghConfigDir() : undefined;
+      const runDir = engine.summary.runDir;
+      let readEnv: Record<string, string | undefined> = {};
+      let marker = "";
+      if (tokenAccess) readEnv = repoTokenEnv(tokenAccess, env, ghDir);
+      if (keyAccess) {
+        try {
+          ({ env: readEnv, marker } = prepareKeyStep(keyAccess, runDir, env, ghDir));
+        } catch {
+          removeSignInDir(runDir);
+          if (ghDir) removeGhConfigDir(ghDir);
+          return refuse(KEY_NOT_READY);
+        }
+      }
       Object.assign(env, readEnv);
       const readNames = Object.keys(readEnv).filter((k) => readEnv[k] !== undefined);
       // The push exception is a one-time token that only this step gets (see grantPush), not a plain name.
       const grant = env.FACTORY_PUSH_ALLOW ? grantPush(env.FACTORY_PUSH_ALLOW) : undefined;
       if (grant) Object.assign(env, grant.env);
+      let r: Awaited<ReturnType<typeof runShell>> | undefined;
+      let thrown: unknown;
+      let gone = true;
+      let noGh = false;
       try {
-        const r = await runShell({
+        r = await runShell({
           command: render(step.run, ctx, SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
           env,
@@ -175,19 +200,39 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           signal: engine.signal,
           dockerImage: step.sandbox ? image : undefined,
           dockerEnv: readNames,
-          // the token of this step stays hidden even if the stored one is changed or removed while it runs
-          pinnedSecrets: access?.kind === "token" ? [access.token] : undefined,
-          scan: access?.kind === "token" ? tokenRefused : undefined,
+          // the token or key of this step stays hidden even if the stored one is changed or removed while it runs
+          pinnedSecrets: tokenAccess ? [tokenAccess.token] : keyAccess ? [keyAccess.key] : undefined,
+          scan: tokenAccess ? tokenRefused : keyAccess ? keyRefused : undefined,
+          ownGroup: Boolean(tokenAccess || keyAccess),
         });
-        // A refusal on stderr fails the step even when the script goes on; on a failed step the output counts too.
-        const stopped = r.error === "cancelled"; // a refusal that came before a timeout still counts
-        const denied = access?.kind === "token" && !stopped && (r.ok ? r.scanned?.stderr : r.scanned?.output) === true;
-        if (denied) engine.accessFailed = true;
-        return { ok: r.ok && !denied, output: r.output, error: denied ? (refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN) : r.error, exitCode: r.exitCode };
+      } catch (e) {
+        thrown = e;
       } finally {
         grant?.revoke();
         if (ghDir) removeGhConfigDir(ghDir);
+        if (keyAccess) {
+          noGh = ghStandInCalled(marker);
+          gone = removeSignInDir(runDir);
+        }
       }
+      // A folder with the key that cannot be removed fails the step, whatever else happened.
+      if (keyAccess && !gone) {
+        engine.log(`    ! ${step.id}: the sign-in folder could not be removed`);
+        return refuse(SIGN_IN_NOT_REMOVED);
+      }
+      if (thrown) throw thrown;
+      if (!r) return refuse(KEY_NOT_READY);
+      // A refusal on stderr fails the step even when the script goes on; on a failed step the output counts too.
+      const stopped = r.error === "cancelled"; // a refusal that came before a timeout still counts
+      const denied = (tokenAccess || keyAccess) && !stopped && (r.ok ? r.scanned?.stderr : r.scanned?.output) === true;
+      if (noGh) return refuse(DEPLOY_KEY_NO_GH);
+      if (denied) {
+        const expired = appExpires !== undefined && Date.now() >= appExpires;
+        const reason = keyAccess ? KEY_REFUSED_RUN : access?.kind === "app" ? (expired ? APP_TOKEN_EXPIRED : APP_REFUSED_RUN) : refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN;
+        engine.accessFailed = true;
+        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode };
+      }
+      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode };
     }
 
     case "parallel": {

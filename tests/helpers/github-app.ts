@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 
 /** What the fake answers instead of the normal answer, for the lookup or the token call. */
-export type Forced = { status: number; body?: string } | "network" | "hang" | { raw: string };
+export type Forced = { status: number; body?: string; headers?: Record<string, string> } | "network" | "hang" | { raw: string };
 
 export interface FakeGithubApp {
   appId: string;
@@ -81,7 +81,7 @@ export function fakeGithubApp(): FakeGithubApp {
       });
     }
     if ("raw" in f) return Promise.resolve(new Response(f.raw, { status: 200 }));
-    return Promise.resolve(new Response(f.body ?? "{}", { status: f.status }));
+    return Promise.resolve(new Response(f.body ?? "{}", { status: f.status, ...(f.headers ? { headers: f.headers } : {}) }));
   };
 
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {

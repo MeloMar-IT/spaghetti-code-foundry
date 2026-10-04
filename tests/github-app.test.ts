@@ -8,7 +8,7 @@ import { liveLogFile } from "../src/engine/state.js";
 import { runFlow } from "../src/engine/runner.js";
 import { classifyFailure } from "../src/failure.js";
 import { parseFlow } from "../src/flow/load.js";
-import { GithubAppError, clearTokenCache, installUrl, installationToken, repoApp, repoInstallation } from "../src/github-app.js";
+import { GithubAppError, clearTokenCache, installUrl, installationToken, installationTokenInfo, limited, repoApp, repoInstallation } from "../src/github-app.js";
 import { type FakeGithubApp, fakeGithubApp } from "./helpers/github-app.js";
 
 let fake: FakeGithubApp;
@@ -134,6 +134,30 @@ describe("installationToken", () => {
     expect(fake.calls).toHaveLength(2);
     await installationToken(app(), "77", { repository: "app", fresh: true });
     expect(fake.calls).toHaveLength(3);
+  });
+  it("installationTokenInfo returns the end time, and a fresh token is not cached", async () => {
+    const before = Date.now();
+    const info = await installationTokenInfo(app(), "77", { repository: "app", fresh: true });
+    expect(info.token).toBe(fake.tokens[0]);
+    expect(info.expires).toBeGreaterThan(before + 3_000_000);
+    await installationToken(app(), "77", { repository: "app" });
+    expect(fake.calls).toHaveLength(2); // the fresh one was not kept
+    await installationToken(app(), "77", { repository: "app" });
+    expect(fake.calls).toHaveLength(2);
+  });
+  it("limited is true for 429 and for 403 with no requests left, false for a plain 403", () => {
+    const res = (status: number, headers: Record<string, string> = {}) => ({ status, headers: new Headers(headers) });
+    expect(limited(res(429))).toBe(true);
+    expect(limited(res(403, { "x-ratelimit-remaining": "0" }))).toBe(true);
+    expect(limited(res(403))).toBe(false);
+    expect(limited(res(403, { "x-ratelimit-remaining": "5" }))).toBe(false);
+    expect(limited(res(500))).toBe(false);
+  });
+  it("marks the error of a rate limit", async () => {
+    fake.force.token = { status: 403, headers: { "x-ratelimit-remaining": "0" } };
+    await expect(installationToken(app(), "77")).rejects.toMatchObject({ code: "status", status: 403, rateLimited: true });
+    fake.force.token = { status: 403 };
+    await expect(installationToken(app(), "77")).rejects.toMatchObject({ status: 403, rateLimited: false });
   });
   it("asks again when under five minutes are left", async () => {
     const real = Date.now;
