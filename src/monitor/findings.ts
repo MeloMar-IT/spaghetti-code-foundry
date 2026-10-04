@@ -34,6 +34,42 @@ export interface FindingInput {
   repo?: string;
 }
 
+/** The bug story written for a finding (see report.ts). Times are ISO text. */
+export interface StoryRef {
+  /** owner/repo the story lives in. */
+  repo: string;
+  issue: number;
+  url: string;
+  /** When the story was made. */
+  at: string;
+  /** In how many checks the finding was seen since the story was made or adopted. */
+  seen: number;
+  /** When GitHub was last asked about this story (the "seen again" comment goes out at most every 6 hours). */
+  lookedAt?: string;
+  /** When the story was closed as completed. */
+  closedAt?: string;
+  /** The story was closed as not planned: no new story, until it is reopened. */
+  muted?: boolean;
+  /** The commit that fixed it (40 hex digits), from the run that built the story. */
+  fixCommit?: string;
+  /** When the 24-hour clock started, and why: the running Foundry has the fix, the server restarted, or the wait ran out. */
+  clockAt?: string;
+  clockWhy?: "update" | "restart" | "waited";
+  /** Milliseconds of normal work (checks that did not see the problem) since the clock started. */
+  workedMs?: number;
+  /** The first check after the clock started that saw the problem with new proof: the fix did not work. */
+  seenAfter?: string;
+  /** When the finding became fixed. */
+  fixedAt?: string;
+  /** The "not seen since the fix" comment: `due` (to write), `tried` (a post was started and may be lost). */
+  fixNote?: "due" | "tried";
+  /** When the "not seen since the fix" comment was written (or found). */
+  notedAt?: string;
+}
+
+/** The local day of a time, as YYYY-MM-DD. */
+export const dayOf = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 export interface Finding extends FindingInput {
   firstSeen: string;
   lastSeen: string;
@@ -41,11 +77,57 @@ export interface Finding extends FindingInput {
   count: number;
   /** Not seen for 24 hours. */
   gone: boolean;
+  /** The last 3 different local days it was seen on (oldest first). */
+  days?: string[];
+  /** A bug story is owed since then (kept until it is made, also when the problem goes away). */
+  due?: string;
+  report?: StoryRef;
+  /** A check after the story's creation that did not see the finding (proof that the problem went away). */
+  missedAt?: string;
+  /** In how many checks in a row it was seen (a missed check resets it). A story is owed for a problem that lasts: 2 in a row. */
+  streak?: number;
+  /** The reasons a story for this finding was skipped and written to the monitor's log already (once per finding and reason). */
+  skipped?: string[];
+  /** The fix failed: runs of its bug stories ended as failed. `at` is when the newest of them finished. */
+  fixFailed?: { count: number; at: string };
+  /** First seen during the quiet time after a restart: it does not count for the circuit breaker. */
+  quietStart?: boolean;
+  /** Bug stories this finding had before, which a newer story replaced (newest last, at most 10). */
+  earlier?: { repo: string; issue: number; url?: string; closedAt?: string }[];
+  /** Bug stories made for this finding since the count started. Missing: 1 with a story, else 0. */
+  tries?: number;
+  /** Since when the finding needs a person: two stories did not fix it, so no third is made. */
+  needsYou?: string;
 }
+
+const MAX_EVIDENCE_LINES = 11;
+const cleanText = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
+
+/** The evidence as at most 11 plain lines for the admin: flows, watchers, counts (one line), times, steps, lines. Never throws. */
+export function evidenceLines(e: Evidence | undefined): string[] {
+  if (!e || typeof e !== "object") return [];
+  const list = (label: string, v: unknown, n: number): string[] => {
+    if (!Array.isArray(v)) return [];
+    const items = v.filter((x): x is string => typeof x === "string").slice(0, n).map(cleanText).filter(Boolean);
+    return items.length ? [cleanText(`${label}: ${items.join(", ")}`)] : [];
+  };
+  const out: string[] = [...list("Flows", e.flows, 5), ...list("Watchers", e.watchers, 5), ...list("Repositories", e.repos, 5)];
+  if (e.counts && typeof e.counts === "object" && !Array.isArray(e.counts)) {
+    const parts = Object.entries(e.counts).filter(([k, v]) => /^[\w.-]{1,40}$/.test(k) && typeof v === "number" && Number.isFinite(v)).slice(0, 6).map(([k, v]) => `${k} ${v}`);
+    if (parts.length) out.push(cleanText(`Counts: ${parts.join(", ")}`));
+  }
+  out.push(...list("Times", e.times, 5), ...list("Steps", e.steps, 5));
+  if (Array.isArray(e.lines)) for (const l of e.lines.filter((x): x is string => typeof x === "string").slice(0, 5)) if (cleanText(l)) out.push(cleanText(l));
+  return out.slice(0, MAX_EVIDENCE_LINES);
+}
+
+export const MAX_EARLIER = 10;
 
 export const GONE_AFTER_MS = 24 * 3_600_000;
 export const PRUNE_AFTER_MS = 30 * 86_400_000;
 export const MAX_FINDINGS = 500;
+/** The limit for findings with a story or an owed story, which are not counted in MAX_FINDINGS. */
+export const MAX_STORY_FINDINGS = 1000;
 
 export const findingsFile = (): string => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "monitor-findings.json");
 
@@ -72,10 +154,12 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     if (seen.has(input.fingerprint)) continue;
     seen.add(input.fingerprint);
     const have = old.get(input.fingerprint);
+    const carry = have ? { ...(have.report ? { report: have.report } : {}), ...(have.due ? { due: have.due } : {}), ...(have.missedAt ? { missedAt: have.missedAt } : {}), ...(have.skipped ? { skipped: have.skipped } : {}), ...(have.fixFailed ? { fixFailed: have.fixFailed } : {}), ...(have.earlier ? { earlier: have.earlier } : {}), ...(have.tries !== undefined ? { tries: have.tries } : {}), ...(have.needsYou ? { needsYou: have.needsYou } : {}) } : {};
+    const days = [...new Set([...(have?.days ?? []), dayOf(now)])].slice(-3);
     if (have && !have.gone) {
-      out.push({ ...input, firstSeen: have.firstSeen, lastSeen: at, count: have.count + 1, gone: false });
+      out.push({ ...input, firstSeen: have.firstSeen, lastSeen: at, count: have.count + 1, gone: false, streak: (have.streak ?? have.count) + 1, days, ...(have.quietStart ? { quietStart: true } : {}), ...carry });
     } else {
-      const f: Finding = { ...input, firstSeen: at, lastSeen: at, count: 1, gone: false };
+      const f: Finding = { ...input, firstSeen: at, lastSeen: at, count: 1, gone: false, streak: 1, days, ...carry };
       fresh.push(f);
       out.push(f);
     }
@@ -84,20 +168,34 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     if (seen.has(f.fingerprint)) continue;
     const age = t - Date.parse(f.lastSeen);
     if (f.gone) {
-      if (age <= PRUNE_AFTER_MS) out.push(f);
+      // A story that is made or owed is never pruned: it must survive a long outage of GitHub.
+      if (age <= PRUNE_AFTER_MS || f.report || f.due || f.needsYou) out.push(f);
     } else if (age >= GONE_AFTER_MS) {
-      const g = { ...f, gone: true };
+      const g = { ...f, gone: true, streak: 0, ...(f.report ? { missedAt: at } : {}) };
       gone.push(g);
       out.push(g);
     } else {
-      out.push(f);
+      // A missed check ends the streak of consecutive sightings.
+      out.push({ ...f, streak: 0, ...(f.report ? { missedAt: at } : {}) });
     }
   }
   let dropped = 0;
-  if (out.length > MAX_FINDINGS) {
+  // Findings that owe a story or have one are counted apart, so they never crowd out new findings (and are not evicted by them).
+  const held = (f: Finding) => !!(f.report || f.due || f.needsYou);
+  const plain = out.filter((f) => !held(f));
+  const keptStories = out.filter(held);
+  const drop = new Set<Finding>();
+  if (plain.length > MAX_FINDINGS) {
     // Gone ones go first, then the open ones that were seen longest ago.
-    const order = [...out.filter((f) => f.gone).sort(byLastSeen), ...out.filter((f) => !f.gone).sort(byLastSeen)];
-    const drop = new Set(order.slice(0, out.length - MAX_FINDINGS));
+    const order = [...plain].sort((a, b) => Number(b.gone) - Number(a.gone) || byLastSeen(a, b));
+    for (const f of order.slice(0, plain.length - MAX_FINDINGS)) drop.add(f);
+  }
+  if (keptStories.length > MAX_STORY_FINDINGS) {
+    // Only archived ones (gone, story made, nothing owed) can go, the oldest first.
+    const archived = keptStories.filter((f) => f.gone && !f.due && !f.needsYou).sort(byLastSeen);
+    for (const f of archived.slice(0, keptStories.length - MAX_STORY_FINDINGS)) drop.add(f);
+  }
+  if (drop.size) {
     dropped = drop.size;
     const kept = out.filter((f) => !drop.has(f));
     out.length = 0;
@@ -113,6 +211,38 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
   return { findings: out, fresh, gone, dropped };
 }
 
+const isTime = (x: unknown): x is string => typeof x === "string" && !Number.isNaN(Date.parse(x));
+const validReport = (r: unknown): r is StoryRef => {
+  const x = r as StoryRef;
+  return !!x && typeof x === "object" && typeof x.repo === "string" && Number.isInteger(x.issue) && typeof x.url === "string" && isTime(x.at)
+    && typeof x.seen === "number" && (x.lookedAt === undefined || isTime(x.lookedAt)) && (x.closedAt === undefined || isTime(x.closedAt))
+    && (x.muted === undefined || typeof x.muted === "boolean")
+    && (x.fixCommit === undefined || (typeof x.fixCommit === "string" && /^[0-9a-f]{40}$/.test(x.fixCommit)))
+    && (x.clockAt === undefined || isTime(x.clockAt)) && (x.seenAfter === undefined || isTime(x.seenAfter))
+    && (x.fixedAt === undefined || isTime(x.fixedAt)) && (x.notedAt === undefined || isTime(x.notedAt))
+    && (x.workedMs === undefined || (typeof x.workedMs === "number" && Number.isFinite(x.workedMs) && x.workedMs >= 0))
+    && (x.clockWhy === undefined || x.clockWhy === "update" || x.clockWhy === "restart" || x.clockWhy === "waited")
+    && (x.fixNote === undefined || x.fixNote === "due" || x.fixNote === "tried");
+};
+/** The optional fields of a stored finding: a malformed one is dropped, the finding stays. */
+function tidy(f: Finding): Finding {
+  const { days, due, report, missedAt, streak, skipped, fixFailed, quietStart, earlier, tries, needsYou, ...rest } = f;
+  return {
+    ...rest,
+    ...(Number.isInteger(streak) && streak! >= 0 ? { streak } : {}),
+    ...(Array.isArray(days) && days.every((d) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) ? { days: days.slice(-3) } : {}),
+    ...(isTime(due) ? { due } : {}),
+    ...(validReport(report) ? { report } : {}),
+    ...(isTime(missedAt) ? { missedAt } : {}),
+    ...(fixFailed && typeof fixFailed === "object" && Number.isInteger(fixFailed.count) && fixFailed.count > 0 && isTime(fixFailed.at) ? { fixFailed: { count: fixFailed.count, at: fixFailed.at } } : {}),
+    ...(quietStart === true ? { quietStart } : {}),
+    ...(Array.isArray(earlier) && earlier.length <= MAX_EARLIER && earlier.every((e) => !!e && typeof e === "object" && typeof e.repo === "string" && Number.isInteger(e.issue)) ? { earlier: earlier.map((e) => ({ repo: e.repo, issue: e.issue, ...(typeof e.url === "string" ? { url: e.url } : {}), ...(isTime(e.closedAt) ? { closedAt: e.closedAt } : {}) })) } : {}),
+    ...(Number.isInteger(tries) && tries! >= 0 ? { tries } : {}),
+    ...(isTime(needsYou) ? { needsYou } : {}),
+    ...(Array.isArray(skipped) && skipped.length <= 10 && skipped.every((x) => typeof x === "string" && x.length <= 40) ? { skipped } : {}),
+  };
+}
+
 const SEVERITIES = new Set(["critical", "major", "minor"]);
 const valid = (f: unknown): f is Finding => {
   const x = f as Finding;
@@ -121,21 +251,29 @@ const valid = (f: unknown): f is Finding => {
     && typeof x.count === "number" && typeof x.gone === "boolean" && !!x.evidence && typeof x.evidence === "object";
 };
 
-/** Reads the findings. A missing file is empty. A broken file is kept as `<file>.broken` and reads as empty. */
-export function loadFindings(file = findingsFile()): { findings: Finding[]; broken: boolean } {
+/** Reads the findings and changes nothing. A missing file is empty; a file that cannot be read is empty and `broken`. */
+export function readFindings(file = findingsFile()): { findings: Finding[]; broken: boolean } {
   if (!existsSync(file)) return { findings: [], broken: false };
   try {
     const data = JSON.parse(readFileSync(file, "utf8")) as { findings?: unknown };
     if (!Array.isArray(data.findings) || !data.findings.every(valid)) throw new Error("wrong shape");
-    return { findings: data.findings, broken: false };
+    return { findings: data.findings.map(tidy), broken: false };
   } catch {
+    return { findings: [], broken: true };
+  }
+}
+
+/** Reads the findings. A missing file is empty. A broken file is kept as `<file>.broken` and reads as empty. */
+export function loadFindings(file = findingsFile()): { findings: Finding[]; broken: boolean } {
+  const r = readFindings(file);
+  if (r.broken) {
     try {
       renameSync(file, `${file}.broken`);
     } catch {
       // nothing more to do: the file is read as empty anyway
     }
-    return { findings: [], broken: true };
   }
+  return r;
 }
 
 /** Writes through a temporary file, so a crash never leaves half a file. */

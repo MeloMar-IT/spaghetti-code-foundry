@@ -17,10 +17,17 @@ async function req(method, url, body) {
 
 const enc = encodeURIComponent;
 
+/** The audit filters as a query: only the ones that are set, in the order user, action, from, to. "" for none. */
+const auditQuery = (f = {}) => {
+  const q = ["user", "action", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
+  return q ? `?${q}` : "";
+};
+
 export const api = {
   session: () => req("GET", "/api/session"),
   signIn: (email, password) => req("POST", "/api/session", { email, password }),
   setPassword: (token, password) => req("POST", "/api/set-password", { token, password }),
+  changePassword: (current, password) => req("POST", "/api/password", { current, password }),
   signOut: () => req("DELETE", "/api/session"),
   setup: (name, email, password) => req("POST", "/api/setup", { name, email, password }),
   info: () => req("GET", "/api/info"),
@@ -44,16 +51,22 @@ export const api = {
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
   repos: () => req("GET", "/api/repos"),
+  repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),
   setRepoAuth: (id, body) => req("PUT", `/api/repos/${enc(id)}/auth`, body),
+  testRepo: (id) => req("POST", `/api/repos/${enc(id)}/test`, {}),
   removeRepo: (id) => req("DELETE", `/api/repos/${enc(id)}`),
   users:() => req("GET", "/api/users"),
   addUser: (body) => req("POST", "/api/users", body),
   saveUser: (id, body) => req("PUT", `/api/users/${enc(id)}`, body),
   blockUser: (id, stopWork) => req("POST", `/api/users/${enc(id)}/block`, { stopWork: !!stopWork }),
   unblockUser: (id) => req("POST", `/api/users/${enc(id)}/unblock`, {}),
+  resetUser: (id) => req("POST", `/api/users/${enc(id)}/reset`, {}),
+  unlockUser: (id) => req("POST", `/api/users/${enc(id)}/unlock`, {}),
   userLink: (id) => req("POST", `/api/users/${enc(id)}/link`, {}),
   deleteUser: (id) => req("DELETE", `/api/users/${enc(id)}`),
+  audit: (filters) => req("GET", `/api/audit${auditQuery(filters)}`),
+  auditExportUrl: (filters) => `/api/audit/export${auditQuery(filters)}`,
   allRepos: () => req("GET", "/api/admin/repos"),
   setRepoSettings: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/settings`, body),
   transferRepo: (id, email) => req("POST", `/api/admin/repos/${enc(id)}/transfer`, { email }),
@@ -63,11 +76,18 @@ export const api = {
   renameRefinement: (id, body) => req("PUT", `/api/refinement/${enc(id)}`, body),
   dropRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/drop`, {}),
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),
+  askArchitect: (id) => req("POST", `/api/refinement/${enc(id)}/architect`, {}),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
   saveConfig: (config) => req("PUT", "/api/config", config),
   watchers: () => req("GET", "/api/watchers"),
-  tickWatcher: (id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
+  monitor: () => req("GET", "/api/monitor"),
+  monitorOff: () => req("POST", "/api/monitor/off", {}),
+  monitorOn: () => req("POST", "/api/monitor/on", {}),
+  muteMonitor: (body) => req("POST", "/api/monitor/mutes", body),
+  retryMonitor: (finding) => req("POST", "/api/monitor/retry", { finding }),
+  unmuteMonitor: (id) => req("DELETE", `/api/monitor/mutes/${enc(id)}`),
+  tickWatcher:(id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
   providers: () => req("GET", "/api/providers"),
   testModel: (spec) => req("POST", "/api/providers/test", { spec }),
   next: () => req("GET", "/api/next"),

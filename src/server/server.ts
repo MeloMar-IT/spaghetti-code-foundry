@@ -9,14 +9,16 @@ import { homeMoved } from "../home.js";
 import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
-import { SESSION_RECHECK_MS, authRoutes, requireSession, sessionAlive } from "./api-auth.js";
+import { SESSION_RECHECK_MS, authRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
 import { adminRoutes } from "./api-admin.js";
 import { credentialRoutes } from "./api-credentials.js";
+import { monitorRoutes } from "./api-monitor.js";
 import { flowRoutes } from "./api-flows.js";
 import { runRoutes } from "./api-runs.js";
 import { HttpError, send, serveStatic } from "./http.js";
 import { areaWait, forgetHistory, nextRoutes, type RestartState } from "./next.js";
 import { healthRoutes } from "./health.js";
+import type { UpdateView } from "../self-update.js";
 import { boardRoutes } from "./board.js";
 import { TurnNotifier } from "./notifier.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
@@ -25,7 +27,11 @@ import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.
 import { adoptRuns } from "../auth/run-owner.js";
 import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
+import { isRefinementRun } from "../auth/run-owner.js";
+import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
+import { auditRoutes } from "./api-audit.js";
+import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
@@ -53,6 +59,10 @@ export interface ServerOptions {
   accountSweepMs?: number;
   /** How often dropped refinement sessions past their 30 days are removed, in ms (default 600000). */
   refinementSweepMs?: number;
+  /** The clock of the sign-in waits and locks, in ms (default Date.now). A test moves it. */
+  signInClock?: () => number;
+  /** How often old audit lines are removed, in ms (default one day). */
+  auditSweepMs?: number;
 }
 
 export interface ApiContext {
@@ -63,6 +73,8 @@ export interface ApiContext {
   reloadConfig: () => void;
   /** Set while the server waits to restart (new version, moved data folder). */
   restart?: RestartState;
+  /** The self-updater of the running server: which version runs and whether an update waits. */
+  selfUpdate?: { view(): UpdateView };
   /** The address the server is bound to (a changed setting applies after a restart). */
   listen: string;
   /**
@@ -75,7 +87,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [credentialRoutes, repoRoutes, refinementRoutes, userRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -104,12 +116,14 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
+      // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
+      if (isRefinementRun(s.source)) return void settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
       // When a run ends, the watchers of its repository check at once instead of at the next interval.
       // (A run that only stepped aside for a busy code area freed nothing: no check for that.)
       if (s.vars?.github_repo && !steppedAsideFor(s)) watchers.kickRepo(s.vars.github_repo);
     },
   });
-  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => config, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart });
+  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => config, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart, startedAt: new Date() });
   const ctx: ApiContext = { opts, diagLog: sink, scheduler, watchers, config: () => config, reloadConfig: () => (config = loadConfig()), listen };
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while
@@ -118,6 +132,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweep();
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
+  const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
+  auditSweep();
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     const method = req.method ?? "GET";
@@ -174,13 +190,16 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     if (path.startsWith("/api/")) {
       api(req, res, path).catch((e: Error) => {
         const status = e instanceof HttpError ? e.status : 400;
-        if (!res.headersSent) send(res, status, { error: e.message });
+        if (!res.headersSent) {
+          if (e instanceof HttpError) for (const [k, v] of Object.entries(e.headers ?? {})) res.setHeader(k, v);
+          send(res, status, { error: e.message });
+        }
         else res.end();
       });
       return;
     }
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
-    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path.slice(1));
+    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
   });
 
   await new Promise<void>((ok, fail) => {
@@ -203,6 +222,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweepTimer.unref();
   const refinementTimer = setInterval(refinementSweep, opts.refinementSweepMs ?? REFINEMENT_SWEEP_MS);
   refinementTimer.unref();
+  const auditTimer = setInterval(auditSweep, opts.auditSweepMs ?? AUDIT_SWEEP_MS);
+  auditTimer.unref();
   if (opts.watchers !== false) watchers.sync();
   let notifier: TurnNotifier | undefined;
   if (process.env.FACTORY_NO_NOTIFY !== "1") {
@@ -220,6 +241,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(adoptTimer);
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
+      clearInterval(auditTimer);
       notifier?.stop();
       watchers.stopAll();
       server.close();

@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
+import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 
 const WatcherSchema = z
@@ -106,6 +107,16 @@ const MonitorSchema = z
     develop_red: z.object({ failures: z.number().int().min(1).max(100).default(2), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
     /** A step took more than `factor` times its usual time, `times` times within `within_hours`. */
     slow_step: z.object({ factor: z.number().min(1.5).max(100).default(3), times: z.number().int().min(1).max(1000).default(3), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
+    /** The repository (owner/repo) where the monitor writes bug stories. Without it, findings are only shown. */
+    report_to: z.string().regex(/^[\w.-]+\/[\w.-]+$/, "owner/repo").optional(),
+    /** At most `per_day` new bug stories a day and `per_check` in one check (at most 3: it bounds the GitHub calls of a check). */
+    report_limits: z.object({ per_day: z.number().int().min(1).max(50).default(3), per_check: z.number().int().min(1).max(3).default(1) }).strict().prefault({}),
+    /** For this many minutes after the server started no bug story is made and none becomes owed (0: no quiet time). */
+    cooldown_minutes: z.number().int().min(0).max(1440).default(10),
+    /** A closed bug story whose fix is not running yet is watched anyway after this many days (the 24-hour clock starts then). */
+    fix_wait_days: z.number().int().min(1).max(365).default(7),
+    /** The circuit breaker: bug stories stop when more than `new_findings` different findings first appear within `within_minutes`, or when the newest `failed_fixes` finished runs of bug stories all failed. */
+    breaker: z.object({ new_findings: z.number().int().min(1).max(499).default(5), within_minutes: z.number().int().min(1).max(1440).default(60), failed_fixes: z.number().int().min(1).max(100).default(3) }).strict().prefault({}),
   })
   .strict();
 
@@ -201,10 +212,30 @@ const ServerSchema = z
   .strict()
   .prefault({});
 
+const AuditSchema = z
+  .object({
+    /** Audit lines older than this many days are removed (at start and once a day). */
+    retention_days: z.number().int().min(1).max(3650).default(180),
+  })
+  .strict()
+  .prefault({});
+
+const SelfUpdateSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** "owner/name": updates come only when the checkout's origin is this GitHub repository. */
+    repo: z.string().refine(validGithubName, "not a GitHub repository name (owner/name)").optional(),
+  })
+  .strict()
+  .refine((u) => !u.enabled || u.repo, { message: "name the repository the Foundry may update from (owner/name)", path: ["repo"] })
+  .prefault({});
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
     server: ServerSchema,
+    /** The audit log (`audit.jsonl`): how long lines are kept. */
+    audit: AuditSchema,
     /** Model spec for agent steps with no model anywhere (flow, step or router). */
     default_model: z.string().optional(),
     /** Extra or overridden providers; anthropic, openai, ollama and lmstudio are built in. */
@@ -272,8 +303,11 @@ export const ConfigSchema = z
     github_app: z
       .object({
         app_id: z.string(),
-        installation_id: z.string(),
+        /** Only for the bot identity (runs commit and comment as the app). */
+        installation_id: z.string().optional(),
         private_key_path: z.string(),
+        /** The app's name in https://github.com/apps/<slug>; needed for the repository method "GitHub App". */
+        slug: z.string().regex(/^[A-Za-z0-9-]{1,100}$/, "the app name may only have letters, digits and -").optional(),
       })
       .strict()
       .optional(),
@@ -282,6 +316,8 @@ export const ConfigSchema = z
     watchers: z.array(WatcherSchema).default([]),
     /** Thresholds of the monitor watcher. */
     monitor: MonitorSchema.prefault({}),
+    /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
+    self_update: SelfUpdateSchema,
   })
   .strict()
   .superRefine((c, ctx) => {
@@ -293,6 +329,7 @@ export const ConfigSchema = z
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type ServerConfig = z.infer<typeof ServerSchema>;
+export type SelfUpdateConfig = z.infer<typeof SelfUpdateSchema>;
 export type MonitorConfig = z.infer<typeof MonitorSchema>;
 export type WatcherConfig = z.infer<typeof WatcherSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;

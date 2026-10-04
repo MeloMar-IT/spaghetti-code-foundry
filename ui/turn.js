@@ -72,6 +72,13 @@ export function sinceText(iso, now = new Date()) {
 
 const stories = (n) => `${n} ${n === 1 ? "story" : "stories"}`;
 
+/** A bug story as a link (only for an https address), else "#12" as text. */
+function storyLink(s) {
+  return typeof s.url === "string" && s.url.startsWith("https://")
+    ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, `#${s.issue}`)
+    : h("span", {}, `#${s.issue}`);
+}
+
 function itemView(item, { onDismiss, onLeave, onAct }) {
   const n = item.next;
   const issueOk = n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
@@ -92,6 +99,8 @@ function itemView(item, { onDismiss, onLeave, onAct }) {
         h("b", {}, item.what)),
       h("div", {}, h("span", { class: "hold-action" }, n.action)),
       h("div", { class: "muted" }, n.why),
+      n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
+      n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s)])) : null,
       item.unblocks > 0 ? h("div", { class: "muted" }, `${stories(item.unblocks)} ${item.unblocks === 1 ? "waits" : "wait"} for this`) : null,
       since ? h("div", { class: "muted", title: new Date(item.since).toLocaleString() }, since) : null),
     h("div", { class: "turn-side" },

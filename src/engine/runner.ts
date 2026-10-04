@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { defaultOwner } from "../auth/run-owner.js";
+import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
 import { FACTORY_HOME } from "../flow/load.js";
@@ -94,8 +94,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const runDir = join(opts.runsDir, runId);
 
   const vars = opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
-  // A run nobody asked for by name (CLI, evals) belongs to the first admin.
-  const owner = opts.owner ?? defaultOwner();
+  // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
+  const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
   const summary: RunSummary = {
     runId,
     flow: flow.name,
@@ -376,6 +376,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
         return { outcome: "waiting", reason: message, next: step.id, lastOutput };
       }
     } else {
+      engine.accessFailed = false;
       try {
         res = await executeStep(step, scope, engine, logFile);
       } catch (e) {
@@ -397,7 +398,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: `cancelled during step "${step.id}"`, ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
-    const target = res.ok ? (routed ?? step.on_success ?? "next") : (step.on_failure ?? "fail");
+    const target = res.ok ? (routed ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
       return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here() };

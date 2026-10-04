@@ -46,7 +46,7 @@ The UI opens at **http://localhost:4777**. By default it only listens on your ow
 top-right corner is the repository runs work on by default.
 
 **First start.** The first time you open the UI there is no account yet, so it shows
-**Create the admin account**: enter a name, an e-mail and a password (at least 10 characters,
+**Create the admin account**: enter a name, an e-mail and a password (12 to 200 characters, not a common one,
 twice). That signs you in. You can also create the admin in a terminal with
 `scf user create --admin`; `scf ui` and `scf serve` print a hint while there is no admin. After
 an upgrade from a version without sign-in, do this once; nothing else changes. The CLI, the
@@ -60,9 +60,17 @@ change or a block (`scf user password`, `scf user block`) signs that account out
 are blocked, you cannot sign in. If the session ends while a page is open, the next action
 brings you back to the sign-in form.
 
+**Forgot password.** The sign-in form says so: ask an admin for a new set-password link (the admin
+uses **Reset password** on the Users page), or run `scf user password <e-mail>` on the machine.
+
+**Change password.** **Change password** in the top bar asks for your current password and the new
+one (twice). The new password follows the same rules (12 to 200 characters, not a common one).
+Your session stays; every other session of your account is signed out. A wrong current password
+counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
+
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
-The link works once and for 7 days. If the page says "this link is not valid any more", ask your
+The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
 admin for a new one.
 
 | Page | What it is for |
@@ -79,13 +87,20 @@ admin for a new one.
 | **Models** | Which agents and models are available, and which model runs which step |
 | **Dashboard** | Spend, success rate, where runs fail, eval results |
 | **Users** | The accounts: add, edit, block and delete them (admins only) |
+| **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
 
-An account with the role `user` sees only **Refinement**, **Runs** and **My repositories**:
+An account with the role `user` works on its own display at `/user/`, with **Start work**, **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
 
-![What a user sees: Runs and My repositories](images/user-home.png)
+**Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
-**Under the top bar** is the health line. It says "All good", or names what is wrong with the
+**My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes every 30 seconds. With no runs it says so and offers **Start work**.
+
+**The run page.** It shows the status, **Now** (what happens next, and the step the run is at, with what that step does), the task, the repository, the branch and the flow version. Three parts: **Log** (live), **Steps** (the finished steps; they cannot be opened) and **Changes** (what the run changed, or a line that there is nothing). Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry** is for a run that failed, stopped or was cancelled, and continues at the step where it stopped. **Cancel** is for a run that is running, waiting or queued, and asks first; a run that is queued can only be cancelled. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. Resume, "Retry from step…", costs and raw details belong to the admin display.
+
+**Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box.
+
+**Under the top bar of the admin page** (not on the user display) is the health line. It says "All good", or names what is wrong with the
 Foundry itself, and on the right when each repository was last checked.
 
 #### The day in four steps
@@ -132,6 +147,7 @@ When a run finishes, its branch stays in your repository. Review it, merge it, o
 
 **Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 
+- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (see "Two tries, then a person").
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. Runs of older versions have no record of who started them and are treated like watcher runs.
@@ -169,7 +185,9 @@ A line under the top bar of every page says **All good**, or the number of probl
 - **A run that failed because of the Foundry:** the newest run per issue that no newer run replaced, from the last 7 days, at most 5. The line says "The Foundry failed, not the code" with the fix and a link to the run; the reason is on the run page.
 - **Last check per repository:** each repository of an enabled watcher is listed with the time of its last successful check (the oldest, when it has several watchers), or "no successful check yet".
 
-The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`) and `repos`. It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
+- **Version and update:** when the Foundry runs from a git checkout, the line ends with "Version abc1234 · date". With [self-update](#self-update) on, it adds "An update is waiting (abc1234): …" with the reason, or why self-update does nothing. This is information, not a problem: it does not change "All good".
+
+The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
 ### The board
 
@@ -185,6 +203,8 @@ The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem",
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
 
 ### The runs list
+
+A run of the architect has the mark **refinement**; click it to open its session.
 
 ![Runs](images/runs.png)
 
@@ -367,6 +387,8 @@ Every status in the app has a **?** that shows the two sentences from this table
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
+| bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
+| waiting for you — two fixes did not work | The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page. |
 | watcher silent | The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page. |
 | closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
 | restarting soon | The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done. |
@@ -450,6 +472,16 @@ current format.
 | **Parallel** | Runs several agent/shell steps at once; succeeds when all succeed |
 | **Sub-flow** | Runs another flow inline, in the same workspace |
 
+**Repository access (shell steps).** Tick **Needs repository access** (`repo_access: true`) on a
+shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
+helper script that does. Never tick it on a step that runs tests or the build, and not together
+with **Run in Docker** or in a parallel step. A marked step signs in with the token you stored for
+the repository under **My repositories** (see "What runs sign in with" there); the built-in flows
+and the blocks of the library are already marked. **Flows you wrote yourself that call `gh` or push need the flag. In a step
+without it the Foundry's own access is used, not your repository's token.** If the sign-in fails
+in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
+purpose must send its error output to `/dev/null`, because a refusal on stderr fails the step.
+
 ### Controlling the path
 
 Steps run top to bottom. Each step can change that:
@@ -527,8 +559,11 @@ The editor keeps empty values (`issue: ""`), so a variable you have just added s
 
 Blocks are ready-made groups of steps: pull a GitHub issue, plan, code, run tests with a fix
 loop, code review, cross-review by Codex, commit, push, open a PR, wait for CI, secret scan,
-Jira and Linear, and more. Insert one with **+ From library** in the editor. Turn any step into
-your own block with **☆ Save as block**.
+Jira and Linear, and more. The block **Architect (charter)** holds the architect's role as one
+text; the architect steps of Refinement take it from there. Insert one with **+ From library** in the editor. Turn any step into
+your own block with **☆ Save as block**. Blocks that call `gh` or the remote come with **Needs
+repository access** ticked. A flow built from blocks before this version has copies without it, so
+tick it there or insert the block again.
 
 ---
 
@@ -620,7 +655,8 @@ The monitor is a watcher that looks at the Foundry itself and writes down what i
 do not have to find it. It is **off until you add it**: on the Watchers page choose **Add watcher**
 and the source **The Foundry itself**. It needs only an id and an interval. It has no repository, no
 flow and no label, only one is allowed, and only an admin can add it. It starts nothing and changes
-no run, label or file of a run; it only writes its findings.
+no run, label or file of a run; it writes its findings and, if you set `report_to`, bug stories
+(see [Bug stories](#bug-stories-from-the-monitor)).
 
 Each check runs these detectors. Each one reads the runs, the queue, the watchers and the server
 log; none calls an AI or GitHub.
@@ -640,6 +676,7 @@ log; none calls an AI or GitHub.
 | Restart overdue | a new version is installed and the server has not restarted | major | more than 2 hours |
 | Develop is red | the tests after a merge into develop failed one after the other | critical | 2 in a row, looking back 24 hours |
 | Slow step | a step took much longer than its usual time (the times kept for estimates; needs 3 earlier runs and more than 2 minutes) | minor | more than 3 times, 3 times in 24 hours |
+| Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical) | major / critical | always (only when a self-update was tried) |
 
 *Critical* means work has stopped, *major* means work is slowed or wrong, *minor* means wrong but
 harmless. A detector that crashes shows up as a finding "Detector X failed"; the others still run.
@@ -687,13 +724,164 @@ Notes:
 Findings are kept in `monitor-findings.json` in the data folder and survive a restart. Each has a
 detector, a fingerprint (the same problem gives the same one), a severity, one sentence, the
 evidence, when it was first and last seen and how often. A finding not seen for 24 hours becomes
-*gone* (kept 30 days; at most 500 findings are kept). A file that cannot be read is kept as
-`monitor-findings.json.broken`. If the monitor's own check fails, the Health line says so.
-Findings are not shown in the app yet.
+*gone* (kept 30 days; at most 500 findings are kept, not counting those with a bug story or an
+owed one). A file that cannot be read is kept as `monitor-findings.json.broken`. If the monitor's
+own check fails, the Health line says so. The monitor's card on the Watchers page shows what waits
+or is wrong with its bug stories, and lists the findings and the mutes (see
+[Mute a detector or a finding](#mute-a-detector-or-a-finding)).
+
+#### Bug stories from the monitor
+
+Set `report_to` and the monitor writes a lasting problem up as one GitHub issue, so the normal flow
+can fix it. **Try it on a private repository first**, and read one real story before you point it
+at a public one.
+
+```yaml
+monitor:
+  report_to: your-name/your-foundry-repo
+  report_limits: { per_day: 3, per_check: 1 }   # per_check: at most 3
+  cooldown_minutes: 10                          # quiet time after a server start; 0: none
+  fix_wait_days: 7                              # watch a closed story anyway after this many days
+  breaker: { new_findings: 5, within_minutes: 60, failed_fixes: 3 }   # the circuit breaker
+```
+
+- **When.** Critical and major findings: after 2 checks in a row. Minor: after 3 different days. A
+  story that is owed is made later even if the problem has gone away.
+- **What.** Labels `bug` and the build label of the repository's issue watcher (with several
+  watchers: the `issue-gitflow` one). With no watcher the story only gets `bug`, and the card says
+  so. The text comes from a fixed template (no AI): what happened, since when, effect, evidence,
+  what should happen, how to see it again, where to look, acceptance criteria.
+- **Cleaning.** Other repositories, people, e-mail addresses, folders, links and keys are removed.
+  In log lines only words of a fixed list stay. If a line cannot be cleaned with certainty, the
+  story says the evidence is left out.
+- **Only once.** A hidden marker in the story tells the monitor it exists. While it is open, a
+  comment "Seen again: N times since …" is added at most every 6 hours.
+- **Came back.** If the story was closed as completed and the problem returns after the fix runs
+  (new proof from after the 24-hour clock started, see "Did the fix work?"), and the usual rule is
+  met (2 checks in a row; minor: 3 different days after the clock started), a new story links the
+  old one. Closed as *not planned* means muted: reopen the story to unmute it. (That is not an
+  admin's mute; see below.) A story that is reopened is open again: its clock and verdict are
+  forgotten.
+- **Did the fix work?** A story closed as completed is *waiting for the update* until the fix is
+  running. Sightings then are not "came back" and make no story. The 24-hour clock starts: when the
+  running Foundry contains the fix commit (the full commit is read from the run that built the
+  story); else at the first server start after the close (no git checkout, fix commit not known,
+  or `report_to` is not the Foundry's own repository); and in any case `fix_wait_days` (default 7)
+  after the close (the log says "waited"). If the problem is not seen for 24 hours of normal work
+  (time with no check, such as a sleep, does not count), the finding is *fixed* and the story gets
+  one comment "Not seen since the fix." It is written once, also after a lost answer or when GitHub
+  could not be reached; while bug stories are off, quiet or stopped by the breaker, or the finding is
+  muted, it waits. A story closed long before the clock (`fix_wait_days` or more) gets no comment.
+  If the problem is seen again after the clock started, with new proof, "fixed" is not said. The
+  findings list shows: waiting for the update, being watched, fixed. A story whose problem is not
+  seen is still checked on GitHub every 6 hours, so a close or a reopen is noticed.
+- **Two tries, then a person.** The monitor counts the bug stories it made for a finding. After
+  two that did not fix it, it makes no third: the finding *needs you*, the log says so once
+  (`story-skipped`, reason `two_tries`), and **Your turn** shows one item for it. A story that
+  existed before the upgrade counts as one. Nothing becomes "needs you" while bug stories are off,
+  quiet after a restart or stopped by the breaker, or while the finding is muted.
+  - **Try again or mute.** On the Watchers page the findings list shows "needs you" and a **Try
+    again** button (admin only). It starts the count anew; the next check may make a story, which
+    links the newest earlier story. A mute (see above) also makes the item go away; when the mute
+    ends and the finding still needs a person, the item is back.
+  - **When the item is hidden.** While the finding is *gone* (not seen for 24 hours), while its
+    story is open again, and once it is *fixed*. The count is kept, so no third story is made when
+    it returns. A story closed as not planned does not hide the item: **Try again** then starts the
+    count anew, but no story is made until that story is reopened.
+  - **A new count.** A finding that became *fixed* no longer needs you, and starts a new count when
+    it is seen again. A finding that needs you is kept (never pruned) until someone acts.
+- **Limits.** 3 new stories a day, 1 per check (most severe first). The rest waits and the card
+  says how many. At most 6 GitHub calls per check. If GitHub cannot be reached or its request limit
+  is used up, nothing is lost; the stories are made at a later check.
+
+- **Never a story about a story.** A run that builds a bug story of the monitor is never a finding,
+  whether it fails, hangs, is slow, loops, holds a lock or its label is wrong. This also holds for a
+  story that a newer one replaced. A failed run of a bug story is written on the finding as "the
+  fix failed" (how often and when) and in the log.
 
 *Unexplained* is strict: no rule in the Foundry's failure rules matched (an AI's summary does not
 count). An ordinary failing command (`exit code 1`) is explained. The request-limit numbers come
 from `gh api rate_limit`, read at most once a minute for the server's own login and the bot token.
+
+#### Stop bug stories: the off switch and the quiet time
+
+One switch stops the monitor from making bug stories. It needs no GitHub.
+
+- **Switch.** On the monitor's card on the Watchers page, the line says "Bug stories: on",
+  "Bug stories: off since 14:05" or "Bug stories: quiet until 14:15 after the restart", and a button
+  switches them off or on. Only an admin can do this. On the command line: `scf monitor off`,
+  `scf monitor on` and `scf monitor status`. The commands only read and write the state file, so
+  they work when the server is not running. The server reads the state at every check and again
+  right before each GitHub call that makes or touches a story. The state (since when, by whom: the
+  account id or `cli`) is kept in `monitor-guard.json` in the data folder and survives a restart.
+- **While it is off.** The monitor still records findings. It makes no story, writes no comment
+  and makes no GitHub call for stories. Nothing new becomes owed; stories owed before stay owed and
+  are made after you switch on, at the next check.
+- **Off does not stop building.** Stories that already exist still carry the build label, so the
+  issue watcher keeps building them (with `hotfix_to_main` on, it still pushes fixes to main). To
+  stop that, disable the issue watcher or remove the label from the issue.
+- **Quiet time.** For the first `cooldown_minutes` (default 10, 0 = none) after the server started,
+  findings are recorded but no story is made and none becomes owed. A server that restarts more
+  often than that never makes a story.
+- **A state file that cannot be read.** Stories stop and the card says so. `scf monitor on` or the
+  button keeps the old file as `monitor-guard.json.broken` (older ones as `.broken.1`, `.broken.2`,
+  …), starts a fresh file and switches on. Later parts add other state to this file; it is reset
+  too (the mutes as well), and the card and the log say so. "Off" does nothing on an unreadable file.
+- **The log.** `monitor-log.jsonl` in the data folder has one JSON line per event: `off`, `on`,
+  `story-made`, `story-skipped`, `breaker-open`, `breaker-closed`, `fix-failed`, `clock-started` (reason `update`, `restart` or `waited`), `fixed`,
+  `came-back`, `try-again` (with `by`, the account id), `mute-made` and `mute-ended`, with the reason for a skipped story (`off`, `cooldown`, `unreadable`, `breaker`,
+  `muted`, `two_tries`, `day_limit`, `check_limit`, `request_limit`, `github`). A story skipped because of a
+  mute also has the mute's id and its reason text. A skipped story is written once per finding and reason, not at every
+  check (and again each time the circuit breaker opens). The file moves to `monitor-log.1.jsonl` at 512 KiB, so it keeps
+  between 512 KiB and 1 MiB of history. Lines from the server also show in the card's recent
+  activity; a switch made on the command line does not.
+- **Lock.** Changes take `monitor.lock` in the data folder for a moment. If `scf monitor on` says
+  the lock is held, try again; if no process uses it, remove the folder `monitor.lock`. "Off" never
+  waits for it: it takes the lock over.
+
+#### The circuit breaker
+
+The monitor stops making stories by itself when many things go wrong at once. It only works when
+`report_to` is set and bug stories are not switched off.
+
+- **When it opens.** More than `new_findings` (default 5) different findings first appear within
+  `within_minutes` (60), or the newest `failed_fixes` (3) finished runs of bug stories all failed.
+  A succeeded run between failed ones resets the count; cancelled, stopped and interrupted runs
+  neither count nor reset. Findings first seen in the quiet time after a restart do not count.
+- **What stops.** No story, as with the off switch. Findings are still recorded. The log has a
+  `breaker-open` line and one `story-skipped` line (reason `breaker`) for each story that is owed.
+  The reason and the time are kept in `monitor-guard.json`, so a restart does not close it.
+- **Your turn.** An admin sees one item, "The monitor stopped making bug stories", with the reason
+  and the way back: switch bug stories on again on the Watchers page. It cannot be dismissed and
+  goes away when the breaker is closed. The card says "Bug stories: stopped by the circuit
+  breaker since …"; `scf monitor status` says so too.
+- **Switch on again.** Only an admin: the button on the monitor's card or `scf monitor on`. The log
+  gets `on` and `breaker-closed`. Every switch-on starts the counts anew: findings and failed runs
+  from before do not open the breaker again. Look at what went wrong first.
+
+#### Mute a detector or a finding
+
+Some problems are known noise. An admin can mute one detector (by name) or one finding, so that it
+does not become a bug story.
+
+- **Make a mute.** On the monitor's card (Watchers page) open **Findings (N) · Mutes (M)**. Press
+  **Mute** on a finding, or **Mute a detector**. Give a reason (required, at most 200 characters)
+  and choose how long: for good, 1 hour, 1 day, 1 week or 30 days. The API takes any number of
+  hours up to 8760 (one year).
+- **See and end mutes.** The list shows each mute with its reason, since when and until when.
+  **End mute** ends it at once. An admin can end any mute. A mute for a time ends by itself; the
+  log gets `mute-ended` with the reason `expired`. `scf monitor status` lists the mutes too.
+- **What a mute stops.** No story is owed or made, and no "seen again" comment is written, for a
+  muted finding. A story that was owed before the mute is not made while the mute lasts; it is
+  made at the next check after the mute ends (if the problem still lasts).
+- **What it does not stop.** Findings are still recorded (count, last seen) and shown. A story that
+  already exists keeps its build label, so it is still built. Muted findings do not count for the
+  circuit breaker, and neither do the failed runs of their stories.
+- **The log.** `mute-made` and `mute-ended` (with who, and the reason text), and one
+  `story-skipped` line with reason `muted` for a story that a mute held back.
+- **Limits.** One mute per detector and one per finding at a time (a finding can be muted next to
+  its detector; the mute of the finding wins). At most 200 mutes. Mutes are kept in
+  `monitor-guard.json` as account ids, never names or e-mail addresses.
 
 ### How issue watchers use labels
 
@@ -1068,9 +1256,11 @@ request to `main` at 17:00, and no new coding starts while it is open.
 
 #### Which flows ship
 
-Only the two pipelines and what supports them: `epic-questions`, `issue-gitflow` and
-`release-daily` (gitflow), and `issue-plan`, `issue-code-daily` and `daily-pr` (human in the
-loop). Build anything else yourself in the editor, with **✨ Draft flow with Claude**, or with any
+Two delivery pipelines, what supports them, and the standalone refinement flow: `epic-questions`,
+`issue-gitflow` and `release-daily` (gitflow), `issue-plan`, `issue-code-daily` and `daily-pr`
+(human in the loop), and `refine-brief` (the architect's context brief, see
+[Refinement](#12-refinement); it can't be deleted, because Refinement uses it) and `refine-round`
+(the architect's question round, same section). Build anything else yourself in the editor, with **✨ Draft flow with Claude**, or with any
 AI assistant ([Let any AI write a flow](#let-any-ai-write-a-flow)). **A flow that a watcher uses —
 enabled or disabled, or as its questions check — or that another flow runs as a step can't be
 deleted**; the Foundry says which watchers or flows use it.
@@ -1089,6 +1279,26 @@ scf service install     # uninstall | status
 If you installed the service before, run `scf service install` once. It replaces the old
 `com.claude-factory.server` agent with `com.spaghetti-code-foundry.server`, and puts the old one
 back if the new one can't start.
+
+#### Self-update
+
+Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in Settings → Safety and name the repository (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.
+
+Every 5 minutes it checks, in this order, and stops at the first reason that applies (the Health line shows it):
+
+1. The record `self-update.json` can be read, and no earlier go-back failed.
+2. The Foundry runs from a git checkout, under the supervisor (`scf ui` / `scf serve`, or the service).
+3. The `origin` of the checkout is the repository in the setting.
+4. `main` can be read from GitHub. Nothing new: nothing to do.
+5. The checkout is on `main` and has no local changes (untracked files count). Only then does it fetch.
+6. The same commit did not fail before. It waits for a newer commit.
+7. The checkout can fast-forward to `main`.
+
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). If a step fails, the old version keeps running and the monitor gets a finding. When all pass, no new runs start (queued runs wait and start after the restart) and the server restarts when the active runs are done. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
+
+If the new server stops or does not answer within 3 minutes, the supervisor puts the previous version back once and reports it (the monitor finding is critical). An install that was cut off is finished or undone at the next start. If you switch the setting off while an update waits, the server restarts on the unchanged version when the runs are done.
+
+When the Health line says "Self-update is stopped", the checkout needs a person: run `git status`, `npm ci`, `npm run build`, then delete `self-update.json` in the data folder. Going back does not undo changes the bad version made in the data folder.
 
 ---
 
@@ -1111,6 +1321,14 @@ it; paused runs continue the next day. Flows can also cap one run (`limits.max_c
   reviews. This is the one exception to **Protected branches**: only the merge-to-`main` step of
   the unchanged built-in flow may push `main`; flows you write never can. Stored as
   `hotfix_to_main` in `config.yaml` (an older build rejects that key).
+- **Repository access** — shell steps that call `gh` or the remote carry `repo_access: true`, so
+  only they will get the repository's credential (see [Step types](#step-types)).
+- **Self-update** — off by default. When on, the Foundry builds and tests new commits of `main` of
+  the repository you name and restarts on them without a person (see [Self-update](#self-update)).
+  Stored as `self_update` in `config.yaml` (an older build rejects that key).
+- **Audit log** — "Keep the audit log for … days": a whole number from 1 to 3650, default 180.
+  Older lines are removed when the server starts and once a day (see "How long the audit log is
+  kept" below). Stored as `audit.retention_days` in `config.yaml` (an older build rejects that key).
 - **Secret scan** — every push is checked for API keys, tokens, private keys, connection
   strings and `.env`/key files in the new commits. Findings are shown masked and the push is
   refused. A private-key header only counts when key data follows it, so code (or a test) that
@@ -1160,6 +1378,23 @@ not told).
 **Bot identity** — by default commits and comments are made as you. Set a bot name/email and a
 token (or a GitHub App) to make them as a bot instead.
 
+**GitHub App** — one app for the whole Foundry. It lets users connect a repository without a personal
+token (the method "GitHub App" on My repositories). Set it up once:
+
+1. Create a GitHub App. Give it the repository permissions Contents, Issues and Pull requests, each
+   "Read and write". Download its private key (a `.pem` file) and keep it readable only by the server's account.
+2. Fill in Settings → GitHub App: **App ID**; **App name (slug)**, the last part of
+   `https://github.com/apps/<name>`; **Private key file**, the path of the `.pem`; and, only if you want the
+   bot identity, **Installation ID (optional)**. With an installation ID, runs commit and comment as the app
+   (this works as before). Without one, the app is used only for the repository method.
+3. Without an app ID, a key file and a name, the method is not offered, and the API answers 400.
+
+Install the app only on repositories that every Foundry user may work in, and choose "Only select
+repositories". The server finds the installation with the app's own key, so a user needs no rights on GitHub:
+if the app is installed on a whole organisation, any Foundry user can connect any repository of it and get push
+access through the app. The first account to add a repository gets it. A user cannot read these settings.
+After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
+
 **Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones here
 or with `scf clean` (branches in your repositories are kept).
 
@@ -1181,15 +1416,25 @@ as another admin. Change a role with
 ("never" when there is none).
 
 **The Users page.** Admins only: **Users** in the top bar (`#/users`). It lists name, e-mail, role,
-status (active, blocked, no password yet), last sign-in and the number of runs. Your own account is
+status, last sign-in and the number of runs. The status is **blocked**, **no password yet**,
+**locked** (too many wrong tries) or **active**; when more than one is true, the first in this list
+wins, so a blocked account reads "blocked" even if it is also locked. Your own account is
 marked "(you)".
 
 - **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
-  link works once, for 7 days, and you must send it to the user yourself. **Copy** needs HTTPS or
+  link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
   localhost; otherwise select the link in the field and copy it. Close the dialog too early and
   the link is gone: use **New link**.
 - **New link** (only for an account without a password) shows a fresh link; the earlier one stops
   working. For a blocked account the link works only after you unblock it.
+- **Reset password** (only for an account with a password) removes the password, signs the account
+  out everywhere and shows a one-time link, like **Add user**. Until the link is used the person
+  cannot sign in. The last admin that can sign in cannot be reset; resetting your own account signs
+  you out (the link is in the dialog). If the dialog shows an error and the account now reads "no
+  password yet", the reset happened but its link was not shown: use **New link**.
+- **Unlock** (only for a locked account) removes the lock and the wrong tries of the account. A wait
+  of up to a minute for the address the wrong tries came from can remain, so the person may need to
+  wait a moment. It leaves no line in the audit log.
 - **Edit** changes name, e-mail and role. After an e-mail change, set a watcher's `owner` again
   (see above).
 - **Block** signs the user out, cancels their queued runs and lets running runs finish. **Also stop
@@ -1204,7 +1449,7 @@ not change. An error from Block or Delete can come after the change was made; cl
 see the list again. Blocking or deleting your own account signs you out, and the page reloads.
 
 **Managing accounts over the API.** Admins only (a user gets `403`). `GET /api/users` lists the
-accounts (`id`, `name`, `email`, `role`, `status`, `created`, `lastSignIn`, `runs`, `hasPassword`).
+accounts (`id`, `name`, `email`, `role`, `status`, `created`, `lastSignIn`, `runs`, `hasPassword`, `lockedUntil`: an ISO time while the account is locked, else `null`; a blocked account can have both).
 `POST /api/users {"name": …, "email": …, "role": "admin"|"user"}` adds an account without a password
 and answers 201 with the account and its one-time token (400 for bad input, 409 for a taken e-mail).
 The token is shown once; the link is `<address>/#/set-password/<token>`.
@@ -1212,6 +1457,11 @@ The token is shown once; the link is `<address>/#/set-password/<token>`.
 accepted (400). `POST /api/users/<id>/block {"stopWork": true}` blocks, signs the account out and
 answers with `cancelled: {queued, running, waiting}`. `POST /api/users/<id>/unblock` unblocks.
 `POST /api/users/<id>/link` gives a new token for an account without a password (409 if it has one).
+`POST /api/users/<id>/reset` removes the password, ends the account's sessions and answers like
+`/link` (`user`, `token`, `expires`); 409 for an account without a password or for the last admin
+that can sign in. `POST /api/users/<id>/unlock` removes the lock and wrong tries of the account and
+answers with the account. Everyone signed in may call `POST /api/password {"current": …, "password": …}`
+to change their own password (400 for bad input, 403 for a wrong current password, 429 when waiting).
 `DELETE /api/users/<id>` deletes as `scf user delete` does. An unknown id is 404, the last admin that
 is not blocked is 409. An admin may act on their own account within the last-admin rule; blocking
 yourself signs you out. If an old key stays in the Keychain, delete answers 500 and the account is
@@ -1232,17 +1482,66 @@ not handled yet. Watchers of the account keep working: disable the watcher or ch
 server log says how many runs it cancelled, with the account id only.
 
 **Audit log.** Every `scf user` action and every users API call that changes something (`create`, `password`, `role`, `edit`,
-`block`, `unblock`, `delete`; also `link`, when a new set-password link replaces the old one) adds one line to `audit.jsonl` in the data folder (mode `0600`), for
+`block`, `unblock`, `delete`, `reset`; also `link`, when a new set-password link replaces the old one) adds one line to `audit.jsonl` in the data folder (mode `0600`), for
 example `{"time":"2026-10-02T09:46:46.000Z","by":"cli","action":"role","userId":"<id>","oldRole":"user","newRole":"admin"}`.
-`by` is `cli` or the id of the admin. An `edit` line is a name or e-mail change. A password set through a link is a `password` line made by the account itself (`by` is its id).
+`by` is `cli` or the id of the admin. An `edit` line is a name or e-mail change. A password set through a link is a `password` line made by the account itself (`by` is its id), and so is a password changed with **Change password**. A `reset` line has the admin's id (or `cli`) in `by`.
 Only a role change has `oldRole` and `newRole`. A `block` line has `stopWork` (`true` when
-`--stop-work` was given). No line holds a name, e-mail, password, hash or
-token, and a failed action is not logged. A block or delete that stops with an error may already have
+`--stop-work` was given). No line holds a name, e-mail, password, hash, key or
+token, and a failed account change is not logged. A block or delete that stops with an error may already have
 signed the account out or removed its repositories and stored credentials; the server log names the
 problem, and the same action made again finishes the job and writes the line. If the file cannot be written, the command stops before
 it changes anything. In the rare case that the line cannot be added after the change (for example a
 full disk), the command says so and exits 1. The file is a record, not a protection: anyone who runs
 commands as you can edit it.
+
+Every sign-in is also a line, for example `{"time":"2026-10-02T09:50:00.000Z","by":"<id>","action":"sign-in","result":"ok","userId":"<id>"}`.
+A sign-in that works has `result` `ok`, and `by` and `userId` are the account id. A sign-in that fails (wrong password,
+unknown e-mail, blocked account) has `result` `failed` and `by` `anonymous`; it has `userId` only when the e-mail belongs to an
+account, so a wrong password and an unknown e-mail each write one line. The typed e-mail and password are never written. A try that is
+refused with 429, a bad request and an over-long e-mail write no line. The first admin made on the setup page writes a
+`create` line with `by` set to its own id (no `sign-in` line); if `audit.jsonl` cannot be opened, setup stops with an error and
+makes no account. Event lines can also hold a short `target` (instead of `userId`) and a `detail` (only with a `target`); sign-ins
+use neither. A sign-in line that cannot be written (for example while another `scf` command holds the lock) does not stop the
+sign-in; the server log says `auth: audit.jsonl cannot-write`.
+
+What people do in the web interface is also logged, with `result` `ok`, `by` set to the account that made the call, and a `target`
+(and sometimes a `detail`):
+
+| `action` | When | `target` | `detail` |
+|---|---|---|---|
+| `run-start` | A run is started | run id | |
+| `run-cancel`, `run-approve`, `run-reject`, `run-resume` | A run is cancelled, approved, rejected or resumed (a cancel that cancelled nothing writes no line) | run id | |
+| `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
+| `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
+| `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
+| `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
+| `flow-publish` | A published flow is saved with a new version | flow name | version |
+| `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
+| `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action on the Your turn page (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
+
+A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
+call that changes nothing (the same repository settings again, a flow saved without a change, an unpublished flow). If an old key
+is left in the Keychain, the change was made, so its line is written even though the answer is an error. Tokens, passwords, keys,
+notes, task text, credential names and setting values are never written. A line that cannot be written does not stop or undo the
+action, and a line is not written while another `scf` command holds the lock; the server log then says
+`audit: <file> <kind> (<action>)`. Runs that a watcher starts, `scf run`, `scf approve`, `scf reject`, evals, deleting or
+unpublishing a flow, blocks, clean-up and running a watcher now are not logged. A `target` can be up to 255 characters.
+
+**The Audit page.** Admins only: **Audit** in the top bar (`#/audit`). It shows who did what, newest first: time, who, action,
+target and result. "Who" is the account's name, "command line" for `scf`, or "not signed in" for a failed sign-in. An account
+that is gone shows as "deleted user". A detail, such as `user -> admin` for a role change, is under the target.
+
+- **Filters.** User (a list of the accounts; it finds what the account did and what was done to it), action, and a from and a
+  to date. The dates are days in your browser's time zone; both days are included. Changing a filter reloads the list.
+- **Export CSV** downloads every line that matches the filters shown, oldest first.
+- The page shows the newest 500 lines. When there are more, it says so: narrow the filters or use **Export CSV**.
+- An empty result says "No entries." An error, such as a log that cannot be read, shows on the page.
+
+An account with the role `user` never sees the link or the page; a user who opens `/#/audit` lands on My runs.
+
+**Reading the audit log over the API.** Admins only; a user gets 403. `GET /api/audit` answers `{entries, more}`. An `actor` is `{type: "cli"}`, `{type: "anonymous"}` or `{type: "account", id, name}`; a `target` is an account in the same form, `{type: "text", text}`, or `null`. Account lines show `result: "ok"` and the account as target; a role change has `detail` like `user -> admin`, and a block that stops work has `stop work`. `name` is the current name, or `deleted user`; the file keeps ids only. Filters: `user` (the account id exactly as stored; it matches the actor or the target account), `action`, `from` and `to` (ISO times with seconds, such as `2026-10-02T09:00:00Z`; both are included). A `+` in an offset must be written `%2B`. An unknown, empty or repeated filter, a `user` that is not an id, an `action` that is not an audit action, a bad time, or `from` after `to` answers 400. At most 500 entries come back, newest first by the order of the lines; when `more` is true, narrow the filters or use the export. `GET /api/audit/export` takes the same filters and downloads every matching line as `audit.csv`, in the order of the file (oldest first), with the header row `time,actor,actor_name,action,target,target_name,result,detail`. A cell that starts with `=`, `+`, `-` or `@` gets a `'` in front. Stored secrets are hidden as in every other answer; a CSV row that would show one is hidden whole. Lines that do not parse are left out. An unreadable file answers a plain 500, and the log says `audit: audit.jsonl unreadable`. A download that breaks half-way is cut off, not ended early.
+
+**How long the audit log is kept.** Lines older than `audit.retention_days` (Settings → Safety, "Keep the audit log for … days"; 1 to 3650, default 180) are removed when the server starts and once a day after that. A changed setting counts at the next round, without a restart. There is no "keep for ever": download the log with `GET /api/audit/export`, or copy `audit.jsonl`, before lines age out. Only a line that can be read and is too old is removed. Lines that cannot be read stay, also a line with bytes that are not valid UTF-8; the order and the mode `0600` stay. The file is replaced in one step and is not touched when no line is old enough. If the clean-up fails or `auth.lock` is busy, the server keeps running, the log says `audit: <file> <kind> (clean-up)`, and the next round tries again. `scf` commands never remove lines. The first start after an upgrade removes lines older than 180 days; to keep more, set `audit.retention_days` in `config.yaml` before that start.
 
 **Sign-in and sessions.** The UI and its API need a signed-in account; only the sign-in, sign-out,
 first-admin and set-password calls and the static files are open. A session is kept on the server in
@@ -1255,14 +1554,23 @@ The cookie gets the `Secure` flag when you reach the UI over HTTPS (through a pr
 - **CSRF.** Every call that changes something must send the header `X-CSRF-Token` with the token
   the server gave at sign-in; otherwise it gets 403. The UI does this for you. Requests from a
   foreign origin or host are refused as before.
-- **Wrong passwords.** After 10 wrong tries for one e-mail in 15 minutes, sign-in answers 429
-  for that e-mail until the 15 minutes are over. A server restart also clears the count. The
-  answer for a wrong password and for an unknown e-mail is the same.
+- **Wrong passwords.** Every try is counted before the password is checked, per e-mail and per
+  client address. From the 5th wrong try, sign-in answers 429 (with `Retry-After`) until a wait is
+  over: 1, 2, 4, 8, 16 and 32 seconds, then 60 seconds. The 20th wrong try for an e-mail locks it
+  for 30 minutes, also against the right password. A try with the right password is given back
+  for the address and clears the count of the e-mail. Counts are forgotten 30 minutes after the
+  last try. **Change password** counts as a sign-in try for the e-mail, and a wrong current
+  password can delay or lock sign-in for that account. **Unlock** removes only the lock and the
+  count of the account; a wait of up to a minute for the address can remain. A server restart
+  clears all waits and locks (the CLI cannot unlock). Anyone can lock an e-mail with 20 wrong
+  tries, so the only admin can be locked out: wait 30 minutes, ask another admin to unlock, or
+  restart the server. The answer for a wrong password and for an unknown e-mail is the same.
 - **Set-password links.** Only a SHA-256 of the link token is stored. The token sits after `#` in
-  the address, so it is in no request line or log. `POST /api/set-password` shares the limits with
-  sign-in (60 tries per client in 15 minutes, 16 password checks at once), and using a link clears
-  the wrong-tries count of that e-mail.
-- **Ending sessions.** Signing out, expiry, `scf user password` and `scf user block` end sessions, and so do block and delete through the API.
+  the address, so it is in no request line or log. A link lasts 24 hours (a link made before the
+  upgrade keeps its stored end time). `POST /api/set-password` shares the per-client wait with
+  sign-in (16 password checks at once); a refused password with a live link does not count, and
+  using a link clears the wrong-tries count of that e-mail.
+- **Ending sessions.** Signing out, expiry, `scf user password` and `scf user block` end sessions, and so do block, delete and **Reset password** through the API. **Change password** ends the other sessions of the account and keeps the one that made the change.
   A run log that is open in the browser stops within 5 seconds. A role change does not end
   sessions; the new role counts from the next call.
 - **Problems with the files.** If `users.json` or `sessions.json` cannot be read or written, or
@@ -1276,9 +1584,10 @@ Every account has a role, `admin` or `user`. The server checks it on every call.
 not in the table below answers 404, also for an admin.
 
 - **An admin** may make every call and sees every page.
-- **A user** sees only the **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
+- **A user** sees only the **Start work**, **Refinement**, **Runs** and **My repositories** pages and may use the calls marked `yes` or `own runs` in the
   table. Every other call answers `403 {"error":"not allowed for your role"}`. Pages other than
-  Refinement, Runs and My repositories are not drawn; the address bar goes back to `#/runs`.
+  Start work, Refinement, Runs and My repositories are not part of the user display at `/user/`. A user who
+  opens `/` is sent to `/user/`, and any other address there goes to `#/runs`.
 
 **What a user does not see.** The server cuts these from every answer a user gets, so the page
 cannot show them: costs, tokens, budgets and prices; the model, provider and agent; step output
@@ -1311,13 +1620,59 @@ show as "n runs ahead of you", without ids.
 
 ![My repositories](images/repos.png)
 
+**What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the token you stored for it (method "GitHub token" or "HTTPS token"), and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it. Give the token Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment. With the method "none" an admin's run uses the server's own access (a deploy key or the GitHub App too); a user's run fails with "set a token for this repository under My repositories". If the token is missing, cannot be read or is refused by GitHub (expired, revoked, no access), the run fails and tells you to set it again here. A push to a protected branch is still refused and the secret scan still applies.
+
+**Test connection.** The button on My repositories calls `POST /api/repos/<id>/test` (the owner, or an admin for any
+repository). It runs up to three checks and shows each with a short message: **Read** (a shallow clone), **Write**
+(`git push --dry-run` to a scratch branch name; nothing is pushed and no branch is created) and, for GitHub
+repositories, **GitHub API** (the repository, its issues and its pull requests can be read). The last result is saved
+as the connection status and returned by `GET /api/repos` as `connection`. It is cleared when the token, key, method
+or address changes, when the repository is transferred, and when its stored token or key is deleted. A test stops
+after 60 seconds. A second test of the same repository while one runs, and a repository changed during its test,
+answer 409. The messages tell wrong or expired tokens, a repository not found, read-only access (for a deploy key:
+"added without write access"), an unreachable host, host key problems, timeouts and a token without the Issues or
+Pull requests permission, and say what to do. A deploy key gives git access only, so for a GitHub repository with a
+deploy key the API check is skipped; issue and pull request work needs a token or the GitHub App. The API check only
+reads: the Foundry still needs "Read and write" for Issues and Pull requests, and the test does not prove that. A dry
+run does not check branch rules, so a protected branch can still refuse a real push. In an empty repository the push
+check uses a local commit that is never sent. Only an admin can test a repository with the method "none", whoever
+owns it; for a user the test answers 409. For that method the test uses the server account's git configuration, credential helpers, SSH configuration, keys and `gh`
+sign-in; `GIT_*` variables of the server are not used. SSH host keys: the first key seen is trusted and kept in
+`known_hosts` in the data folder; remove the host's line there after a real key change (for "none", the file is
+`~/.ssh/known_hosts` of the server's account). The server's SSH configuration is not used for a deploy key.
+For the method "GitHub App" the test looks up the installation again and asks GitHub for a new short-lived token
+limited to that repository; clone, push check and API check use it (it is passed to git and `gh` through the
+environment only, and is never stored, logged or shown). If the app is no longer installed, the result says so
+(`app-not-installed`); if the app was removed from the settings, `app-not-set-up`; if its key or ID is wrong,
+`app-broken`. A changed installation ID is kept.
+
 **The My repositories page.** `#/repos` is in the top bar for every account. It lists your repositories
 with the URL, how the Foundry signs in (the authentication method) and the connection status, which is
-"Not tested yet" until the connection test exists. **Add repository** asks for the URL and the method:
+"Not tested yet" until you press **Test connection** (see below). **Add repository** asks for the URL and the method:
 a GitHub fine-grained personal access token (give it these repository permissions, each "Read and write":
-Contents, Issues and Pull requests), or an HTTPS user name + token for other git hosts. The token is typed
-in a password field and is never shown again. **Change authentication** keeps the stored token if you leave
-the token empty; a new method needs a new token. **Remove** asks first and deletes the stored token too.
+Contents, Issues and Pull requests), an HTTPS user name + token for other git hosts, an SSH deploy key, or
+the **GitHub App**. The token is typed in a password field and is never shown again. **Change authentication** keeps the stored
+token if you leave the token empty; a new method needs a new token. **Remove** asks first and deletes the
+stored token or key too.
+
+With **GitHub App** you need no token. It is offered only for a GitHub repository with an https address, and
+only when the administrator has set up the app; otherwise the dialog says "GitHub App is not available: the
+administrator has not set up the app (Settings → GitHub App)". The dialog shows **Install the app on GitHub**
+(`https://github.com/apps/<name>/installations/new`). Install the app on this repository (choose "Only select
+repositories" and pick it), then save, then press **Test connection**. When you save, the server looks up the
+installation of the app on the repository and keeps its ID with the repository; if the app is not installed
+there, it says so (409) and nothing is saved. The row keeps the link, to install the app on more repositories or
+change which ones it may use. If the administrator removes the app, the row says so; choose another
+authentication. **Remove** does not uninstall the app on GitHub.
+
+With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no
+secret. The Foundry makes a key pair, keeps the private key and shows the **public key** in the
+Authentication column, with **Copy** (it needs HTTPS or localhost; otherwise select the key and copy it
+yourself). Add the public key in the settings of the repository as a deploy key **with write access** (on
+GitHub: Settings → Deploy keys → Add deploy key, with "Allow write access"). **Generate a new key** makes
+another pair after a confirmation; the old key stops working, so add the new public key and remove the old
+one. When you change a repository with an https address to this method, the dialog also asks for its **SSH
+address**; changing a deploy-key repository to a token method asks for an **HTTPS address**.
 Errors from the server show in the dialog in plain words. A failed removal shows above the list, with
 **Try again** when the server asks for it (an old key is still in the Keychain). A repository without a
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
@@ -1325,8 +1680,7 @@ has no per-repository settings. An admin sets them on the **Repositories** page.
 
 **The Repositories page (admin).** `#/all-repos` is the admin page **Repositories**; a user never gets it.
 It lists the repositories of all accounts with the owner (name and e-mail, and "blocked" for a blocked
-owner), the URL, the authentication method and the connection status ("Not tested yet" until the connection
-test exists). Three calls, all admin only: `GET /api/admin/repos`, `PUT /api/admin/repos/<id>/settings` and
+owner), the URL, the authentication method and the connection status ("Not tested yet" until the owner tests it). Three calls, all admin only: `GET /api/admin/repos`, `PUT /api/admin/repos/<id>/settings` and
 `POST /api/admin/repos/<id>/transfer {"email": …}`.
 
 - **Settings** per repository: the test command (one line, up to 500 characters), the docs to update (up to
@@ -1343,22 +1697,38 @@ test exists). Three calls, all admin only: `GET /api/admin/repos`, `PUT /api/adm
   the old one's, and its settings stay.
 - **Sign-in on transfer.** A personal token (`github-token`, `https-token`) is deleted and the method becomes
   `none`. For a user that reads "Needs authentication"; for an admin it reads "The server's own access", like
-  every `none` repository of an admin. The new owner sets the sign-in again. Keeping a deploy key or a GitHub
-  App installation (they belong to the repository, not to a person) is prepared and starts to work when those
-  methods exist. The wipe cannot be undone; transfer back and type the token again.
+  every `none` repository of an admin. The new owner sets the sign-in again. An SSH deploy key belongs to the
+  repository, not to a person: it moves to the new owner with its public key, so the key that was added in the
+  repository's settings keeps working (a missing key refuses the transfer with 409). A GitHub App installation
+  is kept the same way: the method and the installation ID move with the repository (the connection status is
+  cleared). The wipe of a token cannot be undone; transfer back and
+  type the token again.
 - Queued and running runs of the old owner are not stopped.
 
 **Repositories.** Every account has its own list of GitHub repositories, kept in `repos.json` in
 the data folder (mode `0600`). A repository is a record: `id`, `owner` (account id), `url`, `method`
 and `added`, and it may hold `settings`, which only an admin can read (`GET /api/repos` never has them).
-It never holds a secret. These calls manage it:
+A deploy-key record also has `credentialId` and `publicKey`. It never holds a secret (a public key is not
+one). These calls manage it:
 
-- `GET /api/repos` lists your records.
+- `GET /api/repos` lists your records, with the `publicKey` of a deploy key and the `installationId` of a
+  GitHub App record (a record with the method `github-app` has no credential). A GitHub record also has
+  `github`, its `owner/name` in lower case without `.git`; so do the answers of adding and changing a record.
+- `GET /api/repos/methods` answers `{methods, githubApp}`: the methods you may choose (`none` only for an admin,
+  `github-app` only when the app is set up) and `githubApp: {available: true, installUrl}` or
+  `{available: false}`. It never shows the app ID or the key path.
+- With `"method": "github-app"`, `POST /api/repos` and `PUT /api/repos/<id>/auth` take no token and no user name,
+  and the installation ID is never read from the request. The server checks the request first (a request it
+  refuses itself makes no call to GitHub), then asks GitHub for the installation. Answers: 400 when the app is
+  not set up on this server, 409 when it is not installed on the repository, 500 when the app does not work
+  (ask the administrator), 502 when GitHub cannot be asked.
 - `POST /api/repos {"url": …, "method": …, "username": …, "token": …}` adds one (201; 409 if you or
   another account has it; 400 for a bad URL or method; at most 50). `{"name": "owner/name"}` still works.
 - `PUT /api/repos/<id>/auth` changes the method, user name, token or address. What you do not give
   keeps its value. The old stored token is wiped. 404 for an id that is not yours.
-- `DELETE /api/repos/<id>` removes the repository and its stored token (404 if it is not yours).
+  `{"newKey": true}` makes a new deploy key (only for the method `ssh-deploy-key`; 400 otherwise); the
+  answer holds the new `publicKey`.
+- `DELETE /api/repos/<id>` removes the repository and its stored token or key (404 if it is not yours).
 - `DELETE /api/repos/<owner>/<name>` removes a GitHub repository by name (the old form).
 
 The URL is `https://host/path`, `ssh://[user@]host[:port]/path` or `git@host:path`; `owner/name`
@@ -1374,6 +1744,14 @@ as `repo:<repository id>`. `none` is the default without a method: the server's 
 admin, "needs authentication" for a user, who cannot choose it. If a repository's token is removed
 with `DELETE /api/credentials/<id>`, set it again with `PUT …/auth`.
 
+`ssh-deploy-key` works only with an SSH address (400 with "SSH address" in the message for https); it takes
+no user name and no token. The Foundry makes an ed25519 pair with `/usr/bin/ssh-keygen` (no passphrase, no
+comment) in a private temporary folder that is removed again. The private key is stored as the credential
+`repo:<repository id>` of type `ssh-key` and never leaves the server; the record and `GET /api/repos` show
+the `publicKey`. If ssh-keygen fails, the call answers 500 "the SSH key could not be made; see the server
+log". If the key was removed with `DELETE /api/credentials/<id>`, generate a new key (`PUT …/auth` with
+`{"newKey": true}`, or the method `ssh-deploy-key` again, which also repairs a missing or wrong credential).
+
 If `repos.json` cannot be read, the calls answer "the repository list is not working; see the server log".
 
 **Which flows a user may start.** A user starts a *published* flow by name (`POST /api/runs
@@ -1384,7 +1762,8 @@ editor"). Built-in flows are not published; save a copy and publish it. After an
 see no flows until you publish some. An unpublished flow answers 404.
 
 `GET /api/flows` shows a user the published, valid flows as `{name, title, description,
-version, fields}`. `fields` lists the variables that are *fixed* (shown with their value) or
+version, usesTask, fields}`. `usesTask` is true when a step reads the task (`{{task}}`,
+`FACTORY_TASK` or `SCF_TASK`); the Start work page shows a Task box only when it is not false. `fields` lists the variables that are *fixed* (shown with their value) or
 *user fills in* (with label, help text, default and whether it is required); hidden variables
 are not listed. In `vars` a user may set only the inputs (403 `you cannot set the var "<name>"`
 for any other). A required input that is empty gives 400 `fill in "<label>"`. Hidden and fixed
@@ -1422,6 +1801,12 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/config` | yes | no | change the settings |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
+| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), its findings and its mutes |
+| `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |
+| `POST /api/monitor/on` | yes | no | let the monitor make bug stories again |
+| `POST /api/monitor/mutes` | yes | no | mute one detector or one finding of the monitor, with a reason, for a time or for good |
+| `DELETE /api/monitor/mutes/:id` | yes | no | end a mute |
+| `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
 | `POST /api/providers/test` | yes | no | test a provider |
@@ -1442,7 +1827,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
-| `POST /api/runs/:id/resume` | yes | own runs | resume a run |
+| `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session) |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
@@ -1458,6 +1843,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/your-turn/detail` | yes | no | the questions, plan or split of an item |
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
+| `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
 | `GET /api/credentials` | yes | yes | your stored credentials |
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |
@@ -1467,24 +1853,35 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/users/:id/block` | yes | no | block an account, end its sessions and cancel its queued jobs |
 | `POST /api/users/:id/unblock` | yes | no | unblock an account |
 | `POST /api/users/:id/link` | yes | no | a new set-password token for an account without a password |
+| `POST /api/users/:id/reset` | yes | no | take the password of an account away, end its sessions and give a one-time set-password token |
+| `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions and stored credentials |
+| `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
+| `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
-| `POST /api/repos` | yes | yes | add a repository (a URL, and a token for it) |
-| `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository |
-| `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token |
+| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
+| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
+| `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
+| `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
+| `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
-| `GET /api/refinement/:id` | yes | yes | read your refinement session (an admin: any session) |
+| `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
 | `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
-| `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days |
+| `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
+| `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
+| `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
+| `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
+| `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
+| `PUT /api/refinement/:id/map/:eid` | yes | yes | change the text of a rule, example or open question of your refinement session |
+| `DELETE /api/refinement/:id/map/:eid` | yes | yes | remove a rule, example or open question from your refinement session |
 
-**What comes later.** Runs that use a user's stored credentials or a repository's token, changing
-your own password in the UI, a connection test for repositories, SSH deploy keys, the GitHub App, and pages for users (starting runs).
+**What comes later.** Runs that use a user's stored credentials or a repository's token, runs that use a deploy key, runs that use the GitHub App, and pages for users (starting runs).
 
 ### Access from other computers
 
@@ -1561,7 +1958,8 @@ then cross the network unencrypted. Use it only on a network you trust.
 - The first admin can only be created on the Mac itself, not through the proxy.
 - Settings cannot be saved if the change would lock out the browser that saves it (its host name
   removed, or a `listen` value that does not cover the address it is connected to).
-- Sign-in and set-password are also limited per client address (60 tries in 15 minutes) and to 16 password checks at
+- Sign-in and set-password also wait per client address (from the 5th wrong try, up to 60 seconds; see
+  "Wrong passwords" in [Settings and safety](#7-settings-and-safety)) and run at most 16 password checks at
   the same time; an e-mail longer than 254 characters is a wrong sign-in.
 
 **Restart** after changing the address: stop and start `scf ui`, or run `scf service install` again.
@@ -1577,8 +1975,10 @@ in Slack and notifications still point at `http://localhost:<port>`.
 (`POST /api/credentials`); there is no UI page yet, and runs do not use them yet. They are kept in
 `credentials.json` in the data folder (mode `0600`), encrypted with AES-256-GCM. The key is not in
 the data folder: it is in the macOS Keychain, as an item of the service
-`claude-factory-credential-key`. Only macOS is supported. The token of a repository is stored here
-too, as `repo:<repository id>`; your own names must not start with `repo:`.
+`claude-factory-credential-key`. Only macOS is supported. The token or deploy key of a repository is stored here
+too, as `repo:<repository id>`; your own names must not start with `repo:`. The public key of a deploy key
+is not a secret: `/api/repos` always shows it in full, even when a stored secret is part of it (the rest of
+the answer is hidden as before).
 - **What the API shows.** Only type, name, created, last used and the fingerprint, never the
   secret. A token must be 8 to 4096 printable ASCII characters on one line. To check a fingerprint:
   `printf %s "$TOKEN" | shasum -a 256`, the first 16 digits.
@@ -1704,9 +2104,11 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
+| `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 
 The password is asked twice on a terminal, or read from the first line of stdin; it is never an
-option or an environment variable. No command needs a signed-in session; only the web UI does.
+option or an environment variable. A password has 12 to 200 characters and must not be a common
+one; `scf user create` and `scf user password` refuse others and change nothing. No command needs a signed-in session; only the web UI does.
 
 ### Environment variables
 
@@ -1759,6 +2161,8 @@ you can do first. Find yours in the table:
 | The step … failed: the agent stopped without a result | Look at the log of the step on the run page |
 | The step … failed: the agent stopped with an error | Look at the log of the step on the run page |
 | The step … failed: the agent used all its turns | Look at the log of the step on the run page |
+| The step … failed: the repository has no token for runs; set one under My repositories | Set a token for the repository under My repositories |
+| The step … failed: the repository's token is missing or refused; set it again under My repositories | Set the token of the repository again under My repositories |
 | The step … failed: the agent hit an error while it worked | Look at the log of the step on the run page |
 | The step … failed: the agent used up the budget of the step | Give the step a larger budget in the flow |
 | The step … failed: the agent ended with an error | Look at the log of the step on the run page |
@@ -1820,7 +2224,16 @@ A protected branch is a setting to change (**Protected branches** in Settings, o
 branch); the run then says the Foundry failed. A secret-scan finding is in the code: the step
 output lists the file, line and kind of secret.
 
-**Forgot the password.** Run `scf user password <e-mail>` on the machine. If no admin is left, run
+**Locked out.** "This account is locked" after many wrong tries: wait 30 minutes, ask an admin to
+press **Unlock** on the Users page, or restart the server on the machine (the lock is in memory).
+
+**Reset password gave an error.** The account may already have lost its password. If the Users
+page now reads "no password yet", use **New link**.
+
+**Change password gave an error.** The password is not changed; your other sessions may be signed
+out. Try again.
+
+**Forgot the password.** Ask an admin to use **Reset password**, or run `scf user password <e-mail>` on the machine. If no admin is left, run
 `scf user create --admin`. A set-password link that ended is replaced the same way. If the page said
 "sign-in is not working" after you sent the form, first try to sign in with the password you chose:
 it may have been set already.
@@ -1890,13 +2303,13 @@ The folder of your clone can keep its name.
 
 ## 12. Refinement
 
-**Refinement** is where a rough idea grows into a story before it goes to the backlog. For now the page keeps the idea, its state and a log. Nothing on this page calls an AI agent or GitHub yet.
+**Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
 
-**The session page.** It shows the idea, the story drafts ("No story drafts yet." for now) and the log: who did what, and when. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -1904,6 +2317,68 @@ The folder of your clone can keep its name.
 
 **When something goes away.** If you remove the repository from My repositories, the session stays readable; the page says so, and it works again when you add the repository back. If an admin deletes your account, your refinement sessions are deleted with it.
 
-**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. Nothing is removed to make room.
+**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. In the talk (see below): 100 entries per list, 50 waiting proposals and 50 own questions. A full list or log answers 400 with a plain sentence. Nothing is removed to make room.
+
+### The talk: questions, answers and the map
+
+A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. No architect round is started from a session yet.
+
+**What is kept.** Rounds of questions (at most 5 per round), your answer to each question, proposed entries that wait for you, and the map with three lists: **rules** (what must be true), **examples** (concrete cases, including edge cases) and **open questions**. `GET /api/refinement/:id` returns all of it as `talk`. The log has every question, every answer, and every accepted, rejected, changed and removed entry, with its text (cut at 2,000 characters).
+
+**Three kinds of answer.** `POST /api/refinement/:id/questions/:qid/answer` takes `{ "option": n }` (an option of the question, counted from 1), `{ "text": "…" }` (your own answer, 1–2,000 characters) or `{ "unknown": true }` ("I don't know yet"). A question is answered once; a second answer gets 409. "I don't know yet" puts the question in the open questions at once.
+
+**Accept and reject.** A proposed entry waits. **Accept** (`POST …/proposals/:pid/accept`) puts it in its list; **Reject** (`POST …/proposals/:pid/reject`) removes it. Nothing is in the map that you did not accept, apart from the open questions that came from "I don't know yet".
+
+**Change and remove.** `PUT /api/refinement/:id/map/:eid` with `{ "text": "…" }` (1–500 characters) changes an entry; `DELETE /api/refinement/:id/map/:eid` removes it.
+
+**Who may do what.** Only the owner changes the talk. Another user gets 404, an admin 403 (an admin may read it). A dropped session answers 409.
+
+**Hidden talk.** While the repository is not in My repositories, the talk and the texts of its log lines are not shown (`talkHidden: true`), and the calls that change it answer 409. It comes back when you add the repository again.
 
 **Where it is kept.** In `refinements.json` in the data folder (mode 0600). It survives a restart and is copied unchanged when the data folder moves. If the file cannot be read, the calls answer "the refinement sessions are not working; see the server log", and an account cannot be deleted until the file is repaired.
+
+### The architect's context brief
+
+The flow `refine-brief` lets the architect read a repository and its open issues and write a **context brief** for an idea, so that refining starts from the code and the backlog instead of guesses. You can run it by hand:
+
+```
+scf run refine-brief --task "your idea" --var github_repo=owner/name
+```
+
+**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
+
+**What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
+
+**The five parts.** Each has its own heading, in this order: *What already exists*, *Code the idea would touch*, *Open issues that overlap*, *Rules that apply* (from `CLAUDE.md`, the README and architecture documents) and *Could not find out*. Every claim about the code names its file; every claim about the backlog names its issue number. A brief that misses a part, leaves one empty, puts the headings in another order or holds a code block fails the run. A part with nothing says "Nothing found."
+
+**It only reads.** The architect has the tools `Read`, `Glob` and `Grep` and nothing else. No step pushes, comments, labels or changes anything on GitHub. The repository is cloned into a subfolder, so its own `.claude/` settings and hooks are not loaded. Your idea and the issue text are never put into a shell command, and the architect treats them as text to read, never as instructions. Its role is written once, in the block **Architect (charter)**: it asks, explains, warns and suggests; it never decides, never writes a plan or code, and says "I don't know" instead of guessing.
+
+**Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the token you stored for the repository under **My repositories**, and nothing else (not the server's `gh` login, not the bot token, not the GitHub App). The token needs read access to Contents and Issues. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher use the stored token too, in their marked steps. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
+
+**Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on the Models page.
+
+**Cannot be deleted.** Refinement uses the flow, so `DELETE /api/flows/refine-brief` is refused (also for a copy an admin saved).
+
+### The architect's question round
+
+The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand; starting it from a session comes later. Give it the talk so far as the task:
+
+```
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]
+```
+
+**What it reads.** The code of the repository only (the `develop` branch when there is one, else the default branch). The open issues are not read again: what the talk says about the backlog is what the architect knows of it.
+
+**`ask=round` (the default).** The answer is one JSON object. `questions` has at most 5 entries, the most important first. Each has a `view` (`need`, `build` or `test`), a `text`, a `why`, 2 to 4 `options` (each with a `text` and a `tradeoff`) and `recommended`, the position of the recommended option counted from 1. In the first round there is at least one question from each view. `proposals` has at most 20 entries for the lists of the story: a `list` (`rule`, `example` or `open`) and a `text`, from the answers the talk marks as new. `done` is one sentence; it is required when there are no questions, because the architect has nothing important left to ask.
+
+**`ask=question`.** The answer is `{ "answer": "…" }`, with no questions and no proposals. Every claim about the code names its file.
+
+**Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
+
+**When it fails.** The run fails with one plain sentence when the answer is not JSON of this form, or when a question has no `why`, fewer than 2 or more than 4 options, an option without a trade-off, a `recommended` that is not one of its options or a `view` outside the three; also when there are no questions and no `done`, or when `ask` is not `round` or `question`. There is no second try.
+
+**It only reads, and whose access it uses.** As the brief: the tools `Read`, `Glob` and `Grep`, nothing is written to GitHub, and the talk is never put into a shell command. In a run the server started for a refinement session, only the clone uses the token you stored under **My repositories**; the architect and `check_round` never get it. The clone step asks for repository access (`repo_access`), so it follows the same rules as the clone of the brief, also in a run by hand.
+
+**Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on the Models page.
+
+**Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.

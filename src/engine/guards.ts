@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { createSign, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRefinementRun } from "../auth/run-owner.js";
+import { appJwt, installationToken } from "../github-app.js";
 import type { Config } from "../config.js";
 import { FACTORY_HOME, flowDir, parseFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
@@ -120,6 +122,56 @@ export function grantPush(branch: string): { env: Record<string, string>; revoke
   return { env: { FACTORY_PUSH_ALLOW: `${branch}:${token}` }, revoke: () => rmSync(file, { force: true }) };
 }
 
+// ── The architect reads with the repository's own token ──
+
+/** The shell steps that get the stored token, per flow (literals: src/flow/usage.ts would make an import cycle; a test pins them). */
+export const REPO_READ_STEPS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["refine-brief", ["clone", "list_issues"]],
+  ["refine-round", ["clone"]],
+]);
+export const TOKEN_REFUSED_REASON = "GitHub refused the token of this repository; check its access to Contents and Issues, or set a new token under My repositories";
+
+/** The run fails with this when a token step is refused (not a refinement run). */
+export const TOKEN_REFUSED_RUN = "GitHub refused the token of this repository; reconnect the repository under My repositories";
+
+/** Messages of gh and git for a token that GitHub did not accept or that cannot reach the repository. */
+const TOKEN_REFUSED = new RegExp(
+  [
+    "HTTP 401",
+    "Bad credentials",
+    "Could not resolve to a Repository",
+    "Resource not accessible by (?:personal access token|integration)",
+    "SAML enforcement",
+    "SAML SSO",
+    "forbids access via a (?:fine-grained )?personal access token",
+    "Authentication failed for",
+    "Invalid username or (?:password|token)",
+    "Repository not found",
+    "repository '.*' not found",
+    "Write access to repository not granted",
+    "Permission to .* denied",
+    "The requested URL returned error: 40[13]",
+    "terminal prompts disabled",
+  ].join("|"),
+  "i",
+);
+
+/** Did a command fail because GitHub refused the token? A rate limit is not a refusal. */
+export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(output) && !/rate limit|abuse detection/i.test(output);
+
+/**
+ * Output kept for the last step of the question round (tools/refine-round-check): a full checked answer is about 30,000
+ * characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
+ */
+export const ROUND_CHECK_MAX_OUTPUT = 100_000;
+export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined =>
+  flowName === "refine-round" && step.id === "check_round" && depth === 0 ? ROUND_CHECK_MAX_OUTPUT : undefined;
+
+/** The grant: the repository read steps of a refinement flow, at the top level, in a run the server started for a refinement session. */
+export function isRepoReadStep(step: Pick<Step, "id">, depth: number, flowName: string, source: string | undefined): boolean {
+  return REPO_READ_STEPS.get(flowName)?.includes(step.id) === true && depth === 0 && isRefinementRun(source);
+}
+
 // ── The running Foundry's own build ──
 
 const selfCache = new Map<string, { sha: string; repo: string } | undefined>();
@@ -128,7 +180,9 @@ const selfCache = new Map<string, { sha: string; repo: string } | undefined>();
  * The commit a checkout was at when first asked (once per process) and its GitHub repository as
  * "owner/name" in lower case. Undefined for a folder that is not a git checkout with a GitHub origin.
  */
-export function selfBuild(dir = process.env.FACTORY_SELF_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), "../..")): { sha: string; repo: string } | undefined {
+export const selfDir = (): string => process.env.FACTORY_SELF_DIR ?? resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+export function selfBuild(dir = selfDir()): { sha: string; repo: string } | undefined {
   if (selfCache.has(dir)) return selfCache.get(dir);
   let found: { sha: string; repo: string } | undefined;
   try {
@@ -143,6 +197,27 @@ export function selfBuild(dir = process.env.FACTORY_SELF_DIR ?? resolve(dirname(
   return found;
 }
 
+const containsYes = new Set<string>();
+
+/**
+ * Does the running build (the commit `selfBuild()` read) contain this commit? False for anything but 40 lower-case hex digits,
+ * when the build is unknown, and on any error. Only a "yes" is remembered: a "no" is asked again at the next check.
+ */
+export function selfContains(commit: string, dir = selfDir()): boolean {
+  if (!/^[0-9a-f]{40}$/.test(commit)) return false;
+  const key = `${dir}\0${commit}`;
+  if (containsYes.has(key)) return true;
+  const build = selfBuild(dir);
+  if (!build) return false;
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", commit, build.sha], { cwd: dir, stdio: "ignore", timeout: 10_000 });
+    containsYes.add(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** FACTORY_SELF_SHA and FACTORY_SELF_REPO for steps ("" when unknown). */
 export function selfEnv(): Record<string, string> {
   const b = selfBuild();
@@ -151,30 +226,7 @@ export function selfEnv(): Record<string, string> {
 
 // ── GitHub App installation tokens ──
 
-let appToken: { token: string; expires: number; key: string } | undefined;
-
-const b64url = (b: Buffer | string) => Buffer.from(b).toString("base64url");
-
-export function appJwt(appId: string, privateKeyPem: string, now = Math.floor(Date.now() / 1000)): string {
-  const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = b64url(JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId }));
-  const sig = createSign("RSA-SHA256").update(`${header}.${payload}`).sign(privateKeyPem);
-  return `${header}.${payload}.${b64url(sig)}`;
-}
-
-async function installationToken(app: NonNullable<Config["github_app"]>): Promise<string> {
-  const key = `${app.app_id}/${app.installation_id}`;
-  if (appToken && appToken.key === key && appToken.expires - Date.now() > 5 * 60_000) return appToken.token;
-  const jwt = appJwt(app.app_id, readFileSync(app.private_key_path, "utf8"));
-  const res = await fetch(`https://api.github.com/app/installations/${app.installation_id}/access_tokens`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${jwt}`, accept: "application/vnd.github+json", "user-agent": "claude-factory" },
-  });
-  if (!res.ok) throw new Error(`GitHub App token request failed: ${res.status} ${await res.text()}`);
-  const body = (await res.json()) as { token: string; expires_at: string };
-  appToken = { token: body.token, expires: new Date(body.expires_at).getTime(), key };
-  return body.token;
-}
+export { appJwt };
 
 /** Env for acting as the bot: git author/committer and the token gh (and git via gh) uses. */
 export async function identityEnv(config: Config): Promise<Record<string, string>> {
@@ -182,7 +234,7 @@ export async function identityEnv(config: Config): Promise<Record<string, string
   const { name, email, gh_token_env } = config.bot;
   if (name) env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = name;
   if (email) env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = email;
-  if (config.github_app) env.GH_TOKEN = await installationToken(config.github_app);
+  if (config.github_app?.installation_id) env.GH_TOKEN = await installationToken(config.github_app, config.github_app.installation_id);
   else if (gh_token_env) {
     const t = process.env[gh_token_env];
     if (!t) throw new Error(`bot.gh_token_env is "${gh_token_env}" but that env var is not set`);

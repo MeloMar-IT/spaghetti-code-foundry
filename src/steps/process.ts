@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { liveRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
+import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
 export interface ProcessResult {
   exitCode: number | null;
@@ -22,6 +22,8 @@ export interface ProcessOptions {
   onLine?: (line: string) => void;
   /** Secrets to hide from the output. Without it the stored credentials are used (and must be readable). */
   redactor?: Redactor;
+  /** Secrets of this process, hidden for its whole life even when the stored credentials change meanwhile. Used with the stored ones. */
+  pinnedSecrets?: string[];
 }
 
 /**
@@ -55,12 +57,14 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
         current = () => fixed;
       } else {
         requireRedaction();
-        current = liveRedactor;
+        const pinned = opts.pinnedSecrets?.length ? makeRedactor(opts.pinnedSecrets) : undefined;
+        current = pinned ? () => combineRedactors(liveRedactor(), pinned) : liveRedactor;
       }
     } catch (e) {
       return reject(e);
     }
     const log = createWriteStream(opts.logFile, { flags: "a" });
+    let logError: NodeJS.ErrnoException | undefined;
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: mergeEnv(opts.env),
@@ -81,6 +85,13 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       aborted = true;
       kill();
     };
+    // A log that cannot be written (a folder that is gone, a full disk) fails the step: the transcript would be missing or cut.
+    // The child is stopped, and the promise is rejected once it has exited.
+    log.on("error", (err: NodeJS.ErrnoException) => {
+      if (logError) return;
+      logError = err;
+      kill();
+    });
     if (opts.signal?.aborted) onAbort();
     else opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -134,7 +145,14 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       errFilter.end();
       logFilter.end();
       if (opts.onLine && pending.trim()) opts.onLine(pending);
-      log.end(() => resolve({ exitCode: code, stdout, stderr, timedOut, aborted }));
+      if (logError) {
+        log.end();
+        return reject(new Error(`could not write the log file (${logError.code ?? "error"})`));
+      }
+      log.end((err?: Error | null) => {
+        if (err || logError) return reject(new Error(`could not write the log file (${(err as NodeJS.ErrnoException | null | undefined)?.code ?? logError?.code ?? "error"})`));
+        resolve({ exitCode: code, stdout, stderr, timedOut, aborted });
+      });
     });
 
     child.stdin.on("error", () => {}); // process may exit before reading stdin

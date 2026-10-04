@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { monitorLists } from "./monitor.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
@@ -9,6 +10,49 @@ const check = (checked, label) => {
   return { el, row: h("label", { class: "row", style: { gap: "6px" } }, el, h("span", {}, label)) };
 };
 const num = (el) => (el.value.trim() === "" ? undefined : Number(el.value));
+
+/** The notes of a watcher's status (what waits or is wrong with the monitor's bug stories) as a list, or null when there are none. */
+export const watcherNotes = (st) => (st?.notes?.length ? h("ul", { class: "holds" }, st.notes.map((n) => h("li", {}, n))) : null);
+
+/** A time as the card shows it: the clock time on the same local day, else with the short month and the day. */
+function storyTime(iso, now) {
+  const d = new Date(iso);
+  const clock = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? clock : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${clock}`;
+}
+
+/** The one line that says whether the monitor makes bug stories. */
+export function storiesLine(m, now = new Date()) {
+  let line;
+  if (m.state === "off") line = `Bug stories: off since ${storyTime(m.since, now)}`;
+  else if (m.state === "quiet") line = `Bug stories: quiet until ${storyTime(m.until, now)} after the restart`;
+  else if (m.state === "breaker") line = `Bug stories: stopped by the circuit breaker since ${storyTime(m.since, now)}${m.why ? ` (${m.why})` : ""}`;
+  else if (m.state === "unreadable") line = "Bug stories: stopped. The state file monitor-guard.json cannot be read.";
+  else line = `Bug stories: on${m.reportTo === false ? " (no repository is set: monitor.report_to)" : ""}`;
+  if (m.reset) line += ` The state file could not be read at ${storyTime(m.reset, now)}; it was kept as monitor-guard.json.broken and started fresh.`;
+  return line;
+}
+
+/** The line and the switch button for the monitor's card; null without a state. */
+export function storiesRow(m, reload) {
+  if (!m) return null;
+  const isOn = m.state === "on" || m.state === "quiet";
+  const wantOn = m.state === "off" || m.state === "unreadable" || m.state === "breaker";
+  const click = async () => {
+    if (m.state === "unreadable" && !confirm("The state file cannot be read. Switching on keeps it as monitor-guard.json.broken and starts a fresh one. Go on?")) return;
+    try {
+      await (wantOn ? api.monitorOn() : api.monitorOff());
+      toast(wantOn ? "Bug stories are on" : "Bug stories are off");
+    } catch (e) {
+      toast(e.message, "error");
+    }
+    await reload();
+  };
+  return h("div", { class: "row" },
+    h("span", { class: isOn ? "status ok" : "status bad" }, storiesLine(m)),
+    h("span", { class: "spacer" }),
+    h("button", { class: "small", onClick: click }, wantOn ? "Switch bug stories on" : "Switch bug stories off"));
+}
 
 /** The `notify` setting from the raw values of the Settings controls (strings for text, booleans for checkboxes). */
 export function notifyFrom(v) {
@@ -173,6 +217,7 @@ export const lastOkText = (st) => (!st ? "" : st.lastOk ? ` · last successful c
 export async function renderWatchers(main) {
   const [watchers, flows] = await Promise.all([api.watchers(), api.flows()]);
   const reload = () => renderWatchers(main);
+  const mon = watchers.some((w) => w.source === "monitor") ? await api.monitor().catch(() => undefined) : undefined;
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Watchers"),
       h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
@@ -202,6 +247,9 @@ export async function renderWatchers(main) {
           w.enabled ? lastOkText(st) : "",
           st?.nextTick ? ` · next ${new Date(st.nextTick).toLocaleTimeString()}` : ""),
         w.enabled && watcherNext(w).length ? h("div", {}, h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "6px" } }, "What happens next:"), nextList(watcherNext(w))) : null,
+        w.source === "monitor" ? storiesRow(mon, reload) : null,
+        w.source === "monitor" ? monitorLists(mon, reload) : null,
+        watcherNotes(st),
         st?.lastError ? h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "mono" }, st.lastError)) : null,
         st?.lastActions?.length ? h("details", {}, h("summary", {}, `Recent activity (${st.lastActions.length})`), h("pre", { class: "mono" }, st.lastActions.join("\n"))) : null);
     })) : h("div", { class: "empty" },
@@ -258,22 +306,27 @@ export async function renderSettings(main) {
   const botEmail = input(c.bot.email ?? "", { class: "mono" });
   const botToken = input(c.bot.gh_token_env ?? "", { class: "mono", placeholder: "FACTORY_GH_TOKEN" });
   const appId = input(c.github_app?.app_id ?? "", { class: "mono" });
+  const appSlug = input(c.github_app?.slug ?? "", { class: "mono" });
   const instId = input(c.github_app?.installation_id ?? "", { class: "mono" });
   const keyPath = input(c.github_app?.private_key_path ?? "", { class: "mono", placeholder: "/path/to/app.private-key.pem" });
   const sbxClaude = check(c.sandbox.claude, "Sandbox agents' shell commands by default");
   const secrets = check(c.secret_scan !== false, "Block pushes that add secrets (API keys, tokens, private keys, .env files)");
   const hotfix = check(c.hotfix_to_main === true, "Hotfixes: build bug stories on a hotfix branch and merge them into main without a person (only the unchanged built-in issue-gitflow)");
   const sbxImage = input(c.sandbox.docker_image ?? "", { class: "mono", placeholder: "e.g. node:22" });
+  const selfUpdate = check(c.self_update?.enabled === true, "Self-update: when main of the Foundry's own repository has new commits, build and test them and restart on the new version without a person");
+  const selfRepo = input(c.self_update?.repo ?? "", { class: "mono", placeholder: "owner/name" });
   const net = c.server ?? { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false };
   const listenSel = h("select", {}, ["127.0.0.1", "::1", "0.0.0.0", "::"].map((a) => h("option", { value: a }, a)));
   listenSel.value = net.listen;
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
+  const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
   const err = h("div");
 
   const save = async () => {
     const next = {
       ...c,
+      audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
       cost_limits: limits.el.checked,
@@ -281,12 +334,15 @@ export async function renderSettings(main) {
       protected_branches: protectedB.value.split(",").map((s) => s.trim()).filter(Boolean),
       secret_scan: secrets.el.checked,
       hotfix_to_main: hotfix.el.checked,
+      self_update: { enabled: selfUpdate.el.checked, repo: selfRepo.value.trim() || undefined },
       notify: notifyFrom({
         macos: macos.el.checked, slack: slack.value, command: cmd.value, on: on.filter(([, x]) => x.el.checked).map(([s]) => s),
         successes: successes.el.checked, throttle: throttle.value, quietFrom: quietFrom.value, quietTo: quietTo.value, summaryAt: summaryAt.value,
       }),
       bot: { name: botName.value.trim() || undefined, email: botEmail.value.trim() || undefined, gh_token_env: botToken.value.trim() || undefined },
-      github_app: appId.value.trim() ? { app_id: appId.value.trim(), installation_id: instId.value.trim(), private_key_path: keyPath.value.trim() } : undefined,
+      github_app: appId.value.trim()
+        ? { app_id: appId.value.trim(), private_key_path: keyPath.value.trim(), slug: appSlug.value.trim() || undefined, installation_id: instId.value.trim() || undefined }
+        : undefined,
       sandbox: { claude: sbxClaude.el.checked || undefined, docker_image: sbxImage.value.trim() || undefined },
     };
     try {
@@ -320,8 +376,11 @@ export async function renderSettings(main) {
       f("Protected branches", protectedB, "Pushes to these are refused during runs (glob patterns, comma-separated). Also enable branch protection on GitHub."),
       secrets.row,
       hotfix.row,
+      selfUpdate.row,
+      f("Repository the Foundry may update from", selfRepo, "owner/name. Updates come only when the checkout's origin is this repository. Needs one stop and start of the Foundry after upgrading."),
       sbxClaude.row,
-      f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted.")),
+      f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted."),
+      f("Keep the audit log for … days", auditDays, "1 to 3650. Older lines are removed when the server starts and once a day.")),
     section("Notifications",
       macos.row,
       h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } },
@@ -339,6 +398,10 @@ export async function renderSettings(main) {
       h("p", { class: "muted", style: { margin: 0 } }, "By default commits and comments are made as you (your git config and gh login)."),
       h("div", { class: "grid" }, f("Commit author name", botName), f("Commit author email", botEmail), f("Env var with the bot's GitHub token", botToken, "Used as GH_TOKEN for gh and git pushes."))),
     diskSection(section),
-    section("GitHub App (optional, preferred over a token)",
-      h("div", { class: "grid" }, f("App ID", appId), f("Installation ID", instId), f("Private key file", keyPath))));
+    section("GitHub App",
+      h("div", { class: "grid" },
+        f("App ID", appId),
+        f("App name (slug)", appSlug, "The last part of https://github.com/apps/<name>. Needed for the method “GitHub App” on My repositories."),
+        f("Private key file", keyPath, "The .pem file of the app, readable only by the server's account."),
+        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))));
 }

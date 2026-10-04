@@ -7,8 +7,8 @@ const BANNED = ["hold", "precheck", "area lock", "jump_only"];
 const EXPLAIN = "how risky it is to create the smaller issues without you looking, 0–100";
 
 describe("glossary", () => {
-  it("has 26 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(26);
+  it("has 28 distinct kinds", () => {
+    expect(new Set(KINDS).size).toBe(28);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
@@ -34,6 +34,8 @@ describe("glossary", () => {
     ["cancelled", {}, "cancelled"],
     ["failed", {}, "failed"],
     ["watcher_error", {}, "watcher error"],
+    ["monitor_stopped", {}, "bug stories stopped"],
+    ["monitor_needs_you", {}, "waiting for you — two fixes did not work"],
     ["restart", {}, "restarting soon"],
     ["superseded", {}, "replaced by a newer run"],
     ["done", {}, "done"],
@@ -126,7 +128,7 @@ const shown = (src: string) => src
 
 describe("words in the app", () => {
   const dir = new URL("../ui/", import.meta.url);
-  const files = readdirSync(dir).filter((f) => f.endsWith(".js") || f === "index.html");
+  const files = [...readdirSync(dir).filter((f) => f.endsWith(".js") || f === "index.html"), "user/app.js", "user/start.js", "user/index.html"];
 
   it("scan helper keeps real text and drops names", () => {
     expect(shown('h("li", { class: "holds" }, w.status?.holds, step.jump_only, "On hold")').toLowerCase()).toContain("hold");

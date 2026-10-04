@@ -38,7 +38,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
       briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: [], active: [] }),
     },
-    watchers: { tracked: () => o.tracked ?? [] },
+    watchers: { tracked: () => o.tracked ?? [], statuses: () => [] },
   } as unknown as ApiContext;
 }
 
@@ -97,6 +97,7 @@ describe("sinceFor", () => {
     const runs = [
       run("e", { source: "eval x", vars: { github_repo: "ev/one", issue: "1" } }),
       run("old-eval", { vars: { github_repo: "ev/two", issue: "2" } }),
+      run("rf", { source: "refinement 11111111-1111-4111-8111-111111111111", vars: { github_repo: "ev/three", issue: "3" } }),
     ];
     const prs = vi.fn(none);
     const s = await sinceFor(stub({ runs }), SINCE, NOW, { prs });
@@ -152,6 +153,7 @@ describe("sinceFor", () => {
     const runs = [
       run("old", { source: "ui", vars: { github_repo: "acme/manual", issue: "1" }, startedAt: at(1), finishedAt: at(2) }),
       run("ev", { source: "eval x", vars: { github_repo: "acme/eval", issue: "2" }, startedAt: at(1), finishedAt: at(2) }),
+      run("rf", { source: "refinement 11111111-1111-4111-8111-111111111111", vars: { github_repo: "acme/private", issue: "3" }, startedAt: at(1), finishedAt: at(2) }),
     ];
     const prs = vi.fn(none);
     await sinceFor(stub({ runs }), SINCE, NOW, { prs });

@@ -63,6 +63,7 @@ vars:
 steps:
   - id: pull_ticket
     type: shell
+    repo_access: true
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
@@ -71,9 +72,10 @@ steps:
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
   - id: daily_branch
     type: shell
+    repo_access: true
     description: Clone, then check out today's branch — or wait while the daily PR is unmerged
     run: |-
-      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       "$FACTORY_TOOLS/daily-branch" prepare --wait-for-merge
     routes:
       - if: "^WAIT:"
@@ -335,6 +337,7 @@ steps:
     on_failure: docs
   - id: commit
     type: shell
+    repo_access: true
     run: |-
       git add -A
       title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)
@@ -342,12 +345,14 @@ steps:
       git log --oneline -1
   - id: push
     type: shell
+    repo_access: true
     run: |-
       branch=$(git branch --show-current)
       if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then git pull -q --rebase origin "$branch"; fi
       git push -q -u origin HEAD && echo "pushed $branch"
   - id: report
     type: shell
+    repo_access: true
     run: |-
       branch=$(git branch --show-current); sha=$(git rev-parse HEAD)
       verdict() { printf '%s\n' "$1" | sed -n 's/^VERDICT: *//p' | tail -1; }

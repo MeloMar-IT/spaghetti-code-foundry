@@ -18,6 +18,18 @@ const dep = () => nextStep("dependency", { repo: "o/r", issue: 7, title: "Seven"
 const q = () => nextStep("questions", { repo: "o/r", issue: 5, title: "Five" }, { watched: true, questions: 2 });
 const watcher = (id: string, records: NextStep[], enabled = true) => ({ id, enabled, status: { id, lastActions: [], holds: records.map((next) => ({ reason: next.text, next })) } });
 
+describe("watcherNotes", () => {
+  it("lists the notes of the monitor, and gives null when there are none", async () => {
+    const { watcherNotes } = (await import("../ui/admin.js" as string)) as any;
+    const el = watcherNotes({ notes: ["2 bug stories wait: x.", "No watcher builds bug stories."] }) as FakeElement;
+    expect(el.textContent).toContain("2 bug stories wait");
+    expect(el.textContent).toContain("No watcher builds");
+    expect(watcherNotes({ notes: [] })).toBeNull();
+    expect(watcherNotes({})).toBeNull();
+    expect(watcherNotes(undefined)).toBeNull();
+  });
+});
+
 describe("lastOkText", () => {
   it("says when the last successful check was, or that there is none", async () => {
     const { lastOkText } = (await import("../ui/admin.js" as string)) as any;
@@ -544,6 +556,25 @@ describe("the Runs pages for a user", () => {
     expect(runs.runRow(RUN).all("td")).toHaveLength(6);
     expect(runs.runRow(RUN, { cost: false }).all("td")).toHaveLength(5);
     expect(runs.runRow({ ...RUN, ownerName: "Ann" }, { owner: true }).all("td")).toHaveLength(7);
+  });
+
+  it("runRow has one link to the run; its click does not reach the row, a click on a cell still opens the run", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const g = globalThis as any;
+    const saved = g.location;
+    g.location = { hash: "" };
+    try {
+      const row = runs.runRow(RUN) as FakeElement;
+      const links = row.all("a");
+      expect(links).toHaveLength(1);
+      expect(links[0]!.attrs.href).toBe(`#/runs/${RUN.runId}`);
+      links[0]!.click();
+      expect(g.location.hash).toBe("");
+      row.all("td")[2]!.click();
+      expect(g.location.hash).toBe(`#/runs/${RUN.runId}`);
+    } finally {
+      g.location = saved;
+    }
   });
 
   it("the watcher form leaves 'owner' out of the config when the field is empty", async () => {

@@ -1,14 +1,50 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ConfigSchema, loadConfig, saveConfig } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { outputEnvName, render } from "../src/engine/template.js";
 
 const minimal = (steps: string) => `name: t\nsteps:\n${steps}`;
 
+describe("repo_access", () => {
+  const shell = (extra: string) => minimal(`  - {id: a, type: shell, run: x${extra}}`);
+  it("is optional on a shell step and keeps its value", () => {
+    expect(parseFlow(shell(", repo_access: true")).steps[0]).toMatchObject({ repo_access: true });
+    expect(parseFlow(shell(", repo_access: false")).steps[0]).toMatchObject({ repo_access: false });
+    expect("repo_access" in parseFlow(shell("")).steps[0]!).toBe(false);
+    expect(() => parseFlow(shell(", repo_access: maybe"))).toThrow(/repo_access/);
+  });
+
+  it("is rejected on other step types", () => {
+    for (const step of [
+      "{id: a, type: claude, prompt: x, repo_access: true}",
+      "{id: a, type: approval, message: x, repo_access: true}",
+      "{id: a, type: parallel, steps: [b, c], repo_access: true}",
+      "{id: a, type: flow, flow: other, repo_access: true}",
+    ]) {
+      expect(() => parseFlow(minimal(`  - ${step}\n  - {id: b, type: shell, run: x}\n  - {id: c, type: shell, run: x}`))).toThrow(/repo_access/);
+    }
+  });
+
+  it("cannot be combined with sandbox: true", () => {
+    expect(() => parseFlow(shell(", repo_access: true, sandbox: true"))).toThrow(/steps\.0\.repo_access: a step with repo_access cannot also have sandbox: true/);
+    expect(parseFlow(shell(", repo_access: false, sandbox: true")).steps).toHaveLength(1);
+    expect(parseFlow(shell(", repo_access: true, sandbox: false")).steps).toHaveLength(1);
+  });
+
+  it("cannot be listed in a parallel step", () => {
+    const flow = (flag: string) => minimal(`  - {id: p, type: parallel, steps: [a, b]}\n  - {id: a, type: shell, run: x, repo_access: ${flag}}\n  - {id: b, type: shell, run: x}`);
+    expect(() => parseFlow(flow("true"))).toThrow(/steps\.0\.steps\.0: "a" has repo_access, so it cannot be listed in a parallel step/);
+    expect(parseFlow(flow("false")).steps).toHaveLength(3);
+  });
+});
+
 describe("flow schema", () => {
   it("parses the built-in flows", () => {
     const shipped = readdirSync("flows").filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""));
-    expect(shipped.sort()).toEqual(["daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "release-daily"]);
+    expect(shipped.sort()).toEqual(["daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-daily"]);
     for (const f of shipped) {
       const flow = parseFlow(readFileSync(`flows/${f}.yaml`, "utf8"), f);
       expect(flow.name).toBe(f);
@@ -59,5 +95,34 @@ describe("template", () => {
 
   it("builds env names", () => {
     expect(outputEnvName("run-tests")).toBe("FACTORY_OUT_RUN_TESTS");
+  });
+});
+
+describe("config: audit.retention_days", () => {
+  it("defaults to 180", () => {
+    expect(ConfigSchema.parse({}).audit).toEqual({ retention_days: 180 });
+    expect(ConfigSchema.parse({ audit: {} }).audit).toEqual({ retention_days: 180 });
+  });
+
+  it("accepts 1 to 3650 whole numbers only", () => {
+    for (const n of [1, 30, 3650]) expect(ConfigSchema.parse({ audit: { retention_days: n } }).audit.retention_days).toBe(n);
+    for (const bad of [0, 3651, 1.5, -1, "30", null]) expect(ConfigSchema.safeParse({ audit: { retention_days: bad } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ audit: { retention_days: 30, extra: 1 } }).success).toBe(false);
+  });
+
+  it("loads a config.yaml without the key unchanged, and saves and loads the key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    try {
+      const path = join(dir, "config.yaml");
+      writeFileSync(path, "concurrency: 3\n");
+      const c = loadConfig(path);
+      expect(c.concurrency).toBe(3);
+      expect(c.audit.retention_days).toBe(180);
+      expect(readFileSync(path, "utf8")).toBe("concurrency: 3\n");
+      saveConfig({ audit: { retention_days: 30 } }, path);
+      expect(loadConfig(path).audit.retention_days).toBe(30);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

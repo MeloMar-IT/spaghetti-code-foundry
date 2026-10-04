@@ -4,6 +4,7 @@ description: Pushes the current branch to origin.
 steps:
   - id: push
     type: shell
+    repo_access: true
     run: |
       git push -q -u origin HEAD
       echo "pushed $(git branch --show-current)"

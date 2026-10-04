@@ -28,6 +28,7 @@ steps:
 
   - id: ask_for_info
     type: shell
+    repo_access: true
     jump_only: true
     description: Post Claude's questions on the ticket, then stop the run
     run: |

@@ -146,6 +146,25 @@ Leave `model` out to use the flow default / the user's routing rules.
 
 The output is stdout + stderr (long output is trimmed to the end).
 
+```yaml
+- id: push
+  type: shell
+  repo_access: true                 # this step talks to the repository's host (gh, git clone/fetch/pull/push/ls-remote)
+  run: git push -q -u origin HEAD
+```
+
+- Set `repo_access: true` on every shell step that calls `gh`, uses the remote with git (`clone`,
+  `fetch`, `pull`, `push`, `ls-remote`), or calls a helper script that does.
+- Only shell steps have it.
+- Never set it on a step that runs the project's tests or build. Split a step that does both.
+- A step with it cannot have `sandbox: true` and cannot be listed in a `parallel` step.
+- In a run with an owner, a marked step signs in with the stored token of the repository named by
+  `github_repo` (`GH_TOKEN` for `gh`, a credential helper for git) and `$FACTORY_REPO_URL` is its
+  address. Steps without the flag and agent steps never get the token.
+- A failed sign-in ends the run: `on_failure` is not followed. A refusal on stderr fails the step
+  even if the script goes on, so a call you tolerate on purpose must send its error output to
+  `/dev/null`.
+
 ### `approval` — wait for a human
 
 ```yaml
@@ -259,6 +278,7 @@ these environment variables instead (always quote them: `"$FACTORY_TASK"`):
 | `$FACTORY_VAR_<NAME>` | A flow variable (`github_repo` → `$FACTORY_VAR_GITHUB_REPO`) |
 | `$FACTORY_RUN_ID`, `$FACTORY_WORKDIR`, `$FACTORY_BRANCH` | Run id, workspace, branch |
 | `$FACTORY_BASE_SHA` | The commit the run started from (`git diff $FACTORY_BASE_SHA` = everything the run changed) |
+| `$FACTORY_REPO_URL` | The stored address of the repository; set only in a marked step that uses a stored token |
 | `$FACTORY_TOOLS` | Folder with helper scripts (below) |
 | `$FACTORY_NEXT_<REASON>` | The closing "what to do next" sentence for a comment on the issue. `<REASON>` is `QUESTIONS`, `PLANNER_QUESTIONS`, `APPROVE_PLAN`, `APPROVE_SPLIT` or `APPROVAL`; e.g. `$FACTORY_NEXT_APPROVAL` is "It waits for your approval — reply /approve or /reject." The sentence is fixed per reason. Write `"_${FACTORY_NEXT_APPROVAL}_"` with braces when `_` follows |
 | `$FACTORY_FIRST_<REASON>`, `$FACTORY_FIRST_NOTHING` | The bold first line of a comment on the issue. `<REASON>` is the same five as above; e.g. `$FACTORY_FIRST_APPROVE_PLAN` is `**What you need to do:** Reply /approve or /reject.` `$FACTORY_FIRST_NOTHING` is for a comment that needs no answer: `**Nothing needed from you** — it is being worked on.` Print it first, then an empty line (`echo "$FACTORY_FIRST_APPROVAL"; echo`), and always quote it because it contains `*` |
@@ -370,6 +390,7 @@ feature (everything else):  develop ──► feature/42-… ──► develop  
     git commit -q -m "$FACTORY_TASK" && git log --oneline -1
 - id: push
   type: shell
+  repo_access: true
   run: git push -q -u origin HEAD && echo "pushed $(git branch --show-current)"
 ```
 
@@ -378,6 +399,7 @@ feature (everything else):  develop ──► feature/42-… ──► develop  
 ```yaml
 - id: open_pr
   type: shell
+  repo_access: true
   run: |
     printf '%s\n\n%s\n' "$FACTORY_TASK" "$FACTORY_OUT_IMPLEMENT" > "{{run.dir}}/pr.md"
     gh pr create --fill --body-file "{{run.dir}}/pr.md"
@@ -391,9 +413,11 @@ vars: {github_repo: owner/repo, issue: ""}
 steps:
   - id: clone
     type: shell
+    repo_access: true
     run: gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q && git checkout -q -b "factory/issue-$FACTORY_VAR_ISSUE"
   - id: issue
     type: shell
+    repo_access: true
     run: gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --comments
   - id: implement
     type: claude
@@ -403,6 +427,7 @@ steps:
   # … tests, review, commit, push, then:
   - id: report
     type: shell
+    repo_access: true
     run: gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body "Done on branch $(git branch --show-current)"
 ```
 
@@ -421,6 +446,8 @@ steps:
 7. Nothing pushes to `main`; there is no `git push --force`.
 8. Regexes in YAML strings escape backslashes: `"^VERDICT: APPROVE\\s*$"`.
 9. Flows that change code have `one_per_repo: true`.
+10. Every shell step that calls `gh` or the remote has `repo_access: true`; steps that run tests or
+    the build do not; no such step has `sandbox: true` or is in a `parallel` step.
 
 ## Complete example
 

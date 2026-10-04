@@ -8,6 +8,8 @@ import type { ApiContext } from "./server.js";
 import { turnFor } from "./your-turn.js";
 
 const DAY = 86_400_000;
+/** Runs that never make a notification: evaluation runs, and the architect's reads (their session shows them). */
+const isQuiet = (source?: string) => ["eval", "refinement"].includes(runOrigin(source));
 /** Successes older than this are never told. */
 const DONE_WINDOW_MS = 7 * DAY;
 /** What was told about something that is gone is kept this long (longer than the window above). */
@@ -168,7 +170,7 @@ export class TurnNotifier {
       const after = Math.max(time(state.doneSince), now.getTime() - DONE_WINDOW_MS);
       for (const b of briefs) {
         if (b.status !== "succeeded" || !b.finishedAt || time(b.finishedAt) <= after) continue;
-        if (runOrigin(b.source) === "eval" || state.notified[`done|${b.runId}`]) continue;
+        if (isQuiet(b.source) || state.notified[`done|${b.runId}`]) continue;
         const run = ctx.scheduler.get(b.runId);
         if (!run) continue;
         const what = run.vars?.issue ? `${run.vars.github_repo}#${run.vars.issue}` : run.task.split("\n")[0] || run.flow;
@@ -215,7 +217,7 @@ export class TurnNotifier {
     const stories = new Set<string>();
     let otherRuns = 0;
     for (const b of briefs) {
-      if (b.status !== "succeeded" || !b.finishedAt || time(b.finishedAt) <= since || runOrigin(b.source) === "eval") continue;
+      if (b.status !== "succeeded" || !b.finishedAt || time(b.finishedAt) <= since || isQuiet(b.source)) continue;
       const run = ctx.scheduler.get(b.runId);
       if (!run) continue;
       if (run.vars?.github_repo && run.vars.issue) stories.add(`${run.vars.github_repo}#${run.vars.issue}`);

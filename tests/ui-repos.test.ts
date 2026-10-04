@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -21,18 +21,37 @@ let repos: any[];
 let gets: number;
 let sent: { method: string; url: string; body: any }[];
 let answers: Answer[];
+let testResult: any;
+/** A saved connection status; a failed one has a read check that failed and a skipped write check. */
+const connection = (ok: boolean, over: object = {}) => ({
+  at: new Date().toISOString(),
+  ok,
+  checks: ok
+    ? [{ check: "clone", ok: true, code: "ok", message: "The repository can be read." }, { check: "push", ok: true, code: "ok", message: "Write access works. Nothing was pushed." }]
+    : [{ check: "clone", ok: false, code: "bad-token", message: "The host did not accept the token." }, { check: "push", ok: false, skipped: true, code: "skipped", message: "Not checked." }],
+  ...over,
+});
+/** The answer of GET /api/repos/methods (undefined: the call fails, and the page behaves as before). */
+let methodsAnswer: any;
+let methodsCalls = 0;
+const APP_URL = "https://github.com/apps/foundry-app/installations/new";
+const appOptions = (over: object = {}) => ({ methods: ["github-token", "https-token", "ssh-deploy-key", "github-app"], githubApp: { available: true, installUrl: APP_URL }, ...over });
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
 let heldGets: (() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
 const realFetch = globalThis.fetch;
 const realConfirm = (globalThis as any).confirm;
 let nextId = 1;
+let keyCount = 0;
+/** A public key as the server shows it (built here, never a real one). */
+const nextKey = () => `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI${String(++keyCount).padStart(43, "k")}`;
 
 beforeEach(() => {
   repos = [];
   gets = 0;
   sent = [];
   answers = [];
+  testResult = connection(true);
   hold = undefined;
   holdNext = false;
   heldGets = [];
@@ -42,7 +61,13 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+  methodsAnswer = undefined;
+  methodsCalls = 0;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (init.method === "GET" && url === "/api/repos/methods") {
+      methodsCalls++;
+      return methodsAnswer ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+    }
     if (init.method === "GET") {
       gets++;
       const snapshot = [...repos];
@@ -63,10 +88,22 @@ beforeEach(() => {
       if (init.method === "DELETE" && answer.status === 500) repos = repos.filter((r) => `/api/repos/${r.id}` !== url);
       return reply({ error: answer.error }, answer.status);
     }
+    if (init.method === "POST" && url.endsWith("/test")) return reply(testResult);
     if (init.method === "POST") {
-      const rec = { id: `id${nextId++}`, url: body.url, method: body.method, ...(body.username ? { username: body.username } : {}) };
+      const rec = {
+        id: `id${nextId++}`,
+        url: body.url,
+        method: body.method,
+        ...(body.username ? { username: body.username } : {}),
+        ...(body.method === "ssh-deploy-key" ? { publicKey: nextKey() } : {}),
+      };
       repos.push(rec);
       return reply(rec, 201);
+    }
+    if (init.method === "PUT" && (body.newKey || body.method === "ssh-deploy-key")) {
+      const at = repos.findIndex((r) => `/api/repos/${r.id}/auth` === url);
+      repos[at] = { ...repos[at], ...(body.url ? { url: body.url } : {}), method: "ssh-deploy-key", publicKey: nextKey() };
+      return reply(repos[at]);
     }
     if (init.method === "DELETE") repos = repos.filter((r) => `/api/repos/${r.id}` !== url);
     return reply({});
@@ -106,17 +143,27 @@ const choose = (id: string) => {
 
 describe("pure functions", () => {
   it("lists the methods", () => {
-    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "none"]);
+    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app", "none"]);
     for (const m of ui.METHODS) {
       expect(m.label).toBeTruthy();
       expect(Array.isArray(m.help)).toBe(true);
       expect(Array.isArray(m.fields)).toBe(true);
     }
     expect(ui.methodsFor(false).map((m: any) => m.id)).not.toContain("none");
-    expect(ui.methodsFor(true)).toHaveLength(3);
+    // without the server's list the GitHub App is left out, because it may not be set up
+    expect(ui.methodsFor(true)).toHaveLength(4);
+    expect(ui.methodsFor(true).map((m: any) => m.id)).not.toContain("github-app");
+    expect(ui.methodsFor(false, appOptions()).map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
+    expect(ui.methodsFor(false, appOptions({ methods: ["github-token"] })).map((m: any) => m.id)).toEqual(["github-token"]);
+    expect(ui.methodsFor(true, appOptions({ methods: ["github-token", "none"] })).map((m: any) => m.id)).toEqual(["github-token", "none"]);
+    // the server decides: a user never gets the server's own access, even when it is listed
+    expect(ui.methodsFor(false, appOptions({ methods: ["github-token", "none"] })).map((m: any) => m.id)).toEqual(["github-token"]);
     const help = ui.METHODS[0].help.join(" ");
     for (const w of ["Contents", "Issues", "Pull requests", '"Read and write"']) expect(help).toContain(w);
-    expect(ui.METHODS[2].help.join(" ")).not.toContain("GitHub");
+    expect(ui.METHODS.find((m: any) => m.id === "none").help.join(" ")).not.toContain("GitHub");
+    const deploy = ui.METHODS.find((m: any) => m.id === "ssh-deploy-key");
+    expect(deploy.help.join(" ")).toContain("deploy key with write access");
+    expect(deploy.fields).toEqual([]);
   });
 
   it("methodLabel and connectionStatus", () => {
@@ -128,6 +175,21 @@ describe("pure functions", () => {
     expect(ui.methodLabel({ method: "none" }, true)).toBe("The server's own access");
     expect(ui.methodLabel({ method: "ssh-key" }, false)).toBe("ssh-key");
     expect(ui.connectionStatus({})).toBe("Not tested yet");
+    expect(ui.connectionStatus({ connection: connection(true) })).toBe("Connected");
+    expect(ui.connectionStatus({ connection: connection(false) })).toBe("Failed");
+  });
+
+  it("connectionLines: a failed test shows every check, a good one only the skipped ones", () => {
+    expect(ui.connectionLines({})).toEqual([]);
+    expect(ui.connectionLines({ connection: connection(false) })).toEqual([
+      { ok: false, text: "Read: The host did not accept the token." },
+      { ok: false, text: "Write: Not checked." },
+    ]);
+    expect(ui.connectionLines({ connection: connection(true) })).toEqual([]);
+    const api = { check: "github-api", ok: true, skipped: true, code: "deploy-key", message: "Issues and pull requests are not checked." };
+    const good = connection(true);
+    good.checks.push(api as any);
+    expect(ui.connectionLines({ connection: good })).toEqual([{ ok: true, text: "GitHub API: Issues and pull requests are not checked." }]);
   });
 
   it("repoProblem", () => {
@@ -169,9 +231,76 @@ describe("the page", () => {
     expect(text).toContain("ann");
     expect(text.split("Not tested yet")).toHaveLength(3);
     const rowButtons = walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent);
-    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Change authentication", "Remove", "Change authentication", "Remove"]);
+    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Change authentication", "Remove", "Test connection", "Change authentication", "Remove"]);
     for (const tag of ["input", "select", "textarea"]) expect(main().all(tag)).toEqual([]);
     expect(errLine(main())).toEqual([]);
+  });
+
+  it("shows the connection status: the pill, the time and the messages", async () => {
+    repos = [rec({ connection: connection(true) }), rec({ connection: connection(false) }), rec()];
+    await show();
+    const cells = walk(main()).filter((e) => e.tag === "td" && e.textContent.includes("Connected") || e.textContent.includes("Failed") || e.textContent === "Not tested yet");
+    expect(cells.length).toBeGreaterThan(0);
+    const pills = byClass(main(), "pill");
+    expect(pills.map((p) => p.textContent)).toEqual(["Connected", "Failed", "Not tested yet"]);
+    expect(pills.map((p) => p.attrs.class)).toEqual(["pill ok", "pill fail", "pill"]);
+    expect(byClass(main(), "muted").filter((e) => e.textContent.startsWith("tested ")).map((e) => e.textContent)).toEqual(["tested just now", "tested just now"]);
+    expect(byClass(main(), "muted").find((e) => e.textContent.startsWith("tested "))!.attrs.title).toBeTruthy();
+    expect(byClass(main(), "status").map((e) => [e.attrs.class, e.textContent])).toEqual([
+      ["status bad", "Read: The host did not accept the token."],
+      ["status bad", "Write: Not checked."],
+    ]);
+  });
+
+  describe("test connection", () => {
+    it("sends the call, disables the button while it runs, then reloads and toasts", async () => {
+      const r = rec();
+      repos = [r];
+      await show();
+      holdNext = true;
+      const btn = button(main(), "Test connection")!;
+      press(btn);
+      await flush();
+      expect(sent).toEqual([{ method: "POST", url: `/api/repos/${r.id}/test`, body: {} }]);
+      expect(btn.disabled).toBe(true);
+      expect(btn.textContent).toBe("Testing…");
+      repos = [{ ...r, connection: connection(true) }];
+      hold!.release();
+      await flush();
+      expect(toastText()).toBe("Connection works");
+      expect(gets).toBe(2);
+      expect(byClass(main(), "pill")[0]!.textContent).toBe("Connected");
+    });
+
+    it("toasts a failed test as an error", async () => {
+      repos = [rec()];
+      await show();
+      testResult = connection(false);
+      press(button(main(), "Test connection"));
+      await flush();
+      expect(toastText()).toBe("Connection failed");
+      expect(gets).toBe(2);
+    });
+
+    it("toasts a 409 and a network failure", async () => {
+      repos = [rec()];
+      await show();
+      answers.push({ status: 409, error: "a test of this repository is running already; wait for it to finish" });
+      press(button(main(), "Test connection"));
+      await flush();
+      expect(toastText()).toBe("a test of this repository is running already; wait for it to finish");
+      expect(gets).toBe(2);
+      answers.push("throw");
+      press(button(main(), "Test connection"));
+      await flush();
+      expect(toastText()).toBe("Could not reach the server.");
+      expect(button(main(), "Test connection")!.disabled).toBeFalsy();
+    });
+
+    it("api.testRepo posts to the escaped address", async () => {
+      await api.testRepo("a b");
+      expect(sent).toEqual([{ method: "POST", url: "/api/repos/a%20b/test", body: {} }]);
+    });
   });
 
   it("shows an empty list", async () => {
@@ -180,11 +309,48 @@ describe("the page", () => {
     expect(button(main(), "+ Add repository")).toBeDefined();
   });
 
+  it("puts the table in its own scroll box", async () => {
+    repos = [rec()];
+    await show();
+    const box = byClass(main(), "table-box");
+    expect(box).toHaveLength(1);
+    expect(box[0]!.all("table")).toHaveLength(1);
+  });
+
+  it("gives the focus back to the new + Add repository button of the toolbar and of the empty list", async () => {
+    await show();
+    const adds = () => walk(main()).filter((e) => e.tag === "button" && e.textContent === "+ Add repository");
+    expect(adds().map((b) => b.attrs["data-focus"])).toEqual(["add-toolbar", "add-empty"]);
+    for (const i of [0, 1]) {
+      const opener = adds()[i]!;
+      opener.focus();
+      press(opener);
+      pressEscape();
+      await flush();
+      const now = adds()[i]!;
+      expect(now).not.toBe(opener);
+      expect((document as any).activeElement).toBe(now);
+    }
+  });
+
+  it("gives the focus back to Change authentication of the second repository", async () => {
+    repos = [rec(), rec({ url: "https://github.com/o/b" })];
+    await show();
+    const changes = () => walk(main()).filter((e) => e.tag === "button" && e.textContent === "Change authentication");
+    const opener = changes()[1]!;
+    opener.focus();
+    press(opener);
+    pressEscape();
+    await flush();
+    expect((document as any).activeElement).toBe(changes()[1]);
+    expect((document as any).activeElement).not.toBe(opener);
+  });
+
   it("adds a repository as a user", async () => {
     await show();
     press(button(main(), "+ Add repository"));
     expect(field(root(), "url")).toBeDefined();
-    expect(field(root(), "method")!.all("option")).toHaveLength(2);
+    expect(field(root(), "method")!.all("option")).toHaveLength(3);
     const token = field(root(), "token")!;
     expect(token.attrs.type).toBe("password");
     expect(token.value).toBe("");
@@ -209,7 +375,7 @@ describe("the page", () => {
   it("adds a repository as an admin with the server's own access", async () => {
     await show(true);
     press(button(main(), "+ Add repository"));
-    expect(field(root(), "method")!.all("option")).toHaveLength(3);
+    expect(field(root(), "method")!.all("option")).toHaveLength(4);
     choose("none");
     expect(root().all("input").map((i) => i.attrs.name)).toEqual(["url"]);
     type("url", "https://github.com/o/a");
@@ -554,6 +720,181 @@ describe("late answers", () => {
   });
 });
 
+describe("the SSH deploy key", () => {
+  const SSH = "git@github.com:o/a.git";
+  const deployRec = (over: object = {}): ReturnType<typeof rec> & { publicKey?: string } => rec({ url: SSH, method: "ssh-deploy-key", publicKey: nextKey(), ...over });
+  const keyOf = (r: any) => byClass(main(), "field").flatMap((e) => e.all("code")).find((c) => c.textContent === r.publicKey);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("adds one as a user: the placeholder changes and the row shows the key and the hint", async () => {
+    await show();
+    press(button(main(), "+ Add repository"));
+    expect(field(root(), "url")!.attrs.placeholder).toBe("https://github.com/owner/name");
+    choose("ssh-deploy-key");
+    expect(field(root(), "url")!.attrs.placeholder).toBe("git@github.com:owner/name.git");
+    expect(root().all("input").map((i) => i.attrs.name)).toEqual(["url"]);
+    choose("github-token");
+    expect(field(root(), "url")!.attrs.placeholder).toBe("https://github.com/owner/name");
+    choose("ssh-deploy-key");
+    type("url", SSH);
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: SSH, method: "ssh-deploy-key" } }]);
+    expect(main().textContent).toContain(repos[0].publicKey);
+    expect(main().textContent).toContain(ui.DEPLOY_KEY_HINT);
+    expect(main().textContent).toContain("SSH deploy key");
+  });
+
+  it("copies the key", async () => {
+    const r = deployRec();
+    repos = [r];
+    await show();
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    press(button(main(), "Copy"));
+    await flush();
+    expect(writeText).toHaveBeenCalledWith(r.publicKey);
+    expect(toastText()).toBe("Public key copied");
+    vi.stubGlobal("navigator", {});
+    press(button(main(), "Copy"));
+    await flush();
+    expect(toastText()).toBe("Could not copy. Select the key and copy it yourself.");
+    expect(keyOf(r)!.style).toMatchObject({ userSelect: "all" });
+  });
+
+  it("generates a new key only after a confirmation, and shows it", async () => {
+    const r = deployRec();
+    repos = [r];
+    await show();
+    (globalThis as any).confirm = () => false;
+    press(button(main(), "Generate a new key"));
+    await flush();
+    expect(sent).toEqual([]);
+    let asked = "";
+    (globalThis as any).confirm = (m: string) => ((asked = m), true);
+    holdNext = true;
+    const btn = button(main(), "Generate a new key")!;
+    press(btn);
+    await flush();
+    expect(asked).toBe(`Generate a new key for ${SSH}? The old key stops working. Add the new public key as a deploy key and remove the old one.`);
+    expect(btn.disabled).toBe(true);
+    expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { newKey: true } }]);
+    hold!.release();
+    await flush();
+    expect(toastText()).toBe("New key generated");
+    expect(main().textContent).toContain(repos[0].publicKey);
+    expect(main().textContent).not.toContain(r.publicKey);
+  });
+
+  it("shows a failed new key above the list without a retry", async () => {
+    repos = [deployRec()];
+    await show();
+    (globalThis as any).confirm = () => true;
+    answers.push({ status: 500, error: "the SSH key could not be made; see the server log" });
+    press(button(main(), "Generate a new key"));
+    await flush();
+    expect(errLine(main())[0]!.textContent).toBe("the SSH key could not be made; see the server log");
+    expect(button(main(), "Try again")).toBeUndefined();
+  });
+
+  it("asks about the stored key when removing", async () => {
+    repos = [deployRec(), rec()];
+    await show();
+    const asked: string[] = [];
+    (globalThis as any).confirm = (m: string) => (asked.push(m), false);
+    for (const b of walk(main()).filter((e) => e.tag === "button" && e.textContent === "Remove")) press(b);
+    expect(asked[0]).toContain("Its stored key is deleted too.");
+    expect(asked[1]).toContain("Its stored token is deleted too.");
+  });
+
+  it("a token row has no key block and no new-key button", async () => {
+    repos = [rec()];
+    await show();
+    expect(button(main(), "Copy")).toBeUndefined();
+    expect(button(main(), "Generate a new key")).toBeUndefined();
+    expect(main().textContent).not.toContain("Public key");
+  });
+
+  describe("change authentication", () => {
+    const open = async (r: any) => {
+      repos = [r];
+      await show();
+      press(button(main(), "Change authentication"));
+    };
+
+    it("asks for the SSH address on an https record", async () => {
+      const r = rec();
+      await open(r);
+      expect(field(root(), "url")).toBeUndefined();
+      choose("ssh-deploy-key");
+      const url = field(root(), "url")!;
+      expect(url.attrs.class).toBe("mono");
+      expect(url.value).toBe("");
+      expect(root().textContent).toContain("SSH address");
+      press(button(root(), "Save"));
+      expect(errLine(root())[0]!.textContent).toBe("Fill in the repository URL.");
+      expect(sent).toEqual([]);
+      type("url", SSH);
+      press(button(root(), "Save"));
+      await flush();
+      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: SSH, method: "ssh-deploy-key" } }]);
+    });
+
+    it("keeps what was typed in the address when the method changes back and forth", async () => {
+      await open(rec());
+      choose("ssh-deploy-key");
+      type("url", SSH);
+      choose("https-token");
+      expect(field(root(), "url")).toBeUndefined();
+      choose("ssh-deploy-key");
+      expect(field(root(), "url")!.value).toBe(SSH);
+    });
+
+    it("asks for an https address when a deploy-key record changes to a token method", async () => {
+      const r = deployRec();
+      await open(r);
+      expect(field(root(), "url")).toBeUndefined();
+      choose("github-token");
+      const url = field(root(), "url")!;
+      expect(url.attrs.placeholder).toBe("https://github.com/owner/name");
+      expect(root().textContent).toContain("HTTPS address");
+      type("token", TOKEN);
+      press(button(root(), "Save"));
+      expect(errLine(root())[0]!.textContent).toBe("Fill in the repository URL.");
+      type("url", "https://github.com/o/a");
+      press(button(root(), "Save"));
+      await flush();
+      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: "https://github.com/o/a", method: "github-token", token: TOKEN } }]);
+    });
+
+    it("has no address input on an SSH record", async () => {
+      const r = rec({ url: SSH, method: "none" });
+      await open(r);
+      choose("ssh-deploy-key");
+      expect(field(root(), "url")).toBeUndefined();
+      press(button(root(), "Save"));
+      await flush();
+      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { method: "ssh-deploy-key" } }]);
+    });
+  });
+
+  it("shows the method name in a server error", async () => {
+    await show();
+    press(button(main(), "+ Add repository"));
+    choose("ssh-deploy-key");
+    type("url", "https://github.com/o/a");
+    answers.push({ status: 400, error: '"ssh-deploy-key" works only with an SSH address' });
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toBe("SSH deploy key works only with an SSH address");
+  });
+
+  it("isSshUrl", () => {
+    for (const u of ["git@github.com:o/a.git", "ssh://git@host/a/b", " SSH://host/a", "GIT@host:a/b"]) expect(ui.isSshUrl(u), u).toBe(true);
+    for (const u of ["https://github.com/o/a", "o/a", "", undefined]) expect(ui.isSshUrl(u), String(u)).toBe(false);
+  });
+});
+
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("links the page for every account", () => {
@@ -561,7 +902,8 @@ describe("wiring", () => {
     const app = read("app.js");
     expect(app).toContain('from "./repos.js"');
     expect(app).toContain('section === "repos"');
-    expect(read("style.css")).toContain('.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"])');
+    expect(read("user/index.html")).toContain('href="#/repos" data-nav="repos">My repositories<');
+    expect(read("user/app.js")).toContain('from "/repos.js"');
   });
 
   it("api calls use the right routes and errors carry the status", async () => {
@@ -579,5 +921,108 @@ describe("wiring", () => {
     expect(e).toBeInstanceOf(Error);
     expect(e.message).toBe("taken");
     expect(e.status).toBe(409);
+  });
+});
+
+describe("the GitHub App", () => {
+  const anchors = (el: FakeElement) => walk(el).filter((e) => e.tag === "a");
+  const optionIds = () => field(root(), "method")!.children.map((o: any) => o.value);
+  const NOT_AVAILABLE = "GitHub App is not available";
+
+  it("asks the server for the methods", async () => {
+    methodsAnswer = appOptions();
+    const r = await api.repoMethods();
+    expect(r.githubApp.available).toBe(true);
+    expect(methodsCalls).toBe(1);
+  });
+
+  it("offers the method only when the app is set up, and says why not", async () => {
+    methodsAnswer = appOptions();
+    await show();
+    press(button(main(), "+ Add repository"));
+    expect(optionIds()).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
+    expect(root().textContent).not.toContain(NOT_AVAILABLE);
+    pressEscape();
+    await flush();
+
+    methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
+    await show();
+    press(button(main(), "+ Add repository"));
+    expect(optionIds()).not.toContain("github-app");
+    expect(root().textContent).toContain(`${NOT_AVAILABLE}: the administrator has not set up the app (Settings → GitHub App).`);
+  });
+
+  it("shows the link and no token field, and sends the url and the method", async () => {
+    methodsAnswer = appOptions();
+    await show();
+    press(button(main(), "+ Add repository"));
+    type("url", "https://github.com/o/a");
+    choose("github-app");
+    expect(field(root(), "token")).toBeUndefined();
+    const [link] = anchors(root());
+    expect(link!.attrs.href).toBe(APP_URL);
+    expect(link!.attrs.rel).toBe("noopener noreferrer");
+    expect(link!.attrs.target).toBe("_blank");
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://github.com/o/a", method: "github-app" } }]);
+  });
+
+  it("shows the server's sentence when the app is not installed", async () => {
+    methodsAnswer = appOptions();
+    answers = [{ status: 409, error: "the GitHub App is not installed on this repository; install it with the link on the page, then save again" }];
+    await show();
+    press(button(main(), "+ Add repository"));
+    type("url", "https://github.com/o/a");
+    choose("github-app");
+    press(button(root(), "Add repository"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toContain("is not installed on this repository");
+    expect(root().children.length).toBeGreaterThan(0);
+  });
+
+  it("draws only a link to github.com/apps/<name>/installations/new", () => {
+    expect(ui.appInstallUrl(appOptions())).toBe(APP_URL);
+    for (const url of ["https://evil.example/apps/x/installations/new", "http://github.com/apps/x/installations/new", "https://github.com/apps/x/installations/new?next=1", "javascript:alert(1)", "https://github.com/apps//installations/new", 5, undefined]) {
+      expect(ui.appInstallUrl({ githubApp: { available: true, installUrl: url } }), String(url)).toBe("");
+    }
+    expect(ui.appInstallUrl(undefined)).toBe("");
+  });
+
+  it("does not draw a bad link in the dialog", async () => {
+    methodsAnswer = appOptions({ githubApp: { available: true, installUrl: "https://evil.example/x" } });
+    await show();
+    press(button(main(), "+ Add repository"));
+    choose("github-app");
+    expect(anchors(root())).toEqual([]);
+  });
+
+  it("shows the label and the link in the row", async () => {
+    methodsAnswer = appOptions();
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    expect(main().textContent).toContain("GitHub App");
+    expect(main().textContent).toContain("Install the app on this repository, or change which repositories it may use. Then press Test connection.");
+    expect(anchors(main())[0]!.attrs.href).toBe(APP_URL);
+    expect(errLine(main())).toEqual([]);
+  });
+
+  it("says when the administrator removed the app", async () => {
+    methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    expect(errLine(main()).map((e) => e.textContent)).toEqual(["The administrator removed the GitHub App. Choose another authentication."]);
+    expect(anchors(main())).toEqual([]);
+  });
+
+  it("tells that the app stays installed when the repository is removed", async () => {
+    methodsAnswer = appOptions();
+    repos = [rec({ method: "github-app", installationId: "42" })];
+    await show();
+    const asked: string[] = [];
+    (globalThis as any).confirm = (q: string) => (asked.push(q), false);
+    press(button(main(), "Remove"));
+    expect(asked[0]).toContain("The app stays installed on GitHub.");
+    expect(asked[0]).not.toContain("token");
   });
 });

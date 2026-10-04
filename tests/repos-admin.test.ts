@@ -7,8 +7,9 @@ import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoErr
 import { StoreError } from "../src/auth/store.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 import { createUser, setStatus } from "../src/auth/users.js";
-import { credentialsPath, listCredentials } from "../src/credentials/store.js";
+import { credentialsPath, listCredentials, readSecret, removeCredential } from "../src/credentials/store.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
 
 const ANN = "11111111-1111-4111-8111-111111111111";
 const BOB = "22222222-2222-4222-8222-222222222222";
@@ -121,7 +122,7 @@ describe("settings in the store", () => {
   it("stores settings; listAllRepos has them, listRepos and the returns of addRepo and setRepoAuth do not", () => {
     const a = add(ANN, "acme/app");
     expect("settings" in a).toBe(false);
-    expect(setRepoSettings(a.id, S).settings).toEqual(S);
+    expect(setRepoSettings(a.id, S).repo.settings).toEqual(S);
     expect(listAllRepos()[0]!.settings).toEqual(S);
     expect(listRepos(ANN).every((r) => !("settings" in r))).toBe(true);
     const changed = setRepoAuth(ANN, a.id, { method: "github-token", token: TOKEN }, OK);
@@ -154,7 +155,7 @@ describe("settings in the store", () => {
     const a = add(ANN, "acme/app");
     setRepoSettings(a.id, S);
     expect(statSync(reposPath()).mode & 0o777).toBe(0o600);
-    expect("settings" in setRepoSettings(a.id, {})).toBe(false);
+    expect("settings" in setRepoSettings(a.id, {}).repo).toBe(false);
     expect("settings" in file().repos[0]!).toBe(false);
     expect(code(() => setRepoSettings("33333333-3333-4333-8333-333333333333", S))).toBe("not-found");
     expect(code(() => setRepoSettings(a.id, { nope: 1 }))).toBe("bad-settings");
@@ -189,6 +190,19 @@ describe("settings in the store", () => {
       expect((e as StoreError).kind).toBe("wrong-format");
     }
     expect(a.id).toBeTruthy();
+  });
+});
+
+describe("what a change reports (for the audit log)", () => {
+  it("setRepoSettings names the fields that differ; setRepoAuth says whether it changed; transferRepo says whether it moved", () => {
+    const a = add(ANN, "acme/app");
+    expect(setRepoSettings(a.id, { testCommand: "npm test", mainBranch: "main" }).changed).toEqual(["mainBranch", "testCommand"]);
+    expect(setRepoSettings(a.id, { testCommand: "npm test", mainBranch: "main" }).changed).toEqual([]);
+    expect(setRepoSettings(a.id, {}).changed).toEqual(["mainBranch", "testCommand"]);
+    expect(setRepoAuth(ANN, a.id, { method: "none" }, { ownerOk: () => true }).changed).toBe(false);
+    expect(setRepoAuth(ANN, a.id, { url: "git@github.com:acme/app.git" }, { ownerOk: () => true }).changed).toBe(true);
+    expect(transferRepo(a.id, "bob@example.com", { findOwner }).moved).toBe(true);
+    expect(transferRepo(a.id, "bob@example.com", { findOwner }).moved).toBe(false);
   });
 });
 
@@ -337,12 +351,54 @@ describe("transferRepo", () => {
   });
 });
 
+describe("a deploy key moves with its repository", () => {
+  const deployRepo = (user: string, url = "git@github.com:acme/app.git") => add(user, url, { method: "ssh-deploy-key" });
+  let kg: FakeKeygen;
+  beforeEach(() => {
+    kg = fakeKeygen();
+  });
+  afterEach(() => kg.remove());
+
+  it("is kept for the new owner, with the same key", () => {
+    const a = deployRepo(ANN);
+    const pair = kg.pairs()[0]!;
+    const out = transferRepo(a.id, "bob@example.com", { findOwner });
+    expect(out.repo).toMatchObject({ owner: BOB, method: "ssh-deploy-key", publicKey: a.publicKey, credentialId: a.credentialId });
+    expect(listCredentials(ANN)).toEqual([]);
+    expect(listCredentials(BOB).map((c) => [c.id, c.type, c.name])).toEqual([[a.credentialId, "ssh-key", `repo:${a.id}`]]);
+    expect(readSecret(BOB, a.credentialId!)).toBe(pair.privateKey);
+    expect(listRepos(BOB)).toHaveLength(1);
+    expect(listRepos(ANN)).toEqual([]);
+    expect(kg.calls()).toHaveLength(1);
+  });
+
+  it("the repeat after a failed record write finishes the transfer", () => {
+    const a = deployRepo(ANN);
+    mkdirSync(`${reposPath()}.tmp`);
+    expect(() => transferRepo(a.id, "bob@example.com", { findOwner })).toThrow();
+    rmSync(`${reposPath()}.tmp`, { recursive: true, force: true });
+    expect(listRepos(ANN)).toHaveLength(1);
+    expect(transferRepo(a.id, "bob@example.com", { findOwner }).repo).toMatchObject({ owner: BOB, method: "ssh-deploy-key", publicKey: a.publicKey });
+    expect(readSecret(BOB, a.credentialId!)).toBe(kg.pairs()[0]!.privateKey);
+  });
+
+  it("is refused with no-credential when the key is missing, and nothing changes", () => {
+    const a = deployRepo(ANN);
+    removeCredential(ANN, a.credentialId!);
+    const before = raw();
+    expect(code(() => transferRepo(a.id, "bob@example.com", { findOwner }))).toBe("no-credential");
+    expect(raw()).toBe(before);
+    expect(listRepos(ANN)).toHaveLength(1);
+  });
+});
+
 describe("what a transfer does to a sign-in", () => {
   it("lists the methods: personal ones are wiped, repository-bound ones move", () => {
     expect([...PERSONAL_METHODS].sort()).toEqual(["github-token", "https-token"]);
     // Before a method is listed here, add transfer tests with a real record of it: kept for the new owner, the repeat after
-    // a failed record write, and a missing credential refused with "no-credential".
-    expect(REPO_BOUND_METHODS).toEqual([]);
+    // a failed record write, and a missing credential refused with "no-credential" (see "a deploy key moves with its repository").
+    // an app record has no credential of its own: it moves with its installation id (see the transfer tests)
+    expect(REPO_BOUND_METHODS).toEqual(["ssh-deploy-key", "github-app"]);
     expect([...PERSONAL_METHODS, ...REPO_BOUND_METHODS, "none"].sort()).toEqual([...REPO_METHODS].sort());
   });
 

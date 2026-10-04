@@ -1,6 +1,6 @@
 import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
-import { allowedHash, ensureSignedIn, isAdmin, linkToken, startApp } from "./auth.js";
+import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
 import { renderGraph } from "./graph.js";
@@ -13,6 +13,7 @@ import { renderAllRepos } from "./admin-repos.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
+import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
@@ -44,7 +45,7 @@ steps:
  * cur: the flow being edited.
  * { name: saved name | null, scope, saveScope, yaml, obj, mode: "visual"|"yaml", dirty, selected, validation }
  */
-const S = { info: null, flows: [], cur: null, cleanup: null, lastHash: "", admin: true, me: "" };
+const S = { info: null, flows: [], cur: null, cleanup: null, lastHash: "", me: "" };
 
 function tryParse(text) {
   try {
@@ -67,7 +68,6 @@ async function refreshFlows() {
 }
 
 function renderSidebar() {
-  if (!S.admin) return;
   const inFlows = location.hash.startsWith("#/flows/") || location.hash === "#/new";
   const current = inFlows ? S.cur : null;
   mount(sidebar,
@@ -370,8 +370,7 @@ function welcome() {
 async function route() {
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
-  // A page a user may not open is never drawn.
-  const hash = allowedHash(S.admin, location.hash || (S.admin ? "#/flows" : "#/runs"), (to) => history.replaceState(null, "", to));
+  const hash = location.hash || "#/flows";
   const [, section, arg] = hash.split("/").map(decodeURIComponent);
   const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && hash !== "#/new";
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
@@ -392,11 +391,12 @@ async function route() {
     else if (section === "settings") await renderSettings(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
-    else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: S.admin, id: arg });
-    else if (section === "repos") S.cleanup = await renderRepos(main, { admin: S.admin });
+    else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
+    else if (section === "repos") S.cleanup = await renderRepos(main, { admin: true });
     else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
-    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: S.admin });
-    else if (section === "runs") S.cleanup = await renderRunsList(main, { admin: S.admin });
+    else if (section === "audit") S.cleanup = await renderAudit(main);
+    else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
+    else if (section === "runs") S.cleanup = await renderRunsList(main, { admin: true });
     else if (section === "new") S.cur && !S.cur.name ? renderFlowView() : openNew();
     else if (section === "flows" && arg) await openFlow(arg);
     else welcome();
@@ -414,12 +414,12 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-const me = await ensureSignedIn();
-S.admin = isAdmin(me);
+// A user never gets past this line: enterDisplay sends that account to /user/ and does not return.
+const me = await enterDisplay("admin");
 S.me = me.id;
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
-await startApp(me, { startAdmin, route });
+await startAdmin();
 
 async function startAdmin() {
   startHealth(healthEl);

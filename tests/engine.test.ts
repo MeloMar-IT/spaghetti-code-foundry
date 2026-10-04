@@ -33,6 +33,27 @@ const start = (yaml: string, opts: { vars?: Record<string, string>; config?: Con
 const resume = (runId: string, extra: Partial<Parameters<typeof resumeRun>[0]> = {}) =>
   resumeRun({ runId, runsDir, claudeBin, config: baseConfig(), ...extra });
 
+describe("repo_access", () => {
+  const saved = { GH_TOKEN: process.env.GH_TOKEN, FACTORY_REPO_URL: process.env.FACTORY_REPO_URL };
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it("a run without an owner: marked and plain steps get the same environment", async () => {
+    process.env.GH_TOKEN = "x";
+    delete process.env.FACTORY_REPO_URL;
+    const cmd = `printf '%s|%s|%s' "\${GH_TOKEN:+set}" "\${FACTORY_REPO_URL:-none}" "\${GIT_CONFIG_COUNT:-none}"`;
+    const s = await start(`name: t\nworkspace: empty\nsteps:\n  - id: a\n    type: shell\n    repo_access: true\n    run: ${JSON.stringify(cmd)}\n  - id: b\n    type: shell\n    run: ${JSON.stringify(cmd)}`);
+    expect(s.status).toBe("succeeded");
+    const [a, b] = s.history.map((h) => h.output.trim());
+    expect(a).toBe(b);
+    expect(a!.startsWith("set|none|")).toBe(true);
+  });
+});
+
 describe("next-step sentences in the step environment", () => {
   const names = COMMENT_KINDS.map((k) => k.toUpperCase());
   const print = (prefix: string) => names.map((n) => `echo "$${prefix}_NEXT_${n}"`).join("; ");
@@ -537,6 +558,21 @@ steps:
       process.env.FACTORY_NO_NOTIFY = saved;
     }
     expect(readFileSync(out, "utf8")).toBe("succeeded succeeded");
+  });
+
+  it("notifyRun writes nothing for a run of a refinement session", async () => {
+    const s = await start("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'true'}\n");
+    const out = join(tmp, "quiet");
+    const saved = process.env.FACTORY_NO_NOTIFY;
+    delete process.env.FACTORY_NO_NOTIFY;
+    try {
+      await notifyRun(baseConfig({ notify: { macos: false, command: `printf x > ${out}` } }), { ...s, source: "refinement 11111111-1111-4111-8111-111111111111" } as typeof s);
+      expect(existsSync(out)).toBe(false);
+      await notifyRun(baseConfig({ notify: { macos: false, command: `printf x > ${out}` } }), s);
+      expect(existsSync(out)).toBe(true);
+    } finally {
+      process.env.FACTORY_NO_NOTIFY = saved;
+    }
   });
 
   it("FACTORY_MESSAGE says who has to do what", async () => {

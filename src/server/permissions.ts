@@ -1,5 +1,6 @@
 import { listFlows, type FlowListing } from "../flow/load.js";
 import type { User } from "../auth/users.js";
+import { isRefinementFlow } from "../flow/usage.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
 
@@ -27,6 +28,12 @@ export const RULES: Rule[] = [
   r("PUT", "config", "no", "change the settings"),
   r("GET", "watchers", "no", "list the watchers"),
   r("POST", "watchers/:id/tick", "no", "run a watcher now"),
+  r("GET", "monitor", "no", "whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), its findings and its mutes"),
+  r("POST", "monitor/off", "no", "stop the monitor from making bug stories"),
+  r("POST", "monitor/on", "no", "let the monitor make bug stories again"),
+  r("POST", "monitor/mutes", "no", "mute one detector or one finding of the monitor, with a reason, for a time or for good"),
+  r("DELETE", "monitor/mutes/:id", "no", "end a mute"),
+  r("POST", "monitor/retry", "no", "let the monitor try again for a finding that waits for a person (two bug stories did not fix it)"),
   r("POST", "clean", "no", "clean up old runs"),
   r("GET", "providers", "no", "agent providers"),
   r("POST", "providers/test", "no", "test a provider"),
@@ -47,7 +54,7 @@ export const RULES: Rule[] = [
   r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run"),
-  r("POST", "runs/:id/resume", "own", "resume a run"),
+  r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session)"),
   r("POST", "runs/:id/approve", "own", "approve a run, with a note"),
   r("POST", "runs/:id/reject", "own", "reject a run, with a note"),
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),
@@ -63,6 +70,7 @@ export const RULES: Rule[] = [
   r("GET", "your-turn/detail", "no", "the questions, plan or split of an item"),
   r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue"),
   r("GET", "clarity", "no", "how long items waited for you, and what Your turn missed"),
+  r("POST", "password", "yes", "change your own password (the other sessions of the account end)"),
   r("GET", "credentials", "yes", "your stored credentials"),
   r("POST", "credentials", "yes", "store a credential"),
   r("DELETE", "credentials/:id", "yes", "remove a credential"),
@@ -72,21 +80,33 @@ export const RULES: Rule[] = [
   r("POST", "users/:id/block", "no", "block an account, end its sessions and cancel its queued jobs"),
   r("POST", "users/:id/unblock", "no", "unblock an account"),
   r("POST", "users/:id/link", "no", "a new set-password token for an account without a password"),
+  r("POST", "users/:id/reset", "no", "take the password of an account away, end its sessions and give a one-time set-password token"),
+  r("POST", "users/:id/unlock", "no", "remove the lock after too many wrong tries (a short wait for the address can remain)"),
   r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions and stored credentials"),
+  r("GET", "audit", "no", "read the audit log, newest first, with filters"),
+  r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories"),
-  r("POST", "repos", "yes", "add a repository (a URL, and a token for it)"),
-  r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository"),
-  r("DELETE", "repos/:id", "yes", "remove your repository and its stored token"),
+  r("GET", "repos/methods", "yes", "the sign-in methods you may choose, and the link to install the GitHub App"),
+  r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it)"),
+  r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository, or make a new deploy key"),
+  r("POST", "repos/:id/test", "yes", "test the connection of your repository (an admin: any repository); the result is saved as its connection status"),
+  r("DELETE", "repos/:id", "yes", "remove your repository and its stored token or key"),
   r("DELETE", "repos/:owner/:name", "yes", "remove a GitHub repository by name (old form)"),
   r("GET", "admin/repos", "no", "the repositories of all accounts, with their settings"),
   r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches and branch names of a repository"),
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
-  r("GET", "refinement/:id", "yes", "read your refinement session (an admin: any session)"),
+  r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
   r("PUT", "refinement/:id", "yes", "rename your refinement session"),
-  r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days"),
+  r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
+  r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
+  r("POST", "refinement/:id/questions/:qid/answer", "yes", "answer a question of the architect in your refinement session: an option, your own text, or \"I don't know yet\""),
+  r("POST", "refinement/:id/proposals/:pid/accept", "yes", "accept a proposed entry of your refinement session: it goes into its rules, examples or open questions"),
+  r("POST", "refinement/:id/proposals/:pid/reject", "yes", "reject a proposed entry of your refinement session; it is removed"),
+  r("PUT", "refinement/:id/map/:eid", "yes", "change the text of a rule, example or open question of your refinement session"),
+  r("DELETE", "refinement/:id/map/:eid", "yes", "remove a rule, example or open question from your refinement session"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */
@@ -114,7 +134,7 @@ export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]
 
 /** The flows a user may see and start: valid, published ones whose name a run can use. The list and the start check both use this. */
 export function publishedFlows(repo: string): FlowListing[] {
-  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true);
+  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && !isRefinementFlow(f.name));
 }
 
 /** The table for the guide, in Markdown. */

@@ -22,8 +22,9 @@ vars:
 steps:
   - id: clone
     type: shell
+    repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
       if [ -n "$FACTORY_VAR_DEVELOP_BRANCH" ] && git rev-parse -q --verify "origin/$FACTORY_VAR_DEVELOP_BRANCH" >/dev/null; then git checkout -q --detach "origin/$FACTORY_VAR_DEVELOP_BRANCH" && echo "Code: $FACTORY_VAR_DEVELOP_BRANCH" && exit 0; fi
       b=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE)
@@ -31,6 +32,7 @@ steps:
     description: Clone, then check out develop (gitflow) or the newest factory branch that is not in main yet
   - id: read_issues
     type: shell
+    repo_access: true
     run: |-
       for n in $FACTORY_VAR_ISSUES; do
         case "$n" in *[!0-9]*) echo "not an issue number: $n"; exit 1;; esac
@@ -82,4 +84,5 @@ steps:
       **Recommendation:** <option> — <why>
   - id: post
     type: shell
+    repo_access: true
     run: printf '%s\n' "$FACTORY_OUT_ASK" | "$FACTORY_TOOLS/post-questions"

@@ -1,7 +1,10 @@
 import { api, setCsrf } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { h, modal, mount, toast } from "./dom.js";
 
-const PASSWORD_MIN = 10;
+const PASSWORD_MIN = 12;
+
+/** The line under the sign-in form. */
+export const FORGOT_TEXT = "Forgot your password? Ask an admin for a new set-password link.";
 
 const LINK_PREFIX = "#/set-password/";
 
@@ -29,6 +32,12 @@ export function formProblem(kind, v) {
     if (v.password !== v.repeat) return "The two passwords are not the same.";
     return "";
   }
+  if (kind === "change") {
+    if (!v.current) return "Type your current password.";
+    if (String(v.password ?? "").length < PASSWORD_MIN) return `The password must be at least ${PASSWORD_MIN} characters.`;
+    if (v.password !== v.repeat) return "The two passwords are not the same.";
+    return "";
+  }
   if (kind === "setup") {
     if (!text(v.name) || !text(v.email)) return "Fill in your name and e-mail.";
     if (String(v.password ?? "").length < PASSWORD_MIN) return `The password must be at least ${PASSWORD_MIN} characters.`;
@@ -50,12 +59,43 @@ export async function submitForm(a, kind, v) {
   if (problem) return problem;
   try {
     if (kind === "password") await a.setPassword(v.token, v.password);
+    else if (kind === "change") await a.changePassword(v.current, v.password);
     else if (kind === "setup") await a.setup(v.name.trim(), v.email.trim(), v.password);
     else await a.signIn(v.email.trim(), v.password);
     return "";
   } catch (e) {
     return errorText(e);
   }
+}
+
+/**
+ * The Change password dialog. A server error shows in the dialog and it stays open; on success it closes with a toast.
+ * Resolves true after a change, else false.
+ */
+export function changePasswordDialog(a = api) {
+  return modal("Change password", (close) => {
+    const input = (name, label, autocomplete) => ({ name, el: h("input", { name, type: "password", autocomplete }), label });
+    const fields = [input("current", "Current password", "current-password"), input("password", "New password", "new-password"), input("repeat", "Repeat new password", "new-password")];
+    const error = h("p", { class: "status bad" });
+    const button = h("button", { type: "submit", class: "primary" }, "Change password");
+    const onSubmit = async (e) => {
+      e.preventDefault();
+      button.disabled = true;
+      const problem = await submitForm(a, "change", Object.fromEntries(fields.map((f) => [f.name, f.el.value])));
+      if (problem) {
+        error.textContent = problem;
+        button.disabled = false;
+        return;
+      }
+      toast("Password changed. Your other sessions are signed out.");
+      close(true);
+    };
+    return h("form", { class: "stack", onSubmit },
+      h("p", { class: "muted" }, `At least ${PASSWORD_MIN} characters. Your other sessions are signed out.`),
+      fields.map((f) => h("div", {}, h("label", {}, f.label), f.el)),
+      error,
+      button);
+  }).then((v) => v === true);
 }
 
 /** Signs out. Returns "" (after calling reload) on success, else the text to show. */
@@ -119,6 +159,7 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
     fields.map((f) => h("div", {}, f.label, f.el)),
     error,
     button,
+    kind === "signin" ? h("p", { class: "muted" }, FORGOT_TEXT) : null,
   );
   mount(document.getElementById("main"), form);
 }
@@ -170,7 +211,8 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
     "Sign out",
   );
   const box = document.getElementById("user");
-  mount(box, h("span", {}, session.user.name), out);
+  const change = h("button", { class: "small", type: "button", onClick: () => changePasswordDialog(a) }, "Change password");
+  mount(box, h("span", {}, session.user.name), change, out);
   box.hidden = false;
   return session.user;
 }
@@ -178,22 +220,47 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-/** The pages a user may open: Refinement (and one session), Runs, a run page and My repositories. Anything else becomes the Runs list. */
-export function userHash(hash) {
-  return /^#\/(runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/.test(hash ?? "") ? hash : "#/runs";
-}
+const USER_HASH = /^#\/(start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
 
-/** The hash to draw. A user never gets a page they may not open; `replace(to)` puts the allowed hash in the address bar. */
-export function allowedHash(admin, hash, replace) {
-  if (admin) return hash;
+/** True when the address names no page at all: no hash, "#" or "#/". */
+export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
+
+/** True for a hash the user display has a page for: Start work, Runs, one run, My repositories, Refinement, one session. */
+export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
+
+/** The hash the user display draws: the given one when it has that page, else the Runs list. */
+export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
+
+/** The page of the user display for a hash: { hash, section, id }. `id` is undefined for a list. */
+export function userPage(hash) {
   const to = userHash(hash);
-  if (to !== hash) replace(to);
-  return to;
+  const [, section, id] = to.split("/");
+  return { hash: to, section, id };
 }
 
-/** Starts the app for the signed-in account: an admin gets the whole start-up, a user only Runs and My repositories. */
-export async function startApp(user, { startAdmin, route }) {
-  if (isAdmin(user)) return startAdmin();
-  document.body.classList.add("role-user");
-  return route();
+/**
+ * Where an account must go when it opened the display of the other role, or "" when it is in the right place.
+ * `display` is "admin" (the page at /) or "user" (the page at /user/). A hash is kept only when the user display has that page.
+ */
+export function otherDisplay(user, display, hash) {
+  const admin = isAdmin(user);
+  if (admin === (display === "admin")) return "";
+  // the admin display has no Start work page
+  return (admin ? "/" : "/user/") + (isUserHash(hash) && !(admin && hash === "#/start") ? hash : "");
+}
+
+/**
+ * Signs in and keeps only the account that belongs on this display: resolves with it and shows the top bar links.
+ * An account of the other role is sent to its own display and this never resolves, so no page is drawn here.
+ * `signIn`, `go` and `hash` are arguments so tests can run this without a browser.
+ */
+export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash } = {}) {
+  const user = await signIn();
+  const to = otherDisplay(user, display, hash());
+  if (to) {
+    go(to);
+    return new Promise(() => {});
+  }
+  document.body.classList.remove("signed-out");
+  return user;
 }

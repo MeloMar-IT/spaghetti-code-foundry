@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextStep, type NextKind, type NextStep } from "../src/next-step.js";
+import { REFINEMENT_SOURCE } from "../src/auth/run-owner.js";
 import { actsFor, buildTurn, emptyText, needsUser, runOrigin, soonestAt, type TurnSource } from "../src/your-turn.js";
 
 const rec = (kind: NextKind, base: { repo?: string; issue?: number; title?: string; runId?: string } = {}, data = {}) =>
@@ -27,6 +28,7 @@ describe("runOrigin", () => {
     for (const s of ["ui", "ui approve", "cli"]) expect(runOrigin(s)).toBe("hand");
     expect(runOrigin("watcher a issue #7")).toBe("watcher");
     expect(runOrigin("eval smoke")).toBe("eval");
+    expect(runOrigin(`${REFINEMENT_SOURCE}11111111-1111-4111-8111-111111111111`)).toBe("refinement");
     expect(runOrigin(undefined)).toBe("unknown");
     expect(runOrigin("x")).toBe("unknown");
   });

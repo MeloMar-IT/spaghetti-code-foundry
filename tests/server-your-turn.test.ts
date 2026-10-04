@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { saveFindings } from "../src/monitor/findings.js";
+import { saveGuard, switchStories } from "../src/monitor/guard.js";
+import { markerHash } from "../src/monitor/story.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
 import { TurnNotifier } from "../src/server/notifier.js";
@@ -25,7 +28,7 @@ const run = (runId: string, over: Record<string, unknown> = {}) => ({
 
 type Tracked = { watcher: unknown; status: Record<string, unknown>; issues: { issue: number; title: string; runId?: string }[] };
 
-function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run>[]; tracked?: Tracked[]; listed?: number } = {}) {
+function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run>[]; tracked?: Tracked[]; statuses?: unknown[]; listed?: number } = {}) {
   const runs = o.runs ?? [];
   const config = o.config ?? cfg();
   return {
@@ -36,7 +39,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
       briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: [], active: [] }),
     },
-    watchers: { tracked: () => o.tracked ?? [] },
+    watchers: { tracked: () => o.tracked ?? [], statuses: () => o.statuses ?? [] },
   } as unknown as ApiContext;
 }
 
@@ -88,6 +91,7 @@ describe("Your turn runs", () => {
 
   it("skips eval runs and lists failed runs of other watcher flows", () => {
     expect(ids([run("e", { source: "eval smoke" }), run("w", { source: "watcher rel schedule", flow: "release-daily" })])).toEqual(["w"]);
+    expect(ids([run("rf", { source: "refinement 11111111-1111-4111-8111-111111111111" })])).toEqual([]);
   });
 
   it("lists a failed run without a source for 7 days", () => {
@@ -158,6 +162,95 @@ describe("Your turn dismissals", () => {
     mkdirSync(join(home, "evals"), { recursive: true });
     writeFileSync(join(home, "evals", "s-1.json"), JSON.stringify({ results: [{ runId: "old-eval" }] }));
     expect(items(stub({ runs: [run("old-eval"), run("manual")] })).map((i) => i.next.runId)).toEqual(["manual"]);
+  });
+
+  describe("the circuit breaker", () => {
+    const monitor = (enabled = true) => ({ id: "mon", source: "monitor", every: "1h", enabled });
+    const openIt = (at: string) => saveGuard({ version: 1, breaker: { open: { since: at, reason: "findings", count: 7, minutes: 60 } } });
+
+    it("shows one item that cannot be dismissed, and none once it is closed", () => {
+      openIt(ago(0.5));
+      const ctx = stub({ statuses: [monitor()] });
+      const out = items(ctx);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ dismissable: false, since: ago(0.5), next: { kind: "monitor_stopped", where: { url: "#/watchers" } } });
+      expect(out[0]!.next.text).toContain("7 new findings within 60 minutes");
+      expect(() => dismissTurn(ctx, out[0]!.key, NOW)).toThrow(expect.objectContaining({ status: 404 }));
+      switchStories("on", "cli");
+      expect(items(ctx)).toEqual([]);
+    });
+
+    it("shows nothing without a monitor or with a disabled one", () => {
+      openIt(ago(0.5));
+      expect(items(stub())).toEqual([]);
+      expect(items(stub({ statuses: [monitor(false)] }))).toEqual([]);
+    });
+  });
+
+  describe("a finding that needs a person", () => {
+    const monitor = { id: "mon", source: "monitor", every: "1h", enabled: true };
+    const conf = (report_to: string | undefined = "acme/app") => ConfigSchema.parse({ monitor: report_to ? { report_to } : {} });
+    const S = "restart-loop|secret-fingerprint";
+    const story = (issue: number, over: Record<string, unknown> = {}) => ({ repo: "acme/app", issue, url: `https://github.com/acme/app/issues/${issue}`, at: ago(3), seen: 1, ...over });
+    const needy = (over: Record<string, unknown> = {}) => ({
+      detector: "restart-loop", fingerprint: S, severity: "critical", summary: "Runs of flow x are resumed again and again.", about: "foundry",
+      evidence: { flows: ["x"], repos: ["acme/app"], lines: ["exit code 1"] }, firstSeen: ago(3), lastSeen: ago(0.1), count: 5, gone: false,
+      tries: 2, needsYou: ago(0.5), earlier: [{ repo: "acme/app", issue: 101, closedAt: ago(2) }], report: story(102, { closedAt: ago(1) }), ...over,
+    }) as never as import("../src/monitor/findings.js").Finding;
+    const seed = (...list: ReturnType<typeof needy>[]) => saveFindings(list);
+    const turn = (c = conf(), statuses: unknown[] = [monitor]) => items(stub({ config: c, statuses }));
+
+    it("shows one item with the sentence, the evidence and both links, and no fingerprint", () => {
+      seed(needy());
+      const out = turn();
+      expect(out).toHaveLength(1);
+      const n = out[0]!.next;
+      expect(out[0]).toMatchObject({ key: `monitor|needs|${markerHash(S)}`, dismissable: false, since: ago(0.5) });
+      expect(n).toMatchObject({ kind: "monitor_needs_you", where: { url: "#/watchers" } });
+      expect(n.why).toContain("Runs of flow x are resumed again and again");
+      expect(n.evidence).toEqual(["Flows: x", "Repositories: acme/app", "exit code 1"]);
+      expect(n.stories).toEqual([
+        { issue: 101, url: "https://github.com/acme/app/issues/101" },
+        { issue: 102, url: "https://github.com/acme/app/issues/102" },
+      ]);
+      expect(n.text).not.toContain("exit code 1");
+      expect(JSON.stringify(out)).not.toContain(S);
+      expect(() => dismissTurn(stub({ config: conf(), statuses: [monitor] }), out[0]!.key, NOW)).toThrow(expect.objectContaining({ status: 404 }));
+    });
+    it("takes the two newest distinct stories when the current one is also in the history", () => {
+      seed(needy({ earlier: [{ repo: "acme/app", issue: 100 }, { repo: "ACME/app", issue: 101 }, { repo: "acme/app", issue: 102 }], report: story(102, { closedAt: ago(1) }) }));
+      expect(turn()[0]!.next.stories!.map((s) => s.issue)).toEqual([101, 102]);
+      seed(needy({ earlier: [{ repo: "acme/app", issue: 101 }, { repo: "acme/app", issue: 102 }], report: undefined }));
+      expect(turn()[0]!.next.stories!.map((s) => s.issue)).toEqual([101, 102]);
+    });
+    it("shows one item per finding", () => {
+      seed(needy(), needy({ fingerprint: "restart-loop|other" }));
+      expect(turn()).toHaveLength(2);
+    });
+    it("shows a story closed as not planned or no story, and hides the rest", () => {
+      seed(needy({ report: story(102, { muted: true }) }));
+      expect(turn()).toHaveLength(1);
+      seed(needy({ report: undefined }));
+      expect(turn()).toHaveLength(1);
+      for (const hidden of [needy({ gone: true }), needy({ report: story(102) }), needy({ report: story(102, { closedAt: ago(1), fixedAt: ago(0.5) }) })]) {
+        seed(hidden);
+        expect(turn()).toEqual([]);
+      }
+      seed(needy());
+      expect(turn(conf(), [])).toEqual([]);
+      expect(turn(conf(), [{ ...monitor, enabled: false }])).toEqual([]);
+      expect(turn(conf(""))).toEqual([]);
+    });
+    it("a mute hides the item and a mute that ended shows it again", () => {
+      seed(needy());
+      const mute = (over: Record<string, unknown>) => ({ id: "0123456789abcdef", kind: "finding", detector: "restart-loop", fingerprint: S, reason: "r", since: ago(1), by: "cli", ...over });
+      saveGuard({ version: 1, mutes: [mute({}) as never] });
+      expect(turn()).toEqual([]);
+      saveGuard({ version: 1, mutes: [mute({ kind: "detector", fingerprint: undefined }) as never] });
+      expect(turn()).toEqual([]);
+      saveGuard({ version: 1, mutes: [mute({ until: ago(0.01) }) as never] });
+      expect(turn()).toHaveLength(1);
+    });
   });
 
   it("keeps an earlier dismissal when the watchers are not there yet", () => {
@@ -240,7 +333,7 @@ describe("Your turn notifications", () => {
     const state = { config: ConfigSchema.parse({ watchers: [issuesWatcher], notify: { ...channel, ...notify } }), runs: [] as ReturnType<typeof run>[], tracked: [] as Tracked[] };
     const ctx = stub({ config: state.config, runs: state.runs });
     (ctx as unknown as { config: () => unknown }).config = () => state.config;
-    (ctx as unknown as { watchers: unknown }).watchers = { tracked: () => state.tracked };
+    (ctx as unknown as { watchers: unknown }).watchers = { tracked: () => state.tracked, statuses: () => [] };
     const sent: Notice[] = [];
     const slow = { ms: 0 };
     const make = () =>
@@ -262,6 +355,20 @@ describe("Your turn notifications", () => {
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0]).toMatchObject({ title: "Foundry · your turn", url: issueUrl(3) });
     expect(t.sent[0]!.message).toContain("acme/app#3 T3");
+  });
+
+  it("tells about a finding that needs a person with its sentence and without the evidence", async () => {
+    const t = rig();
+    t.state.config = ConfigSchema.parse({ watchers: [issuesWatcher], notify: channel, monitor: { report_to: "acme/app" } });
+    (t.ctx as unknown as { watchers: unknown }).watchers = { tracked: () => [], statuses: () => [{ id: "mon", source: "monitor", every: "1h", enabled: true }] };
+    saveFindings([{
+      detector: "restart-loop", fingerprint: "restart-loop|n", severity: "critical", summary: "Runs of flow x are resumed again and again.", about: "foundry",
+      evidence: { lines: ["exit code 1"] }, firstSeen: ago(3), lastSeen: ago(0.1), count: 5, gone: false, tries: 2, needsYou: ago(0.5),
+    }]);
+    await t.notifier.check(min(0));
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]!.message).toContain("Runs of flow x are resumed again and again");
+    expect(t.sent[0]!.message).not.toContain("exit code 1");
   });
 
   it("links each kind of item", async () => {
@@ -362,7 +469,7 @@ describe("Your turn notifications", () => {
       t.runs.push(done("old", min(-30).toISOString()));
       await t.notifier.check(min(0));
       expect(t.sent).toHaveLength(0);
-      t.runs.push(done("s1", min(5).toISOString()), done("ev", min(5).toISOString(), { source: "eval smoke" }));
+      t.runs.push(done("s1", min(5).toISOString()), done("ev", min(5).toISOString(), { source: "eval smoke" }), done("rf", min(5).toISOString(), { source: "refinement 11111111-1111-4111-8111-111111111111" }));
       await t.notifier.check(min(10));
       await t.notifier.check(min(20));
       expect(t.sent).toHaveLength(1);
@@ -393,7 +500,7 @@ describe("Your turn notifications", () => {
     const sum = { daily_summary_at: "09:00" };
     it("is sent at the time with the counts, once a day", async () => {
       const t = rig(sum);
-      t.runs.push(done("s1", at(5).toISOString(), { vars: { github_repo: "acme/app", issue: "1" } }), done("s2", at(6).toISOString()), done("ev", at(6).toISOString(), { source: "eval x" }));
+      t.runs.push(done("s1", at(5).toISOString(), { vars: { github_repo: "acme/app", issue: "1" } }), done("s2", at(6).toISOString()), done("ev", at(6).toISOString(), { source: "eval x" }), done("rf", at(6).toISOString(), { source: "refinement 11111111-1111-4111-8111-111111111111" }));
       await t.notifier.check(at(8));
       expect(t.sent).toHaveLength(0);
       await t.notifier.check(at(9));

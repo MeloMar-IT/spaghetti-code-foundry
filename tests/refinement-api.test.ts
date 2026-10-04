@@ -80,7 +80,7 @@ describe("list and create", () => {
     const r = await call(ann, "POST", "/api/refinement", { repo: "ACME/App.git", idea: "An idea" });
     expect(r.status).toBe(201);
     const s = r.json();
-    expect(Object.keys(s).sort()).toEqual(["created", "drafts", "id", "idea", "log", "mine", "repo", "repoAvailable", "state", "title", "updated"]);
+    expect(Object.keys(s).sort()).toEqual(["architect", "created", "drafts", "id", "idea", "log", "mine", "repo", "repoAvailable", "state", "talk", "title", "updated"]);
     expect(s).toMatchObject({ repo: "acme/app", state: "exploring", mine: true, repoAvailable: true, drafts: [], title: "An idea" });
     expect(s.log).toEqual([{ at: expect.any(String), what: "created", who: "Ann" }]);
   });

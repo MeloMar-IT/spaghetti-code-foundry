@@ -5,7 +5,7 @@ import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Monitor, areaLockDir, logRing, readAreaLocks } from "../src/monitor/monitor.js";
-import { loadFindings } from "../src/monitor/findings.js";
+import { loadFindings, saveFindings } from "../src/monitor/findings.js";
 import type { DetectorInput } from "../src/monitor/detectors.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { WatcherManager } from "../src/queue/watchers.js";
@@ -50,6 +50,20 @@ describe("monitor", () => {
   const monitor = (over: Partial<ConstructorParameters<typeof Monitor>[1]> = {}, cfg = mcfg()) =>
     new Monitor(cfg, { scheduler, watchers: () => [], thresholds: () => config.monitor, log: (m) => lines.push(m), file, ...over });
 
+  it("makes no finding from a failed or looping run of a bug story, but does for the same runs of another issue", async () => {
+    const story = { repo: "acme/app", issue: 12, url: "u", at: ago(60 * MIN), seen: 1 };
+    saveFindings([{ detector: "x", fingerprint: "x|1", severity: "major", summary: "s", evidence: {}, about: "foundry", firstSeen: ago(MIN), lastSeen: ago(MIN), count: 1, gone: false, report: story }], file);
+    const failing = { error: "weird", reason: "weird failure nobody explained" };
+    makeRun({ vars: { github_repo: "acme/app", issue: "12" }, ...failing });
+    loop({ vars: { github_repo: "acme/app", issue: "12" } });
+    await monitor().tick();
+    expect(loadFindings(file).findings.map((f) => f.fingerprint)).toEqual(["x|1"]);
+    makeRun({ vars: { github_repo: "acme/app", issue: "13" } });
+    loop({ vars: { github_repo: "acme/app", issue: "13" } });
+    await monitor().tick();
+    expect(loadFindings(file).findings.length).toBeGreaterThan(1);
+  });
+
   it("finds the restart loop and keeps the finding over a restart (the second check counts 2)", async () => {
     loop();
     await monitor().tick();
@@ -63,6 +77,16 @@ describe("monitor", () => {
 
   it("finds a limit hit from a run's files even with an empty log", async () => {
     makeRun({ history: [{ id: "x", type: "shell", visit: 1, ok: false, output: "API rate limit exceeded", error: "exit code 1", startedAt: ago(MIN), durationMs: 1, logFile: "x" }] as never });
+    await monitor({ serverLog: () => [] }).tick();
+    expect(loadFindings(file).findings.map((f) => f.fingerprint)).toContain("github-limit|core");
+  });
+
+  it("does not judge the architect's failed reads, but judges the same runs from the UI", async () => {
+    const limited = { reason: 'step "x" failed: internal error: boom', history: [{ id: "x", type: "shell", visit: 1, ok: false, output: "API rate limit exceeded", error: "exit code 1", startedAt: ago(MIN), durationMs: 1, logFile: "x" }] as never };
+    for (let i = 0; i < 3; i++) makeRun({ ...limited, source: "refinement 11111111-1111-4111-8111-111111111111" });
+    await monitor({ serverLog: () => [] }).tick();
+    expect(loadFindings(file).findings).toEqual([]);
+    for (let i = 0; i < 3; i++) makeRun({ ...limited, source: "ui" });
     await monitor({ serverLog: () => [] }).tick();
     expect(loadFindings(file).findings.map((f) => f.fingerprint)).toContain("github-limit|core");
   });
@@ -373,10 +397,10 @@ describe("the monitor in the WatcherManager", () => {
 
   const watcher = (id: string) => ({ id, github_repo: "acme/app", flow: "issue-gitflow", every: "1h" });
   const mon = { id: "mon", source: "monitor", every: "1h" };
-  const setup = (watchers: unknown[]) => {
-    cfg = ConfigSchema.parse({ watchers });
+  const setup = (watchers: unknown[], monitor: unknown = {}, startedAt?: Date) => {
+    cfg = ConfigSchema.parse({ watchers, monitor });
     const scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => cfg });
-    manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: () => {} });
+    manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: () => {}, startedAt });
     manager.sync();
     return manager;
   };
@@ -389,6 +413,40 @@ describe("the monitor in the WatcherManager", () => {
     }
     await new Promise((r) => setTimeout(r, 100));
   };
+
+  describe("monitorIdle", () => {
+    afterEach(() => {
+      delete process.env.FAKE_GH_SLEEP;
+    });
+    it("runs at once without a monitor, returns the value and rejects on a throw", async () => {
+      const m = setup([]);
+      expect(await m.monitorIdle(() => 7)).toBe(7);
+      await expect(m.monitorIdle(() => { throw new Error("boom"); })).rejects.toThrow("boom");
+    });
+    it("waits for a check in flight", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      expect(status.lastTick).toBeUndefined();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+    it("waits for the check of a monitor that was stopped mid-check", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      m.stopAll();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+    it("waits for the check of a monitor that was replaced mid-check", async () => {
+      process.env.FAKE_GH_SLEEP = "1";
+      const m = setup([mon]);
+      const status = m.statuses().find((s) => s.id === "mon")!.status!;
+      delete process.env.FAKE_GH_SLEEP;
+      cfg = ConfigSchema.parse({ watchers: [{ ...mon, every: "2h" }], monitor: {} });
+      m.sync();
+      expect(await m.monitorIdle(() => status.lastTick)).toBeDefined();
+    });
+  });
 
   it("starts no Watcher for it; its status is listed; Check now runs a check; stopAll stops it", async () => {
     const m = setup([mon]);
@@ -469,5 +527,100 @@ describe("the monitor in the WatcherManager", () => {
     await settled(m, ["w"]);
     await m.runNow("w");
     expect(rateCalls()).toBe(0);
+  });
+
+  describe("bug stories", () => {
+    const findingsPath = () => join(process.env.FACTORY_HOME!, "monitor-findings.json");
+    const storyCalls = () => gh.ghLog().split("\n").filter((l) => /^gh (api repos|label create|issue comment)/.test(l));
+    const extra = () => ["monitor-guard.json", "monitor-log.jsonl", "monitor-log.1.jsonl"].map((f) => join(process.env.FACTORY_HOME!, f));
+    beforeEach(() => [findingsPath(), ...extra()].forEach((f) => rmSync(f, { force: true })));
+    afterEach(() => [findingsPath(), ...extra()].forEach((f) => rmSync(f, { force: true })));
+
+    const owedFinding = () => {
+      const iso = new Date().toISOString();
+      mkdirSync(process.env.FACTORY_HOME!, { recursive: true });
+      writeFileSync(findingsPath(), JSON.stringify({ version: 1, findings: [{
+        detector: "restart-loop", fingerprint: "restart-loop|a", severity: "critical", summary: "s", evidence: { counts: { runs: 2 } }, about: "foundry",
+        firstSeen: iso, lastSeen: iso, count: 2, gone: false, due: iso,
+      }] }));
+    };
+
+    it("is quiet after the server started (default 10 minutes) and makes the story with cooldown_minutes 0", async () => {
+      owedFinding();
+      const m = setup([mon], { report_to: "acme/app" }, new Date());
+      await settled(m, ["mon"]);
+      await m.runNow("mon");
+      expect(gh.createdBodies()).toHaveLength(0);
+      expect(m.statuses()[0]!.status?.notes?.join(" ")).toContain("quiet time after the restart");
+      m.stopAll();
+      const m2 = setup([mon], { report_to: "acme/app", cooldown_minutes: 0 }, new Date());
+      await settled(m2, ["mon"]);
+      await m2.runNow("mon");
+      expect(gh.createdBodies()).toHaveLength(1);
+      expect(readFileSync(join(process.env.FACTORY_HOME!, "monitor-log.jsonl"), "utf8")).toContain('"event":"story-made"');
+    });
+
+    it("monitorAct shows in the recent activity, and does nothing when no monitor runs", async () => {
+      const m = setup([mon]);
+      await settled(m, ["mon"]);
+      m.monitorAct("x");
+      expect(m.statuses()[0]!.status!.lastActions[0]).toContain("x");
+      m.stopAll();
+      expect(() => m.monitorAct("y")).not.toThrow();
+    });
+
+    it("a monitor with report_to and an issue watcher make one story with the watcher's label from two checks", async () => {
+      const runDir = join(gh.tmp, "runs", "20261001-120000-abcd");
+      mkdirSync(runDir, { recursive: true });
+      const now = Date.now();
+      saveRun({
+        runId: "20261001-120000-abcd", flow: "issue-gitflow", task: "t", status: "stopped", reason: 'stopped at step "wait_for_area"', startedAt: new Date(now - 60_000).toISOString(),
+        vars: { github_repo: "acme/app" }, history: [], totalCostUsd: 0, state: { next: null, steps: {}, visits: {} }, runDir,
+        resumeLog: Array.from({ length: 24 }, (_, i) => ({ at: new Date(now - (23 - i) * 5_000).toISOString(), from: "claim_areas" })),
+      } as unknown as RunSummary);
+      const m = setup([{ ...watcher("w"), label: "go" }, mon], { report_to: "acme/app" });
+      await settled(m, ["w", "mon"]);
+      await m.runNow("mon");
+      await m.runNow("mon");
+      const made = gh.createdBodies();
+      expect(made).toHaveLength(1);
+      expect(made[0]!.labels).toEqual(["bug", "go"]);
+      expect(m.statuses().find((s) => s.id === "mon")!.status).toHaveProperty("lastActions");
+    });
+
+    it("one check with three owed stories makes at most 6 story calls and 2 reads of the request limit; the status shows its notes", async () => {
+      const iso = new Date().toISOString();
+      const owed = ["a", "b", "c"].map((id) => ({
+        detector: "restart-loop", fingerprint: `restart-loop|${id}`, severity: "critical", summary: "s", evidence: { counts: { runs: 2 } }, about: "foundry",
+        firstSeen: iso, lastSeen: iso, count: 2, gone: false, due: iso,
+      }));
+      mkdirSync(process.env.FACTORY_HOME!, { recursive: true });
+      writeFileSync(findingsPath(), JSON.stringify({ version: 1, findings: owed }));
+      const m = setup([mon], { report_to: "acme/app", report_limits: { per_day: 10, per_check: 3 } });
+      await settled(m, ["mon"]);
+      expect(gh.createdBodies()).toHaveLength(3);
+      expect(storyCalls().length).toBeLessThanOrEqual(6);
+      expect(rateCalls()).toBeLessThanOrEqual(2);
+      expect(m.statuses()[0]!.status?.notes?.join(" ")).toContain("No watcher builds bug stories");
+    });
+  });
+});
+
+describe("monitor: self-update", () => {
+  it("stores a finding for a failed update", async () => {
+    const gh = fakeGithub();
+    try {
+      const file = join(gh.tmp, "monitor-findings.json");
+      const config = ConfigSchema.parse({});
+      const scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => config });
+      const failed = { commit: "a".repeat(40), stage: "build" as const, at: new Date().toISOString() };
+      const m = new Monitor(WatcherSchema.parse({ id: "mon", source: "monitor", every: "5m" }), {
+        scheduler, watchers: () => [], thresholds: () => config.monitor, log: () => {}, file, selfUpdate: () => ({ state: { failed }, broken: false }),
+      });
+      await m.tick();
+      expect(loadFindings(file).findings.map((f) => f.fingerprint)).toEqual(["self-update|build"]);
+    } finally {
+      gh.restore();
+    }
   });
 });

@@ -20,7 +20,7 @@ const g = (phase: Phase, ids: string): [Phase, string][] => ids.split(" ").map((
 const REVIEW = "review_1 address_review_1 run_tests_1 fix_tests_1 review_2 address_review_2 run_tests_2 fix_tests_2 docs final_guard";
 const FLOWS: Record<string, Groups> = {
   "issue-gitflow": [
-    ...g("planning", "pull_ticket feature_branch baseline_tests baseline_main hotfix_branch plan plan_review revise_gate revise_plan send_back split_gate approve_split create_split size_gate force_split risk_gate approve_plan claim_areas wait_for_area"),
+    ...g("planning", "pull_ticket feature_branch baseline_tests fetch_main baseline_main hotfix_branch plan plan_review revise_gate revise_plan send_back split_gate approve_split create_split size_gate force_split risk_gate approve_plan claim_areas wait_for_area"),
     ...g("coding", "implement guard fix_guard run_tests fix_tests"),
     ...g("reviewing", "review_1 address_review_1 run_tests_1 fix_tests_1 review_gate review_2 address_review_2 run_tests_2 fix_tests_2 docs final_guard"),
     ...g("merging", "commit push_feature merge_develop resolve_conflicts finish_merge test_develop fix_develop commit_develop_fix push_develop merge_main test_main red_main push_main merge_back resolve_back finish_back test_back red_back fix_back commit_back_fix push_back hotfix_done report"),
@@ -312,6 +312,11 @@ describe("boardFor", () => {
   it("does not show a run without an issue, or one for the placeholder repository", () => {
     const ctx = stub({ runs: [run("r1", { vars: { github_repo: "acme/app" } }), run("r2", { vars: { github_repo: "owner/repo", issue: "3" } })] });
     expect(allCards(ctx)).toEqual([]);
+  });
+
+  it("does not show the architect's reads: they have no issue", () => {
+    const source = "refinement 11111111-1111-4111-8111-111111111111";
+    expect(allCards(stub({ runs: [run("r1", { source, vars: { github_repo: "acme/app" } }), run("r2", { source, flow: "refine-brief", status: "failed", vars: { github_repo: "acme/app" } })] }))).toEqual([]);
   });
 
   it("does not show eval runs, also those of older versions without a source", () => {

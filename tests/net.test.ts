@@ -153,14 +153,15 @@ describe("server settings schema", () => {
 });
 
 describe("the UI under the Content-Security-Policy", () => {
-  const html = readFileSync("ui/index.html", "utf8");
-  it("index.html has only external scripts, no inline style and no event attributes", () => {
+  it.each(["index.html", "user/index.html"])("%s has only external scripts, no inline style and no event attributes", (f) => {
+    const html = readFileSync(`ui/${f}`, "utf8");
+    expect(html.match(/<script\b[^>]*>/g)?.length ?? 0).toBeGreaterThan(0);
     for (const tag of html.match(/<script\b[^>]*>/g) ?? []) expect(tag).toContain("src=");
     expect(html).not.toMatch(/\sstyle=/);
     expect(html).not.toMatch(/\son[a-z]+=/i);
     expect(html).not.toContain("importmap");
   });
-  const files = readdirSync("ui").filter((f) => f.endsWith(".js"));
+  const files = [...readdirSync("ui").filter((f) => f.endsWith(".js")), ...readdirSync("ui/user").filter((f) => f.endsWith(".js")).map((f) => `user/${f}`)];
   it.each(files)("%s has no inline-code patterns", (f) => {
     const src = readFileSync(`ui/${f}`, "utf8");
     for (const bad of ["innerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", 'setAttribute("style"']) expect(src, bad).not.toContain(bad);

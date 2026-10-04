@@ -6,6 +6,7 @@ vars:
 steps:
   - id: check_repo
     type: shell
+    repo_access: true
     description: Verify the repo exists and show your permission
     run: |
       gh repo view "$FACTORY_VAR_GITHUB_REPO" --json nameWithOwner,defaultBranchRef,viewerPermission \

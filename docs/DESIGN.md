@@ -328,20 +328,33 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 ## 11. Accounts, roles and repositories
 
 - **Sign-in is required** for the web interface. The first account is the admin.
+- **Passwords.** A password has 12 to 200 characters and is not on a short list of common ones
+  (`common-passwords.ts`). An admin's **reset** removes the hash, ends the sessions and stores a
+  24-hour one-time link (only its SHA-256 is kept). Wrong tries are throttled in memory
+  (`sign-in-throttle.ts`), not in `users.json`: one counter per e-mail (shared by sign-in and Change
+  password) and one per client address. A try is counted before the slow check, so tries that arrive
+  together cannot pass the limit; it is given back when the password was right. Entries of stored
+  accounts are never dropped for room. A restart clears waits and locks.
 - **Two roles.** An **admin** makes flows, watchers and settings and sees everything. A **user**
   runs the flows an admin published, on their own repositories, and sees only their own runs —
-  no costs, no setup.
+  no costs, no setup. Each role has its own display (`/` for admins, `/user/` for users); the
+  server still decides what a call may do.
 - **Published flows.** An admin decides per flow which variables a user may fill in, which are
   shown read-only and which stay hidden.
 - **Repositories per user**, each with its own way of signing in. Tokens are stored encrypted,
   with the key in the macOS Keychain; they never appear in API answers, logs or agent
   environments.
+- **Runs sign in with the repository's token.** `executeStep()` asks `stepRepoAccess()`
+  (`src/engine/repo-access.ts`) when a shell step has `repo_access` (or is the old by-name
+  refinement grant). The lookup happens when the step starts. `repoTokenEnv()` puts the token in
+  the step's environment only: `GH_TOKEN`, an empty `gh` folder, and git config entries added
+  after the engine's `core.hooksPath` (an empty `credential.helper`, a helper for the repository's
+  host that prints the name and token from the environment, no extra header), https only, no
+  prompt. A refusal ends the run (`Engine.accessFailed` skips `on_failure`).
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
-- An audit log records sign-ins and account changes.
-
-![The user display: only Runs and My repositories](images/user-home.png)
+- An audit log records sign-ins, account changes and what signed-in people do in the web interface. Lines older than `audit.retention_days` (default 180) are removed by the server, in a chunked scan under `auth.lock`.
 
 ---
 
@@ -374,6 +387,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
@@ -384,7 +398,19 @@ Run ids are timestamps, so folders sort by time. Old workspaces are removed by `
 
 One process serves the web interface, runs the queue and the watchers. A supervisor notices a
 new build and restarts the server — but only when no run is active. Until then it starts no new
-runs and tells the user why. Runs that were interrupted continue after the restart.
+runs and tells the user why (`Scheduler.drain()` stops queued jobs from starting; they stay in
+`queue.json` for the new server). Runs that were interrupted continue after the restart.
+
+**Self-update.** With `self_update` on, the server (`SelfUpdater`) is the one that decides: it
+checks `main` of the named repository, builds and tests the new commit in a git worktree, and when
+the active runs are done installs that exact commit in place (`git merge --ff-only`, `npm ci` if
+the lock file changed, `npm run build`). It writes a journal first (`self-update.json`, `pending`
+with phase `apply`, then `installed` with the build stamp) and exits with the restart code. The
+supervisor guards the first start after an install: it reads the journal, finishes going back
+when an install was cut off, and puts the previous commit back once when the server stops or
+does not confirm in time. The new server confirms with `GET /api/ready` (loopback only) after it
+checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
+state (`failed.backOk = false`) that a person must repair. The monitor reads the same file.
 
 ---
 
@@ -406,6 +432,10 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js`; the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+
+Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
+
 ---
 
 ## 16. Tests
@@ -421,7 +451,13 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 
 ## 17. Where it is going
 
-- **Refinement:** help people write good stories before they reach the backlog, in the role of
+- **Refinement:** (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
+  queues the shipped flow `refine-brief` with source `refinement <session id>`, the only way in;
+  the scheduler's `onFinished` hook and every session read settle the end of the run into the
+  session, which keeps the latest brief and the current run. The question round is the shipped flow
+  `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
+  `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
+  deletion. Not yet started from a session. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
 - **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has

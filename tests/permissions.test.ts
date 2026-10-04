@@ -123,6 +123,12 @@ const EXAMPLES: Record<string, Example> = {
   "PUT config": no("config", 400, { concurrency: 0 }),
   "GET watchers": no("watchers", 200),
   "POST watchers/:id/tick": no("watchers/x/tick", 400, {}),
+  "GET monitor": no("monitor", 200),
+  "POST monitor/off": no("monitor/off", 200, {}),
+  "POST monitor/on": no("monitor/on", 200, {}),
+  "POST monitor/mutes": no("monitor/mutes", 400, {}),
+  "DELETE monitor/mutes/:id": no("monitor/mutes/0000000000000000", 404),
+  "POST monitor/retry": no("monitor/retry", 400, {}),
   "POST clean": no("clean", 200, {}),
   "GET providers": no("providers", 200),
   "POST providers/test": no("providers/test", 400, {}),
@@ -167,11 +173,19 @@ const EXAMPLES: Record<string, Example> = {
   "POST users/:id/block": no(`users/${UNKNOWN}/block`, 404, {}),
   "POST users/:id/unblock": no(`users/${UNKNOWN}/unblock`, 404, {}),
   "POST users/:id/link": no(`users/${UNKNOWN}/link`, 404, {}),
+  "POST users/:id/reset": no(`users/${UNKNOWN}/reset`, 404, {}),
+  "POST users/:id/unlock": no(`users/${UNKNOWN}/unlock`, 404, {}),
+  "POST password": { path: "password", body: {}, user: 400, admin: 400 },
   "DELETE users/:id": no(`users/${UNKNOWN}`, 404),
+  "GET audit": no("audit", 200),
+  // the walk reads every answer as JSON; a good export is CSV and is covered in audit-api.test.ts
+  "GET audit/export": no("audit/export?user=x", 400),
   "DELETE credentials/:id": { path: `credentials/${UNKNOWN}`, user: 404, admin: 404 },
   "GET repos": { path: "repos", user: 200, admin: 200 },
+  "GET repos/methods": { path: "repos/methods", user: 200, admin: 200 },
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
+  "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
@@ -179,6 +193,12 @@ const EXAMPLES: Record<string, Example> = {
   "PUT refinement/:id": { path: `refinement/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drop": { path: `refinement/${UNKNOWN}/drop`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/restore": { path: `refinement/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/architect": { path: `refinement/${UNKNOWN}/architect`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/questions/:qid/answer": { path: `refinement/${UNKNOWN}/questions/${UNKNOWN}/answer`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/proposals/:pid/accept": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/proposals/:pid/reject": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
+  "PUT refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
+  "DELETE refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
@@ -194,17 +214,29 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
+    expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
+    expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "diff"])?.path).toBe("runs/:id/diff");
     expect(findRule("DELETE", ["repos", "a", "b"])?.path).toBe("repos/:owner/:name");
     expect(findRule("DELETE", ["repos", "a"])?.path).toBe("repos/:id");
+    expect(findRule("GET", ["repos", "methods"])?.path).toBe("repos/methods");
     expect(findRule("PUT", ["repos", "a", "auth"])?.path).toBe("repos/:id/auth");
+    expect(findRule("POST", ["repos", "a", "test"])?.path).toBe("repos/:id/test");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");
     expect(findRule("PUT", ["admin", "repos", "a", "settings"])?.path).toBe("admin/repos/:id/settings");
     expect(findRule("GET", ["admin"])).toBeUndefined();
+    expect(findRule("GET", ["audit"])?.path).toBe("audit");
+    expect(findRule("GET", ["audit", "export"])?.path).toBe("audit/export");
+    expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
+    expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
+    expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
+    expect(findRule("PUT", ["refinement", "a", "map", "b"])?.path).toBe("refinement/:id/map/:eid");
+    expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
 
   it("has an example for every rule and a rule for every example", () => {
@@ -218,7 +250,7 @@ describe("the table", () => {
       for (const m of readFileSync(join(dir, f), "utf8").matchAll(/seg\[0\]\s*(?:===|!==)\s*"([^"]+)"/g)) groups.add(m[1]!);
     }
     expect(groups.size).toBeGreaterThan(10);
-    const known = new Set([...RULES.map((r) => r.path.split("/")[0]!), "session", "setup", "set-password"]);
+    const known = new Set([...RULES.map((r) => r.path.split("/")[0]!), "session", "setup", "set-password", "ready"]);
     expect([...groups].filter((g) => !known.has(g))).toEqual([]);
   });
 });
@@ -495,11 +527,11 @@ describe("lists", () => {
     writeFileSync(join(dir, "unpub.yaml"), PRIVATE("unpub"));
     try {
       const list = (await call(ann, "GET", "/api/flows")).json() as Record<string, unknown>[];
-      for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "version"]);
+      for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "usesTask", "version"]);
       const names = list.map((f) => f.name);
       expect(names).toContain("walk");
       for (const hidden of ["bad", "my flow", "a.b", "unpub", "feature"]) expect(names).not.toContain(hidden);
-      expect(list.find((f) => f.name === "walk")).toEqual({ name: "walk", title: "walk", description: "", version: 1, fields: [] });
+      expect(list.find((f) => f.name === "walk")).toEqual({ name: "walk", title: "walk", description: "", version: 1, usesTask: false, fields: [] });
       const adminList = (await call(admin, "GET", "/api/flows")).json() as Record<string, unknown>[];
       expect(adminList.map((f) => f.name)).toEqual(expect.arrayContaining(["bad", "my flow", "a.b"]));
       expect(adminList.find((f) => f.name === "walk")).toMatchObject({ scope: "repo", published: true });

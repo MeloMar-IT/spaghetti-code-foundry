@@ -75,11 +75,10 @@ body > * { flex: none; }
 .health.bad { background: var(--fail-soft); }
 .health .holds { margin: 0; flex: 1 1 420px; }
 .health-repos { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-left: auto; }
+.health-version { flex: 1 1 100%; }
 .user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 .signed-out .top nav, .signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health { display: none; }
 .signed-out .layout { grid-template-columns: 1fr; }
-.role-user .top nav a:not([data-nav="runs"]):not([data-nav="repos"]):not([data-nav="refinement"]), .role-user .repo, .role-user aside { display: none; }
-.role-user .layout { grid-template-columns: 1fr; }
 .auth-card { max-width: 380px; margin: 60px auto; }
 aside { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--panel); }
 main { padding: 20px 24px 80px; min-width: 0; }
@@ -123,8 +122,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft
 .pill.claude { background: var(--accent-soft); color: var(--claude); }
 .pill.ok, .pill.kind-done, .pill.state-active { background: var(--ok-soft); color: var(--ok); }
 .pill.fail, .pill.state-error, .pill.first { background: var(--fail-soft); color: var(--fail); }
+.pill.locked { background: #fef3c7; color: #92400e; }
 .pill.kind-running { background: var(--run-soft); color: var(--run); }
 .pill.who-a-time-limit { background: #fef3c7; color: #92400e; }
+a.pill.refinement { background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+a.pill.refinement:hover { text-decoration: underline; }
 
 /* ── editor ── */
 .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -356,3 +358,43 @@ td > .help > .help-mark { margin-left: 6px; }
 .card.failure { border-color: var(--fail); }
 .card.failure ul.options { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .card.failure details.raw summary { cursor: pointer; color: var(--muted); }
+
+/* ── keyboard focus ── */
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
+.modal:focus-visible { outline: none; }
+
+/* ── a wide table scrolls in its own box ── */
+.table-box { overflow-x: auto; }
+.table tr.link td > a { text-decoration: none; }
+
+/* ── the user display (ui/user/) ── */
+.user-display .top { height: auto; min-height: 52px; flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; padding-bottom: 6px; }
+.user-display .top nav { flex-wrap: wrap; }
+.user-display .user { margin-left: auto; flex-wrap: wrap; white-space: normal; min-width: 0; }
+.user-display .user > span { overflow-wrap: anywhere; min-width: 0; }
+.user-display main { overflow-wrap: break-word; }
+@media (max-width: 760px) {
+  .user-display .top { position: static; overflow-x: visible; }
+}
+
+/* Start work */
+.start-form { display: grid; gap: 16px; max-width: 640px; }
+.start-form .start-rest { display: grid; gap: 16px; }
+.start-form fieldset { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 14px; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.start-form legend { font-weight: 600; padding: 0 6px; }
+.start-form .choice { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: start; cursor: pointer; }
+.start-form .choice input { width: auto; margin-top: 3px; }
+.start-form .choice span { grid-column: 2; }
+.start-form .req { color: var(--fail); }
+
+/* My runs and the run page of a user (ui/user/runs.js) */
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-card.who-you { border-color: #7c3aed; }
+.run-card .run-link { overflow-wrap: anywhere; }
+.run-card .run-next { margin: 0; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.run-now h2 { margin: 0 0 8px; font-size: 15px; }
+.run-dialog { display: grid; gap: 12px; }
+.user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }

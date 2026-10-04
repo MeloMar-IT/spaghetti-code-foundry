@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { basename } from "node:path";
 import { StoreError } from "../auth/store.js";
 import { KeyError } from "./keychain.js";
+import { PUBLIC_KEY_RE } from "./ssh-keygen.js";
 import { allSecrets, credentialsPath } from "./store.js";
 
 export const REDACTED = "[redacted]";
@@ -28,8 +29,8 @@ export interface Match {
 export interface Redactor {
   readonly empty: boolean;
   redact(text: string): string;
-  /** Where the secrets are in the text. */
-  find(text: string): Match[];
+  /** Where the secrets are in the text, looking from the position `from` on (default: the start). */
+  find(text: string, from?: number): Match[];
   /** The length of the longest pattern. */
   readonly maxLen: number;
 }
@@ -59,9 +60,11 @@ export function makeRedactor(secrets: string[]): Redactor {
   const re = new RegExp(sources.join("|"), "g");
   const maxLen = Math.max(...[...long, ...short].map((s) => s.length));
 
-  const find = (text: string): Match[] => {
+  const find = (text: string, from = 0): Match[] => {
     const found: Match[] = [];
+    re.lastIndex = from;
     for (const m of text.matchAll(re)) if (m[0].length) found.push({ start: m.index!, end: m.index! + m[0].length });
+    re.lastIndex = 0;
     return found;
   };
   const redact = (text: string) => {
@@ -114,6 +117,32 @@ export function redactStream(sink: (text: string) => void, current: () => Redact
   };
 }
 
+/** Hides what either redactor hides (overlapping matches become one). */
+export function combineRedactors(a: Redactor, b: Redactor): Redactor {
+  if (b.empty) return a;
+  if (a.empty) return b;
+  const find = (text: string): Match[] => {
+    const all = [...a.find(text), ...b.find(text)].sort((x, y) => x.start - y.start || y.end - x.end);
+    const out: Match[] = [];
+    for (const m of all) {
+      const last = out.at(-1);
+      if (last && m.start <= last.end) last.end = Math.max(last.end, m.end);
+      else out.push({ ...m });
+    }
+    return out;
+  };
+  const redact = (text: string) => {
+    let out = "";
+    let at = 0;
+    for (const m of find(text)) {
+      out += text.slice(at, m.start) + REDACTED;
+      at = m.end;
+    }
+    return out + text.slice(at);
+  };
+  return { empty: false, redact, find, maxLen: Math.max(a.maxLen, b.maxLen) };
+}
+
 // ---- the live set, from credentials.json -------------------------------------------------------------
 
 let cache: { sig: string; redactor: Redactor } | undefined;
@@ -154,12 +183,59 @@ export function liveRedactor(): Redactor {
   }
 }
 
-/** JSON text of a value with the stored secrets hidden, for API answers. `undefined` when the store cannot be read. */
-export function redactedJson(value: unknown): string | undefined {
+/**
+ * Where the kept public keys stand in JSON text: each one as a whole string value (not an object key, not part of a
+ * longer string), as `[start, end)` of the key itself.
+ */
+function keptSpans(text: string, keep: string[]): Match[] {
+  const spans: Match[] = [];
+  for (const key of new Set(keep)) {
+    if (!PUBLIC_KEY_RE.test(key)) continue;
+    for (let at = text.indexOf(key); at >= 0; at = text.indexOf(key, at + 1)) {
+      const end = at + key.length;
+      if (text[at - 1] !== '"' || text[end] !== '"' || !":[,".includes(text[at - 2] ?? "x")) continue;
+      // an object key is followed by ":"
+      if (text[end + 1] === ":") continue;
+      spans.push({ start: at, end });
+    }
+  }
+  return spans;
+}
+
+/**
+ * Like `r.redact`, but a public key in `keep` stays whole where it is a complete JSON string value. A public key is not a
+ * secret, yet a stored token can be part of it (such as "ssh-ed25519"). A secret that reaches outside the key is still
+ * replaced, also when it overlaps a secret that lies inside the key (the text is scanned again after each match left).
+ */
+export function redactKeeping(r: Redactor, text: string, keep: string[]): string {
+  if (r === BLOCKED || r.empty) return r.redact(text);
+  const spans = keep.length ? keptSpans(text, keep) : [];
+  if (!spans.length) return r.redact(text);
+  let out = "";
+  let at = 0;
+  let pos = 0;
+  for (;;) {
+    const m = r.find(text, pos)[0];
+    if (!m) break;
+    if (spans.some((s) => m.start >= s.start && m.end <= s.end)) {
+      pos = m.start + 1;
+      continue;
+    }
+    out += text.slice(at, m.start) + REDACTED;
+    at = pos = m.end;
+  }
+  return out + text.slice(at);
+}
+
+/**
+ * JSON text of a value with the stored secrets hidden, for API answers. `keep` lists public keys that stay readable
+ * (see `redactKeeping`). `undefined` when the store cannot be read.
+ */
+export function redactedJson(value: unknown, keep: string[] = []): string | undefined {
   const r = liveRedactor();
   const text = JSON.stringify(value);
   if (r === BLOCKED) return undefined;
-  return r.empty ? text : r.redact(text);
+  return r.empty ? text : redactKeeping(r, text, keep);
 }
 
 /** Throws a KeyError that starts with "the stored credentials cannot be read" when the store cannot be used. */

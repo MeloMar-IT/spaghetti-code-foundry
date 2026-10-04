@@ -19,6 +19,9 @@ describe("errorLine", () => {
 
 const rows: Row[] = [
   ['step "run_tests" failed: exit code 1', "The step run_tests failed", "run", "its command ended with an error"],
+  ['step "push" failed: set a token for this repository under My repositories', "The step push failed", "run", "the repository has no token for runs; set one under My repositories"],
+  ['step "push" failed: the token of this repository is missing; set it again under My repositories', "The step push failed", "run", "the repository's token is missing or refused; set it again under My repositories"],
+  ['step "push" failed: GitHub refused the token of this repository; reconnect the repository under My repositories', "The step push failed", "run", "the repository's token is missing or refused; set it again under My repositories"],
   ['step "x" failed: exit code null', "The step x failed", "run", "its command ended with an error"],
   ['step "plan" failed: timed out', "The step plan failed", "run", "it ran longer than its time limit"],
   ['step "plan" failed: claude exited with code 1 and no result. boom\nline 2', "The step plan failed", "run", "the agent stopped without a result"],

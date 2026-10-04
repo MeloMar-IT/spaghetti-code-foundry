@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
@@ -42,6 +42,16 @@ steps:
   - {id: hello, type: shell, run: "echo hi from $FACTORY_TASK"}
 `;
 
+describe("readiness probe", () => {
+  it("answers this machine without a session, and nothing else without one", async () => {
+    const ready = await fetch(`${base}/api/ready`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual({ ok: true });
+    expect((await fetch(`${base}/api/ready`, { headers: { "x-forwarded-for": "203.0.113.5" } })).status).not.toBe(200);
+    expect((await fetch(`${base}/api/health`)).status).toBe(401);
+  });
+});
+
 describe("ui server", () => {
   it("won't delete a flow a watcher uses (also a disabled one) or another flow runs; does once nothing uses it", async () => {
     const used = FLOW.replace("name: mine", "name: used-by-watcher");
@@ -66,6 +76,20 @@ describe("ui server", () => {
     expect((await json("DELETE", "/api/flows/used-by-step")).status).toBe(200);
   });
 
+  it.each(["refine-brief", "refine-round"])("won't delete %s: refinement uses it", async (name) => {
+    expect((await json("DELETE", `/api/flows/${name}`)).status).toBe(403);
+    for (const scope of ["repo", "global"]) {
+      const put = await json("PUT", `/api/flows/${name}`, { yaml: readFileSync(`flows/${name}.yaml`, "utf8"), scope });
+      expect(put.status).toBe(200);
+      const { path } = (await put.json()) as { path: string };
+      const del = await json("DELETE", `/api/flows/${name}`);
+      expect(del.status).toBe(409);
+      expect(((await del.json()) as { error: string }).error).toContain(`flow "${name}" is in use by refinement (the architect)`);
+      expect(existsSync(path)).toBe(true);
+      rmSync(path); // so other tests see the built-in flow again
+    }
+  });
+
   it("runs a monitor watcher: listed as active, Check now writes the findings file, a second monitor is refused", async () => {
     const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
     const mon = { id: "mon", source: "monitor", every: "1h" };
@@ -76,6 +100,70 @@ describe("ui server", () => {
     expect(existsSync(join(tmp, "home", "monitor-findings.json"))).toBe(true);
     expect((await json("PUT", "/api/config", { ...cfg, watchers: [mon, { ...mon, id: "mon2" }] })).status).toBe(400);
     expect((await json("PUT", "/api/config", { ...cfg, watchers: [] })).status).toBe(200);
+  });
+
+  describe("the monitor's off switch", () => {
+    const home = () => join(tmp, "home");
+    const logLines = () => (existsSync(join(home(), "monitor-log.jsonl")) ? readFileSync(join(home(), "monitor-log.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { event: string; by?: string }) : []);
+    const get = async () => (await json("GET", "/api/monitor")).json() as Promise<Record<string, unknown>>;
+    const activity = async () => {
+      const list = (await (await json("GET", "/api/watchers")).json()) as { id: string; status?: { lastActions: string[] } }[];
+      return list.find((w) => w.id === "mon")?.status?.lastActions ?? [];
+    };
+    beforeAll(() => {
+      rmSync(join(home(), "monitor-guard.json"), { force: true });
+      rmSync(join(home(), "monitor-log.jsonl"), { force: true });
+    });
+
+    it("GET says quiet with `until` just after the start", async () => {
+      expect(await get()).toMatchObject({ state: "quiet", reportTo: false });
+      expect(typeof (await get()).until).toBe("string");
+    });
+
+    it("off and on set the state with the account id, log once, show in the activity, and a second one changes nothing", async () => {
+      const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
+      expect((await json("PUT", "/api/config", { ...cfg, watchers: [{ id: "mon", source: "monitor", every: "1h" }] })).status).toBe(200);
+      const off = await json("POST", "/api/monitor/off", {});
+      expect(off.status).toBe(200);
+      expect(await off.json()).toMatchObject({ state: "off", by: session.user.id, changed: true });
+      expect(JSON.parse(readFileSync(join(home(), "monitor-guard.json"), "utf8")).off.by).toBe(session.user.id);
+      expect(logLines()).toMatchObject([{ event: "off", by: session.user.id }]);
+      expect((await activity())[0]).toContain("bug stories switched off");
+      expect(await (await json("POST", "/api/monitor/off", {})).json()).toMatchObject({ state: "off", changed: false });
+      expect(logLines()).toHaveLength(1);
+      expect(await activity()).toHaveLength(1);
+      expect(await (await json("POST", "/api/monitor/on", {})).json()).toMatchObject({ state: "quiet", changed: true });
+      expect(logLines().map((l) => l.event)).toEqual(["off", "on"]);
+      expect((await activity())[0]).toContain("bug stories switched on");
+      expect((await json("PUT", "/api/config", { ...cfg, watchers: [] })).status).toBe(200);
+    });
+
+    it("an open circuit breaker shows with its reason; on closes it, logs it, and the Your turn item goes", async () => {
+      const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
+      expect((await json("PUT", "/api/config", { ...cfg, watchers: [{ id: "mon", source: "monitor", every: "1h" }] })).status).toBe(200);
+      writeFileSync(join(home(), "monitor-guard.json"), JSON.stringify({ version: 1, breaker: { open: { since: new Date().toISOString(), reason: "findings", count: 7, minutes: 60 } } }));
+      expect(await get()).toMatchObject({ state: "breaker", why: "7 new findings within 60 minutes", count: 7 });
+      const turn = async () => ((await (await json("GET", "/api/your-turn")).json()) as { groups: { items: { next: { kind: string } }[] }[] }).groups.flatMap((g) => g.items.map((i) => i.next.kind));
+      expect(await turn()).toContain("monitor_stopped");
+      expect(await (await json("POST", "/api/monitor/on", {})).json()).toMatchObject({ changed: true, closed: true });
+      expect(logLines().map((l) => l.event).slice(-2)).toEqual(["on", "breaker-closed"]);
+      expect((await activity())[0]).toContain("circuit breaker closed");
+      expect(await turn()).not.toContain("monitor_stopped");
+      expect((await json("PUT", "/api/config", { ...cfg, watchers: [] })).status).toBe(200);
+    });
+
+    it("a broken file reads as unreadable; on resets it and keeps .broken", async () => {
+      writeFileSync(join(home(), "monitor-guard.json"), "{nope");
+      expect(await get()).toMatchObject({ state: "unreadable" });
+      const on = (await (await json("POST", "/api/monitor/on", {})).json()) as { reset?: string };
+      expect(typeof on.reset).toBe("string");
+      expect(existsSync(join(home(), "monitor-guard.json.broken"))).toBe(true);
+    });
+
+    it("a POST without the CSRF token is refused", async () => {
+      const r = await fetch(base + "/api/monitor/off", { method: "POST", headers: { cookie: session.cookie, "content-type": "application/json" }, body: "{}" });
+      expect(r.status).toBe(403);
+    });
   });
 
   it("serves the UI and the yaml browser build", async () => {
@@ -118,6 +206,11 @@ describe("ui server", () => {
 
   it("validates, saves, lists and deletes flows", async () => {
     expect(await (await json("POST", "/api/validate", { yaml: "name: x\nsteps: []" })).json()).toMatchObject({ ok: false });
+    const conflict = "name: bad\nsteps:\n  - {id: a, type: shell, run: x, repo_access: true, sandbox: true}";
+    const checked = (await (await json("POST", "/api/validate", { yaml: conflict })).json()) as { ok: boolean; error?: string };
+    expect(checked.ok).toBe(false);
+    expect(checked.error).toContain("cannot also have sandbox: true");
+    expect((await json("PUT", "/api/flows/bad", { yaml: conflict, scope: "repo" })).status).toBe(400);
     expect((await json("PUT", "/api/flows/other", { yaml: FLOW, scope: "repo" })).status).toBe(400); // name mismatch
     expect((await json("PUT", "/api/flows/mine", { yaml: FLOW, scope: "repo" })).status).toBe(200);
     const flows = (await (await json("GET", "/api/flows")).json()) as Array<{ name: string; scope: string }>;

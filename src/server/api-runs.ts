@@ -4,8 +4,10 @@ import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
+import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
-import { ownerNames } from "../auth/run-owner.js";
+import { isRefinementRun, ownerNames } from "../auth/run-owner.js";
+import { isRefinementFlow } from "../flow/usage.js";
 import { effectiveVars } from "../engine/runner.js";
 import type { RunSummary } from "../engine/state.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
@@ -15,7 +17,7 @@ import { guardedRepos } from "./api-repos.js";
 import { publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
-import { hidePaths, userLogLine, userRecord, userRun } from "./user-view.js";
+import { hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import type { RunEvent } from "../queue/scheduler.js";
 import type { Route } from "./server.js";
@@ -30,9 +32,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const mine = (rid: string) => scheduler.ownerOf(rid) === user.id;
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string }) => unknown = admin ? (r) => r : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
   const hide = <T,>(v: T): T => (admin ? v : hideForeign(v, mine));
-  if (seg[0] === "queue" && method === "GET") return send(res, 200, admin ? queueWithNext(ctx) : ownQueue(ctx, user.id)), true;
+  if (seg[0] === "queue" && method === "GET") {
+    // A queued architect read says which refinement session it is for; the source itself stays with the admin.
+    const sessionOf = new Map(scheduler.queue().pending.flatMap((p) => (refinementSessionOf(p.source) ? [[p.runId, refinementSessionOf(p.source)!] as const] : [])));
+    const q = admin ? queueWithNext(ctx) : ownQueue(ctx, user.id);
+    return send(res, 200, { ...q, pending: q.pending.map((p) => (sessionOf.has(p.runId) ? { ...p, refinement: sessionOf.get(p.runId) } : p)) }), true;
+  }
   if (seg[0] === "run-owners" && !seg[1] && method === "GET") {
     const counts = new Map<string, number>();
     for (const b of scheduler.briefs()) if (b.owner) counts.set(b.owner, (counts.get(b.owner) ?? 0) + 1);
@@ -93,6 +100,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       // A user starts a published, saved flow in the server's default folder, on one of their own repositories.
       const name = str(body, "flow");
       if (!NAME_RE.test(name)) throw new HttpError(400, "invalid flow name");
+      // The architect's flows are started from a refinement session only, also when an admin published a copy of them.
+      if (isRefinementFlow(name)) throw new HttpError(404, "flow not found");
       const listing = publishedFlows(opts.repo).find((f) => f.name === name);
       if (!listing) throw new HttpError(404, "flow not found");
       try {
@@ -100,7 +109,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       } catch {
         throw new HttpError(404, "flow not found"); // the message of a failure holds a file path
       }
-      if (!isPublished(flow)) throw new HttpError(404, "flow not found");
+      if (!isPublished(flow) || isRefinementFlow(flow.name)) throw new HttpError(404, "flow not found");
       repo = resolve(opts.repo);
       if (!existsSync(repo)) throw new HttpError(400, "the server's folder was not found");
       // The folder's own settings are read now and kept with the job; the user may fill in the published inputs only.
@@ -126,18 +135,25 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       { kind: "run", flow, task, repo, vars: runVars, ...(admin ? {} : { frozenVars: true }) },
       { lockKey, source: "ui", owner: user.id, queuedBy: user.id },
     );
+    auditAction(ctx.diagLog, user.id, "run-start", runId);
     return send(res, 201, { runId, queued: scheduler.isQueued(runId) }), true;
   }
 
   if (!id || !/^[\w-]+$/.test(id)) throw new HttpError(400, "invalid run id");
   const action = seg[2];
 
-  if (action === "cancel" && method === "POST") return send(res, 200, { cancelled: scheduler.cancel(id) }), true;
+  if (action === "cancel" && method === "POST") {
+    const cancelled = scheduler.cancel(id);
+    if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
+    return send(res, 200, { cancelled }), true;
+  }
 
   if ((action === "resume" || action === "approve" || action === "reject") && method === "POST") {
     const body = await readJson(req);
     const s = scheduler.get(id);
     if (!s) throw new HttpError(404, "run not found");
+    // The one-read-at-a-time rules live in the session: an architect run is continued from there, for every role.
+    if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
     if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
     const from = str(body, "from", false) || undefined;
     const vars = s.vars ?? {};
@@ -152,6 +168,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         : { kind: "resume", runId: id, decision: { approved: action === "approve", by: "ui", note: str(body, "note", false) || undefined } },
       { lockKey, source: `ui ${action}`, queuedBy: user.id, ...(story ? { priority: true, storyAt: story.createdAt } : {}) },
     );
+    auditAction(ctx.diagLog, user.id, `run-${action}`, id);
     return send(res, 202, { runId: id }), true;
   }
 

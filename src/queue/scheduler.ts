@@ -285,6 +285,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(!priority && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
+          flow: job.kind === "run" ? job.flow.name : undefined,
           repo: job.kind === "run" ? job.repo : undefined, task: job.kind === "run" ? job.task : undefined,
         };
       }),
@@ -340,7 +341,7 @@ export class Scheduler {
     const live = this.active.get(b.runId)?.summary;
     if (live) return { ...b, status: live.status };
     // An interrupted run ended when its run.json was last written: a time that stays the same.
-    return b.status === "running" && !this.active.has(b.runId) ? { ...b, status: "failed" as const, finishedAt: b.finishedAt ?? b.updatedAt } : b;
+    return b.status === "running" && !this.active.has(b.runId) ? { ...b, status: "failed" as const, finishedAt: b.finishedAt ?? b.updatedAt, interrupted: true } : b;
   }
 
   /** A "running" run.json with no live process was interrupted (e.g. the server died). */
@@ -379,7 +380,20 @@ export class Scheduler {
     writeFileSync(this.o.queueFile, JSON.stringify(this.pending, null, 2));
   }
 
+  /** Set while the server waits to restart: queued jobs stay saved and start in the new server. */
+  private paused = false;
+
+  /** From now on nothing starts. Active jobs go on; queued and newly submitted jobs wait in the queue file. */
+  drain(): void {
+    this.paused = true;
+  }
+
+  get draining(): boolean {
+    return this.paused;
+  }
+
   private pump() {
+    if (this.paused) return;
     const limit = this.o.config().concurrency;
     const states = new Map<string, boolean>();
     const held = (q: QueuedJob) => {

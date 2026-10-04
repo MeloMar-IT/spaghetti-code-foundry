@@ -29,8 +29,8 @@ describe("serverFrom", () => {
 });
 
 /** Renders Settings against a stubbed API; returns the page and the PUT bodies. */
-async function render(server: Record<string, unknown>, listening = "127.0.0.1", putStatus = 200) {
-  const config = { ...ConfigSchema.parse({}), server: { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, ...server } };
+async function render(server: Record<string, unknown>, listening = "127.0.0.1", putStatus = 200, extra: Record<string, unknown> = {}) {
+  const config = { ...ConfigSchema.parse({}), server: { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, ...server }, ...extra };
   const puts: any[] = [];
   (globalThis as any).fetch = async (url: string, init?: { method?: string; body?: string }) => {
     if (init?.method === "PUT") {
@@ -88,6 +88,50 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → GitHub App", () => {
+  const appCard = (main: FakeElement) => main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "GitHub App")!;
+  const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+
+  it("shows four fields with their hints", async () => {
+    const { main } = await render({});
+    const card = appCard(main);
+    expect(card.all("input")).toHaveLength(4);
+    for (const label of ["App ID", "App name (slug)", "Private key file", "Installation ID (optional)"]) expect(input(card, label), label).toBeDefined();
+    expect(card.textContent).toContain("The last part of https://github.com/apps/<name>.");
+    expect(card.textContent).toContain("Only for the bot identity: runs then commit and comment as the app.");
+  });
+
+  it("saves the slug and sends no installation id when it is empty", async () => {
+    const { main, puts } = await render({});
+    const card = appCard(main);
+    input(card, "App ID").value = " 123 ";
+    input(card, "App name (slug)").value = " my-app ";
+    input(card, "Private key file").value = "/k/app.pem";
+    await save(main);
+    expect(puts[0].github_app).toEqual({ app_id: "123", private_key_path: "/k/app.pem", slug: "my-app", installation_id: undefined });
+    expect(JSON.stringify(puts[0].github_app)).not.toContain("installation_id");
+  });
+
+  it("round-trips an old configuration unchanged", async () => {
+    const old = { app_id: "1", installation_id: "2", private_key_path: "/k" };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { github_app: old });
+    await save(main);
+    expect(JSON.parse(JSON.stringify(puts[0].github_app))).toEqual(old);
+    expect(ConfigSchema.parse(JSON.parse(JSON.stringify(puts[0]))).github_app).toEqual(old);
+  });
+
+  it("sends no github_app for an empty app id", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { github_app: { app_id: "1", private_key_path: "/k", slug: "x" } });
+    input(appCard(main), "App ID").value = "  ";
+    await save(main);
+    expect(puts[0].github_app).toBeUndefined();
+  });
+});
+
 describe("Settings → Safety", () => {
   const hotfixBox = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Hotfixes"))!.all("input")[0] as any;
 
@@ -98,5 +142,71 @@ describe("Settings → Safety", () => {
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
     expect(puts[0].hotfix_to_main).toBe(true);
+  });
+});
+
+describe("Settings → Safety: self-update", () => {
+  const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Self-update"))!.all("input")[0] as any;
+  const repo = (main: FakeElement) => main.all("input").find((i) => i.attrs.placeholder === "owner/name") as any;
+
+  it("is off and empty by default", async () => {
+    const { main } = await render({});
+    expect(!!box(main).checked).toBe(false);
+    expect(repo(main).value).toBe("");
+  });
+
+  it("saves the switch and the trimmed repository", async () => {
+    const { main, puts } = await render({});
+    box(main).checked = true;
+    repo(main).value = " acme/foundry ";
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].self_update).toEqual({ enabled: true, repo: "acme/foundry" });
+  });
+});
+
+describe("Settings → Safety: audit log", () => {
+  const field = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Keep the audit log"))!.all("input")[0] as any;
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+
+  it("shows 180 by default, inside the Safety card", async () => {
+    const { main } = await render({});
+    expect(field(main).value).toBe("180");
+    const safety = main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "Safety")!;
+    expect(safety.textContent).toContain("Keep the audit log for … days");
+  });
+
+  it("shows the configured value", async () => {
+    const { main } = await render({}, "127.0.0.1", 200, { audit: { retention_days: 30 } });
+    expect(field(main).value).toBe("30");
+  });
+
+  it("saves a typed value and keeps the other settings", async () => {
+    const { main, puts } = await render({});
+    field(main).value = "365";
+    await save(main);
+    expect(puts[0].audit).toEqual({ retention_days: 365 });
+    expect(puts[0].concurrency).toBe(2);
+  });
+
+  it("saves 180 for an empty field and without a change", async () => {
+    const empty = await render({});
+    field(empty.main).value = "";
+    await save(empty.main);
+    expect(empty.puts[0].audit).toEqual({ retention_days: 180 });
+    const same = await render({});
+    await save(same.main);
+    expect(same.puts[0].audit).toEqual({ retention_days: 180 });
+  });
+
+  it("sends an out-of-range value as typed and shows the server's message", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 400);
+    field(main).value = "0";
+    await save(main);
+    expect(puts[0].audit.retention_days).toBe(0);
+    expect(main.textContent).toContain("invalid config: nope");
   });
 });

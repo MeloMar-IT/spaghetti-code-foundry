@@ -1,9 +1,36 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 export const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
+
+/** An issue as the fake gh stores it (the REST shape). */
+export interface FakeIssue {
+  number: number;
+  state: "open" | "closed";
+  state_reason: string | null;
+  title: string;
+  body: string;
+  labels: { name: string }[];
+  html_url: string;
+  created_at: string;
+  closed_at: string | null;
+}
+
+/**
+ * Puts a `git` wrapper next to the fake `gh`: the https address `url` is the fake remote, and every call logs the
+ * GIT_ALLOW_PROTOCOL it got. Call it after fakeGithub(); that one's restore() undoes it. Only blocks that clone or push need it.
+ */
+export function fakeGit(gh: { tmp: string }, url = "https://github.com/acme/app") {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const log = join(gh.tmp, "git.log");
+  writeFileSync(log, "");
+  copyFileSync(resolve("tests/fixtures/fake-git.sh"), join(gh.tmp, "bin", "git"));
+  chmodSync(join(gh.tmp, "bin", "git"), 0o755);
+  Object.assign(process.env, { FAKE_GIT_REAL: real, FAKE_GIT_LOG: log, FAKE_GIT_URL: url });
+  return { log: () => readFileSync(log, "utf8") };
+}
 
 /**
  * A temp dir with a bare git remote (one commit on main) and a fake `gh` on PATH that
@@ -36,6 +63,8 @@ export function fakeGithub() {
   symlinkSync(resolve("tests/fixtures/fake-gh.sh"), join(bin, "gh"));
   const ghLog = join(tmp, "gh.log");
   writeFileSync(ghLog, "");
+  const issuesFile = `${ghLog}.issues.json`;
+  const labelsFile = `${ghLog}.labels`;
   // The status comments the Foundry remembers must not leak from one test into the next.
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "status-comments.json"), { force: true });
   Object.assign(process.env, {
@@ -60,6 +89,24 @@ export function fakeGithub() {
       [...readFileSync(ghLog, "utf8").matchAll(/^--- comment edit (\d+):\n([\s\S]*?<!-- claude-factory status -->)/gm)].map((m) => ({ id: m[1]!, body: m[2]! })),
     /** The ids of the comments that were deleted. */
     statusDeletes: () => [...readFileSync(ghLog, "utf8").matchAll(/^--- comment delete (\d+)$/gm)].map((m) => m[1]!),
+    /** The issues the fake gh made through the REST API (oldest first). */
+    bugIssues: (): FakeIssue[] => (existsSync(issuesFile) ? (JSON.parse(readFileSync(issuesFile, "utf8")) as FakeIssue[]) : []),
+    /** Replaces them (close, reopen, set state_reason and closed_at, remove a label, add an issue). */
+    setBugIssues: (list: FakeIssue[]) => writeFileSync(issuesFile, JSON.stringify(list)),
+    /** The title and text of every issue the fake gh was asked to make through the REST API, as sent on stdin. */
+    createdBodies: (): { title: string; body: string; labels: string[] }[] =>
+      [...readFileSync(ghLog, "utf8").matchAll(/^--- created issue \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => JSON.parse(m[1]!)),
+    /** The names of the labels that exist in the fake repository. */
+    labels: (): string[] => (existsSync(labelsFile) ? readFileSync(labelsFile, "utf8").split("\n").filter(Boolean) : []),
+    setLabels: (list: string[]) => writeFileSync(labelsFile, list.map((l) => `${l}\n`).join("")),
+    /** Makes the calls that contain `on` (all when empty) wait until the returned function is called. */
+    hold: (on = ""): (() => void) => {
+      const file = join(tmp, "hold");
+      writeFileSync(file, "");
+      process.env.FAKE_GH_HOLD = file;
+      process.env.FAKE_GH_HOLD_ON = on;
+      return () => rmSync(file, { force: true });
+    },
     remoteGit: (...a: string[]) => git(remote, ...a),
     restore: () => {
       process.env = { ...env };
