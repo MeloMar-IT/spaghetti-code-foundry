@@ -469,7 +469,14 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   session, which keeps the latest brief and the current run. The question round is the shipped flow
   `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
   `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
-  deletion. Not yet started from a session. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
+  deletion. A round and an own question start the same way: `askArchitect(deps, actor, id, { kind })`
+  with kind `brief`, `round` or `question` queues `refine-brief` or `refine-round` (`ask=round` or
+  `ask=question`); the talk goes in as `task` only, built by the pure `talkText()` in
+  `src/refinement/talk-text.ts` (at most 90,000 bytes: oldest rounds, then the brief, then the end are
+  left out, with a notice). The end is read from the step `check_round`, checked again with zod, and
+  stored by `endArchitectRun` (a round, an answer or a failed mark that leaves the talk unchanged); an
+  orphan run is adopted with its kind and question read back from the job's flow and task, and a run
+  keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
 - **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has

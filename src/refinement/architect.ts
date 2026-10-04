@@ -6,21 +6,28 @@ import { StoreError } from "../auth/store.js";
 import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
 import { saveRun, type RunSummary } from "../engine/state.js";
 import { flowDir, parseFlow } from "../flow/load.js";
-import { REFINE_BRIEF_FLOW } from "../flow/usage.js";
+import { z } from "zod";
+import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../flow/usage.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { refinementSessionOf, userError } from "../server/user-view.js";
 import {
+  END_BAD_FORM,
   LOG_LIMIT,
   RefinementError,
+  architectLogRoom,
   endArchitectRun,
   getSession,
   listSessions,
   noteArchitectResumed,
   setArchitectRun,
   type Actor,
+  type ArchitectAsk,
   type ArchitectEnd,
+  type ArchitectKind,
   type Session,
 } from "./store.js";
+import { ASKED_LIMIT, DONE_MAX, ENTRY_MAX, LISTS, OPTION_MAX, QUESTION_MAX, REPLY_MAX, ROUND_PROPOSALS_MAX, ROUND_QUESTIONS_MAX, VIEWS, chars, emptyTalk, ownQuestion } from "./talk.js";
+import { TALK_FIRST_LINE, questionOf, talkText } from "./talk-text.js";
 
 /** What the architect code needs of the scheduler (a test passes a stub). */
 export type ArchitectScheduler = Pick<Scheduler, "submit" | "cancel" | "get" | "isActive" | "isQueued" | "queue" | "briefs">;
@@ -39,6 +46,8 @@ export interface ArchitectDeps {
 export type ArchitectState = "idle" | "queued" | "running" | "paused" | "failed";
 export interface ArchitectView {
   state: ArchitectState;
+  /** What the run is for: the context brief, a round of questions, or the answer to a question of the owner. Not there when idle. */
+  kind?: ArchitectKind;
   runId?: string;
   /** What the architect is doing now: the description of the current step. */
   doing?: string;
@@ -68,6 +77,8 @@ export function architectReason(run: Pick<RunSummary, "status" | "reason">): str
   if (/^"[^"]*" is not one of your repositories$/.test(text)) return "The repository is not in My repositories any more";
   if (step === "brief" && /^output did not match pass_if/.test(text)) return "The brief did not have its five parts";
   if (step === "check_brief") return "The brief did not say that the backlog is larger than what was read";
+  if (step === "check_round") return END_BAD_FORM;
+  if (step === "round") return "The architect could not finish its answer";
   if (step === "clone") return "The repository could not be cloned";
   if (step === "list_issues") return "The open issues could not be read";
   if (/^run budget of /.test(raw)) return "The read used up the limit for one read";
@@ -102,10 +113,74 @@ const statusOf = (deps: ArchitectDeps, runId: string): string | undefined => {
   }
 };
 
-/** What an ended run means for the session: a brief, a failure, or "paused" (nothing to store). */
+/** What a run is for, by its flow and its `ask` variable. */
+export function kindOfRun(run: Pick<RunSummary, "flow" | "vars">): ArchitectKind {
+  if (run.flow !== REFINE_ROUND_FLOW) return "brief";
+  return run.vars?.ask === "question" ? "question" : "round";
+}
+
+/**
+ * The kind of a run the session does not record, and for a question its text read back from the task. Only for orphans: the
+ * normal path stores the question with the session. `ask` is undefined when only the queued job is known.
+ */
+export function askOfJob(flow?: string, ask?: string, task?: string): ArchitectAsk {
+  if (flow !== REFINE_ROUND_FLOW) return { kind: "brief" };
+  const first = task?.split("\n", 1)[0];
+  if (ask === "question" || (ask === undefined && first === TALK_FIRST_LINE.question)) {
+    try {
+      return { kind: "question", question: ownQuestion(questionOf(task ?? "")) };
+    } catch {
+      return { kind: "question" };
+    }
+  }
+  return { kind: "round" };
+}
+
+const str = (max: number, min = 1) => z.string().refine((t) => chars(t) >= min && chars(t) <= max);
+const RoundOutput = z
+  .object({
+    questions: z
+      .array(
+        z
+          .object({
+            view: z.enum(VIEWS),
+            text: str(QUESTION_MAX),
+            why: str(QUESTION_MAX),
+            options: z.array(z.object({ text: str(OPTION_MAX), tradeoff: str(OPTION_MAX) }).strict()).min(2).max(4),
+            recommended: z.number().int().min(1).max(4),
+          })
+          .strict(),
+      )
+      .max(ROUND_QUESTIONS_MAX),
+    proposals: z.array(z.object({ list: z.enum(LISTS), text: str(ENTRY_MAX) }).strict()).max(ROUND_PROPOSALS_MAX),
+    done: str(DONE_MAX, 0),
+  })
+  .strict();
+const AnswerOutput = z.object({ answer: str(REPLY_MAX) }).strict();
+
+/** The checked output of the step `check_round`, read again: never trust the run. */
+function roundEnd(run: RunSummary, kind: "round" | "question"): ArchitectEnd {
+  const rec = [...(run.history ?? [])].reverse().find((h) => h.id === "check_round" && h.ok);
+  let json: unknown;
+  try {
+    json = JSON.parse((rec?.output ?? "").trim());
+  } catch {
+    return { failed: END_BAD_FORM };
+  }
+  if (kind === "round") {
+    const r = RoundOutput.safeParse(json);
+    return r.success ? { round: r.data } : { failed: END_BAD_FORM };
+  }
+  const r = AnswerOutput.safeParse(json);
+  return r.success ? { answer: r.data.answer } : { failed: END_BAD_FORM };
+}
+
+/** What an ended run means for the session: a brief, a round, an answer, a failure, or "paused" (nothing to store). */
 function endOf(run: RunSummary): ArchitectEnd | "paused" {
   if (run.status === "stopped") return "paused";
   if (run.status !== "succeeded") return { failed: architectReason(run) };
+  const kind = kindOfRun(run);
+  if (kind !== "brief") return roundEnd(run, kind);
   const rec = [...(run.history ?? [])].reverse().find((h) => h.id === "brief" && h.ok);
   const text = rec?.output?.trim();
   if (!text) return { failed: "The brief was empty" };
@@ -135,23 +210,43 @@ function endFor(deps: ArchitectDeps, runId: string): ArchitectEnd | "paused" {
 function adoptOrphan(deps: ArchitectDeps, s: Session): Session {
   if (s.state === "dropped") return s;
   const source = sourceOf(s.id);
-  const known = new Set([s.architect?.runId, s.brief?.runId]);
+  const known = new Set([s.architect?.runId, s.brief?.runId, ...(s.talk?.rounds.map((r) => r.runId) ?? []), ...(s.talk?.asked.map((a) => a.runId) ?? [])]);
   const q = deps.scheduler.queue();
-  let found = [...q.pending, ...q.active].find((j) => j.source === source && !known.has(j.runId))?.runId;
+  const job = [...q.pending, ...q.active].find((j) => j.source === source && !known.has(j.runId));
+  let found = job?.runId;
   let seen = scanned.get(deps.scheduler);
   if (!seen) scanned.set(deps.scheduler, (seen = new Set()));
+  let scan = false;
   if (!found && !seen.has(s.id)) {
-    seen.add(s.id);
+    scan = true;
     const since = Date.parse(s.updated);
     found = deps.scheduler
       .briefs()
       .filter((b) => b.source === source && !known.has(b.runId) && Date.parse(b.startedAt) > since)
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]?.runId;
   }
-  if (!found) return s;
+  if (!found) {
+    // Nothing to take in: this session is done with the scan.
+    if (scan) seen.add(s.id);
+    return s;
+  }
+  let ask: ArchitectAsk = { kind: "brief" };
+  const pending = q.pending.find((p) => p.runId === found);
+  if (pending) ask = askOfJob(pending.flow, undefined, pending.task);
+  else {
+    try {
+      const run = deps.scheduler.get(found);
+      if (run) ask = askOfJob(run.flow, run.vars?.ask ?? "round", run.task);
+    } catch {
+      // not readable now: recorded as a brief, as before
+    }
+  }
   try {
-    return setArchitectRun({ id: s.owner, admin: false }, s.id, found);
+    const adopted = setArchitectRun({ id: s.owner, admin: false }, s.id, found, ask);
+    if (scan) seen.add(s.id);
+    return adopted;
   } catch {
+    // Not recorded (the lock was busy, for example): the next read looks again.
     return s;
   }
 }
@@ -173,7 +268,8 @@ export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">
   const a = s.architect;
   if (!a) return { state: "idle" };
   const runId = a.runId;
-  if (deps.scheduler.isQueued(runId)) return { state: "queued", runId };
+  const kind = a.kind ?? "brief";
+  if (deps.scheduler.isQueued(runId)) return { state: "queued", kind, runId };
   if (deps.scheduler.isActive(runId)) {
     let run: RunSummary | undefined;
     try {
@@ -181,25 +277,35 @@ export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">
     } catch {
       run = undefined;
     }
-    return { state: "running", runId, doing: doingOf(run) };
+    return { state: "running", kind, runId, doing: doingOf(run) };
   }
-  if (a.failed !== undefined) return { state: "failed", runId, reason: a.failed };
+  if (a.failed !== undefined) return { state: "failed", kind, runId, reason: a.failed };
   const end = endFor(deps, runId);
   if (end === "paused") {
     const run = runOf(deps, runId)!;
-    return { state: "paused", runId, reason: pausedReason(run) };
+    return { state: "paused", kind, runId, reason: pausedReason(run) };
   }
   // Not settled yet (the hook has not run, or the lock was busy): what it would be, not stored.
-  return { state: "failed", runId, reason: "failed" in end ? end.failed : "The brief is being stored" };
+  return { state: "failed", kind, runId, reason: "failed" in end ? end.failed : kind === "brief" ? "The brief is being stored" : "The answer is being stored" };
 }
 
 const busy = (m: string) => new RefinementError("busy", m);
 
+const DOING: Record<ArchitectKind, string> = { brief: "reading the code", round: "asking its questions", question: "answering your question" };
+
+/** What the owner asks of the architect. `question` is the text of an own question (checked here). */
+export interface ArchitectRequest {
+  kind: ArchitectKind;
+  question?: unknown;
+}
+
 /**
- * The owner asks the architect to read for a session: a new run, or the resume of a paused one. At most one read per
- * account is queued, running or paused. Returns the run id and whether it was a resume.
+ * The owner asks the architect for a session: the read of the code, a round of questions or the answer to an own question.
+ * A new run, or the resume of a paused one. At most one run per account is queued, running or paused. Returns the run id and
+ * whether it was a resume.
  */
-export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string): { runId: string; resumed: boolean } {
+export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask: ArchitectRequest = { kind: "brief" }): { runId: string; resumed: boolean } {
+  const kind = ask.kind;
   const found = getSession(id);
   if (!found) throw new RefinementError("not-found", "no such refinement session");
   if (found.owner !== actor.id) throw actor.admin ? new RefinementError("not-owner", "only the owner can ask the architect") : new RefinementError("not-found", "no such refinement session");
@@ -224,6 +330,8 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string): { r
   const source = sourceOf(s.id);
   if (s.architect && s.architect.failed === undefined) {
     const paused = statusOf(deps, s.architect.runId) === "stopped";
+    const pausedKind = s.architect.kind ?? "brief";
+    if (paused && pausedKind !== kind) throw busy(`the architect paused while ${DOING[pausedKind]} for this session; ask that again first`);
     if (paused) {
       const run = runOf(deps, s.architect.runId);
       if (run?.workdir && existsSync(run.workdir)) {
@@ -235,14 +343,27 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string): { r
     }
   }
 
-  if (s.log.length + 2 > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
-  const flow = parseFlow(readFileSync(join(flowDir("builtin", ""), `${REFINE_BRIEF_FLOW}.yaml`), "utf8"));
+  // A new session has no talk yet.
+  const talk = s.talk ?? emptyTalk();
+  let question: string | undefined;
+  if (kind === "round") {
+    if (!s.brief) throw new RefinementError("bad-state", "ask the architect to look at the code first");
+    if (talk.rounds.at(-1)?.questions.some((q) => !q.answer)) throw new RefinementError("bad-state", 'answer every question of the last round first; "I don\'t know yet" is an answer');
+  } else if (kind === "question") {
+    question = ownQuestion(ask.question);
+    if (talk.asked.length >= ASKED_LIMIT) throw new RefinementError("limit", `at most ${ASKED_LIMIT} own questions are kept`);
+  }
+
+  if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
+  const flow = parseFlow(readFileSync(join(flowDir("builtin", ""), `${kind === "brief" ? REFINE_BRIEF_FLOW : REFINE_ROUND_FLOW}.yaml`), "utf8"));
+  const rejected = s.log.flatMap((l) => (l.what === "entry-rejected" && l.detail && l.list ? [{ list: l.list, text: l.detail }] : []));
+  const task = kind === "brief" ? s.idea : talkText({ kind, idea: s.idea, brief: s.brief?.text, talk, rejected, question });
   const runId = deps.scheduler.submit(
-    { kind: "run", flow, task: s.idea, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo }, frozenVars: true },
+    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}) }, frozenVars: true },
     { source, owner: actor.id, queuedBy: actor.id, lockKey: source },
   );
   try {
-    setArchitectRun(actor, s.id, runId);
+    setArchitectRun(actor, s.id, runId, { kind, question });
   } catch (e) {
     deps.scheduler.cancel(runId);
     throw e;

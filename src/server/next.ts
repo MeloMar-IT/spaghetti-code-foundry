@@ -10,7 +10,7 @@ import type { WatcherConfig } from "../config.js";
 import { supersededRuns } from "../stats.js";
 import { watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
-import { userRecord } from "./user-view.js";
+import { userRecord, userTask } from "./user-view.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** Why the server waits to restart, and since when. */
@@ -218,7 +218,7 @@ export function ownQueue(ctx: ApiContext, userId: string): { pending: OwnJob[]; 
       ...(p.flow !== undefined ? { flow: p.flow } : {}),
       ...(p.githubRepo !== undefined ? { githubRepo: p.githubRepo } : {}),
       ...(p.issue !== undefined ? { issue: p.issue } : {}),
-      ...(p.task !== undefined ? { task: p.task } : {}),
+      ...(p.task !== undefined ? { task: userTask(p.flow, p.source, p.task) } : {}),
       ...(p.priority ? { priority: true as const } : {}),
       next: userRecord(ownRecord(p.next, mine)), ahead,
     });

@@ -321,7 +321,7 @@ describe("restart", () => {
     file.sessions[0].architect = { runId, at: new Date().toISOString() };
     writeFileSync(refinementsPath(), JSON.stringify(file));
     await boot();
-    expect((await get(id)).architect).toEqual({ state: "failed", runId, reason: "The server stopped while the architect was reading" });
+    expect((await get(id)).architect).toEqual({ state: "failed", kind: "brief", runId, reason: "The server stopped while the architect was reading" });
   });
 });
 
