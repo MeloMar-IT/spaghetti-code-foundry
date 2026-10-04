@@ -2,23 +2,15 @@ import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { listRepos } from "../auth/repos.js";
+import { listRepos, ownsRepo } from "../auth/repos.js";
 import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
+import { RefinementError } from "./errors.js";
+import { DETAIL_MAX, LISTS, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange } from "./talk.js";
 
-export type RefinementErrorCode = "bad-idea" | "bad-title" | "bad-repo" | "no-owner" | "not-yours" | "limit" | "not-found" | "not-owner" | "bad-state" | "busy" | "no-repo";
-
-/** A problem with what the caller asked for (not with the file). The message is safe to show. */
-export class RefinementError extends Error {
-  constructor(
-    public code: RefinementErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "RefinementError";
-  }
-}
+export { RefinementError, type RefinementErrorCode } from "./errors.js";
+export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
 
@@ -41,9 +33,13 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed"] as const;
 const LogEntry = z
-  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum(["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed"]), detail: z.string().max(TITLE_MAX).optional() })
-  .strict();
+  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
+  .strict()
+  .superRefine((l, ctx) => {
+    if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > TITLE_MAX) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
+  });
 
 const RUN_ID = z.string().regex(/^[\w-]+$/).max(100);
 const BriefSchema = z.object({ text: z.string().min(1).max(BRIEF_MAX), at: z.iso.datetime(), branch: z.string().max(255).optional(), runId: RUN_ID, cut: z.boolean().optional() }).strict();
@@ -62,6 +58,7 @@ const SessionSchema = z
     drafts: z.array(z.never()).max(0),
     brief: BriefSchema.optional(),
     architect: ArchitectSchema.optional(),
+    talk: TalkSchema.optional(),
     log: z.array(LogEntry).min(1).max(LOG_LIMIT),
     created: z.iso.datetime(),
     updated: z.iso.datetime(),
@@ -358,5 +355,51 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
     const { architect: _gone, ...rest } = s;
     const brief: Brief = { text: end.brief.text.slice(0, BRIEF_MAX), at: end.brief.at, ...(end.brief.branch ? { branch: end.brief.branch } : {}), runId, ...(cut ? { cut: true } : {}) };
     return { ...rest, brief, updated: at, log: logged(s, at, "architect-brief", runId) };
+  });
+}
+
+// ---- the talk --------------------------------------------------------------------------------------
+
+export interface TalkOptions extends StoreOptions {
+  repoOk?: (owner: string, repo: string) => boolean;
+}
+
+/** The session with the changed talk and its log lines. Throws `limit` when the lines do not all fit before the slot kept for dropping. */
+function withTalk(s: Session, c: TalkChange, at: string, by: string): Session {
+  if (c.lines.length) room(s, LOG_LIMIT - c.lines.length);
+  return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, detail: l.detail, ...(l.list ? { list: l.list } : {}) }))] };
+}
+
+function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk, at: string) => TalkChange | undefined): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
+    if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+    const c = fn(s.talk ?? emptyTalk(), at);
+    return c ? withTalk(s, c, at, actor.id) : undefined;
+  });
+}
+
+export const answerQuestion = (actor: Actor, id: string, questionId: string, input: unknown, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t, at) => answer(t, questionId, input, at));
+export const acceptProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t, at) => accept(t, proposalId, at));
+export const rejectProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => reject(t, proposalId));
+export const changeEntry = (actor: Actor, id: string, entryId: string, text: unknown, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => changeText(t, entryId, text));
+export const removeEntry = (actor: Actor, id: string, entryId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => remove(t, entryId));
+
+/**
+ * For part 3c, no actor: stores a round of questions and its proposals. Undefined for an unknown session or a run id that is stored
+ * already. Throws RefinementError (bad-round, limit) and writes nothing then; `limit` also when the log has no room for every line.
+ */
+export function recordRound(id: string, runId: string, round: RoundInput, opts: StoreOptions = {}): Session | undefined {
+  return changeById(id, opts, (s, at) => {
+    const c = addRound(s.talk ?? emptyTalk(), runId, round, at);
+    return c ? withTalk(s, c, at, s.owner) : undefined;
+  });
+}
+
+/** An own question and the architect's answer, stored with the session. Same rules as `recordRound`. */
+export function recordAsked(id: string, runId: string, asked: { question: string; answer: string }, opts: StoreOptions = {}): Session | undefined {
+  return changeById(id, opts, (s, at) => {
+    const c = addAsked(s.talk ?? emptyTalk(), runId, asked, at);
+    return c ? withTalk(s, c, at, s.owner) : undefined;
   });
 }

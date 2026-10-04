@@ -96,11 +96,16 @@ export const RULES: Rule[] = [
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
-  r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state (an admin: any session)"),
+  r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
   r("PUT", "refinement/:id", "yes", "rename your refinement session"),
   r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
   r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
+  r("POST", "refinement/:id/questions/:qid/answer", "yes", "answer a question of the architect in your refinement session: an option, your own text, or \"I don't know yet\""),
+  r("POST", "refinement/:id/proposals/:pid/accept", "yes", "accept a proposed entry of your refinement session: it goes into its rules, examples or open questions"),
+  r("POST", "refinement/:id/proposals/:pid/reject", "yes", "reject a proposed entry of your refinement session; it is removed"),
+  r("PUT", "refinement/:id/map/:eid", "yes", "change the text of a rule, example or open question of your refinement session"),
+  r("DELETE", "refinement/:id/map/:eid", "yes", "remove a rule, example or open question from your refinement session"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */
