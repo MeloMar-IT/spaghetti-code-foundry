@@ -19,6 +19,7 @@ vars:
 steps:
   - id: checkout_pr
     type: shell
+    repo_access: true
     run: |
       case "$FACTORY_VAR_PR" in ''|*[!0-9]*) echo "set the 'pr' variable to a PR number"; exit 1;; esac
       [ -d .git ] || gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q
@@ -26,6 +27,7 @@ steps:
       git branch --show-current
   - id: pr_comments
     type: shell
+    repo_access: true
     run: |
       R="$FACTORY_VAR_GITHUB_REPO"; N="$FACTORY_VAR_PR"
       gh pr view "$N" --repo "$R" --json number,title,body -q '"# PR #\(.number // "") \(.title)\n\(.body)\n"' 2>/dev/null || true
@@ -89,6 +91,7 @@ steps:
     on_success: run_tests
   - id: push_changes
     type: shell
+    repo_access: true
     run: |-
       git add -A
       git diff --cached --quiet && { echo "no code changes"; exit 0; }
@@ -96,6 +99,7 @@ steps:
       git push -q && git log --oneline -1
   - id: reply
     type: shell
+    repo_access: true
     run: |-
       { echo "$FACTORY_FIRST_LOOK"; echo
         echo "🤖 **Spaghetti Code Foundry** went through the review comments:"; echo

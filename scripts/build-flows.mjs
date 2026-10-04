@@ -144,16 +144,17 @@ for (const [tool, label] of [["jira", "Jira"], ["linear", "Linear"]]) {
   const s = [
     ...steps(`${tool}-pull-ticket`, "plan"),
     ...steps(`${tool}-push-plan`, "code", "run-tests", "code-review", "commit"),
-    { id: "push", type: "shell", run: 'git push -q -u origin HEAD && echo "pushed $(git branch --show-current)"' },
+    { id: "push", type: "shell", repo_access: true, run: 'git push -q -u origin HEAD && echo "pushed $(git branch --show-current)"' },
     ...steps(`${tool}-push-result`),
   ];
   // Without GitHub there is nowhere to ask; stop so a human can look at the questions in the run.
-  patch(s, "ask_for_info", {
+  // The new command does not call gh, so the block's repo_access goes too.
+  delete patch(s, "ask_for_info", {
     run: 'printf \'%s\n\' "$FACTORY_OUT_PLAN" | sed -E \'/^(PLAN_STATUS|ROUTE):/d\'',
     on_success: "stop",
     resume_from: "pull_ticket",
     description: "Show Claude's questions and stop; answer on the ticket, then resume the run",
-  });
+  }).repo_access;
   patch(s, "address_review", { on_success: "run_tests" });
   write(`${tool}-ticket`, {
     title: `${label} ticket → code in this repo → pushed branch`,
@@ -186,6 +187,7 @@ write("pr-feedback", {
     {
       id: "push_changes",
       type: "shell",
+      repo_access: true,
       run: [
         "git add -A",
         'git diff --cached --quiet && { echo "no code changes"; exit 0; }',
@@ -196,6 +198,7 @@ write("pr-feedback", {
     {
       id: "reply",
       type: "shell",
+      repo_access: true,
       run: [
         '{ echo "$FACTORY_FIRST_LOOK"; echo',
         '  echo "🤖 **Spaghetti Code Foundry** went through the review comments:"; echo',
@@ -214,6 +217,7 @@ write("pr-feedback", {
     {
       id: "ci_logs",
       type: "shell",
+      repo_access: true,
       description: "Failed job logs of CI run ci_run (set by the ci-failures watcher)",
       run: [
         'case "$FACTORY_VAR_CI_RUN" in *[!0-9]*|"") echo "set var ci_run to a GitHub Actions run id"; exit 1;; esac',
@@ -994,6 +998,7 @@ write("issue-plan", {
     {
       id: "open_pr",
       type: "shell",
+      repo_access: true,
       description: "Open the factory pull request, or add this issue to the open one",
       run: '"$FACTORY_TOOLS/daily-branch" ensure-pr "$(git branch --show-current)"',
     },

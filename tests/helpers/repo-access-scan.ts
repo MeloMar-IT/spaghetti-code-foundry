@@ -70,13 +70,16 @@ export function scanSteps(
   return hits;
 }
 
-/** scanSteps for every flows/*.yaml under root. */
+/** scanSteps for every blocks/*.yaml, flows/*.yaml and tests/fixtures/flows/*.yaml under root. A block's step is named blocks/<block>/<step>. */
 export function scanRepoAccess(root = "."): AccessHit[] {
   const tools = remoteTools(root);
   const hits: AccessHit[] = [];
-  for (const f of readdirSync(join(root, "flows")).filter((n) => n.endsWith(".yaml")).sort()) {
-    const def = parseYaml(readFileSync(join(root, "flows", f), "utf8")) as { steps?: { id: string; type?: string; run?: unknown; repo_access?: unknown }[] };
-    hits.push(...scanSteps(f.replace(/\.yaml$/, ""), def.steps ?? [], tools));
+  for (const dir of ["blocks", "flows", "tests/fixtures/flows"]) {
+    for (const f of readdirSync(join(root, dir)).filter((n) => n.endsWith(".yaml")).sort()) {
+      const def = parseYaml(readFileSync(join(root, dir, f), "utf8")) as { steps?: { id: string; type?: string; run?: unknown; repo_access?: unknown }[] };
+      const name = f.replace(/\.yaml$/, "");
+      hits.push(...scanSteps(dir === "blocks" ? `blocks/${name}` : name, def.steps ?? [], tools));
+    }
   }
   return hits;
 }
