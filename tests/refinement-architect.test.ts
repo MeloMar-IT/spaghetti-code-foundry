@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
 import { refinementsPath } from "../src/refinement/store.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
-import { fakeGithub } from "./helpers/fake-github.js";
+import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -31,6 +31,7 @@ async function boot() {
 
 beforeEach(async () => {
   gh = fakeGithub();
+  fakeGit(gh, "https://github.com/acme/app https://github.com/other/thing");
   for (const k of ENV) saved[k] = process.env[k];
   tmp = mkdtempSync(join(tmpdir(), "refinement-architect-"));
   process.env.FACTORY_HOME = join(tmp, "home");

@@ -11,6 +11,10 @@ const NO_COLOR_ENV = { NO_COLOR: "1", FORCE_COLOR: undefined, CLICOLOR_FORCE: un
 export interface ShellRunResult {
   ok: boolean;
   output: string;
+  /** What the command wrote on stderr (cleaned like `output`). */
+  stderr: string;
+  /** `scan` applied to the whole output and to the whole stderr, before they were cut to their tail. */
+  scanned?: { output: boolean; stderr: boolean };
   exitCode: number | null;
   error?: string;
 }
@@ -28,6 +32,8 @@ export async function runShell(o: {
   dockerEnv?: string[];
   /** Secrets of this step, hidden for its whole life. */
   pinnedSecrets?: string[];
+  /** A check made on the complete output (not only its tail). */
+  scan?: (text: string) => boolean;
 }): Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -48,12 +54,18 @@ export async function runShell(o: {
     pinnedSecrets: o.pinnedSecrets,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
-  const output = (res.stdout + res.stderr).replace(ANSI, "").slice(-MAX_OUTPUT);
-  if (res.aborted) return { ok: false, output, exitCode: res.exitCode, error: "cancelled" };
-  if (res.timedOut) return { ok: false, output, exitCode: res.exitCode, error: "timed out" };
+  const fullOut = (res.stdout + res.stderr).replace(ANSI, "");
+  const fullErr = res.stderr.replace(ANSI, "");
+  const output = fullOut.slice(-MAX_OUTPUT);
+  const stderr = fullErr.slice(-MAX_OUTPUT);
+  const scanned = o.scan ? { output: o.scan(fullOut), stderr: o.scan(fullErr) } : undefined;
+  if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled" };
+  if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "timed out" };
   return {
     ok: res.exitCode === 0,
     output,
+    stderr,
+    scanned,
     exitCode: res.exitCode,
     error: res.exitCode === 0 ? undefined : `exit code ${res.exitCode}`,
   };

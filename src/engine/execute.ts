@@ -5,7 +5,9 @@ import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
 import { runShell } from "../steps/shell.js";
-import { TOKEN_REFUSED_REASON, grantPush, pushAllowEnv, repoReadAccess, repoReadEnv, tokenRefused } from "./guards.js";
+import { isRefinementRun } from "../auth/run-owner.js";
+import { TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, pushAllowEnv, tokenRefused } from "./guards.js";
+import { ghConfigDir, removeGhConfigDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
@@ -57,6 +59,10 @@ export interface Engine {
   /** Remaining budget in USD for the next claude call (undefined = unlimited). */
   remainingBudget: () => number | undefined;
   runLoop: (scope: Scope, startAt: string | null) => Promise<LoopResult>;
+  /** Set when a token step could not sign in: the run ends there, `on_failure` is not followed. */
+  accessFailed?: boolean;
+  /** The note about a repository whose method runs do not use yet was written. */
+  unusedNoted?: boolean;
   /** A human decision for the approval step the run is waiting at (consumed on use). */
   decision?: ApprovalDecision & { stepId: string };
 }
@@ -140,13 +146,20 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const image = scope.flow.sandbox.docker_image ?? engine.config.sandbox.docker_image;
       if (step.sandbox && !image) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);
-      // The stored token of the repository, looked up now, only for the clone and the issue list of a refinement run.
-      const access = repoReadAccess(step, scope.depth, scope.flow.name, engine.summary, ctx.vars);
+      // The stored token of the repository, looked up now, only for a step with repo_access (or the old grant by name).
+      const access = stepRepoAccess(step, scope.depth, scope.flow.name, engine.summary, ctx.vars);
       if (access?.kind === "refused") {
         if (access.detail) engine.log(`    ! ${step.id}: the stored token could not be read: ${access.detail}`);
+        engine.accessFailed = true;
         return { ok: false, output: access.reason, error: access.reason };
       }
-      const readEnv = access ? repoReadEnv(access, env) : {};
+      if (access?.kind === "server" && access.unused && !engine.unusedNoted) {
+        engine.unusedNoted = true;
+        engine.log(`    · ${step.id}: this repository uses ${access.unused === "github-app" ? "the GitHub App" : "a deploy key"}, which runs do not use yet; the server's own access is used`);
+      }
+      const refinement = isRefinementRun(engine.summary.source);
+      const ghDir = access?.kind === "token" ? ghConfigDir() : undefined;
+      const readEnv = access ? repoTokenEnv(access, env, ghDir) : {};
       Object.assign(env, readEnv);
       const readNames = Object.keys(readEnv).filter((k) => readEnv[k] !== undefined);
       // The push exception is a one-time token that only this step gets (see grantPush), not a plain name.
@@ -164,11 +177,16 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           dockerEnv: readNames,
           // the token of this step stays hidden even if the stored one is changed or removed while it runs
           pinnedSecrets: access?.kind === "token" ? [access.token] : undefined,
+          scan: access?.kind === "token" ? tokenRefused : undefined,
         });
-        const denied = access?.kind === "token" && !r.ok && r.error !== "cancelled" && r.error !== "timed out" && tokenRefused(r.output);
-        return { ok: r.ok, output: r.output, error: denied ? TOKEN_REFUSED_REASON : r.error, exitCode: r.exitCode };
+        // A refusal on stderr fails the step even when the script goes on; on a failed step the output counts too.
+        const stopped = r.error === "cancelled"; // a refusal that came before a timeout still counts
+        const denied = access?.kind === "token" && !stopped && (r.ok ? r.scanned?.stderr : r.scanned?.output) === true;
+        if (denied) engine.accessFailed = true;
+        return { ok: r.ok && !denied, output: r.output, error: denied ? (refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN) : r.error, exitCode: r.exitCode };
       } finally {
         grant?.revoke();
+        if (ghDir) removeGhConfigDir(ghDir);
       }
     }
 

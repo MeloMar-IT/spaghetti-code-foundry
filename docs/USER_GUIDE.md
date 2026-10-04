@@ -467,9 +467,12 @@ current format.
 **Repository access (shell steps).** Tick **Needs repository access** (`repo_access: true`) on a
 shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
 helper script that does. Never tick it on a step that runs tests or the build, and not together
-with **Run in Docker** or in a parallel step. It changes nothing today, and the built-in flows are
-already marked. **Flows you wrote yourself that call `gh` or push will fail for users (not admins)
-without the flag once the repository's own credentials are used, so mark those steps now.**
+with **Run in Docker** or in a parallel step. A marked step signs in with the token you stored for
+the repository under **My repositories** (see "What runs sign in with" there); the built-in flows
+are already marked. **Flows you wrote yourself that call `gh` or push need the flag. In a step
+without it the Foundry's own access is used, not your repository's token.** If the sign-in fails
+in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
+purpose must send its error output to `/dev/null`, because a refusal on stderr fails the step.
 
 ### Controlling the path
 
@@ -1591,6 +1594,8 @@ show as "n runs ahead of you", without ids.
 
 ![My repositories](images/repos.png)
 
+**What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the token you stored for it (method "GitHub token" or "HTTPS token"), and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it. Give the token Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment. With the method "none" an admin's run uses the server's own access (a deploy key or the GitHub App too); a user's run fails with "set a token for this repository under My repositories". If the token is missing, cannot be read or is refused by GitHub (expired, revoked, no access), the run fails and tells you to set it again here. A push to a protected branch is still refused and the secret scan still applies.
+
 **Test connection.** The button on My repositories calls `POST /api/repos/<id>/test` (the owner, or an admin for any
 repository). It runs up to three checks and shows each with a short message: **Read** (a shallow clone), **Write**
 (`git push --dry-run` to a scratch branch name; nothing is pushed and no branch is created) and, for GitHub
@@ -2122,6 +2127,8 @@ you can do first. Find yours in the table:
 | The step … failed: the agent stopped without a result | Look at the log of the step on the run page |
 | The step … failed: the agent stopped with an error | Look at the log of the step on the run page |
 | The step … failed: the agent used all its turns | Look at the log of the step on the run page |
+| The step … failed: the repository has no token for runs; set one under My repositories | Set a token for the repository under My repositories |
+| The step … failed: the repository's token is missing or refused; set it again under My repositories | Set the token of the repository again under My repositories |
 | The step … failed: the agent hit an error while it worked | Look at the log of the step on the run page |
 | The step … failed: the agent used up the budget of the step | Give the step a larger budget in the flow |
 | The step … failed: the agent ended with an error | Look at the log of the step on the run page |
@@ -2296,7 +2303,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 
 **It only reads.** The architect has the tools `Read`, `Glob` and `Grep` and nothing else. No step pushes, comments, labels or changes anything on GitHub. The repository is cloned into a subfolder, so its own `.claude/` settings and hooks are not loaded. Your idea and the issue text are never put into a shell command, and the architect treats them as text to read, never as instructions. Its role is written once, in the block **Architect (charter)**: it asks, explains, warns and suggests; it never decides, never writes a plan or code, and says "I don't know" instead of guessing.
 
-**Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the token you stored for the repository under **My repositories**, and nothing else (not the server's `gh` login, not the bot token, not the GitHub App). The token needs read access to Contents and Issues. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher get no stored token and use the server's access as before. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
+**Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the token you stored for the repository under **My repositories**, and nothing else (not the server's `gh` login, not the bot token, not the GitHub App). The token needs read access to Contents and Issues. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher use the stored token too, in their marked steps. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
 
 **Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on the Models page.
 

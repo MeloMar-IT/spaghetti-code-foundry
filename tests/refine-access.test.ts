@@ -6,11 +6,12 @@ import { adoptRuns, isRefinementRun } from "../src/auth/run-owner.js";
 import { removeCredential, listCredentials } from "../src/credentials/store.js";
 import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
-import { REPO_READ_FLOW, TOKEN_REFUSED_REASON, isRepoReadStep, repoReadEnv, tokenRefused } from "../src/engine/guards.js";
+import { REPO_READ_FLOW, TOKEN_REFUSED_REASON, isRepoReadStep, tokenRefused } from "../src/engine/guards.js";
+import { repoTokenEnv } from "../src/engine/repo-access.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
 import { REFINE_BRIEF_FLOW } from "../src/flow/usage.js";
-import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
+import { claudeBin, fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
@@ -41,13 +42,13 @@ const tokenRepo = (owner: { id: string }, token = TOKEN, url = "acme/app") => ad
 describe("repoAccess", () => {
   it("gives the stored token for github-token and sets lastUsed", () => {
     const r = tokenRepo(user);
-    expect(repoAccess(user.id, "acme/app")).toEqual({ kind: "token", token: TOKEN });
+    expect(repoAccess(user.id, "acme/app")).toEqual({ kind: "token", token: TOKEN, url: r.url, username: "x-access-token" });
     expect(listCredentials(user.id).find((c) => c.id === r.credentialId)?.lastUsed).not.toBeNull();
   });
 
   it("gives the token of https-token on github.com", () => {
     addRepo(user.id, { url: "https://github.com/acme/app", method: "https-token", username: "bob", token: TOKEN });
-    expect(repoAccess(user.id, "acme/app")).toEqual({ kind: "token", token: TOKEN });
+    expect(repoAccess(user.id, "acme/app")).toEqual({ kind: "token", token: TOKEN, url: "https://github.com/acme/app", username: "bob" });
   });
 
   it("matches the name in any case and with .git", () => {
@@ -129,12 +130,26 @@ describe("guards", () => {
 
   it("names the shipped flow", () => expect(REPO_READ_FLOW).toBe(REFINE_BRIEF_FLOW));
 
-  it("repoReadEnv holds the isolation variables only for a token", () => {
-    expect(repoReadEnv({ kind: "server" }, {})).toEqual({});
-    expect(repoReadEnv({ kind: "refused", reason: "x" }, {})).toEqual({});
-    const env = repoReadEnv({ kind: "token", token: TOKEN }, {});
-    expect(env).toMatchObject({ GH_TOKEN: TOKEN, GH_HOST: "github.com", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_PARAMETERS: "", GIT_ALLOW_PROTOCOL: "https", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GIT_CONFIG_COUNT: "0" });
-    expect(repoReadEnv({ kind: "token", token: TOKEN }, { GIT_CONFIG_COUNT: "1" })).not.toHaveProperty("GIT_CONFIG_COUNT");
+  const ACCESS = { kind: "token" as const, token: TOKEN, url: "https://github.com/acme/app", username: "x-access-token" };
+
+  it("repoTokenEnv holds the isolation variables only for a token", () => {
+    expect(repoTokenEnv({ kind: "server" }, {})).toEqual({});
+    expect(repoTokenEnv({ kind: "refused", reason: "x" }, {})).toEqual({});
+    const env = repoTokenEnv(ACCESS, {}, "/tmp/gh-empty");
+    expect(env).toMatchObject({ GH_TOKEN: TOKEN, GH_HOST: "github.com", GH_CONFIG_DIR: "/tmp/gh-empty", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_PARAMETERS: "", GIT_ALLOW_PROTOCOL: "https", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GIT_CONFIG_COUNT: "3", FACTORY_REPO_URL: ACCESS.url });
+    expect(env).toHaveProperty("GITHUB_TOKEN", undefined);
+    expect(env.GIT_CONFIG_KEY_0).toBe("credential.helper");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("");
+    expect(env.GIT_CONFIG_KEY_1).toBe("credential.https://github.com.helper");
+  });
+
+  it("repoTokenEnv adds its entries after the engine's own and never replaces the first", () => {
+    const env = repoTokenEnv(ACCESS, { GIT_CONFIG_COUNT: "1" });
+    expect(env.GIT_CONFIG_COUNT).toBe("4");
+    expect(env.GIT_CONFIG_KEY_3).toBe("http.extraHeader");
+    expect(env).not.toHaveProperty("GIT_CONFIG_KEY_0");
+    expect(env.GIT_CONFIG_KEY_1).toBe("credential.helper");
+    expect(env.GIT_CONFIG_KEY_2).toBe("credential.https://github.com.helper");
   });
 
   it.each([
@@ -297,7 +312,7 @@ describe("git isolation", { timeout: 60_000 }, () => {
     const s = await go(flow, { source: REFINE, owner: user.id });
     for (const id of ["clone", "list_issues"]) {
       const o = out(s, id);
-      expect(o).not.toMatch(/insteadof|credential\.helper|extraheader/i);
+      expect(o).not.toMatch(/insteadof|helper evil|extraheader \S/i); // the Foundry's own helper lines may show
       expect(o).toMatch(/allow=https prompt=0 askpass=\s*\n/);
       expect(o).toContain("transport 'ssh' not allowed");
     }
@@ -353,7 +368,7 @@ describe("a token in the process", { timeout: 60_000 }, () => {
 
   it("finds a repository that is literally named .git", () => {
     addRepo(user.id, { url: "acme/.git", method: "github-token", token: TOKEN });
-    expect(repoAccess(user.id, "acme/.git")).toEqual({ kind: "token", token: TOKEN });
+    expect(repoAccess(user.id, "acme/.git")).toMatchObject({ kind: "token", token: TOKEN });
   });
 });
 
@@ -363,6 +378,7 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
   const ship = (extra: { source?: string; owner?: string }) =>
     runFlow(loadFlow("refine-brief", gh.tmp).flow, { task: "Let people export CSV", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: ConfigSchema.parse({ protected_branches: [] }), ...extra });
   const shipUser = () => ship({ source: REFINE, owner: user.id });
+  beforeEach(() => void fakeGit(gh));
 
   it("succeeds with the stored token, keeps it from the agent and from .git/config", async () => {
     tokenRepo(user);
@@ -373,7 +389,7 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
     expect(out(s, "brief")).toContain("gh_token=none");
     const conf = readFileSync(join(s.workdir!, "repo", ".git", "config"), "utf8");
     expect(conf).not.toContain(TOKEN);
-    expect(conf).toContain("helper");
+    expect(conf).not.toContain("helper");
   });
 
   it("fails with the refused sentence when GitHub refuses the token", async () => {
@@ -381,16 +397,16 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
     process.env.FAKE_GH_EXPECT_TOKEN = TOKEN2;
     const s = await shipUser();
     expect(s.status).toBe("failed");
-    expect(s.history.map((h) => h.id)).toEqual(["clone"]);
-    expect(s.reason).toBe(`step "clone" failed: ${TOKEN_REFUSED_REASON}`);
+    expect(s.history.map((h) => h.id)).toEqual(["clone", "list_issues"]);
+    expect(s.reason).toBe(`step "list_issues" failed: ${TOKEN_REFUSED_REASON}`);
   });
 
-  it("a git 403 on the clone and a refusal in the issue list give the same sentence; a rate limit does not", async () => {
+  it("a git 403 on the clone (a probe step) and a refusal in the issue list give the same sentence; a rate limit does not", async () => {
     tokenRepo(user);
     process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
-    process.env.FAKE_GH_FAIL = "repo clone";
-    process.env.FAKE_GH_FAIL_TEXT = "remote: Write access to repository not granted.\nfatal: The requested URL returned error: 403";
-    expect((await shipUser()).reason).toBe(`step "clone" failed: ${TOKEN_REFUSED_REASON}`);
+    const probeClone = parseFlow("name: refine-brief\nworkspace: empty\nsteps:\n  - id: clone\n    type: shell\n    run: 'echo \"remote: Write access to repository not granted.\"; echo \"fatal: The requested URL returned error: 403\"; exit 128'\n", "p.yaml");
+    const p = await go(probeClone, { source: REFINE, owner: user.id });
+    expect(p.reason).toBe(`step "clone" failed: ${TOKEN_REFUSED_REASON}`);
     process.env.FAKE_GH_FAIL = "issue list";
     process.env.FAKE_GH_FAIL_TEXT = "Resource not accessible by personal access token";
     const s = await shipUser();
@@ -425,10 +441,9 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
     expect(gh.ghLog()).toBe("");
   });
 
-  it("a run by hand gets no stored token", async () => {
+  it("a run by hand gets the stored token too", async () => {
     tokenRepo(user);
-    process.env.FAKE_GH_EXPECT_TOKEN = "";
+    process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
     const s = await ship({ source: "ui", owner: user.id });
     expect(s.status).toBe("succeeded");
-  });
-});
+  });});
