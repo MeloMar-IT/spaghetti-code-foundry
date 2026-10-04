@@ -1,3 +1,4 @@
+import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { explainError } from "../errors.js";
 import type { RunStatus, RunSummary } from "../engine/state.js";
 import type { NextStep } from "../next-step.js";
@@ -12,6 +13,8 @@ export interface UserStep { id: string; type: string; visit: number; ok: boolean
 export interface UserRun {
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
+  /** The id of the refinement session the run reads for (an architect run). */
+  refinement?: string;
   vars: Record<string, string>;
   flowDef: { name: string; steps: { id: string; type: string; description?: string }[]; publish?: { enabled: boolean; version: number } };
   history: UserStep[]; state: { next: string | null };
@@ -71,6 +74,13 @@ export function userRecord(n: NextStep): NextStep {
   return /^[\w.-]+\/[\w.-]+$/.test(out.repo) ? out : { ...out, repo: "" };
 }
 
+/** The session id in "refinement <uuid>", else undefined. */
+export function refinementSessionOf(source?: string): string | undefined {
+  if (typeof source !== "string" || !source.startsWith(REFINEMENT_SOURCE)) return undefined;
+  const id = source.slice(REFINEMENT_SOURCE.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : undefined;
+}
+
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
 export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
@@ -84,6 +94,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean 
     ...(s.resumes !== undefined ? { resumes: s.resumes } : {}),
     ...(s.owner !== undefined ? { owner: s.owner } : {}),
     ...(s.superseded ? { superseded: true } : {}),
+    ...(refinementSessionOf(s.source) ? { refinement: refinementSessionOf(s.source) } : {}),
     vars,
     flowDef: {
       name: s.flowDef?.name ?? s.flow,

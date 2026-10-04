@@ -539,6 +539,21 @@ steps:
     expect(readFileSync(out, "utf8")).toBe("succeeded succeeded");
   });
 
+  it("notifyRun writes nothing for a run of a refinement session", async () => {
+    const s = await start("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'true'}\n");
+    const out = join(tmp, "quiet");
+    const saved = process.env.FACTORY_NO_NOTIFY;
+    delete process.env.FACTORY_NO_NOTIFY;
+    try {
+      await notifyRun(baseConfig({ notify: { macos: false, command: `printf x > ${out}` } }), { ...s, source: "refinement 11111111-1111-4111-8111-111111111111" } as typeof s);
+      expect(existsSync(out)).toBe(false);
+      await notifyRun(baseConfig({ notify: { macos: false, command: `printf x > ${out}` } }), s);
+      expect(existsSync(out)).toBe(true);
+    } finally {
+      process.env.FACTORY_NO_NOTIFY = saved;
+    }
+  });
+
   it("FACTORY_MESSAGE says who has to do what", async () => {
     const s = await start("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'true'}\n");
     const out = join(tmp, "msg");

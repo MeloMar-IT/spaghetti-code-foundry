@@ -4,6 +4,7 @@ import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
 } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
+import { architectRunsOf, cancelReads } from "../refinement/architect.js";
 import { cancelAccountNow } from "./account-work.js";
 import { throttlesOf } from "./api-auth.js";
 import { OLD_KEY_LEFT } from "./api-credentials.js";
@@ -146,7 +147,10 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
 
   if (seg.length === 2 && method === "DELETE") {
+    // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
+    const reads = guardedUsers(ctx, () => architectRunsOf(id));
     const r = guardedUsers(ctx, () => deleteUser(id, { by }));
+    cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {
       log?.(`users: ${r.oldKeysLeft} old key(s) still in the Keychain; run scf credential rotate-key`);

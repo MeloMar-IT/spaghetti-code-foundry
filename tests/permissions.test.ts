@@ -192,6 +192,7 @@ const EXAMPLES: Record<string, Example> = {
   "PUT refinement/:id": { path: `refinement/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drop": { path: `refinement/${UNKNOWN}/drop`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/restore": { path: `refinement/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/architect": { path: `refinement/${UNKNOWN}/architect`, body: {}, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
@@ -226,6 +227,7 @@ describe("the table", () => {
     expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
     expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
+    expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
   });
 
   it("has an example for every rule and a rule for every example", () => {

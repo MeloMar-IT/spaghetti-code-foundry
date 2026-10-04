@@ -75,13 +75,15 @@ export function needsUser(next: NextStep): boolean {
   return next.who === "You" || next.who === "Something is wrong";
 }
 
-export type RunOrigin = "hand" | "watcher" | "eval" | "unknown";
+export type RunOrigin = "hand" | "watcher" | "eval" | "refinement" | "unknown";
 
 /** Who started a run, from `RunSummary.source`. */
 export function runOrigin(source: string | undefined): RunOrigin {
   if (source === "ui" || source === "cli" || source?.startsWith("ui ")) return "hand";
   if (source?.startsWith("watcher ")) return "watcher";
   if (source?.startsWith("eval")) return "eval";
+  // A literal, as this module imports nothing; a test pins it to REFINEMENT_SOURCE.
+  if (source?.startsWith("refinement ")) return "refinement";
   return "unknown";
 }
 

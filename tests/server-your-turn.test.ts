@@ -89,6 +89,7 @@ describe("Your turn runs", () => {
 
   it("skips eval runs and lists failed runs of other watcher flows", () => {
     expect(ids([run("e", { source: "eval smoke" }), run("w", { source: "watcher rel schedule", flow: "release-daily" })])).toEqual(["w"]);
+    expect(ids([run("rf", { source: "refinement 11111111-1111-4111-8111-111111111111" })])).toEqual([]);
   });
 
   it("lists a failed run without a source for 7 days", () => {
@@ -386,7 +387,7 @@ describe("Your turn notifications", () => {
       t.runs.push(done("old", min(-30).toISOString()));
       await t.notifier.check(min(0));
       expect(t.sent).toHaveLength(0);
-      t.runs.push(done("s1", min(5).toISOString()), done("ev", min(5).toISOString(), { source: "eval smoke" }));
+      t.runs.push(done("s1", min(5).toISOString()), done("ev", min(5).toISOString(), { source: "eval smoke" }), done("rf", min(5).toISOString(), { source: "refinement 11111111-1111-4111-8111-111111111111" }));
       await t.notifier.check(min(10));
       await t.notifier.check(min(20));
       expect(t.sent).toHaveLength(1);
@@ -417,7 +418,7 @@ describe("Your turn notifications", () => {
     const sum = { daily_summary_at: "09:00" };
     it("is sent at the time with the counts, once a day", async () => {
       const t = rig(sum);
-      t.runs.push(done("s1", at(5).toISOString(), { vars: { github_repo: "acme/app", issue: "1" } }), done("s2", at(6).toISOString()), done("ev", at(6).toISOString(), { source: "eval x" }));
+      t.runs.push(done("s1", at(5).toISOString(), { vars: { github_repo: "acme/app", issue: "1" } }), done("s2", at(6).toISOString()), done("ev", at(6).toISOString(), { source: "eval x" }), done("rf", at(6).toISOString(), { source: "refinement 11111111-1111-4111-8111-111111111111" }));
       await t.notifier.check(at(8));
       expect(t.sent).toHaveLength(0);
       await t.notifier.check(at(9));

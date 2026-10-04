@@ -62,7 +62,7 @@ export async function sinceFor(
       const t = b.finishedAt ? Date.parse(b.finishedAt) : NaN;
       if (!(t > from && t <= to)) return false;
       const origin = runOrigin(b.source);
-      if (origin === "eval") return false;
+      if (origin === "eval" || origin === "refinement") return false;
       return !(origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId));
     })
     .sort((a, b) => Date.parse(b.finishedAt!) - Date.parse(a.finishedAt!));
@@ -88,7 +88,7 @@ export async function sinceFor(
   // Also the newest runs of any age (a manual run or a removed watcher), so a later release is found.
   for (const r of listed) {
     const origin = runOrigin(r.source);
-    if (origin === "eval" || (origin === "unknown" && (evalIds ??= evalRunIds()).has(r.runId))) continue;
+    if (origin === "eval" || origin === "refinement" || (origin === "unknown" && (evalIds ??= evalRunIds()).has(r.runId))) continue;
     add(r.vars?.github_repo);
   }
 

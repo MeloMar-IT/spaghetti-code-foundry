@@ -314,6 +314,11 @@ describe("boardFor", () => {
     expect(allCards(ctx)).toEqual([]);
   });
 
+  it("does not show the architect's reads: they have no issue", () => {
+    const source = "refinement 11111111-1111-4111-8111-111111111111";
+    expect(allCards(stub({ runs: [run("r1", { source, vars: { github_repo: "acme/app" } }), run("r2", { source, flow: "refine-brief", status: "failed", vars: { github_repo: "acme/app" } })] }))).toEqual([]);
+  });
+
   it("does not show eval runs, also those of older versions without a source", () => {
     expect(allCards(stub({ runs: [run("r1", { source: "eval suite" })] }))).toEqual([]);
     mkdirSync(evalsDir(), { recursive: true });

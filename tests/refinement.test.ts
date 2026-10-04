@@ -12,6 +12,9 @@ import {
   checkRefinements,
   createSession,
   dropSession,
+  endArchitectRun,
+  noteArchitectResumed,
+  setArchitectRun,
   getSession,
   listSessions,
   purgeDropped,
@@ -233,6 +236,120 @@ describe("the log", () => {
     expect(code(() => restoreSession(owner(ANN), s.id))).toBe("limit");
     edit((f) => f.sessions[0].log.push({ at: T0.toISOString(), by: ANN, what: "renamed" }));
     expect(() => listSessions()).toThrow(StoreError);
+  });
+});
+
+describe("the architect's run", () => {
+  const BRIEF = { text: "## What already exists\n- x", at: T0.toISOString(), branch: "main" };
+  const logLength = (n: number) => edit((f) => (f.sessions[0].log = Array.from({ length: n }, () => ({ at: T0.toISOString(), by: ANN, what: "renamed", detail: "x" }))));
+  const whats = (id: string) => getSession(id)!.log.map((l) => l.what);
+
+  it("loads a file without and with the new fields; refuses an unknown field and a brief that is too long", () => {
+    const s = make();
+    expect(getSession(s.id)!.brief).toBeUndefined();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    endArchitectRun(s.id, "run-1", { brief: BRIEF });
+    expect(getSession(s.id)!.brief).toMatchObject({ text: BRIEF.text, branch: "main", runId: "run-1" });
+    edit((f) => (f.sessions[0].brief.extra = 1));
+    expect(() => listSessions()).toThrow(StoreError);
+    edit((f) => {
+      delete f.sessions[0].brief.extra;
+      f.sessions[0].brief.text = "x".repeat(60_001);
+    });
+    expect(() => listSessions()).toThrow(StoreError);
+  });
+
+  it("setArchitectRun sets the run, logs it and keeps the brief", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    endArchitectRun(s.id, "run-1", { brief: BRIEF });
+    const got = setArchitectRun(owner(ANN), s.id, "run-2");
+    expect(got.architect).toMatchObject({ runId: "run-2" });
+    expect(got.brief?.runId).toBe("run-1");
+    expect(whats(s.id)).toEqual(["created", "architect-started", "architect-brief", "architect-started"]);
+  });
+
+  it("setArchitectRun refuses a dropped session, another account, an admin who is not the owner and a log with no room", () => {
+    const s = make();
+    expect(code(() => setArchitectRun(owner(BOB), s.id, "r"))).toBe("not-found");
+    expect(code(() => setArchitectRun(admin, s.id, "r"))).toBe("not-owner");
+    logLength(998);
+    expect(code(() => setArchitectRun(owner(ANN), s.id, "r"))).toBe("limit");
+    logLength(997);
+    expect(setArchitectRun(owner(ANN), s.id, "r").log).toHaveLength(998);
+    edit((f) => (f.sessions[0].log = f.sessions[0].log.slice(0, 5)));
+    dropSession(owner(ANN), s.id);
+    expect(code(() => setArchitectRun(owner(ANN), s.id, "r2"))).toBe("bad-state");
+  });
+
+  it("endArchitectRun with a brief stores it, clears the run and logs; a long brief is cut", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    const got = endArchitectRun(s.id, "run-1", { brief: { ...BRIEF, text: "y".repeat(60_050) } })!;
+    expect(got.architect).toBeUndefined();
+    expect(got.brief).toMatchObject({ cut: true, runId: "run-1" });
+    expect(got.brief!.text).toHaveLength(60_000);
+    expect(whats(s.id).at(-1)).toBe("architect-brief");
+  });
+
+  it("endArchitectRun writes nothing for another run id or an unknown session", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    const bytes = file();
+    expect(endArchitectRun(s.id, "run-0", { brief: BRIEF })).toBeUndefined();
+    expect(endArchitectRun("44444444-4444-4444-8444-444444444444", "run-1", { failed: "x" })).toBeUndefined();
+    expect(file()).toBe(bytes);
+  });
+
+  it("endArchitectRun failed keeps the brief, and the same reason a second time writes nothing", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    endArchitectRun(s.id, "run-1", { brief: BRIEF });
+    setArchitectRun(owner(ANN), s.id, "run-2");
+    const got = endArchitectRun(s.id, "run-2", { failed: "It was cancelled" })!;
+    expect(got.architect).toMatchObject({ runId: "run-2", failed: "It was cancelled" });
+    expect(got.brief?.runId).toBe("run-1");
+    const bytes = file();
+    expect(endArchitectRun(s.id, "run-2", { failed: "It was cancelled" })).toBeUndefined();
+    expect(file()).toBe(bytes);
+  });
+
+  it("a full log still stores the brief, without a log entry", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    logLength(999);
+    edit((f) => (f.sessions[0].architect = { runId: "run-1", at: T0.toISOString() }));
+    const got = endArchitectRun(s.id, "run-1", { brief: BRIEF })!;
+    expect(got.brief?.runId).toBe("run-1");
+    expect(got.log).toHaveLength(999);
+  });
+
+  it("keeps the slot for dropping: start, resumes and the end fit from 997 entries", () => {
+    const s = make();
+    logLength(997);
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    expect(getSession(s.id)!.log).toHaveLength(998);
+    for (let i = 0; i < 3; i++) noteArchitectResumed(s.id, "run-1");
+    expect(getSession(s.id)!.log).toHaveLength(998);
+    endArchitectRun(s.id, "run-1", { failed: "It was cancelled" });
+    expect(getSession(s.id)!.log).toHaveLength(999);
+    expect(dropSession(owner(ANN), s.id).log).toHaveLength(1000);
+    expect(getSession(s.id)!.state).toBe("dropped");
+  });
+
+  it("noteArchitectResumed writes nothing and does not throw from 998 and 999 entries", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1");
+    for (const n of [998, 999]) {
+      logLength(n);
+      edit((f) => (f.sessions[0].architect = { runId: "run-1", at: T0.toISOString(), failed: "x" }));
+      const bytes = file();
+      expect(() => noteArchitectResumed(s.id, "run-1")).not.toThrow();
+      // the failed mark goes away, the log stays
+      expect(getSession(s.id)!.log).toHaveLength(n);
+      expect(getSession(s.id)!.architect?.failed).toBeUndefined();
+      expect(file()).not.toBe(bytes);
+    }
   });
 });
 

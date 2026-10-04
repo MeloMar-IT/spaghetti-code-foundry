@@ -27,6 +27,8 @@ import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.
 import { adoptRuns } from "../auth/run-owner.js";
 import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
+import { isRefinementRun } from "../auth/run-owner.js";
+import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
 import { auditRoutes } from "./api-audit.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
@@ -114,6 +116,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
+      // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
+      if (isRefinementRun(s.source)) return void settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
       // When a run ends, the watchers of its repository check at once instead of at the next interval.
       // (A run that only stepped aside for a busy code area freed nothing: no check for that.)
       if (s.vars?.github_repo && !steppedAsideFor(s)) watchers.kickRepo(s.vars.github_repo);

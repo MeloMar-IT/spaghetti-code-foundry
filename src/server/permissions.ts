@@ -1,5 +1,6 @@
 import { listFlows, type FlowListing } from "../flow/load.js";
 import type { User } from "../auth/users.js";
+import { REFINE_BRIEF_FLOW } from "../flow/usage.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
 
@@ -52,7 +53,7 @@ export const RULES: Rule[] = [
   r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run"),
-  r("POST", "runs/:id/resume", "own", "resume a run"),
+  r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session)"),
   r("POST", "runs/:id/approve", "own", "approve a run, with a note"),
   r("POST", "runs/:id/reject", "own", "reject a run, with a note"),
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),
@@ -95,10 +96,11 @@ export const RULES: Rule[] = [
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
-  r("GET", "refinement/:id", "yes", "read your refinement session (an admin: any session)"),
+  r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state (an admin: any session)"),
   r("PUT", "refinement/:id", "yes", "rename your refinement session"),
-  r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days"),
+  r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
+  r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */
@@ -126,7 +128,7 @@ export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]
 
 /** The flows a user may see and start: valid, published ones whose name a run can use. The list and the start check both use this. */
 export function publishedFlows(repo: string): FlowListing[] {
-  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true);
+  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && f.name !== REFINE_BRIEF_FLOW);
 }
 
 /** The table for the guide, in Markdown. */
