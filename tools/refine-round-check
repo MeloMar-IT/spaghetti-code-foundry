@@ -1,0 +1,79 @@
+#!/usr/bin/env node
+// Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
+// Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }) and $FACTORY_VAR_ASK
+// (`round`, the default, or `question`).
+// Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
+// sentence and exit 1. A sentence never holds text of the answer.
+const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20;
+const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
+const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
+
+class Bad extends Error {}
+const bad = (msg) => {
+  throw new Bad(msg);
+};
+// eslint-disable-next-line no-control-regex
+const clean = (v) => (typeof v === "string" ? v : "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").trim();
+const cut = (s, max) => [...s].slice(0, max).join("");
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// Only a missing list is empty; anything else that is not a list is wrong.
+const listOf = (v, name) => (v === undefined ? [] : Array.isArray(v) ? v : bad(`${name} is not a list`));
+
+function checkQuestion(q, n) {
+  if (!isObject(q)) bad(`question ${n} is not an object`);
+  if (!VIEWS.includes(q.view)) bad(`question ${n} has no view of need, build or test`);
+  const text = cut(clean(q.text), QUESTION_MAX);
+  if (!text) bad(`question ${n} has no text`);
+  const why = cut(clean(q.why), QUESTION_MAX);
+  if (!why) bad(`question ${n} does not say why it matters`);
+  if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) bad(`question ${n} does not have 2 to 4 options`);
+  const options = q.options.map((o, i) => {
+    const t = cut(clean(o?.text), OPTION_MAX);
+    if (!t) bad(`option ${i + 1} of question ${n} has no text`);
+    const tradeoff = cut(clean(o?.tradeoff), OPTION_MAX);
+    if (!tradeoff) bad(`option ${i + 1} of question ${n} has no trade-off`);
+    return { text: t, tradeoff };
+  });
+  if (!Number.isInteger(q.recommended) || q.recommended < 1 || q.recommended > options.length) bad(`question ${n} does not recommend one of its options`);
+  return { view: q.view, text, why, options, recommended: q.recommended };
+}
+
+function checkProposal(p, n) {
+  if (!isObject(p)) bad(`proposal ${n} is not an object`);
+  if (!LISTS.includes(p.list)) bad(`proposal ${n} has no list of rule, example or open`);
+  const text = cut(clean(p.text), PROPOSAL_MAX);
+  if (!text) bad(`proposal ${n} has no text`);
+  return { list: p.list, text };
+}
+
+function check(raw, ask) {
+  const kind = ask || "round";
+  if (kind !== "round" && kind !== "question") bad("set the variable ask to round or question");
+  const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
+  let obj;
+  try {
+    obj = a >= 0 && b > a ? JSON.parse(raw.slice(a, b + 1)) : undefined;
+  } catch {
+    obj = undefined;
+  }
+  if (!isObject(obj)) bad("the architect's answer is not a JSON object");
+  if (kind === "question") {
+    if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
+    const answer = cut(clean(obj.answer), ANSWER_MAX);
+    if (!answer) bad("the architect's answer has no answer");
+    return { answer };
+  }
+  const questions = listOf(obj.questions, "questions").slice(0, MAX_QUESTIONS).map((q, i) => checkQuestion(q, i + 1));
+  const proposals = listOf(obj.proposals, "proposals").slice(0, MAX_PROPOSALS).map((p, i) => checkProposal(p, i + 1));
+  if (obj.done !== undefined && typeof obj.done !== "string") bad("done is not text");
+  const done = cut(clean(obj.done), DONE_MAX);
+  if (!questions.length && !done) bad("there are no questions and no done");
+  return { questions, proposals, done };
+}
+
+try {
+  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK)));
+} catch (e) {
+  console.log(e instanceof Bad ? e.message : "the architect's answer could not be checked");
+  process.exitCode = 1; // not process.exit(): let stdout drain
+}

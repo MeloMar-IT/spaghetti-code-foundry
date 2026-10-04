@@ -6,7 +6,7 @@ import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
 import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
-import { TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, pushAllowEnv, tokenRefused } from "./guards.js";
+import { TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { ghConfigDir, removeGhConfigDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
@@ -178,6 +178,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           // the token of this step stays hidden even if the stored one is changed or removed while it runs
           pinnedSecrets: access?.kind === "token" ? [access.token] : undefined,
           scan: access?.kind === "token" ? tokenRefused : undefined,
+          maxOutput: stepMaxOutput(step, scope.depth, scope.flow.name),
         });
         // A refusal on stderr fails the step even when the script goes on; on a failed step the output counts too.
         const stopped = r.error === "cancelled"; // a refusal that came before a timeout still counts

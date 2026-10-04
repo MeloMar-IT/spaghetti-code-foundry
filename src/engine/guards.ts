@@ -124,9 +124,11 @@ export function grantPush(branch: string): { env: Record<string, string>; revoke
 
 // ── The architect reads with the repository's own token ──
 
-/** The flow whose clone and issue list get the stored token (a literal: src/flow/usage.ts would make an import cycle; a test pins it). */
-export const REPO_READ_FLOW = "refine-brief";
-export const REPO_READ_STEPS: readonly string[] = ["clone", "list_issues"];
+/** The shell steps that get the stored token, per flow (literals: src/flow/usage.ts would make an import cycle; a test pins them). */
+export const REPO_READ_STEPS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["refine-brief", ["clone", "list_issues"]],
+  ["refine-round", ["clone"]],
+]);
 export const TOKEN_REFUSED_REASON = "GitHub refused the token of this repository; check its access to Contents and Issues, or set a new token under My repositories";
 
 /** The run fails with this when a token step is refused (not a refinement run). */
@@ -157,9 +159,17 @@ const TOKEN_REFUSED = new RegExp(
 /** Did a command fail because GitHub refused the token? A rate limit is not a refusal. */
 export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(output) && !/rate limit|abuse detection/i.test(output);
 
-/** The grant: the clone and the issue list of the unchanged name `refine-brief`, at the top level, in a run the server started for a refinement session. */
+/**
+ * Output kept for the last step of the question round (tools/refine-round-check): a full checked answer is about 30,000
+ * characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
+ */
+export const ROUND_CHECK_MAX_OUTPUT = 100_000;
+export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined =>
+  flowName === "refine-round" && step.id === "check_round" && depth === 0 ? ROUND_CHECK_MAX_OUTPUT : undefined;
+
+/** The grant: the repository read steps of a refinement flow, at the top level, in a run the server started for a refinement session. */
 export function isRepoReadStep(step: Pick<Step, "id">, depth: number, flowName: string, source: string | undefined): boolean {
-  return flowName === REPO_READ_FLOW && REPO_READ_STEPS.includes(step.id) && depth === 0 && isRefinementRun(source);
+  return REPO_READ_STEPS.get(flowName)?.includes(step.id) === true && depth === 0 && isRefinementRun(source);
 }
 
 // ── The running Foundry's own build ──

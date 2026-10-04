@@ -7,7 +7,7 @@ import { readTranscript } from "../engine/transcript.js";
 import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
 import { isRefinementRun, ownerNames } from "../auth/run-owner.js";
-import { REFINE_BRIEF_FLOW } from "../flow/usage.js";
+import { isRefinementFlow } from "../flow/usage.js";
 import { effectiveVars } from "../engine/runner.js";
 import type { RunSummary } from "../engine/state.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
@@ -100,8 +100,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       // A user starts a published, saved flow in the server's default folder, on one of their own repositories.
       const name = str(body, "flow");
       if (!NAME_RE.test(name)) throw new HttpError(400, "invalid flow name");
-      // The architect's flow is started from a refinement session only, also when an admin published a copy of it.
-      if (name === REFINE_BRIEF_FLOW) throw new HttpError(404, "flow not found");
+      // The architect's flows are started from a refinement session only, also when an admin published a copy of them.
+      if (isRefinementFlow(name)) throw new HttpError(404, "flow not found");
       const listing = publishedFlows(opts.repo).find((f) => f.name === name);
       if (!listing) throw new HttpError(404, "flow not found");
       try {
@@ -109,7 +109,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       } catch {
         throw new HttpError(404, "flow not found"); // the message of a failure holds a file path
       }
-      if (!isPublished(flow) || flow.name === REFINE_BRIEF_FLOW) throw new HttpError(404, "flow not found");
+      if (!isPublished(flow) || isRefinementFlow(flow.name)) throw new HttpError(404, "flow not found");
       repo = resolve(opts.repo);
       if (!existsSync(repo)) throw new HttpError(400, "the server's folder was not found");
       // The folder's own settings are read now and kept with the job; the user may fill in the published inputs only.

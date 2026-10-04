@@ -1,6 +1,6 @@
 import { listFlows, type FlowListing } from "../flow/load.js";
 import type { User } from "../auth/users.js";
-import { REFINE_BRIEF_FLOW } from "../flow/usage.js";
+import { isRefinementFlow } from "../flow/usage.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
 
@@ -128,7 +128,7 @@ export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]
 
 /** The flows a user may see and start: valid, published ones whose name a run can use. The list and the start check both use this. */
 export function publishedFlows(repo: string): FlowListing[] {
-  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && f.name !== REFINE_BRIEF_FLOW);
+  return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && !isRefinementFlow(f.name));
 }
 
 /** The table for the guide, in Markdown. */

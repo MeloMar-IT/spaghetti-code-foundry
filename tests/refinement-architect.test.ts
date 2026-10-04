@@ -402,16 +402,16 @@ describe("where the read shows", () => {
 });
 
 describe("the flow name", () => {
-  const COPY = `name: refine-brief\nworkspace: empty\nvars: {github_repo: ""}\npublish:\n  enabled: true\n  vars:\n    github_repo: {mode: input}\nsteps:\n  - {id: a, type: shell, run: "true"}\n`;
+  const copyOf = (name: string) => `name: ${name}\nworkspace: empty\nvars: {github_repo: ""}\npublish:\n  enabled: true\n  vars:\n    github_repo: {mode: input}\nsteps:\n  - {id: a, type: shell, run: "true"}\n`;
 
-  it("cannot be started through POST /api/runs by a user, also when an admin published a copy", async () => {
-    const body = { flow: "refine-brief", vars: { github_repo: "acme/app" } };
+  it.each(["refine-brief", "refine-round"])("%s cannot be started through POST /api/runs by a user, also when an admin published a copy", async (name) => {
+    const body = { flow: name, vars: { github_repo: "acme/app" } };
     expect((await call(ann, "POST", "/api/runs", body)).status).toBe(404);
-    const saved = await call(admin, "PUT", "/api/flows/refine-brief", { yaml: COPY, scope: "repo" });
+    const saved = await call(admin, "PUT", `/api/flows/${name}`, { yaml: copyOf(name), scope: "repo" });
     expect([saved.status, saved.text]).toEqual([200, expect.any(String)]);
-    expect((await call(ann, "GET", "/api/flows")).json().filter((f: any) => f.name === "refine-brief")).toEqual([]);
+    expect((await call(ann, "GET", "/api/flows")).json().filter((f: any) => f.name === name)).toEqual([]);
     expect((await call(ann, "POST", "/api/runs", body)).status).toBe(404);
-    expect((await call(admin, "POST", "/api/runs", { flow: "refine-brief", task: "x", vars: { github_repo: "acme/app" } })).status).toBe(201);
+    expect((await call(admin, "POST", "/api/runs", { flow: name, task: "x", vars: { github_repo: "acme/app" } })).status).toBe(201);
   });
 });
 

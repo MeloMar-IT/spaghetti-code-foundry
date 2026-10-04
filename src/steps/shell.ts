@@ -34,6 +34,8 @@ export async function runShell(o: {
   pinnedSecrets?: string[];
   /** A check made on the complete output (not only its tail). */
   scan?: (text: string) => boolean;
+  /** Characters of output to keep (default 20,000). */
+  maxOutput?: number;
 }): Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -54,10 +56,11 @@ export async function runShell(o: {
     pinnedSecrets: o.pinnedSecrets,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
+  const keep = o.maxOutput ?? MAX_OUTPUT;
   const fullOut = (res.stdout + res.stderr).replace(ANSI, "");
   const fullErr = res.stderr.replace(ANSI, "");
-  const output = fullOut.slice(-MAX_OUTPUT);
-  const stderr = fullErr.slice(-MAX_OUTPUT);
+  const output = fullOut.slice(-keep);
+  const stderr = fullErr.slice(-keep);
   const scanned = o.scan ? { output: o.scan(fullOut), stderr: o.scan(fullErr) } : undefined;
   if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled" };
   if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "timed out" };
