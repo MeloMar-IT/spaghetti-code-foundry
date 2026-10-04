@@ -430,7 +430,7 @@ describe("what a user's answers hold", () => {
       const q = (await call(s, ann, "GET", "/api/queue")).json();
       expect(q.pending).toHaveLength(3);
       expect(keys(q)).toEqual(["active", "pending"]);
-      const allowed = ["runId", "kind", "enqueuedAt", "waitingFor", "githubRepo", "issue", "task", "next", "ahead"];
+      const allowed = ["runId", "kind", "enqueuedAt", "waitingFor", "flow", "githubRepo", "issue", "task", "next", "ahead"];
       for (const p of q.pending) for (const k of Object.keys(p)) expect(allowed, k).toContain(k);
       expect(JSON.stringify(q)).not.toMatch(/\$|budget|Settings|claude/i);
       const a = (await call(s, admin, "GET", "/api/queue")).json();

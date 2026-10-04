@@ -144,6 +144,12 @@ describe("account work in the scheduler and the sweeper", () => {
     expect(runJson(odd).status).toBe("waiting");
   });
 
+  it("queue() names the flow of a queued run", () => {
+    const s = new Scheduler({ runsDir, queueFile, config: stopped });
+    s.submit(run(), { source: "ui", owner: "ann", queuedBy: "ann" });
+    expect(s.queue().pending[0]!.flow).toBe(parseFlow(PLAIN).name);
+  });
+
   it("enforceAccounts: blocked, deleted, and nothing for an active account", () => {
     const s = new Scheduler({ runsDir, queueFile, config: stopped });
     s.submit(run(), { source: "ui", owner: "ann", queuedBy: "ann" });

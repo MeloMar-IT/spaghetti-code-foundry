@@ -387,3 +387,14 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .start-form .choice input { width: auto; margin-top: 3px; }
 .start-form .choice span { grid-column: 2; }
 .start-form .req { color: var(--fail); }
+
+/* My runs and the run page of a user (ui/user/runs.js) */
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-card.who-you { border-color: #7c3aed; }
+.run-card .run-link { overflow-wrap: anywhere; }
+.run-card .run-next { margin: 0; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.run-now h2 { margin: 0 0 8px; font-size: 15px; }
+.run-dialog { display: grid; gap: 12px; }
+.user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }
