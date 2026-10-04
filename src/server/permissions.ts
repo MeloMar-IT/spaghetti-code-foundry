@@ -102,6 +102,8 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
   r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
+  r("POST", "refinement/:id/round", "yes", "ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time)"),
+  r("POST", "refinement/:id/ask", "yes", "ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time)"),
   r("POST", "refinement/:id/questions/:qid/answer", "yes", "answer a question of the architect in your refinement session: an option, your own text, or \"I don't know yet\""),
   r("POST", "refinement/:id/proposals/:pid/accept", "yes", "accept a proposed entry of your refinement session: it goes into its rules, examples or open questions"),
   r("POST", "refinement/:id/proposals/:pid/reject", "yes", "reject a proposed entry of your refinement session; it is removed"),

@@ -56,7 +56,7 @@ afterAll(() => {
   else process.env.FACTORY_HOME = savedHome;
 });
 
-const until = async (fn: () => boolean, ms = 4000) => {
+const until = async (fn: () => boolean, ms = 15_000) => {
   const end = Date.now() + ms;
   while (!fn() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
   return fn();

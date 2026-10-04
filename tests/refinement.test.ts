@@ -8,6 +8,9 @@ import { createUser, deleteUser, hashPassword, type User } from "../src/auth/use
 import { jsonFiles } from "../src/home-migrate.js";
 import {
   DROP_KEEP_MS,
+  END_BAD_FORM,
+  END_NO_QUESTION,
+  END_NO_ROOM,
   RefinementError,
   checkRefinements,
   createSession,
@@ -350,6 +353,169 @@ describe("the architect's run", () => {
       expect(getSession(s.id)!.architect?.failed).toBeUndefined();
       expect(file()).not.toBe(bytes);
     }
+  });
+});
+
+describe("the architect's round and answer", () => {
+  const BRIEF = { text: "## What already exists\n- x", at: T0.toISOString() };
+  const logLength = (n: number) => edit((f) => (f.sessions[0].log = Array.from({ length: n }, () => ({ at: T0.toISOString(), by: ANN, what: "renamed", detail: "x" }))));
+  const whats = (id: string) => getSession(id)!.log.map((l) => l.what);
+  const q = (i: number) => ({ view: "need", text: `Question ${i}?`, why: "It matters.", options: [{ text: "A", tradeoff: "a" }, { text: "B", tradeoff: "b" }], recommended: 1 });
+  const ROUND = { questions: [q(1), q(2), q(3)], proposals: [{ list: "rule", text: "A rule" }], done: "" };
+  /** A round of 5 questions, 20 proposals and done, for a session that already waits on 40 proposals: 10 do not fit. */
+  const fullRound = () => {
+    edit((f) => {
+      f.sessions[0].talk = { rounds: [], proposals: Array.from({ length: 40 }, (_, i) => ({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, list: "rule", text: `Old ${i}` })), map: { rules: [], examples: [], open: [] }, asked: [] };
+    });
+    return { questions: [1, 2, 3, 4, 5].map(q), proposals: Array.from({ length: 20 }, (_, i) => ({ list: "rule", text: `Rule ${i}` })), done: "Nothing is left." };
+  };
+  const withBrief = () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-0");
+    endArchitectRun(s.id, "run-0", { brief: BRIEF });
+    return s;
+  };
+
+  it("loads a file with kind and question; refuses an unknown kind", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "run-1", { kind: "question", question: "Why?" });
+    expect(getSession(s.id)!.architect).toMatchObject({ runId: "run-1", kind: "question", question: "Why?" });
+    edit((f) => (f.sessions[0].architect.kind = "other"));
+    expect(() => listSessions()).toThrow(StoreError);
+  });
+
+  it("setArchitectRun for a round logs round-started and needs room for 9 entries", () => {
+    const s = make();
+    logLength(991);
+    expect(code(() => setArchitectRun(owner(ANN), s.id, "r", { kind: "round" }))).toBe("limit");
+    logLength(990);
+    const got = setArchitectRun(owner(ANN), s.id, "r", { kind: "round" });
+    expect(got.architect).toMatchObject({ runId: "r", kind: "round" });
+    expect(got.log.at(-1)).toMatchObject({ what: "round-started", detail: "r" });
+  });
+
+  it("setArchitectRun for a question stores it and logs asked", () => {
+    const s = make();
+    const got = setArchitectRun(owner(ANN), s.id, "r", { kind: "question", question: "Is it so?" });
+    expect(got.architect).toMatchObject({ kind: "question", question: "Is it so?" });
+    expect(got.log.at(-1)).toMatchObject({ what: "asked", detail: "Is it so?" });
+  });
+
+  it("noteArchitectResumed keeps kind and question", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "r", { kind: "question", question: "Is it so?" });
+    noteArchitectResumed(s.id, "r");
+    expect(getSession(s.id)!.architect).toMatchObject({ kind: "question", question: "Is it so?" });
+  });
+
+  it("a paused round at the log boundary: no resume line at 990 entries, and the end still fits", () => {
+    const s = withBrief();
+    logLength(990);
+    setArchitectRun(owner(ANN), s.id, "r", { kind: "round" });
+    expect(getSession(s.id)!.log).toHaveLength(991);
+    noteArchitectResumed(s.id, "r");
+    expect(whats(s.id)).not.toContain("architect-resumed");
+    const many = fullRound();
+    endArchitectRun(s.id, "r", { round: many });
+    const got = getSession(s.id)!;
+    expect(got.architect).toBeUndefined();
+    expect(got.talk!.rounds).toHaveLength(1);
+    expect(got.log).toHaveLength(999);
+    expect(whats(s.id)).toContain("proposals-left-out");
+    expect(whats(s.id)).toContain("round-done");
+  });
+
+  it("a paused round with 989 entries writes the resume line and the end still fits", () => {
+    const s = withBrief();
+    logLength(989);
+    setArchitectRun(owner(ANN), s.id, "r", { kind: "round" });
+    noteArchitectResumed(s.id, "r");
+    expect(whats(s.id).at(-1)).toBe("architect-resumed");
+    const many = fullRound();
+    endArchitectRun(s.id, "r", { round: many });
+    expect(getSession(s.id)!.log).toHaveLength(999);
+    expect(getSession(s.id)!.architect).toBeUndefined();
+  });
+
+  it("other changes cannot use the log room a running round still needs", () => {
+    const s = withBrief();
+    logLength(989);
+    setArchitectRun(owner(ANN), s.id, "r", { kind: "round" });
+    expect(renameSession(owner(ANN), s.id, "One").log).toHaveLength(991);
+    expect(code(() => renameSession(owner(ANN), s.id, "Two"))).toBe("limit");
+    expect(getSession(s.id)!.log).toHaveLength(991);
+    endArchitectRun(s.id, "r", { round: fullRound() });
+    expect(getSession(s.id)!.talk!.rounds).toHaveLength(1);
+    expect(getSession(s.id)!.architect).toBeUndefined();
+    expect(getSession(s.id)!.log).toHaveLength(999);
+  });
+
+  it("a brief and a question still write the resume line up to 997 entries", () => {
+    for (const ask of [{ kind: "brief" as const }, { kind: "question" as const, question: "Why?" }]) {
+      const s = make();
+      logLength(996);
+      setArchitectRun(owner(ANN), s.id, "r", ask);
+      noteArchitectResumed(s.id, "r");
+      expect(whats(s.id).at(-1)).toBe("architect-resumed");
+      expect(getSession(s.id)!.log).toHaveLength(998);
+      rmSync(refinementsPath());
+    }
+  });
+
+  it("endArchitectRun with a round stores the talk, clears the run and logs the lines", () => {
+    const s = withBrief();
+    setArchitectRun(owner(ANN), s.id, "r1", { kind: "round" });
+    const got = endArchitectRun(s.id, "r1", { round: { ...ROUND, done: "Enough." } })!;
+    expect(got.architect).toBeUndefined();
+    expect(got.talk!.rounds[0]!.questions).toHaveLength(3);
+    expect(got.talk!.proposals).toHaveLength(1);
+    expect(whats(s.id).slice(-6)).toEqual(["round-started", "question", "question", "question", "round-done", "architect-round"]);
+    expect(got.log.find((l) => l.what === "round-done")!.detail).toBe("Enough.");
+  });
+
+  it("a round with a bad form or no room is marked failed and changes nothing else", () => {
+    const s = withBrief();
+    setArchitectRun(owner(ANN), s.id, "r1", { kind: "round" });
+    const before = getSession(s.id)!;
+    const bad = endArchitectRun(s.id, "r1", { round: { questions: [{ view: "x" }], proposals: [], done: "" } })!;
+    expect(bad.architect).toMatchObject({ runId: "r1", failed: END_BAD_FORM });
+    expect(bad.talk).toEqual(before.talk);
+    logLength(999);
+    edit((f) => (f.sessions[0].architect = { runId: "r1", at: T0.toISOString(), kind: "round" }));
+    const full = endArchitectRun(s.id, "r1", { round: ROUND })!;
+    expect(full.architect).toMatchObject({ failed: END_NO_ROOM });
+    expect(full.talk).toBeUndefined();
+    expect(full.log).toHaveLength(999);
+  });
+
+  it("an answer is stored in talk.asked and only architect-answered is logged", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "r1", { kind: "question", question: "Is it so?" });
+    const got = endArchitectRun(s.id, "r1", { answer: "Yes (README.md)." })!;
+    expect(got.architect).toBeUndefined();
+    expect(got.talk!.asked).toMatchObject([{ runId: "r1", question: "Is it so?", answer: "Yes (README.md)." }]);
+    expect(whats(s.id)).toEqual(["created", "asked", "architect-answered"]);
+  });
+
+  it("an answer without a stored question or with 50 kept is marked failed", () => {
+    const s = make();
+    setArchitectRun(owner(ANN), s.id, "r1", { kind: "question" });
+    expect(endArchitectRun(s.id, "r1", { answer: "x" })!.architect).toMatchObject({ failed: END_NO_QUESTION });
+    const t = make();
+    edit((f) => {
+      f.sessions[1].talk = { rounds: [], proposals: [], map: { rules: [], examples: [], open: [] }, asked: Array.from({ length: 50 }, (_, i) => ({ runId: `old-${i}`, at: T0.toISOString(), question: "q", answer: "a" })) };
+    });
+    setArchitectRun(owner(ANN), t.id, "r2", { kind: "question", question: "One more?" });
+    expect(endArchitectRun(t.id, "r2", { answer: "x" })!.architect).toMatchObject({ failed: END_NO_ROOM });
+  });
+
+  it("the same run id twice writes nothing the second time", () => {
+    const s = withBrief();
+    setArchitectRun(owner(ANN), s.id, "r1", { kind: "round" });
+    endArchitectRun(s.id, "r1", { round: ROUND });
+    const bytes = file();
+    expect(endArchitectRun(s.id, "r1", { round: ROUND })).toBeUndefined();
+    expect(file()).toBe(bytes);
   });
 });
 

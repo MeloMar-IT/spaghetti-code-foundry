@@ -1,6 +1,7 @@
 import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { explainError } from "../errors.js";
 import type { RunStatus, RunSummary } from "../engine/state.js";
+import { REFINE_ROUND_FLOW } from "../flow/usage.js";
 import type { NextStep } from "../next-step.js";
 
 /**
@@ -81,6 +82,13 @@ export function refinementSessionOf(source?: string): string | undefined {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : undefined;
 }
 
+/**
+ * The task a user sees. A round or question of the architect has the whole talk as its task (the idea, the brief, the
+ * answers); a user sees its first line only.
+ */
+export const userTask = (flow: string | undefined, source: string | undefined, task: string): string =>
+  flow === REFINE_ROUND_FLOW && refinementSessionOf(source) ? (task.split("\n", 1)[0] ?? "") : task;
+
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
 export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
@@ -88,7 +96,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean 
   const vars = Object.fromEntries(Object.entries(s.vars ?? {}).filter(([k]) => shown.has(k)));
   const publish = s.flowDef?.publish;
   const out: UserRun = {
-    runId: s.runId, flow: s.flow, task: s.task, status: s.status, startedAt: s.startedAt,
+    runId: s.runId, flow: s.flow, task: userTask(s.flow, s.source, s.task), status: s.status, startedAt: s.startedAt,
     ...(s.finishedAt !== undefined ? { finishedAt: s.finishedAt } : {}),
     ...(s.branch !== undefined ? { branch: s.branch } : {}),
     ...(s.resumes !== undefined ? { resumes: s.resumes } : {}),

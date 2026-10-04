@@ -1875,6 +1875,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
 | `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
+| `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time) |
+| `POST /api/refinement/:id/ask` | yes | yes | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
 | `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
 | `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
 | `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
@@ -2321,7 +2323,7 @@ The folder of your clone can keep its name.
 
 ### The talk: questions, answers and the map
 
-A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. No architect round is started from a session yet.
+A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. You can start a round or ask the architect a question from a session (see "Rounds and questions from a session" below).
 
 **What is kept.** Rounds of questions (at most 5 per round), your answer to each question, proposed entries that wait for you, and the map with three lists: **rules** (what must be true), **examples** (concrete cases, including edge cases) and **open questions**. `GET /api/refinement/:id` returns all of it as `talk`. The log has every question, every answer, and every accepted, rejected, changed and removed entry, with its text (cut at 2,000 characters).
 
@@ -2336,6 +2338,18 @@ A session keeps the talk with the architect, so it is not lost. The page for it 
 **Hidden talk.** While the repository is not in My repositories, the talk and the texts of its log lines are not shown (`talkHidden: true`), and the calls that change it answer 409. It comes back when you add the repository again.
 
 **Where it is kept.** In `refinements.json` in the data folder (mode 0600). It survives a restart and is copied unchanged when the data folder moves. If the file cannot be read, the calls answer "the refinement sessions are not working; see the server log", and an account cannot be deleted until the file is repaired.
+
+**Rounds and questions from a session.** Two calls, both for the owner only (another user gets 404, an admin 403; a dropped session or a repository that is not in My repositories gets 409). Both answer 202 with the session, and its `architect` part has `kind`: `brief`, `round` or `question`.
+- `POST /api/refinement/:id/round` asks the architect for a round of questions. It needs a context brief ("ask the architect to look at the code first") and an answer to every question of the last round ("answer every question of the last round first; \"I don't know yet\" is an answer"). You can ask for as many rounds as you like.
+- `POST /api/refinement/:id/ask` with `{ "question": "…" }` (1–2,000 characters) asks the architect a question of your own. It needs no brief. The question is logged when the run starts.
+
+**What the architect gets.** The talk so far as the task: your idea, the brief, the map, every round with its questions and your answers (the answers of the last round are marked as new) and the entries you rejected. It is at most 90,000 bytes. When it is longer, the oldest rounds are left out first, then the brief is cut, then the end; the text says what was left out. The question of your own always stays whole.
+
+**What is stored.** When the run succeeds, a round is stored as a new round (at most 5 questions), its proposals wait for you, and the `done` sentence is kept when the architect has nothing important left; the log says so (`round-started`, `question`, `round-done`, `architect-round`). An answer is stored with your question and logged (`architect-answered`). A failed or cancelled run changes nothing in the talk; the session says why in plain words.
+
+**One at a time.** One architect run per session and per account is queued, running or paused, counted together with the brief read (409 with a plain sentence). A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
+
+**What you see of the run.** It shows in your Runs list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Runs list, on the run page and in the queue.
 
 ### The architect's context brief
 
@@ -2361,7 +2375,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 
 ### The architect's question round
 
-The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand; starting it from a session comes later. Give it the talk so far as the task:
+The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
 scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]

@@ -6,11 +6,27 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
-import { USER_ERROR, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun } from "../src/server/user-view.js";
+import { USER_ERROR, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const keys = (o: object) => Object.keys(o).sort();
+
+describe("userTask", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const talk = "First line\n\n## The idea\nSECRET idea";
+  it("is the first line for a refine-round run of a refinement session", () => {
+    expect(userTask("refine-round", `refinement ${id}`, talk)).toBe("First line");
+    expect(userRun({ runId: "r", flow: "refine-round", source: `refinement ${id}`, task: talk, status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z" } as any).task).toBe("First line");
+  });
+  it("is the whole task for refine-round with another source, and for any other flow", () => {
+    expect(userTask("refine-round", "ui", talk)).toBe(talk);
+    expect(userTask("refine-round", undefined, talk)).toBe(talk);
+    expect(userTask("refine-brief", `refinement ${id}`, talk)).toBe(talk);
+    expect(userTask(undefined, `refinement ${id}`, talk)).toBe(talk);
+    expect(userRun({ runId: "r", flow: "refine-round", source: "ui", task: talk, status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z" } as any).task).toBe(talk);
+  });
+});
 
 describe("userRun", () => {
   const full = {
