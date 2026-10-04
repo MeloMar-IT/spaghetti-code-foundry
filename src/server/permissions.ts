@@ -84,6 +84,7 @@ export const RULES: Rule[] = [
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories"),
+  r("GET", "repos/methods", "yes", "the sign-in methods you may choose, and the link to install the GitHub App"),
   r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it)"),
   r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository, or make a new deploy key"),
   r("POST", "repos/:id/test", "yes", "test the connection of your repository (an admin: any repository); the result is saved as its connection status"),

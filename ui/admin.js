@@ -306,6 +306,7 @@ export async function renderSettings(main) {
   const botEmail = input(c.bot.email ?? "", { class: "mono" });
   const botToken = input(c.bot.gh_token_env ?? "", { class: "mono", placeholder: "FACTORY_GH_TOKEN" });
   const appId = input(c.github_app?.app_id ?? "", { class: "mono" });
+  const appSlug = input(c.github_app?.slug ?? "", { class: "mono" });
   const instId = input(c.github_app?.installation_id ?? "", { class: "mono" });
   const keyPath = input(c.github_app?.private_key_path ?? "", { class: "mono", placeholder: "/path/to/app.private-key.pem" });
   const sbxClaude = check(c.sandbox.claude, "Sandbox agents' shell commands by default");
@@ -339,7 +340,9 @@ export async function renderSettings(main) {
         successes: successes.el.checked, throttle: throttle.value, quietFrom: quietFrom.value, quietTo: quietTo.value, summaryAt: summaryAt.value,
       }),
       bot: { name: botName.value.trim() || undefined, email: botEmail.value.trim() || undefined, gh_token_env: botToken.value.trim() || undefined },
-      github_app: appId.value.trim() ? { app_id: appId.value.trim(), installation_id: instId.value.trim(), private_key_path: keyPath.value.trim() } : undefined,
+      github_app: appId.value.trim()
+        ? { app_id: appId.value.trim(), private_key_path: keyPath.value.trim(), slug: appSlug.value.trim() || undefined, installation_id: instId.value.trim() || undefined }
+        : undefined,
       sandbox: { claude: sbxClaude.el.checked || undefined, docker_image: sbxImage.value.trim() || undefined },
     };
     try {
@@ -395,6 +398,10 @@ export async function renderSettings(main) {
       h("p", { class: "muted", style: { margin: 0 } }, "By default commits and comments are made as you (your git config and gh login)."),
       h("div", { class: "grid" }, f("Commit author name", botName), f("Commit author email", botEmail), f("Env var with the bot's GitHub token", botToken, "Used as GH_TOKEN for gh and git pushes."))),
     diskSection(section),
-    section("GitHub App (optional, preferred over a token)",
-      h("div", { class: "grid" }, f("App ID", appId), f("Installation ID", instId), f("Private key file", keyPath))));
+    section("GitHub App",
+      h("div", { class: "grid" },
+        f("App ID", appId),
+        f("App name (slug)", appSlug, "The last part of https://github.com/apps/<name>. Needed for the method “GitHub App” on My repositories."),
+        f("Private key file", keyPath, "The .pem file of the app, readable only by the server's account."),
+        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))));
 }

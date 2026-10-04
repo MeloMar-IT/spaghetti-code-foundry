@@ -28,10 +28,11 @@ export const reposPath = () => join(dataHome(), "repos.json");
 /** At most this many repositories per account. */
 export const REPO_LIMIT = 50;
 
-export const REPO_METHODS = ["none", "github-token", "https-token", "ssh-deploy-key"] as const;
+export const REPO_METHODS = ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"] as const;
 export type RepoMethod = (typeof REPO_METHODS)[number];
 
 const USERNAME_RE = /^[A-Za-z0-9._@+-]{1,100}$/;
+const INSTALLATION_RE = /^[0-9]{1,20}$/;
 const GITHUB_TOKEN_PREFIX = "github_pat_";
 
 // ---- the file --------------------------------------------------------------------------------------
@@ -48,6 +49,8 @@ const RecordSchema = z
     credentialId: z.uuid().optional(),
     publicKey: z.string().optional(),
     username: z.string().optional(),
+    /** The installation of the GitHub App on this repository (method "github-app" only). */
+    installationId: z.string().regex(INSTALLATION_RE).optional(),
     added: z.iso.datetime(),
     settings: RepoSettingsSchema.optional(),
     connection: ConnectionSchema.optional(),
@@ -58,9 +61,17 @@ const RecordSchema = z
     const p = tryParseRepoUrl(r.url);
     if (!p || (p.url !== r.url && !legacyUrl(r.url))) issue("url");
     if (r.method !== "ssh-deploy-key" && r.publicKey !== undefined) issue("publicKey");
+    if (r.method !== "github-app" && r.installationId !== undefined) issue("installationId");
     if (r.method === "none") {
       if (r.credentialId !== undefined) issue("credentialId");
       if (r.username !== undefined) issue("username");
+      return;
+    }
+    if (r.method === "github-app") {
+      if (!r.installationId) issue("installationId");
+      if (r.credentialId !== undefined) issue("credentialId");
+      if (r.username !== undefined) issue("username");
+      if (p && (p.scheme !== "https" || p.host !== "github.com")) issue("method");
       return;
     }
     if (!r.credentialId) issue("credentialId");
@@ -188,7 +199,8 @@ export function repoAccess(userId: string | undefined, githubName: string): Repo
     if (!rec) return notYours;
     if (rec.method === "none") return getUser(userId)?.role === "admin" ? { kind: "server" } : refused(NEEDS_TOKEN);
     // a deploy key is an ssh key, not a token for gh: it is never read here
-    if (rec.method === "ssh-deploy-key") return refused(NEEDS_TOKEN);
+    // (runs do not use the GitHub App yet)
+    if (rec.method === "ssh-deploy-key" || rec.method === "github-app") return refused(NEEDS_TOKEN);
     if (!rec.credentialId) return refused(TOKEN_MISSING);
     try {
       return { kind: "token", token: readSecret(userId, rec.credentialId) };
@@ -232,6 +244,11 @@ function checkAuth(url: ParsedRepoUrl, a: AuthInput, needToken: boolean): Checke
   if (!REPO_METHODS.includes(method as RepoMethod)) throw badAuth(`the method must be one of: ${REPO_METHODS.join(", ")}`);
   if (method === "none") {
     if (a.username !== undefined || a.token !== undefined) throw badAuth('a token and a user name need a method ("github-token" or "https-token")');
+    return { method };
+  }
+  if (method === "github-app") {
+    if (url.scheme !== "https" || url.host !== "github.com") throw badAuth('"github-app" works only for an https address on github.com');
+    if (a.username !== undefined || a.token !== undefined) throw badAuth('"github-app" has no user name and no token; the installed app signs in');
     return { method };
   }
   if (method === "ssh-deploy-key") {
@@ -294,20 +311,47 @@ export interface NewRepo {
   token?: unknown;
 }
 
+/** The address and the method of a new repository, checked without any file. */
+function addPlan(input: NewRepo): { url: ParsedRepoUrl; auth: Checked } {
+  const url = parseRepoUrl(input.url);
+  const auth = checkAuth(url, { method: input.method ?? "none", username: input.username, token: input.token }, input.method !== undefined && input.method !== "none" && input.method !== "github-app");
+  return { url, auth };
+}
+
+/** The checks that need the file (inside the lock): the account, a duplicate, another account's repository and the limit. Returns the file. */
+function addChecks(userId: string, url: ParsedRepoUrl, opts: { ownerOk?: (userId: string) => boolean }): RepoFile {
+  ownerExists(opts, userId);
+  const file = read();
+  if (file.repos.some((r) => r.owner === userId && keyOfRecord(r) === url.key)) throw new RepoError("duplicate", "you have that repository already");
+  if (file.repos.some((r) => keyOfRecord(r) === url.key)) throw new RepoError("taken", "that repository belongs to another account");
+  if (file.repos.filter((r) => r.owner === userId).length >= REPO_LIMIT) throw new RepoError("limit", `at most ${REPO_LIMIT} repositories`);
+  return file;
+}
+
+function checkInstallationId(id: unknown): asserts id is string {
+  if (typeof id !== "string" || !INSTALLATION_RE.test(id)) throw badAuth("the installation of the GitHub App on this repository is needed");
+}
+
+/**
+ * Every check `addRepo` makes before it writes, without writing (and without the installation id, which the caller looks up
+ * afterwards). Throws the same RepoError as the write would.
+ */
+export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean } = {}): void {
+  const input: NewRepo = typeof given === "string" ? { url: given } : given;
+  const { url } = addPlan(input);
+  withAuthLock(() => void addChecks(userId, url, opts));
+}
+
 /**
  * Adds a repository. The record is written first and the token second, and a failed second write takes the record back,
  * so no token exists without a record. `ownerOk` says whether the account exists (default: it is in users.json).
  */
-export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean } = {}): PublicRepo {
+export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string } = {}): PublicRepo {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
-  const url = parseRepoUrl(input.url);
-  const auth = checkAuth(url, { method: input.method ?? "none", username: input.username, token: input.token }, input.method !== undefined && input.method !== "none");
+  const { url, auth } = addPlan(input);
   return withAuthLock(() => {
-    ownerExists(opts, userId);
-    const file = read();
-    if (file.repos.some((r) => r.owner === userId && keyOfRecord(r) === url.key)) throw new RepoError("duplicate", "you have that repository already");
-    if (file.repos.some((r) => keyOfRecord(r) === url.key)) throw new RepoError("taken", "that repository belongs to another account");
-    if (file.repos.filter((r) => r.owner === userId).length >= REPO_LIMIT) throw new RepoError("limit", `at most ${REPO_LIMIT} repositories`);
+    const file = addChecks(userId, url, opts);
+    if (auth.method === "github-app") checkInstallationId(opts.installationId);
     // a failed key leaves both files as they were
     const secret: Secret | undefined = auth.method === "ssh-deploy-key" ? newKeySecret() : auth.token ? { type: "token", value: auth.token } : undefined;
     const id = randomUUID();
@@ -320,6 +364,7 @@ export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk
       ...(credentialId ? { credentialId } : {}),
       ...(secret?.publicKey ? { publicKey: secret.publicKey } : {}),
       ...(auth.username ? { username: auth.username } : {}),
+      ...(auth.method === "github-app" ? { installationId: opts.installationId } : {}),
       added: new Date().toISOString(),
     };
     save([...file.repos, record]);
@@ -349,58 +394,80 @@ export interface AuthChange {
   newKey?: unknown;
 }
 
+type AuthOpts = { ownerOk?: (userId: string) => boolean; installationId?: string };
+
+/** All checks of a change, and the record it would give. Inside the lock; writes nothing. */
+function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange, opts: AuthOpts, requireId: boolean) {
+  ownerExists(opts, userId);
+  const rec = file.repos.find((r) => r.id === id && r.owner === userId);
+  if (!rec) throw new RepoError("not-found", "no such repository");
+  let url = parseRepoUrl(rec.url);
+  if (input.url !== undefined) {
+    const given = parseRepoUrl(input.url);
+    if (given.key !== keyOfRecord(rec)) throw new RepoError("bad-url", "that is another repository; the address can only change to another form of the same one");
+    url = given;
+  }
+  const method = input.method ?? rec.method;
+  const changed = method !== rec.method;
+  if (input.newKey !== undefined && (input.newKey !== true || rec.method !== "ssh-deploy-key" || changed)) {
+    throw badAuth('"newKey" must be true, and works only for a repository with the method "ssh-deploy-key"');
+  }
+  const username = input.username ?? (changed ? undefined : rec.username);
+  if (changed && method !== "none" && method !== "ssh-deploy-key" && method !== "github-app" && input.token === undefined) throw badAuth("a new method needs a token");
+  const auth = checkAuth(url, { method, username, token: input.token }, false);
+  const deploy = auth.method === "ssh-deploy-key";
+  const app = auth.method === "github-app";
+  const installationId = app ? (opts.installationId ?? (rec.method === "github-app" ? rec.installationId : undefined)) : undefined;
+  if (app && requireId) checkInstallationId(installationId);
+  // a deploy key is made for a new method, on request, and when the stored one is missing, of another type or not the record's own
+  const keyOk = listCredentials(userId).some((c) => c.id === rec.credentialId && c.name === secretName(rec) && c.type === "ssh-key");
+  const secret: Secret | undefined = deploy ? (changed || input.newKey === true || !keyOk ? newKeySecret() : undefined) : auth.token !== undefined ? { type: "token", value: auth.token } : undefined;
+  if (secret && listCredentials(userId).some((c) => c.name === secretName(rec) && c.id !== rec.credentialId)) {
+    throw badAuth("a credential with the reserved name of this repository exists already");
+  }
+  const credentialId = auth.method === "none" || app ? undefined : secret ? randomUUID() : rec.credentialId;
+  const publicKey = deploy ? (secret?.publicKey ?? rec.publicKey) : undefined;
+  const next: RepoRecord = {
+    id: rec.id,
+    owner: rec.owner,
+    url: input.url !== undefined ? url.url : rec.url,
+    method: auth.method,
+    ...(credentialId ? { credentialId } : {}),
+    ...(publicKey ? { publicKey } : {}),
+    ...(auth.username ? { username: auth.username } : {}),
+    ...(installationId ? { installationId } : {}),
+    added: rec.added,
+    ...(rec.settings ? { settings: rec.settings } : {}),
+  };
+  // the status stays only for a call that changes nothing about how the repository is reached
+  if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
+  return { rec, next, auth, deploy, app, secret, credentialId };
+}
+
+/**
+ * Every check `setRepoAuth` makes before it writes, without writing. The installation id is looked up by the caller
+ * afterwards, so a missing one is not an error here. Throws the same RepoError as the write would.
+ */
+export function checkRepoAuth(userId: string, id: string, input: AuthChange, opts: { ownerOk?: (userId: string) => boolean } = {}): void {
+  if ([input.method, input.username, input.token, input.url, input.newKey].every((v) => v === undefined)) throw badAuth("give a method, a user name, a token, an address or a new key");
+  withAuthLock(() => void authPlan(read(), userId, id, input, opts, false));
+}
+
 /**
  * Changes the method, user name, token or address of a record, or makes a new deploy key; what is not given keeps its value.
  * The old token or key is wiped first, then the record is written, then the new one is saved. A failure in between leaves a
  * record that names a missing token or key (never a secret without a record); giving the token again, or choosing the
- * method "ssh-deploy-key" again, repairs it.
+ * method "ssh-deploy-key" or "github-app" again, repairs it. The method "github-app" needs `opts.installationId` (or keeps
+ * the one of a record that has it).
  */
-export function setRepoAuth(userId: string, id: string, input: AuthChange, opts: { ownerOk?: (userId: string) => boolean } = {}): { repo: PublicRepo; oldKeysLeft: number; changed: boolean } {
+export function setRepoAuth(userId: string, id: string, input: AuthChange, opts: AuthOpts = {}): { repo: PublicRepo; oldKeysLeft: number; changed: boolean } {
   if ([input.method, input.username, input.token, input.url, input.newKey].every((v) => v === undefined)) throw badAuth("give a method, a user name, a token, an address or a new key");
   return withAuthLock(() => {
-    ownerExists(opts, userId);
     const file = read();
-    const rec = file.repos.find((r) => r.id === id && r.owner === userId);
-    if (!rec) throw new RepoError("not-found", "no such repository");
-    let url = parseRepoUrl(rec.url);
-    if (input.url !== undefined) {
-      const given = parseRepoUrl(input.url);
-      if (given.key !== keyOfRecord(rec)) throw new RepoError("bad-url", "that is another repository; the address can only change to another form of the same one");
-      url = given;
-    }
-    const method = input.method ?? rec.method;
-    const changed = method !== rec.method;
-    if (input.newKey !== undefined && (input.newKey !== true || rec.method !== "ssh-deploy-key" || changed)) {
-      throw badAuth('"newKey" must be true, and works only for a repository with the method "ssh-deploy-key"');
-    }
-    const username = input.username ?? (changed ? undefined : rec.username);
-    if (changed && method !== "none" && method !== "ssh-deploy-key" && input.token === undefined) throw badAuth("a new method needs a token");
-    const auth = checkAuth(url, { method, username, token: input.token }, false);
-    const deploy = auth.method === "ssh-deploy-key";
-    // a deploy key is made for a new method, on request, and when the stored one is missing, of another type or not the record's own
-    const keyOk = listCredentials(userId).some((c) => c.id === rec.credentialId && c.name === secretName(rec) && c.type === "ssh-key");
-    const secret: Secret | undefined = deploy ? (changed || input.newKey === true || !keyOk ? newKeySecret() : undefined) : auth.token !== undefined ? { type: "token", value: auth.token } : undefined;
-    if (secret && listCredentials(userId).some((c) => c.name === secretName(rec) && c.id !== rec.credentialId)) {
-      throw badAuth("a credential with the reserved name of this repository exists already");
-    }
-    const credentialId = auth.method === "none" ? undefined : secret ? randomUUID() : rec.credentialId;
-    const publicKey = deploy ? (secret?.publicKey ?? rec.publicKey) : undefined;
-    const next: RepoRecord = {
-      id: rec.id,
-      owner: rec.owner,
-      url: input.url !== undefined ? url.url : rec.url,
-      method: auth.method,
-      ...(credentialId ? { credentialId } : {}),
-      ...(publicKey ? { publicKey } : {}),
-      ...(auth.username ? { username: auth.username } : {}),
-      added: rec.added,
-      ...(rec.settings ? { settings: rec.settings } : {}),
-    };
-    // the status stays only for a call that changes nothing about how the repository is reached
-    if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
+    const { rec, next, auth, deploy, app, secret, credentialId } = authPlan(file, userId, id, input, opts, true);
     let oldKeysLeft = 0;
-    // a change to none also on a record that is none already: a retry cleans an old key left by the first try
-    if (secret || auth.method === "none") oldKeysLeft = wipeToken(rec);
+    // a change to none or to the app also on a record that is so already: a retry cleans an old key left by the first try
+    if (secret || auth.method === "none" || app) oldKeysLeft = wipeToken(rec);
     // a repeat for a deploy key that is fine already still cleans old Keychain keys left by an earlier try
     else if (deploy) oldKeysLeft = cleanKeys(userId);
     const differs = JSON.stringify(next) !== JSON.stringify(rec) || Boolean(secret);
@@ -462,21 +529,24 @@ export function removeReposLocked(userId: string): number {
  * how it is reached changed meanwhile (owner, address, method, user name, token or key); nothing is written then.
  * A result that does not fit the schema throws and writes nothing.
  */
-export function setRepoConnection(rec: RepoRecord, result: ConnectionResult): "saved" | "gone" | "changed" {
+export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, installationId?: string): "saved" | "gone" | "changed" {
   const connection = ConnectionSchema.parse(result);
+  if (installationId !== undefined && !INSTALLATION_RE.test(installationId)) throw badAuth("the installation id is not valid");
   return withAuthLock(() => {
     const file = read();
     const now = file.repos.find((r) => r.id === rec.id);
     if (!now) return "gone";
-    // a sign-in deleted during the test: a result for it must not be saved
-    if (now.method !== "none") {
+    // a sign-in deleted during the test: a result for it must not be saved (the app has no stored sign-in)
+    if (now.method !== "none" && now.method !== "github-app") {
       const type = now.method === "ssh-deploy-key" ? "ssh-key" : "token";
       if (!listCredentials(now.owner).some((c) => c.id === now.credentialId && c.name === secretName(now) && c.type === type)) return "changed";
     }
     const { settings: _a, ...was } = bare(rec);
     const { settings: _b, ...is } = bare(now);
     if (JSON.stringify(was) !== JSON.stringify(is)) return "changed";
-    save(file.repos.map((r) => (r === now ? { ...now, connection } : r)));
+    // a new installation (the app was installed again) is kept with the status; it is never taken from a request
+    const id = now.method === "github-app" && installationId ? { installationId } : {};
+    save(file.repos.map((r) => (r === now ? { ...now, ...id, connection } : r)));
     return "saved";
   });
 }
@@ -513,7 +583,7 @@ export function setRepoSettings(id: string, input: unknown): { repo: RepoRecord;
 /** Methods whose secret is a personal token: it is wiped when the repository changes owner. */
 export const PERSONAL_METHODS: readonly RepoMethod[] = ["github-token", "https-token"];
 /** Methods whose secret belongs to the repository (a deploy key, a GitHub App installation): it moves with the repository. */
-export const REPO_BOUND_METHODS: readonly RepoMethod[] = ["ssh-deploy-key"];
+export const REPO_BOUND_METHODS: readonly RepoMethod[] = ["ssh-deploy-key", "github-app"];
 
 export interface TransferOptions {
   /** Finds the new owner by e-mail (default: users.json). */
@@ -549,7 +619,9 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     if (file.repos.filter((r) => r.owner === owner.id).length >= REPO_LIMIT) throw new RepoError("limit", `that account has ${REPO_LIMIT} repositories already`);
     let next: RepoRecord = { ...bare(rec), owner: owner.id };
     let oldKeysLeft = 0;
-    if (REPO_BOUND_METHODS.includes(rec.method)) {
+    if (rec.method === "github-app") {
+      // the installation belongs to the repository and there is no stored secret: only the owner changes
+    } else if (REPO_BOUND_METHODS.includes(rec.method)) {
       if (!rec.credentialId || moveCredentialLocked(rec.owner, owner.id, rec.credentialId, secretName(rec)) === "missing") {
         throw new RepoError("no-credential", "the sign-in of this repository is missing; set it again before the transfer");
       }

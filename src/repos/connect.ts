@@ -25,6 +25,7 @@ export class ConnectError extends Error {
 export const CODES = [
   "ok", "skipped", "deploy-key", "bad-token", "bad-key", "no-sign-in", "not-found", "read-only", "empty", "unreachable",
   "host-key-changed", "host-key-unknown", "timeout", "failed", "no-issues", "no-pulls", "no-issues-pulls", "rate-limit", "no-gh",
+  "app-not-set-up", "app-not-installed", "app-broken",
 ] as const;
 export type Code = (typeof CODES)[number];
 export type CheckName = CheckResult["check"];
@@ -39,6 +40,7 @@ const FOLDER_PREFIX = "scf-connect-";
 export function messageFor(code: Code, method: RepoMethod, check: CheckName = "clone"): string {
   const key = method === "ssh-deploy-key";
   const none = method === "none";
+  const app = method === "github-app";
   switch (code) {
     case "ok":
       return check === "clone"
@@ -51,18 +53,21 @@ export function messageFor(code: Code, method: RepoMethod, check: CheckName = "c
     case "deploy-key":
       return "A deploy key gives git access only; issues and pull requests are not checked.";
     case "bad-token":
+      if (app) return "GitHub did not accept the app's token. Test again; if it keeps failing, ask the administrator to check the GitHub App settings.";
       return "The host did not accept the token. It may be wrong or expired. Make a new token and use Change authentication.";
     case "bad-key":
       return "The host did not accept the deploy key. Add the public key shown on this page as a deploy key of the repository, with write access.";
     case "no-sign-in":
       return "The server has no sign-in for this repository. Set up the server's access (for example gh auth login), or choose another authentication.";
     case "not-found":
+      if (app) return "The repository was not found, or the GitHub App cannot see it. Check the address, and that the app is installed on this repository.";
       return key
         ? "The repository was not found, or the deploy key has no access to it. Check the address and add the public key as a deploy key of this repository."
         : none
           ? "The repository was not found, or the server's own access cannot see it. Check the address and the server's access."
           : "The repository was not found, or the token has no access to it. Check the address, and give the token access to this repository.";
     case "read-only":
+      if (app) return "The GitHub App can read the repository but not write to it. Ask the administrator to give the app Contents: Read and write.";
       return key
         ? "The deploy key was added without write access. Remove it and add it again with Allow write access."
         : none
@@ -83,15 +88,24 @@ export function messageFor(code: Code, method: RepoMethod, check: CheckName = "c
     case "failed":
       return "The check failed for a reason the Foundry does not know. Check the address and the sign-in, then test again.";
     case "no-issues":
+      if (app) return "The GitHub App cannot read the issues of this repository. Ask the administrator to give the app Issues: Read and write.";
       return "The sign-in cannot read the issues of this repository. Give the token Issues: Read and write; the Foundry needs it to read and comment on issues.";
     case "no-pulls":
+      if (app) return "The GitHub App cannot read the pull requests of this repository. Ask the administrator to give the app Pull requests: Read and write.";
       return "The sign-in cannot read the pull requests of this repository. Give the token Pull requests: Read and write; the Foundry needs it to open and update them.";
     case "no-issues-pulls":
+      if (app) return "The GitHub App cannot read issues or pull requests. Ask the administrator to give the app Issues and Pull requests: Read and write.";
       return "The sign-in cannot read issues or pull requests. Give the token Issues and Pull requests: Read and write; the Foundry needs both.";
     case "rate-limit":
       return "GitHub's request limit is used up. Wait a while and test again.";
     case "no-gh":
       return "The GitHub command line tool (gh) was not found on the server.";
+    case "app-not-set-up":
+      return "The GitHub App is not set up on this server any more. Ask the administrator, or choose another authentication.";
+    case "app-not-installed":
+      return "The GitHub App is not installed on this repository. Install it with the link on this page, then test again.";
+    case "app-broken":
+      return "The GitHub App of this server is not working. Ask the administrator to check the GitHub App settings.";
   }
 }
 
@@ -102,6 +116,15 @@ const result = (check: CheckName, code: Code, method: RepoMethod, extra: { ok?: 
   code,
   message: messageFor(code, method, check),
 });
+
+/** A test that could not start its checks: the clone has the code, the other checks are skipped. */
+export function blockedResult(code: Code, method: RepoMethod): ConnectionResult {
+  return {
+    at: new Date().toISOString(),
+    ok: false,
+    checks: [result("clone", code, method), result("push", "skipped", method, { ok: false, skipped: true }), result("github-api", "skipped", method, { ok: false, skipped: true })],
+  };
+}
 
 // ---- classifying -----------------------------------------------------------------------------------
 

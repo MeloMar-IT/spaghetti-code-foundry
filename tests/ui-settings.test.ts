@@ -88,6 +88,50 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → GitHub App", () => {
+  const appCard = (main: FakeElement) => main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "GitHub App")!;
+  const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+
+  it("shows four fields with their hints", async () => {
+    const { main } = await render({});
+    const card = appCard(main);
+    expect(card.all("input")).toHaveLength(4);
+    for (const label of ["App ID", "App name (slug)", "Private key file", "Installation ID (optional)"]) expect(input(card, label), label).toBeDefined();
+    expect(card.textContent).toContain("The last part of https://github.com/apps/<name>.");
+    expect(card.textContent).toContain("Only for the bot identity: runs then commit and comment as the app.");
+  });
+
+  it("saves the slug and sends no installation id when it is empty", async () => {
+    const { main, puts } = await render({});
+    const card = appCard(main);
+    input(card, "App ID").value = " 123 ";
+    input(card, "App name (slug)").value = " my-app ";
+    input(card, "Private key file").value = "/k/app.pem";
+    await save(main);
+    expect(puts[0].github_app).toEqual({ app_id: "123", private_key_path: "/k/app.pem", slug: "my-app", installation_id: undefined });
+    expect(JSON.stringify(puts[0].github_app)).not.toContain("installation_id");
+  });
+
+  it("round-trips an old configuration unchanged", async () => {
+    const old = { app_id: "1", installation_id: "2", private_key_path: "/k" };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { github_app: old });
+    await save(main);
+    expect(JSON.parse(JSON.stringify(puts[0].github_app))).toEqual(old);
+    expect(ConfigSchema.parse(JSON.parse(JSON.stringify(puts[0]))).github_app).toEqual(old);
+  });
+
+  it("sends no github_app for an empty app id", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { github_app: { app_id: "1", private_key_path: "/k", slug: "x" } });
+    input(appCard(main), "App ID").value = "  ";
+    await save(main);
+    expect(puts[0].github_app).toBeUndefined();
+  });
+});
+
 describe("Settings → Safety", () => {
   const hotfixBox = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Hotfixes"))!.all("input")[0] as any;
 

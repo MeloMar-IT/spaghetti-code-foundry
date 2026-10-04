@@ -51,6 +51,7 @@ export const api = {
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
   repos: () => req("GET", "/api/repos"),
+  repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),
   setRepoAuth: (id, body) => req("PUT", `/api/repos/${enc(id)}/auth`, body),
   testRepo: (id) => req("POST", `/api/repos/${enc(id)}/test`, {}),
