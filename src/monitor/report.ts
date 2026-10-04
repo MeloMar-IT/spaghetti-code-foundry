@@ -304,6 +304,7 @@ export class Reporter {
       if (handOver().length) mutes = this.d.mutes?.(now) ?? mutes;
       for (const f of handOver()) {
         if (shut) break;
+        if (unresolved.has(f)) continue; // GitHub was not asked about its story: decided at a later check
         f.needsYou = stamp;
         delete f.due;
         touched = true;

@@ -51,11 +51,12 @@ describe("tryAgain", () => {
 describe("fixed starts a new count", () => {
   it("sets the tries back to 0", () => {
     const clock = "2026-10-01T11:00:00.000Z";
-    const f = finding({ tries: 2, lastSeen: T, report: story({ closedAt: T, clockAt: clock, workedMs: 23 * 3_600_000 }) });
+    const f = finding({ tries: 2, needsYou: T, lastSeen: T, report: story({ closedAt: T, clockAt: clock, workedMs: 23 * 3_600_000 }) });
     const now = new Date("2026-10-02T12:00:00.000Z");
     const r = checkFixes([f], { target: "acme/app", now, waitDays: 7, worked: 2 * 3_600_000 });
     expect(r.events.map((e) => e.event)).toEqual(["fixed"]);
     expect(r.findings[0]!.tries).toBe(0);
+    expect(r.findings[0]!.needsYou).toBeUndefined();
     expect(r.findings[0]!.report!.fixedAt).toBeDefined();
   });
 });

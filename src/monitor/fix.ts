@@ -165,8 +165,9 @@ export function checkFixes(findings: Finding[], o: FixOptions): { findings: Find
         // A fix that was waited for a long time gets no comment: it may never have run (and the close is old news).
         r = { ...r, fixedAt: stamp, ...(clock - closed < o.waitDays * DAY ? { fixNote: "due" as const } : {}) };
         events.push({ event: "fixed", finding: f, issue: r.issue });
-        // A fixed problem that is seen again starts a new count of tries.
-        return { ...f, report: r, tries: 0 };
+        // A fixed problem starts a new count and no longer needs a person.
+        const { needsYou, ...rest } = f;
+        return { ...rest, report: r, tries: 0 };
       }
     }
     return r === m ? f : { ...f, report: r };

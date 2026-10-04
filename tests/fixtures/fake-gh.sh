@@ -5,6 +5,8 @@ echo "gh $*" >> "$FAKE_GH_LOG"
 # $FAKE_GH_EXPECT_TOKEN (set, also when empty): a call whose GH_TOKEN differs fails like GitHub does for a bad token.
 if [ -n "${FAKE_GH_EXPECT_TOKEN+x}" ] && [ "$GH_TOKEN" != "$FAKE_GH_EXPECT_TOKEN" ]; then echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1; fi
 if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi
+# $FAKE_GH_HOLD=<file>: the call waits while that file exists; $FAKE_GH_HOLD_ON=<text>: only a call with this text waits (empty: every call).
+if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$FAKE_GH_HOLD" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
 # Edit or delete of a comment (gh api repos/…/issues/comments/<id> [-X DELETE]): logged, the edit with the body field of the JSON on stdin.

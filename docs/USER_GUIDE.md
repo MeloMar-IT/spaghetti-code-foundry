@@ -785,8 +785,8 @@ monitor:
     story is open again, and once it is *fixed*. The count is kept, so no third story is made when
     it returns. A story closed as not planned does not hide the item: **Try again** then starts the
     count anew, but no story is made until that story is reopened.
-  - **A new count.** A finding that became *fixed* and is seen again later starts a new count. A
-    finding that needs you is kept (never pruned) until someone acts.
+  - **A new count.** A finding that became *fixed* no longer needs you, and starts a new count when
+    it is seen again. A finding that needs you is kept (never pruned) until someone acts.
 - **Limits.** 3 new stories a day, 1 per check (most severe first). The rest waits and the card
   says how many. At most 6 GitHub calls per check. If GitHub cannot be reached or its request limit
   is used up, nothing is lost; the stories are made at a later check.
