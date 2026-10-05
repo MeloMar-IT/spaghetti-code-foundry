@@ -111,6 +111,10 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/proposals/:pid/reject", "yes", "reject a proposed entry of your refinement session; it is removed"),
   r("PUT", "refinement/:id/map/:eid", "yes", "change the text of a rule, example or open question of your refinement session"),
   r("DELETE", "refinement/:id/map/:eid", "yes", "remove a rule, example or open question from your refinement session"),
+  r("POST", "refinement/:id/drafts", "yes", "add an empty story draft to your refinement session (at most 20)"),
+  r("PUT", "refinement/:id/drafts/:did", "yes", "save what you typed in a story draft of your refinement session; only the fields in the body change"),
+  r("DELETE", "refinement/:id/drafts/:did", "yes", "remove a story draft from your refinement session"),
+  r("PUT", "refinement/:id/epic", "yes", "set or clear the Epic of your refinement session"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */

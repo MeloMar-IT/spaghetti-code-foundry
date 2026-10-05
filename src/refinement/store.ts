@@ -7,6 +7,7 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, changeEpic, dropDraft, newDraft, saveTyped, type DraftChange, type DraftState } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
@@ -38,7 +39,7 @@ const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
 const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round"] as const;
 const LogEntry = z
-  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
+  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
   .superRefine((l, ctx) => {
     if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > TITLE_MAX) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
@@ -60,7 +61,8 @@ const SessionSchema = z
     state: z.enum(STATES),
     stateBefore: z.enum(OPEN_STATES as [string, ...string[]]).optional(),
     droppedAt: z.iso.datetime().optional(),
-    drafts: z.array(z.never()).max(0),
+    drafts: DraftsSchema,
+    epic: EpicSchema.optional(),
     brief: BriefSchema.optional(),
     architect: ArchitectSchema.optional(),
     talk: TalkSchema.optional(),
@@ -431,10 +433,15 @@ function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, b
   return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
 }
 
+/** The talk and the drafts change only in a session that is not dropped and whose repository is in My repositories. */
+function mustBeOpen(s: Session, opts: TalkOptions): void {
+  if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
+  if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+}
+
 function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk, at: string) => TalkChange | undefined): Session {
   return change(actor, id, opts, false, (s, at) => {
-    if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
-    if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+    mustBeOpen(s, opts);
     const c = fn(s.talk ?? emptyTalk(), at);
     return c ? withTalk(s, c, at, actor.id) : undefined;
   });
@@ -464,3 +471,24 @@ export function recordAsked(id: string, runId: string, asked: { question: string
     return c ? withTalk(s, c, at, s.owner, false) : undefined;
   });
 }
+
+// ---- the story drafts ------------------------------------------------------------------------------
+
+function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState) => DraftChange | undefined): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    mustBeOpen(s, opts);
+    const c = fn({ drafts: s.drafts, epic: s.epic });
+    if (!c) return undefined;
+    if (c.line) room(s, LOG_LIMIT - 1);
+    const { epic: _epic, ...rest } = s;
+    // The first draft starts the drafting; with none left the session is exploring again.
+    const state = s.state === "exploring" && !s.drafts.length && c.drafts.length ? "drafting" : s.state === "drafting" && s.drafts.length && !c.drafts.length ? "exploring" : s.state;
+    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
+    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts: c.drafts, state, updated: at, log: [...s.log, ...line] };
+  });
+}
+
+export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft);
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input));
+export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId));
+export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));

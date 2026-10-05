@@ -5,6 +5,8 @@ export type RefinementErrorCode =
   | "bad-answer"
   | "bad-text"
   | "bad-round"
+  | "bad-draft"
+  | "bad-epic"
   | "no-owner"
   | "not-yours"
   | "limit"

@@ -1943,6 +1943,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
 | `PUT /api/refinement/:id/map/:eid` | yes | yes | change the text of a rule, example or open question of your refinement session |
 | `DELETE /api/refinement/:id/map/:eid` | yes | yes | remove a rule, example or open question from your refinement session |
+| `POST /api/refinement/:id/drafts` | yes | yes | add an empty story draft to your refinement session (at most 20) |
+| `PUT /api/refinement/:id/drafts/:did` | yes | yes | save what you typed in a story draft of your refinement session; only the fields in the body change |
+| `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
+| `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -2378,9 +2382,9 @@ The folder of your clone can keep its name.
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
-**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
+**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too; later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the story drafts (listed by title; "No story drafts yet." when there are none; the page for writing them comes later) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2388,7 +2392,50 @@ The folder of your clone can keep its name.
 
 **When something goes away.** If you remove the repository from My repositories, the session stays readable; the page says so, and it works again when you add the repository back. If an admin deletes your account, your refinement sessions are deleted with it.
 
-**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. In the talk (see below): 100 entries per list, 50 waiting proposals and 50 own questions. A full list or log answers 400 with a plain sentence. Nothing is removed to make room.
+**Limits.** 200 sessions per account; dropped sessions count until they are removed. 1,000 log entries per session; after that the session can only be dropped. In the talk (see below): 100 entries per list, 50 waiting proposals and 50 own questions. In story drafts (see below): 20 drafts; title 120 characters on one line; who, what and why 500 each; 50 criteria of 500; out of scope and notes 5,000 each; 20 depends-on items. A full list or log answers 400 with a plain sentence. Nothing is removed to make room.
+
+### Story drafts
+
+A session keeps story drafts, so that what you write is saved. A draft has a **title**, **who**, **what** and **why** (the parts of "As …, I want …, so that …"), **acceptance criteria** (a list), **out of scope**, **depends on** (a list) and **notes for the builder**. A new draft is empty: nothing is filled in from the idea, the brief or the map. A session has at most 20 drafts and one optional **Epic** that applies to all of them.
+
+**The calls.** All answer with the session; the page for them comes later.
+- `POST /api/refinement/:id/drafts` adds an empty draft (201).
+- `PUT /api/refinement/:id/drafts/:did` saves what you typed, for example `{ "title": "Export a report", "who": "an admin", "what": "to export a report", "why": "I can share it", "criteria": [{ "text": "It downloads" }], "dependsOn": [{ "issue": 12 }] }`.
+- `DELETE /api/refinement/:id/drafts/:did` removes a draft, and it from the depends-on lists of the other drafts.
+- `PUT /api/refinement/:id/epic` with `{ "issue": 73 }` sets the Epic; `{ "issue": null }` clears it. It must be a whole number from 1; it is not checked against GitHub yet.
+
+**Only what you send changes.** A field you leave out stays. An empty field (`""`, spaces or `null`) is removed. A list is sent whole: an item with a known `id` and the same text stays as it is, a known `id` with a new text is changed, an item without `id` is new, and an item you leave out is removed. An unknown or repeated `id` answers 400 ("load the session again").
+
+**Where a text came from.** Every text field and list item has `from`: `typed`, `accepted` (from a suggestion) or `accepted-edited`. The server sets it and ignores a `from` you send: new text is `typed`, and changing an `accepted` text makes it `accepted-edited`. Suggestions come in a later step.
+
+**Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
+
+**The preview.** Every draft in the session has `preview`: `{ title, body }`, the story as Markdown. It is only your text and fixed words; show it as text. For example:
+
+```
+**Epic:** #73
+
+As an admin, I want to export a report, so that I can share it.
+
+### Acceptance criteria
+- [ ] It downloads
+
+### Out of scope
+PDF
+
+### Notes for the builder
+Use the old API
+
+### Depends on
+- #12
+- Sign in (draft)
+```
+
+An empty part shows as "…"; a full stop is added when the why has none; "Out of scope" and "Notes for the builder" show only with text; with nothing to depend on, "Depends on" says "None (can be built on its own)."
+
+**Who may do what.** Only the owner changes drafts and the Epic. Another user gets 404, an admin 403 (an admin may read), a dropped session or a repository that is not in My repositories 409. While the repository is not in My repositories the drafts are not shown (`draftsHidden: true`).
+
+**What is logged.** Adding and removing a draft and setting or clearing the Epic. Saving text writes no line. Drafts and the Epic are kept in `refinements.json` like the talk.
 
 ### The talk: questions, answers and the map
 
