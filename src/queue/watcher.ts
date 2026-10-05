@@ -654,7 +654,7 @@ export class Watcher {
         track.labelOff = { checks, ...off };
       }
       // A job of this watcher that is queued follows the label: it goes first, or goes back when the label is gone.
-      const own = pending.find((p) => p.runId === (queuedId ?? run?.runId) && (p.source === `watcher ${this.cfg.id} issue #${n}` || /^ui (resume|approve|reject)$/.test(p.source ?? "")));
+      const own = pending.find((p) => p.runId === (queuedId ?? run?.runId) && (p.source === `watcher ${this.cfg.id} issue #${n}` || /^ui (resume|approve|reject|answer)$/.test(p.source ?? "")));
       if (own) this.d.scheduler.setPriority(own.runId, isFirst, issue.createdAt);
 
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.

@@ -152,6 +152,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET runs/:id": { path: "runs/nope", user: 404, admin: 404 },
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },
   "POST runs/:id/resume": { path: "runs/nope/resume", body: {}, user: 404, admin: 404 },
+  "POST runs/:id/answer": { path: "runs/nope/answer", body: {}, user: 404, admin: 404 },
   "POST runs/:id/approve": { path: "runs/nope/approve", body: {}, user: 404, admin: 404 },
   "POST runs/:id/reject": { path: "runs/nope/reject", body: {}, user: 404, admin: 404 },
   "GET runs/:id/events": { path: "runs/nope/events", user: 404, admin: 200 },
@@ -223,6 +224,7 @@ describe("the table", () => {
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");
     expect(findRule("GET", ["monitor", "findings", "0000000000000000"])?.path).toBe("monitor/findings/:id");
     expect(findRule("POST", ["monitor", "story"])?.path).toBe("monitor/story");
+    expect(findRule("POST", ["runs", "abc", "answer"])?.path).toBe("runs/:id/answer");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();
@@ -337,6 +339,7 @@ describe("own runs", () => {
     "GET runs/:id": 200,
     "POST runs/:id/cancel": 200,
     "POST runs/:id/resume": 202,
+    "POST runs/:id/answer": 400,
     "POST runs/:id/approve": 202,
     "POST runs/:id/reject": 202,
     "GET runs/:id/events": 200,

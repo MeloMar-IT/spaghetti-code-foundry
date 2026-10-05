@@ -6,11 +6,40 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
-import { USER_ERROR, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
+import { USER_ERROR, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const keys = (o: object) => Object.keys(o).sort();
+
+describe("answers in the user view", () => {
+  const base = {
+    runId: "r", flow: "ask", task: "t", status: "stopped", reason: 'stopped at step "ask_for_info"', startedAt: "2026-01-01T00:00:00.000Z",
+    repo: "/srv/repo", runDir: "/runs/r", workdir: "/work/dir", vars: { github_repo: "acme/app", issue: "7" }, source: "ui",
+    flowDef: { name: "ask", steps: [{ id: "ask_for_info", type: "shell", run: "echo {{task}}" }] },
+    history: [{ id: "ask_for_info", type: "shell", visit: 1, ok: true, output: "Q?", startedAt: "2026-01-01T00:00:00.000Z", durationMs: 1, logFile: "x" }],
+    state: { next: "ask_for_info", steps: {}, visits: {} },
+  } as any;
+  const w = [{ id: "w", enabled: true, source: "issues", github_repo: "acme/app", flow: "ask" }] as any;
+  it("blocks what cannot take an answer, with a sentence", () => {
+    for (const over of [
+      { source: "refinement 11111111-1111-4111-8111-111111111111" }, { status: "failed" }, { reason: 'stopped at step "build"' },
+      { history: [{ ...base.history[0], output: "" }] }, { state: { next: null, steps: {}, visits: {} } },
+      { source: "watcher w issue #7" }, { flowDef: { name: "x", steps: [{ id: "a", type: "shell", run: "echo" }] } }, { flowDef: undefined },
+    ]) expect(answerBlock({ ...base, ...over }, w), JSON.stringify(over)).toEqual(expect.any(String));
+  });
+  it("lets a plain run and a hand-started run of a watched flow through", () => {
+    expect(answerBlock(base, [])).toBeUndefined();
+    expect(answerBlock(base, w)).toBeUndefined();
+  });
+  it("shows answers without who, hides folders, and passes canAnswer only when true", () => {
+    const v = userRun({ ...base, answers: [{ at: "a", text: "see /work/dir", by: "u1" }], canAnswer: true });
+    expect(v.answers).toEqual([{ at: "a", text: "see (folder)" }]);
+    expect(JSON.stringify(v)).not.toContain("u1");
+    expect(v.canAnswer).toBe(true);
+    expect("canAnswer" in userRun({ ...base, canAnswer: false })).toBe(false);
+  });
+});
 
 describe("userTask", () => {
   const id = "11111111-1111-4111-8111-111111111111";

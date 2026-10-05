@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
-import { cancelWaitingRun, newRunId, resumeRun, runFlow } from "../engine/runner.js";
+import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
 import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
@@ -32,6 +32,8 @@ export interface QueuedJob {
   /** When the story's issue was created: among priority jobs, the oldest goes first. */
   storyAt?: string;
 }
+
+export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -128,7 +130,24 @@ export class Scheduler {
     return typeof q?.owner === "string" ? q.owner : undefined;
   }
 
-  submit(job: Job, meta: { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string } = {}): string {
+  /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
+  answer(runId: string, text: string, by: string, meta: JobMeta = {}): void {
+    if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
+    const { undo } = saveAnswer(this.o.runsDir, runId, text, by);
+    try {
+      this.submit({ kind: "resume", runId }, meta);
+    } catch (e) {
+      const i = this.pending.findIndex((p) => p.runId === runId);
+      if (i >= 0) {
+        // not started: as if the call never came
+        this.pending.splice(i, 1);
+        undo();
+      }
+      throw e;
+    }
+  }
+
+  submit(job: Job, meta: JobMeta = {}): string {
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);

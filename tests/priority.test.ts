@@ -271,6 +271,20 @@ describe("watcher priority", () => {
     expect(scheduler.queue().pending[0]!.priority).toBe(true);
   });
 
+  it("a job queued by an answer on the run page follows the label too", async () => {
+    issues([3], [5]);
+    const vars = { github_repo: "acme/app", issue: "5" };
+    scheduler.submit({ kind: "run", flow: PLAIN, task: "", repo: gh.tmp, vars }, { source: "ui answer", lockKey: "acme/app#5", priority: true });
+    scheduler.submit({ kind: "run", flow: PLAIN, task: "", repo: gh.tmp, vars: { ...vars, issue: "3" } }, { source: "ui answer", lockKey: "acme/app#3" });
+    const w = watcher({ max_per_tick: 2 });
+    await w.tick(); // #5 has no bug label: its job goes back
+    expect(scheduler.queue().pending.some((p) => p.priority)).toBe(false);
+    issues([3], [5, ["bug"]]);
+    await w.tick();
+    expect(scheduler.queue().pending[0]!.issue).toBe("5");
+    expect(scheduler.queue().pending[0]!.priority).toBe(true);
+  });
+
   it("a bug story still waits for its dependency", async () => {
     process.env.FAKE_GH_ISSUES = JSON.stringify([
       { number: 4, title: "four", state: "OPEN", createdAt: "2026-01-04T00:00:00Z", labels: [{ name: "claude-factory" }], body: "" },
