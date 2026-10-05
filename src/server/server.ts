@@ -6,6 +6,7 @@ import { loadConfig, type Config } from "../config.js";
 import { redactText } from "../credentials/redact.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
+import { sweepSignInDirs } from "../engine/repo-access.js";
 import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
@@ -107,6 +108,10 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     log(problem);
     throw new Error(problem);
   }
+  // a deploy key that a crash left in a run folder is removed now, not only when the run is resumed
+  const swept = sweepSignInDirs(opts.runsDir);
+  if (swept.removed > 0) log(`${swept.removed} leftover sign-in folder(s) of interrupted runs removed`);
+  if (swept.failed > 0) log(`! ${swept.failed} leftover sign-in folder(s) could not be removed; delete the folder "sign-in" in those run folders`);
   const scheduler = new Scheduler({
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,

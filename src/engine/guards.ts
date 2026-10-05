@@ -156,6 +156,33 @@ const TOKEN_REFUSED = new RegExp(
   "i",
 );
 
+// ── A deploy key or the GitHub App in a run: fixed sentences (never text of GitHub, a key path or a token) ──
+
+export const KEY_REFUSED_RUN = "GitHub refused the deploy key of this repository; reconnect the repository under My repositories";
+export const APP_REFUSED_RUN = "GitHub refused the app's token for this repository; reconnect the repository under My repositories";
+export const DEPLOY_KEY_NO_GH = "a deploy key gives git access only; choose a token or the GitHub App under My repositories";
+export const APP_NOT_SET_UP_RUN = "the GitHub App is not set up on this server; ask an admin, or choose a token under My repositories";
+export const APP_NOT_INSTALLED_RUN = "the GitHub App is not installed on this repository; install it, then press Test connection under My repositories";
+export const APP_BROKEN_RUN = "the GitHub App of this server is not working; ask an admin to check the GitHub App settings";
+export const KEY_NOT_READY = "the deploy key could not be made ready for the step; resume the run to try the step again";
+export const APP_UNREACHABLE_RUN = "GitHub could not be reached for the app's token; resume the run to try the step again";
+export const APP_RATE_LIMIT_RUN = "GitHub's request limit is used up, so no app token could be made; wait a while, then resume the run";
+export const APP_FAILED_RUN = "the app's token could not be made; resume the run to try the step again";
+export const APP_TOKEN_EXPIRED = "the app's token ran out during the step (a token lives one hour); resume the run to get a new one";
+export const SIGN_IN_NOT_REMOVED = "the sign-in folder of this run could not be removed; ask an admin to delete the folder \"sign-in\" in the run folder, then resume the run";
+
+/** Every sentence above that failure.ts, errors.ts and the architect must recognise as it is. */
+export const SIGN_IN_SENTENCES: readonly string[] = [
+  KEY_REFUSED_RUN, APP_REFUSED_RUN, DEPLOY_KEY_NO_GH, APP_NOT_SET_UP_RUN, APP_NOT_INSTALLED_RUN, APP_BROKEN_RUN,
+  KEY_NOT_READY, APP_UNREACHABLE_RUN, APP_RATE_LIMIT_RUN, APP_FAILED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED,
+];
+
+/** What git and ssh say when a host does not accept a deploy key (or the key has no access). Narrower than classifyGit: test output must not match. */
+const KEY_REFUSED = /Permission denied \(publickey|ERROR: Permission to .* denied|Repository not found|Write access to repository not granted|key you are authenticating with has been marked as read only/i;
+
+/** Did a command fail because the host refused the deploy key? */
+export const keyRefused = (output: string): boolean => KEY_REFUSED.test(output);
+
 /** Did a command fail because GitHub refused the token? A rate limit is not a refusal. */
 export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(output) && !/rate limit|abuse detection/i.test(output);
 

@@ -209,6 +209,24 @@ const script = (dir: string, name: string, body: string) => {
 };
 
 /**
+ * Writes a private key as the 0600 file `key` in `dir` and returns what makes git use only that key: no agent, no ssh
+ * configuration of the account, host keys in `knownHosts` (default: known_hosts in the data folder). The caller removes `dir`.
+ */
+export function sshKeyEnv(dir: string, secret: string, knownHosts = join(dataHome(), "known_hosts")): { SCF_SSH_KEY: string; SCF_KNOWN_HOSTS: string; GIT_SSH_COMMAND: string } {
+  // the path travels in SCF_KNOWN_HOSTS; only a quote (ssh's own quoting) or a line break cannot be passed on
+  if (/["\n\r]/.test(knownHosts)) throw new ConnectError("bad-path", "the data folder path cannot be used for the SSH host keys");
+  mkdirSync(dirname(knownHosts), { recursive: true, mode: 0o700 });
+  const key = join(dir, "key");
+  writeFileSync(key, secret.endsWith("\n") ? secret : `${secret}\n`, { mode: 0o600 });
+  chmodSync(key, 0o600);
+  return {
+    SCF_SSH_KEY: key,
+    SCF_KNOWN_HOSTS: knownHosts,
+    GIT_SSH_COMMAND: 'ssh -F /dev/null -i "$SCF_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\\"$SCF_KNOWN_HOSTS\\""',
+  };
+}
+
+/**
  * The environment and arguments of a git process for a method. The secret goes only into the environment of the child
  * (a token) or a 0600 file in `dir` (a key), never into an argument or the address. Every inherited GIT_* variable is
  * dropped. A token or key ignores the git configuration and credential helpers; "none" is the server's own access and keeps them.
@@ -235,16 +253,10 @@ export function gitAuth(dir: string, input: Pick<ConnectInput, "method" | "usern
   const args = ["-c", "credential.helper="];
   if (input.method === "ssh-deploy-key") {
     const secret = needSecret();
-    // the path travels in SCF_KNOWN_HOSTS; only a quote (ssh's own quoting) or a line break cannot be passed on
-    if (/["\n\r]/.test(knownHosts)) throw new ConnectError("bad-path", "the data folder path cannot be used for the SSH host keys");
-    mkdirSync(dirname(knownHosts), { recursive: true, mode: 0o700 });
-    const key = join(dir, "key");
-    writeFileSync(key, secret.endsWith("\n") ? secret : `${secret}\n`, { mode: 0o600 });
-    chmodSync(key, 0o600);
+    const sshEnv = sshKeyEnv(dir, secret, knownHosts);
+    const key = sshEnv.SCF_SSH_KEY;
     delete env.SSH_AUTH_SOCK;
-    env.SCF_SSH_KEY = key;
-    env.SCF_KNOWN_HOSTS = knownHosts;
-    env.GIT_SSH_COMMAND = 'ssh -F /dev/null -i "$SCF_SSH_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\\"$SCF_KNOWN_HOSTS\\""';
+    Object.assign(env, sshEnv);
     const askpass = script(dir, "askpass", "exit 1");
     env.GIT_ASKPASS = askpass;
     return { env, args, askpass, key };

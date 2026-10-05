@@ -5,7 +5,7 @@ import { z } from "zod";
 import { CredentialError, type CredentialType, type Removed, addCredentialLocked, checkSecret, listCredentials, moveCredentialLocked, oldKeysLeft as credentialKeysLeft, readSecret, removeCredentialsLocked } from "../credentials/store.js";
 import { PUBLIC_KEY_RE, generateKeyPair } from "../credentials/ssh-keygen.js";
 import { changedKeys } from "./audit.js";
-import { ConnectionSchema, type ConnectionResult, repoSecretName } from "./repo-connection.js";
+import { ConnectionSchema, type ConnectionResult, readRepoSecret, repoSecretName } from "./repo-connection.js";
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
@@ -172,11 +172,18 @@ export const NEEDS_TOKEN = "set a token for this repository under My repositorie
 export const TOKEN_MISSING = "the token of this repository is missing; set it again under My repositories";
 export const TOKEN_UNREADABLE = "the stored token of this repository cannot be read; set it again under My repositories, or ask an admin";
 export const NO_RUN_OWNER = "this run has no owner, so the token of the repository cannot be looked up";
+export const KEY_MISSING = "the deploy key of this repository is missing; reconnect the repository under My repositories";
+export const KEY_UNREADABLE = "the stored deploy key of this repository cannot be read; reconnect the repository under My repositories, or ask an admin";
 
-/** How a run may read a repository: with the stored token, with the server's own access, or not at all. */
+/**
+ * How a run may use a repository: with the stored token, the stored deploy key, the GitHub App (the step asks for a token),
+ * with the server's own access, or not at all.
+ */
 export type RepoAccess =
   | { kind: "token"; token: string; url: string; username: string }
-  | { kind: "server"; unused?: "ssh-deploy-key" | "github-app" }
+  | { kind: "key"; key: string; url: string }
+  | { kind: "app"; installationId: string; url: string; github: string }
+  | { kind: "server" }
   | { kind: "refused"; reason: string; detail?: string };
 
 const refused = (reason: string, detail?: string): RepoAccess => ({ kind: "refused", reason, ...(detail ? { detail } : {}) });
@@ -205,8 +212,16 @@ export function repoAccess(userId: string | undefined, githubName: string, opts:
     const rec = read().repos.find((r) => r.owner === userId && keyOfRecord(r) === key);
     if (!rec) return notYours;
     if (rec.method === "none") return isAdmin() ? { kind: "server" } : refused(NEEDS_TOKEN);
-    // a deploy key is an ssh key, not a token for gh, and runs do not use the GitHub App yet: an admin keeps the server's access
-    if (rec.method === "ssh-deploy-key" || rec.method === "github-app") return isAdmin() ? { kind: "server", unused: rec.method } : refused(NEEDS_TOKEN);
+    if (rec.method === "github-app") {
+      return rec.installationId ? { kind: "app", installationId: rec.installationId, url: rec.url, github: tryParseRepoUrl(rec.url)?.github ?? githubName } : refused(NEEDS_TOKEN);
+    }
+    if (rec.method === "ssh-deploy-key") {
+      try {
+        return { kind: "key", key: readRepoSecret(rec), url: rec.url };
+      } catch (e) {
+        return e instanceof RepoError && e.code === "no-credential" ? refused(KEY_MISSING) : refused(KEY_UNREADABLE, causeOf(e));
+      }
+    }
     if (!rec.credentialId) return refused(TOKEN_MISSING);
     try {
       return { kind: "token", token: readSecret(userId, rec.credentialId), url: rec.url, username: rec.method === "https-token" ? (rec.username ?? "") : "x-access-token" };

@@ -7,10 +7,13 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
-import { DETAIL_MAX, LISTS, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange } from "./talk.js";
+import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
+
+export const ARCHITECT_KINDS = ["brief", "round", "question"] as const;
+export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
 
@@ -33,7 +36,7 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
@@ -43,7 +46,9 @@ const LogEntry = z
 
 const RUN_ID = z.string().regex(/^[\w-]+$/).max(100);
 const BriefSchema = z.object({ text: z.string().min(1).max(BRIEF_MAX), at: z.iso.datetime(), branch: z.string().max(255).optional(), runId: RUN_ID, cut: z.boolean().optional() }).strict();
-const ArchitectSchema = z.object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional() }).strict();
+const ArchitectSchema = z
+  .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional() })
+  .strict();
 
 const SessionSchema = z
   .object({
@@ -237,8 +242,11 @@ function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean,
   });
 }
 
-const room = (s: Session, last: number) => {
-  if (s.log.length + 1 > last) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
+/** The log lines a run that is not over still needs for its end: kept free from every other change of the session. */
+const reservedFor = (s: Session): number => (s.architect && s.architect.failed === undefined ? architectLogRoom(s.architect.kind) - 1 : 0);
+
+const room = (s: Session, last: number, keep = true) => {
+  if (s.log.length + 1 > last - (keep ? reservedFor(s) : 0)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
 };
 
 export function renameSession(actor: Actor, id: string, title: unknown, opts: StoreOptions = {}): Session {
@@ -254,7 +262,7 @@ export function renameSession(actor: Actor, id: string, title: unknown, opts: St
 export function dropSession(actor: Actor, id: string, opts: StoreOptions = {}): Session {
   return change(actor, id, opts, true, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "that session is dropped already");
-    room(s, LOG_LIMIT);
+    room(s, LOG_LIMIT, false); // dropping must always work; it cancels the run
     return { ...s, state: "dropped", stateBefore: s.state, droppedAt: at, updated: at, log: [...s.log, { at, by: actor.id, what: "dropped" }] };
   });
 }
@@ -315,46 +323,93 @@ function changeById(id: string, opts: StoreOptions, fn: (s: Session, at: string)
 const logged = (s: Session, at: string, what: LogItem["what"], detail?: string, spare = 0): LogItem[] =>
   s.log.length + 1 + spare <= LOG_LIMIT - 1 ? [...s.log, { at, by: s.owner, what, ...(detail !== undefined ? { detail: detail.slice(0, TITLE_MAX) } : {}) }] : s.log;
 
-/** The owner starts a read: records its run. Refused for a dropped session, and when the log has no room for the start and its end. */
-export function setArchitectRun(actor: Actor, id: string, runId: string, opts: StoreOptions = {}): Session {
+/** The log lines a run of this kind can write in all: its start and its end. The room is kept when the run starts. */
+export const architectLogRoom = (kind: ArchitectKind = "brief"): number => (kind === "round" ? 1 + ROUND_LOG_LINES + 2 : 2);
+
+export const END_BAD_FORM = "The architect's answer did not have the agreed form";
+export const END_NO_ROOM = "The talk or the log of this session has no room for the answer";
+export const END_NO_QUESTION = "The question of the person could not be found";
+
+export interface ArchitectAsk {
+  kind?: ArchitectKind;
+  /** For kind `question`: the checked question. */
+  question?: string;
+}
+
+/** The owner starts a run of the architect: records it. Refused for a dropped session, and when the log has no room for the start and its end. */
+export function setArchitectRun(actor: Actor, id: string, runId: string, ask: ArchitectAsk = {}, opts: StoreOptions = {}): Session {
+  const kind = ask.kind ?? "brief";
   return change(actor, id, opts, false, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
-    if (s.log.length + 2 > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
-    return { ...s, architect: { runId, at }, updated: at, log: [...s.log, { at, by: actor.id, what: "architect-started", detail: runId }] };
+    if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
+    const architect = { runId, at, ...(kind !== "brief" ? { kind } : {}), ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}) };
+    const entry: LogItem =
+      kind === "question"
+        ? { at, by: actor.id, what: "asked", detail: cut(ask.question ?? "", DETAIL_MAX) }
+        : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
+    return { ...s, architect, updated: at, log: [...s.log, entry] };
   });
 }
 
-/** A paused read was resumed: it is not marked failed any more. The log entry is written only when it leaves room for the end. Never throws. */
+/** A paused run was resumed: it is not marked failed any more. The log entry is written only when it leaves room for the end. Never throws. */
 export function noteArchitectResumed(id: string, runId: string, opts: StoreOptions = {}): void {
   try {
     changeById(id, opts, (s, at) => {
       if (s.architect?.runId !== runId) return undefined;
-      return { ...s, architect: { runId, at: s.architect.at }, updated: at, log: logged(s, at, "architect-resumed", runId, 1) };
+      const { failed: _failed, ...architect } = s.architect;
+      return { ...s, architect, updated: at, log: logged(s, at, "architect-resumed", runId, architectLogRoom(architect.kind) - 1) };
     });
   } catch {
     // the session stays as it was; the next read settles it
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { failed: string };
 
 /**
- * The read of `runId` ended. A brief replaces the stored one and clears the run; a failure keeps the stored brief and
- * marks the run. Nothing is written for another run id, an unknown session or a mark that is there already.
+ * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
+ * each clears the run. A failure keeps the talk and the brief and marks the run. Nothing is written for another run id, an unknown
+ * session or a mark that is there already.
  */
 export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, opts: StoreOptions = {}): Session | undefined {
   return changeById(id, opts, (s, at) => {
     if (s.architect?.runId !== runId) return undefined;
-    if ("failed" in end) {
-      const failed = end.failed.slice(0, REASON_MAX);
-      if (s.architect.failed === failed) return undefined;
-      const first = s.architect.failed === undefined;
-      return { ...s, architect: { ...s.architect, failed }, updated: at, log: first ? logged(s, at, "architect-failed", failed) : s.log };
-    }
-    const cut = end.brief.text.length > BRIEF_MAX;
+    const a = s.architect;
+    const fail = (text: string): Session | undefined => {
+      const failed = text.slice(0, REASON_MAX);
+      if (a.failed === failed) return undefined;
+      return { ...s, architect: { ...a, failed }, updated: at, log: a.failed === undefined ? logged(s, at, "architect-failed", failed) : s.log };
+    };
+    if ("failed" in end) return fail(end.failed);
     const { architect: _gone, ...rest } = s;
-    const brief: Brief = { text: end.brief.text.slice(0, BRIEF_MAX), at: end.brief.at, ...(end.brief.branch ? { branch: end.brief.branch } : {}), runId, ...(cut ? { cut: true } : {}) };
-    return { ...rest, brief, updated: at, log: logged(s, at, "architect-brief", runId) };
+    if ("brief" in end) {
+      const tooLong = end.brief.text.length > BRIEF_MAX;
+      const brief: Brief = { text: end.brief.text.slice(0, BRIEF_MAX), at: end.brief.at, ...(end.brief.branch ? { branch: end.brief.branch } : {}), runId, ...(tooLong ? { cut: true } : {}) };
+      return { ...rest, brief, updated: at, log: logged(s, at, "architect-brief", runId) };
+    }
+    const talk = s.talk ?? emptyTalk();
+    try {
+      let c: TalkChange | undefined;
+      const lines: LogLine[] = [];
+      if ("round" in end) {
+        c = addRound(talk, runId, end.round, at);
+        if (!c) return undefined;
+        lines.push(...c.lines);
+        const done = c.talk.rounds.at(-1)?.done;
+        if (done) lines.push({ what: "round-done", detail: cut(done, DETAIL_MAX) });
+        lines.push({ what: "architect-round", detail: runId });
+      } else {
+        if (a.question === undefined) return fail(END_NO_QUESTION);
+        c = addAsked(talk, runId, { question: a.question, answer: end.answer }, at);
+        if (!c) return undefined;
+        // The question was logged when the run started.
+        lines.push(...c.lines.filter((l) => l.what !== "asked"));
+      }
+      return withTalk(rest, { talk: c.talk, lines }, at, s.owner, false);
+    } catch (e) {
+      if (!(e instanceof RefinementError)) throw e;
+      return fail(e.code === "limit" ? END_NO_ROOM : END_BAD_FORM);
+    }
   });
 }
 
@@ -365,9 +420,15 @@ export interface TalkOptions extends StoreOptions {
 }
 
 /** The session with the changed talk and its log lines. Throws `limit` when the lines do not all fit before the slot kept for dropping. */
-function withTalk(s: Session, c: TalkChange, at: string, by: string): Session {
-  if (c.lines.length) room(s, LOG_LIMIT - c.lines.length);
-  return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, detail: l.detail, ...(l.list ? { list: l.list } : {}) }))] };
+interface LogLine {
+  what: LogItem["what"];
+  detail?: string;
+  list?: TalkLine["list"];
+}
+
+function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, by: string, keep = true): Session {
+  if (c.lines.length) room(s, LOG_LIMIT - c.lines.length, keep);
+  return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
 }
 
 function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk, at: string) => TalkChange | undefined): Session {
@@ -392,7 +453,7 @@ export const removeEntry = (actor: Actor, id: string, entryId: string, opts: Tal
 export function recordRound(id: string, runId: string, round: RoundInput, opts: StoreOptions = {}): Session | undefined {
   return changeById(id, opts, (s, at) => {
     const c = addRound(s.talk ?? emptyTalk(), runId, round, at);
-    return c ? withTalk(s, c, at, s.owner) : undefined;
+    return c ? withTalk(s, c, at, s.owner, false) : undefined;
   });
 }
 
@@ -400,6 +461,6 @@ export function recordRound(id: string, runId: string, round: RoundInput, opts: 
 export function recordAsked(id: string, runId: string, asked: { question: string; answer: string }, opts: StoreOptions = {}): Session | undefined {
   return changeById(id, opts, (s, at) => {
     const c = addAsked(s.talk ?? emptyTalk(), runId, asked, at);
-    return c ? withTalk(s, c, at, s.owner) : undefined;
+    return c ? withTalk(s, c, at, s.owner, false) : undefined;
   });
 }

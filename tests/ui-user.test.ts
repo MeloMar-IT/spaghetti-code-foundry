@@ -58,7 +58,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {

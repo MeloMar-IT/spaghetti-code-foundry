@@ -16,6 +16,8 @@ export const ANSWER_TEXT_MAX = 2000;
 export const REPLY_MAX = 8000;
 /** The longest own question that is stored (a storage bound; the input limit of the ask call is at most this). */
 export const ASK_MAX = 10_000;
+/** The longest own question the owner can ask the architect, in characters. */
+export const ASK_INPUT_MAX = 2000;
 /** The longest `detail` of a log line of the talk. */
 export const DETAIL_MAX = 2000;
 export const LIST_LIMIT = 100;
@@ -31,7 +33,7 @@ export type ListKind = (typeof LISTS)[number];
 export const MAP_KEY = { rule: "rules", example: "examples", open: "open" } as const;
 export const VIEWS = ["need", "build", "test"] as const;
 
-export const TALK_LOG_KINDS = ["question", "answered", "open-added", "entry-accepted", "entry-rejected", "entry-changed", "entry-removed", "asked", "architect-answered", "proposals-left-out"] as const;
+export const TALK_LOG_KINDS = ["question", "answered", "open-added", "entry-accepted", "entry-rejected", "entry-changed", "entry-removed", "asked", "architect-answered", "proposals-left-out", "round-done"] as const;
 export const isTalkKind = (what: string): boolean => (TALK_LOG_KINDS as readonly string[]).includes(what);
 
 const CONTROL_IN_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
@@ -188,6 +190,9 @@ function ownText(input: unknown, max: number, code: "bad-answer" | "bad-text", w
   if (HAS_CONTROL.test(t)) throw bad(`the ${what} has characters that are not allowed`);
   return t;
 }
+
+/** An own question for the architect, checked: text of 1 to ASK_INPUT_MAX characters, no control characters. */
+export const ownQuestion = (input: unknown): string => ownText(input, ASK_INPUT_MAX, "bad-text", "question");
 
 const LIST_NAME = { rule: "rules", example: "examples", open: "open questions" } as const;
 const full = (kind: ListKind) => new RefinementError("limit", `the ${LIST_NAME[kind]} are full: at most ${LIST_LIMIT} entries; remove one first`);

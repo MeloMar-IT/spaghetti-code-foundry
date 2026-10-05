@@ -36,6 +36,8 @@ export async function runShell(o: {
   scan?: (text: string) => boolean;
   /** Characters of output to keep (default 20,000). */
   maxOutput?: number;
+  /** The step holds a credential: its whole process group is killed when it ends. */
+  ownGroup?: boolean;
 }): Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -54,6 +56,7 @@ export async function runShell(o: {
     signal: o.signal,
     logFile: o.logFile,
     pinnedSecrets: o.pinnedSecrets,
+    ownGroup: o.ownGroup,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
   const keep = o.maxOutput ?? MAX_OUTPUT;

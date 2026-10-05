@@ -45,6 +45,60 @@ export interface ReporterDeps {
   clean?: CleanDeps;
 }
 
+/** The story of each finding on GitHub, by marker hash: an open one wins (the oldest of them), else the newest closed one. */
+export function storiesByMarker(issues: RestIssue[]): Map<string, RestIssue> {
+  const byHash = new Map<string, RestIssue>();
+  for (const i of issues) {
+    const h = hashIn(i.body ?? undefined);
+    if (!h) continue;
+    const have = byHash.get(h);
+    const isOpen = (x: RestIssue) => x.state === "open";
+    if (!have || (isOpen(i) && (!isOpen(have) || i.number < have.number)) || (!isOpen(i) && !isOpen(have) && i.number > have.number)) byHash.set(h, i);
+  }
+  return byHash;
+}
+
+/**
+ * Applies what GitHub says about a story to its finding (changes `f`). A story that was made but whose save was lost is
+ * taken up: it counts as a try. Returns true when the story was closed as not planned.
+ */
+export function adoptIssue(f: Finding, issue: RestIssue, target: string, stamp: string): boolean {
+  const m = f.report && same(f.report.repo, target) ? f.report : undefined;
+  const known = m?.issue === issue.number || (f.earlier ?? []).some((e) => same(e.repo, target) && e.issue === issue.number);
+  if (!known) {
+    f.tries = triesOf(f) + 1;
+    delete f.needsYou;
+  }
+  const r: StoryRef = m && m.issue === issue.number ? { ...m } : { repo: target, issue: issue.number, url: issue.html_url, at: issue.created_at, seen: 0, lookedAt: stamp };
+  let next: StoryRef = r;
+  let notPlanned = false;
+  if (issue.state === "open") {
+    // Open again: the clock and the verdict are forgotten.
+    next = forgetFix(r);
+    delete next.closedAt;
+    delete next.muted;
+    delete f.due;
+  } else if (!issue.state_reason || issue.state_reason === "completed") {
+    const closed = issue.closed_at ?? r.closedAt ?? stamp;
+    // Closed at another time (reopened and closed again): the fix state starts over.
+    next = r.closedAt !== undefined && Date.parse(r.closedAt) !== Date.parse(closed) ? forgetFix(r) : r;
+    next.closedAt = closed;
+    delete next.muted;
+  } else {
+    next = forgetFix(r);
+    next.muted = true;
+    delete f.due;
+    notPlanned = true;
+  }
+  f.report = next;
+  return notPlanned;
+}
+
+/** Why "make a story now" made none. */
+export type StoryNowCode = "unknown" | "no_target" | "gone" | "off" | "unreadable" | "exists" | "muted" | "two_tries" | "github";
+/** `made: false`: the story was already on GitHub (its save was lost) and is taken up. */
+export type StoryNowResult = { ok: true; made: boolean; issue: number; url: string } | { ok: false; code: StoryNowCode };
+
 export interface ReportResult {
   findings: Finding[];
   /** What was done (one line each). */
@@ -64,6 +118,80 @@ export class Reporter {
   private labelsOk = new Set<string>();
 
   constructor(private d: ReporterDeps) {}
+
+  /**
+   * An admin asked for the bug story of one finding. The waiting rules (severity, how long, the limits, the quiet time, the
+   * circuit breaker) do not apply. The off switch, the mutes, "only once" and the two tries do. Makes at most that one story
+   * (or takes up the one that is on GitHub already) and calls `save` with the changed finding. Never throws.
+   */
+  async storyNow(input: Finding[], fingerprint: string, now: Date, by: string, save: (f: Finding) => void): Promise<StoryNowResult> {
+    const no = (code: StoryNowCode): StoryNowResult => ({ ok: false, code });
+    const found = input.find((x) => x.fingerprint === fingerprint);
+    if (!found) return no("unknown");
+    const target = this.d.config().report_to;
+    if (!target) return no("no_target");
+    if (found.gone) return no("gone");
+    const f: Finding = { ...found };
+    const stamp = now.toISOString();
+    /** The switch is read again after every wait: off and an unreadable file stop it, the other verdicts do not. */
+    const stopped = (): StoryNowResult | undefined => {
+      const v = this.d.guard?.();
+      return v && !v.go && (v.reason === "off" || v.reason === "unreadable") ? no(v.reason) : undefined;
+    };
+    const stop = stopped();
+    if (stop) return stop;
+    if (f.report && same(f.report.repo, target)) return no("exists");
+    if (muteFor(this.d.mutes?.(now) ?? [], f)) return no(MUTED);
+    if (triesOf(f) >= MAX_TRIES) return no("two_tries");
+    const rate = this.d.rateLimit?.();
+    const core = rate && now.getTime() - Date.parse(rate.at) < HOUR ? rate.resources.core : undefined;
+    if (core && core.remaining === 0 && core.reset * 1000 > now.getTime()) return no("github");
+    try {
+      const match = storiesByMarker(await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS)).get(markerHash(f.fingerprint));
+      const afterList = stopped();
+      if (afterList) return afterList;
+      if (match) {
+        // Made before, and the save or the answer was lost: taken up, and it counts as a try.
+        adoptIssue(f, match, target, stamp);
+        save(f);
+        return { ok: true, made: false, issue: match.number, url: match.html_url };
+      }
+      const label = this.d.buildLabel(target);
+      const wanted = [BUG, ...(label ? [{ name: label, color: "c2410c", description: LABEL_WORDS.trigger }] : [])].filter((l, i, all) => all.findIndex((x) => x.name === l.name) === i);
+      for (const l of wanted.filter((x) => !this.labelsOk.has(`${target}|${x.name}`))) {
+        await createLabelIfMissing(target, l.name, l.color, l.description, CALL_TIMEOUT_MS);
+        this.labelsOk.add(`${target}|${l.name}`);
+        const afterLabel = stopped();
+        if (afterLabel) return afterLabel;
+      }
+      const foreign = (f.repo !== undefined && !same(f.repo, target)) || (f.evidence?.repos ?? []).some((r) => !same(r, target));
+      const raw = f.evidence?.lines ?? [];
+      const lines = raw.length === 0 ? [] : foreign ? undefined : await cleanLines(raw, this.d.names(target), this.d.clean);
+      const story = buildStory(f, { lines, builtinSteps: this.d.builtinSteps() });
+      const late = stopped();
+      if (late) return late;
+      if (muteFor(this.d.mutes?.(now) ?? [], f)) return no(MUTED);
+      let issue: RestIssue;
+      try {
+        issue = await createIssue(target, { title: story.title, body: story.body, labels: wanted.map((l) => l.name) }, CALL_TIMEOUT_MS);
+      } catch (e) {
+        for (const l of wanted) this.labelsOk.delete(`${target}|${l.name}`);
+        throw e;
+      }
+      // Written before the local save: a story that exists on GitHub must show in the log even when the save fails.
+      this.d.record?.({ event: "story-made", detector: f.detector, fingerprint: f.fingerprint, repo: target, issue: issue.number, by });
+      f.tries = triesOf(f) + 1;
+      delete f.needsYou;
+      delete f.due;
+      delete f.skipped;
+      f.report = { repo: target, issue: issue.number, url: issue.html_url, at: stamp, seen: 0, lookedAt: stamp };
+      save(f);
+      return { ok: true, made: true, issue: issue.number, url: issue.html_url };
+    } catch (e) {
+      this.d.log?.(`bug stories: ${errorLine((e as Error).message)}`);
+      return no("github");
+    }
+  }
 
   async report(input: Finding[], now: Date, save: (findings: Finding[]) => void): Promise<ReportResult> {
     const cfg = this.d.config();
@@ -226,45 +354,10 @@ export class Reporter {
         commit();
       }
       spend(1);
-      const byHash = new Map<string, RestIssue>();
-      for (const i of await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS)) {
-        const h = hashIn(i.body ?? undefined);
-        if (!h) continue;
-        const have = byHash.get(h);
-        const isOpen = (x: RestIssue) => x.state === "open";
-        // An open story wins (the oldest of them); else the newest closed one.
-        if (!have || (isOpen(i) && (!isOpen(have) || i.number < have.number)) || (!isOpen(i) && !isOpen(have) && i.number > have.number)) byHash.set(h, i);
-      }
+      const byHash = storiesByMarker(await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS));
       /** Applies what GitHub says about the story of a finding. */
       const apply = (f: Finding, issue: RestIssue) => {
-        const m = mine(f);
-        const known = m?.issue === issue.number || (f.earlier ?? []).some((e) => same(e.repo, target) && e.issue === issue.number);
-        // A story that was made but whose save was lost is adopted here: it counts as a try (before it is assigned).
-        if (!known) {
-          f.tries = triesOf(f) + 1;
-          delete f.needsYou;
-        }
-        const r: StoryRef = m && m.issue === issue.number ? { ...m } : { repo: target, issue: issue.number, url: issue.html_url, at: issue.created_at, seen: 0, lookedAt: stamp };
-        let next: StoryRef = r;
-        if (issue.state === "open") {
-          // Open again: the clock and the verdict are forgotten.
-          next = forgetFix(r);
-          delete next.closedAt;
-          delete next.muted;
-          delete f.due;
-        } else if (!issue.state_reason || issue.state_reason === "completed") {
-          const closed = issue.closed_at ?? r.closedAt ?? stamp;
-          // Closed at another time (reopened and closed again): the fix state starts over.
-          next = r.closedAt !== undefined && Date.parse(r.closedAt) !== Date.parse(closed) ? forgetFix(r) : r;
-          next.closedAt = closed;
-          delete next.muted;
-        } else {
-          next = forgetFix(r);
-          next.muted = true;
-          delete f.due;
-          actions.push(`bug story #${issue.number} was closed as not planned: muted`);
-        }
-        f.report = next;
+        if (adoptIssue(f, issue, target, stamp)) actions.push(`bug story #${issue.number} was closed as not planned: muted`);
         touched = true;
       };
       const syncing = findings.filter((f) => !muteOf(f) && (queue.includes(f) || (seenNow(f) && mine(f)) || quiet.includes(f) || f === note));

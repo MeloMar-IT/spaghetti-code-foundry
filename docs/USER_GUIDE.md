@@ -189,6 +189,11 @@ A line under the top bar of every page says **All good**, or the number of probl
 
 The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
+When the monitor has stored findings, the line also links to the [Problems page](#the-problems-page):
+"N open findings of the monitor", or "Findings of the monitor (none open)". It does not change
+**All good**. In `GET /api/health` this is `monitorFindings` (`open`, `total`, and `unreadable`
+when the findings file cannot be read): counts only, never a name.
+
 ### The board
 
 ![The board of a repository](images/board.png)
@@ -476,7 +481,7 @@ current format.
 shell step that calls `gh`, or uses `git clone`, `fetch`, `pull`, `push` or `ls-remote`, or calls a
 helper script that does. Never tick it on a step that runs tests or the build, and not together
 with **Run in Docker** or in a parallel step. A marked step signs in with the token you stored for
-the repository under **My repositories** (see "What runs sign in with" there); the built-in flows
+the repository under **My repositories**: its token, its deploy key or the GitHub App (see "What runs sign in with" there); the built-in flows
 and the blocks of the library are already marked. **Flows you wrote yourself that call `gh` or push need the flag. In a step
 without it the Foundry's own access is used, not your repository's token.** If the sign-in fails
 in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
@@ -728,7 +733,8 @@ evidence, when it was first and last seen and how often. A finding not seen for 
 owed one). A file that cannot be read is kept as `monitor-findings.json.broken`. If the monitor's
 own check fails, the Health line says so. The monitor's card on the Watchers page shows what waits
 or is wrong with its bug stories, and lists the findings and the mutes (see
-[Mute a detector or a finding](#mute-a-detector-or-a-finding)).
+[Mute a detector or a finding](#mute-a-detector-or-a-finding)). The
+[Problems page](#the-problems-page) shows the same with the state of each finding.
 
 #### Bug stories from the monitor
 
@@ -882,6 +888,50 @@ does not become a bug story.
 - **Limits.** One mute per detector and one per finding at a time (a finding can be muted next to
   its detector; the mute of the finding wins). At most 200 mutes. Mutes are kept in
   `monitor-guard.json` as account ids, never names or e-mail addresses.
+
+#### The Problems page
+
+**Problems** (`#/problems`, admins only; users do not see it) shows what the monitor found and what
+happens to each problem.
+
+- **The sentence at the top.** One sentence says whether the monitor is running, whether bug
+  stories are on, off, quiet or stopped, when it last checked, how many bug stories it made today
+  and the daily limit, and whether the circuit breaker is open, with its reason. The count comes
+  from the monitor's log, so it can be above the limit: "Make a story now" does not count against
+  the limit. "Last checked" is kept in memory: after a server restart it says "has not checked
+  since the server started" until the monitor runs again.
+- **The findings.** Newest and most severe first (gone ones last), at most 100 at first and then
+  **Show N more**. Each row has the summary, the severity, since when, how often ("seen in N
+  checks"), the state and the bug story. **Details** opens the evidence, the bug stories (links;
+  "(earlier)" for older ones) and the runs that build them. If the findings file cannot be read,
+  the page says so instead of "No findings."
+
+| State | What it says |
+|---|---|
+| seen | seen, no story yet |
+| waiting | bug story #N is waiting (open, no run builds it) |
+| building | bug story #N is being built (a run builds it now) |
+| fixed-watching | fixed, watching: the story is closed and the fix is being watched |
+| came-back | came back: the problem was seen again after the fix |
+| needs-you | needs you: two stories did not fix it |
+| muted | muted by an admin (with the reason), or the story was closed as not planned |
+| gone | gone: not seen for 24 hours |
+
+- **Actions.** **Switch the monitor off / on** (the same as on the Watchers page; while it is off
+  the monitor still records problems, but makes no bug story and writes no comment). **Mute** and
+  **End mute**. **Try again** for *needs you*. **This is not a problem** mutes the finding for
+  good with a reason you give; you can end it here later.
+- **Make a story now.** For a finding that is *seen, no story yet*. It skips the waiting rules:
+  the severity, "longer than one check", 3 days for minor, the daily and per-check limits, the
+  quiet time and an open circuit breaker. It never skips the off switch, the mutes, "only once"
+  (a story already on GitHub is taken up, not made again) or the two tries; the cleaning of
+  private text applies too. It makes only that one story. The button says why it cannot be used:
+  the monitor is off, is not running, or no repository is set. The API answers 409 when the
+  monitor is off or not running, or the finding has a story, is muted, used its two tries, is
+  gone or has no repository; 502 when GitHub fails.
+- **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
+  last found something and whether it is muted. Change a number and press **Save**; this changes
+  the setting `monitor.<detector>` like the Settings page.
 
 ### How issue watchers use labels
 
@@ -1620,7 +1670,16 @@ show as "n runs ahead of you", without ids.
 
 ![My repositories](images/repos.png)
 
-**What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the token you stored for it (method "GitHub token" or "HTTPS token"), and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it. Give the token Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment. With the method "none" an admin's run uses the server's own access (a deploy key or the GitHub App too); a user's run fails with "set a token for this repository under My repositories". If the token is missing, cannot be read or is refused by GitHub (expired, revoked, no access), the run fails and tells you to set it again here. A push to a protected branch is still refused and the secret scan still applies.
+**What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the sign-in you chose for it, and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it.
+- **A token** ("GitHub token" or "HTTPS token"): `gh` and git use it. Give it Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment.
+- **A deploy key:** git uses it over ssh, and nothing else (no ssh agent, no key or ssh settings of the server's account; host keys are kept in `known_hosts` in the data folder). The key is a file in the folder `sign-in` of the run folder, outside the workspace. It exists only while the marked step runs and is deleted when the step ends. **A deploy key gives git access only:** a step that calls `gh` fails with "a deploy key gives git access only; choose a token or the GitHub App under My repositories". Call `gh` by name; the check does not see `gh` called by its full path.
+- **The GitHub App:** each marked step gets a new token from the app, limited to this repository, for `gh` and git. It is never stored and is hidden in the output. **A token lives one hour,** so a marked step with the app must finish within one hour. A step that runs longer and is then refused fails with "the app's token ran out during the step"; resume the run to get a new token. If the app is not set up, not installed on the repository or GitHub cannot be reached, the run fails with a sentence that says so.
+
+With the method "none" an admin's run uses the server's own access; a user's run fails with "set a token for this repository under My repositories". If the sign-in is missing, cannot be read or is refused by GitHub (expired, revoked, no access), the run fails and tells you to reconnect the repository here. A push to a protected branch is still refused and the secret scan still applies.
+
+**The sign-in folder.** The `sign-in` folder is removed when the step ends and when the run ends, however it ends. A folder left by a crash is removed when the run is resumed and when the server starts. If a folder cannot be removed, the step or the resume fails with "the sign-in folder of this run could not be removed"; ask an admin to delete the folder `sign-in` in the run folder, then resume the run. A background process that a step starts is stopped when the step ends.
+
+**After the upgrade.** An admin's repository with a deploy key or the app no longer uses the server's own access in marked steps. A deploy-key repository cannot run steps that call `gh`, such as the first steps of the built-in issue flows; choose a token or the app for it.
 
 **Test connection.** The button on My repositories calls `POST /api/repos/<id>/test` (the owner, or an admin for any
 repository). It runs up to three checks and shows each with a short message: **Read** (a shallow clone), **Write**
@@ -1801,7 +1860,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/config` | yes | no | change the settings |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
-| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), its findings and its mutes |
+| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
+| `GET /api/monitor/findings/:id` | yes | no | the evidence, bug stories and runs of one finding of the monitor |
+| `POST /api/monitor/story` | yes | no | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
 | `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |
 | `POST /api/monitor/on` | yes | no | let the monitor make bug stories again |
 | `POST /api/monitor/mutes` | yes | no | mute one detector or one finding of the monitor, with a reason, for a time or for good |
@@ -1875,13 +1936,15 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
 | `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
+| `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time) |
+| `POST /api/refinement/:id/ask` | yes | yes | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
 | `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
 | `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
 | `POST /api/refinement/:id/proposals/:pid/reject` | yes | yes | reject a proposed entry of your refinement session; it is removed |
 | `PUT /api/refinement/:id/map/:eid` | yes | yes | change the text of a rule, example or open question of your refinement session |
 | `DELETE /api/refinement/:id/map/:eid` | yes | yes | remove a rule, example or open question from your refinement session |
 
-**What comes later.** Runs that use a user's stored credentials or a repository's token, runs that use a deploy key, runs that use the GitHub App, and pages for users (starting runs).
+**What comes later.** Pages for users (starting runs).
 
 ### Access from other computers
 
@@ -2163,6 +2226,14 @@ you can do first. Find yours in the table:
 | The step … failed: the agent used all its turns | Look at the log of the step on the run page |
 | The step … failed: the repository has no token for runs; set one under My repositories | Set a token for the repository under My repositories |
 | The step … failed: the repository's token is missing or refused; set it again under My repositories | Set the token of the repository again under My repositories |
+| The step … failed: the repository signs in with a deploy key, which cannot use issues or pull requests | Choose a token or the GitHub App for the repository under My repositories |
+| The step … failed: the repository's sign-in is missing or refused; reconnect it under My repositories | Reconnect the repository under My repositories |
+| The step … failed: the repository's sign-in is missing or refused; reconnect it under My repositories | Reconnect the repository under My repositories, or ask the administrator |
+| The step … failed: the GitHub App cannot sign in to this repository | Install the GitHub App on the repository, then press Test connection |
+| The step … failed: the GitHub App cannot sign in to this repository | Ask the administrator to check the GitHub App settings |
+| The step … failed: the repository's sign-in was not available for the step | Resume the run to try the step again |
+| The step … failed: the repository's sign-in was not available for the step | Wait a while, then resume the run |
+| The step … failed: a folder with the repository's sign-in was left in the run folder | Ask the administrator to delete the sign-in folder in the run folder, then resume the run |
 | The step … failed: the agent hit an error while it worked | Look at the log of the step on the run page |
 | The step … failed: the agent used up the budget of the step | Give the step a larger budget in the flow |
 | The step … failed: the agent ended with an error | Look at the log of the step on the run page |
@@ -2309,7 +2380,7 @@ The folder of your clone can keep its name.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. For now only **Drop** and **Restore** change it; later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the story drafts ("No story drafts yet." for now) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2321,7 +2392,21 @@ The folder of your clone can keep its name.
 
 ### The talk: questions, answers and the map
 
-A session keeps the talk with the architect, so it is not lost. The page for it comes later; for now the server stores it and the calls below work. No architect round is started from a session yet.
+A session keeps the talk with the architect, so it is not lost. The session page shows it in two parts, **Questions** and **Map**, right after the Context brief. The calls below are what the page uses (see also "Rounds and questions from a session" below).
+
+**How a round goes on the page.**
+1. Press **Ask the architect for questions**. Without a brief the page says to ask the architect to look at the code first.
+2. Each question shows its point of view (the user's need, the build or the test), the question, why it matters, and 2–4 options with their trade-offs. The recommended option is marked.
+3. Answer each question: press **Choose** on an option, type your own answer and press **Send my answer**, or press **I don't know yet**. An answered question shows your answer and has no buttons.
+4. When every question is answered, **Ask for another round** shows. The architect then reads your answers, proposes entries for the map and asks what is still open. If it has nothing important left to ask, the page shows its sentence; you can still ask for another round.
+5. In **Map**, proposed entries show with **Accept** and **Reject**. Entries of the map have **Edit** and **Remove**.
+6. When open questions remain, the page says so: "1 open question — a story with open questions is not ready". With none, there is no such line.
+
+**A question of your own.** Type it in **Ask the architect a question** and press **Send my question**. Your question and the architect's answer stay on the page.
+
+**While the architect works.** The page says what it is doing (reading the code, writing its questions, answering your question) and looks again every 5 seconds. No ask buttons show meanwhile. A paused or failed run shows the reason, and **Ask again** or **Try again** for that kind of run. If a call fails, the page shows the server's sentence and loads the session again; the Edit dialog closes after a failed save.
+
+**Who sees buttons.** Buttons and fields show only on your own, open session, whose repository is in My repositories. A dropped session and an admin looking at another account's session show the texts without buttons. If the repository is not in My repositories, the page says that the talk is not shown. The log tells every question, answer and entry in words.
 
 **What is kept.** Rounds of questions (at most 5 per round), your answer to each question, proposed entries that wait for you, and the map with three lists: **rules** (what must be true), **examples** (concrete cases, including edge cases) and **open questions**. `GET /api/refinement/:id` returns all of it as `talk`. The log has every question, every answer, and every accepted, rejected, changed and removed entry, with its text (cut at 2,000 characters).
 
@@ -2336,6 +2421,18 @@ A session keeps the talk with the architect, so it is not lost. The page for it 
 **Hidden talk.** While the repository is not in My repositories, the talk and the texts of its log lines are not shown (`talkHidden: true`), and the calls that change it answer 409. It comes back when you add the repository again.
 
 **Where it is kept.** In `refinements.json` in the data folder (mode 0600). It survives a restart and is copied unchanged when the data folder moves. If the file cannot be read, the calls answer "the refinement sessions are not working; see the server log", and an account cannot be deleted until the file is repaired.
+
+**Rounds and questions from a session.** Two calls, both for the owner only (another user gets 404, an admin 403; a dropped session or a repository that is not in My repositories gets 409). Both answer 202 with the session, and its `architect` part has `kind`: `brief`, `round` or `question`.
+- `POST /api/refinement/:id/round` asks the architect for a round of questions. It needs a context brief ("ask the architect to look at the code first") and an answer to every question of the last round ("answer every question of the last round first; \"I don't know yet\" is an answer"). You can ask for as many rounds as you like.
+- `POST /api/refinement/:id/ask` with `{ "question": "…" }` (1–2,000 characters) asks the architect a question of your own. It needs no brief. The question is logged when the run starts.
+
+**What the architect gets.** The talk so far as the task: your idea, the brief, the map, every round with its questions and your answers (the answers of the last round are marked as new) and the entries you rejected. It is at most 90,000 bytes. When it is longer, the oldest rounds are left out first, then the brief is cut, then the end; the text says what was left out. The question of your own always stays whole.
+
+**What is stored.** When the run succeeds, a round is stored as a new round (at most 5 questions), its proposals wait for you, and the `done` sentence is kept when the architect has nothing important left; the log says so (`round-started`, `question`, `round-done`, `architect-round`). An answer is stored with your question and logged (`architect-answered`). A failed or cancelled run changes nothing in the talk; the session says why in plain words.
+
+**One at a time.** One architect run per session and per account is queued, running or paused, counted together with the brief read (409 with a plain sentence). A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
+
+**What you see of the run.** It shows in your Runs list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Runs list, on the run page and in the queue.
 
 ### The architect's context brief
 
@@ -2353,7 +2450,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 
 **It only reads.** The architect has the tools `Read`, `Glob` and `Grep` and nothing else. No step pushes, comments, labels or changes anything on GitHub. The repository is cloned into a subfolder, so its own `.claude/` settings and hooks are not loaded. Your idea and the issue text are never put into a shell command, and the architect treats them as text to read, never as instructions. Its role is written once, in the block **Architect (charter)**: it asks, explains, warns and suggests; it never decides, never writes a plan or code, and says "I don't know" instead of guessing.
 
-**Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the token you stored for the repository under **My repositories**, and nothing else (not the server's `gh` login, not the bot token, not the GitHub App). The token needs read access to Contents and Issues. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher use the stored token too, in their marked steps. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
+**Whose access it uses.** In a run the server started for a refinement session, the clone and the issue list use the sign-in you stored for the repository under **My repositories** (its token, its deploy key or the GitHub App), and nothing else (not the server's `gh` login, not the bot token). A token needs read access to Contents and Issues. A deploy key gives git access only, so the issue list fails for such a repository; choose a token or the app. The architect and every other step never get it. For a repository with the method "none" the server's own access is used, but only when the owner of the run is an admin; any other account gets "set a token for this repository under My repositories". A token that is missing, cannot be read or is refused by GitHub fails the run with a sentence in plain words. Runs started by hand, by the CLI or by a watcher use the stored token too, in their marked steps. For admins: with a stored token the clone ignores the server's git settings and allows only https, so a proxy or an own CA must be set in the server's environment (`HTTPS_PROXY`, `GIT_SSL_CAINFO`).
 
 **Cost and model.** One run costs at most $3. It uses the planning model of the build flow (`claude-opus-5-5`); an admin changes it with a routing rule for the flow `refine-brief` on the Models page.
 
@@ -2361,7 +2458,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 
 ### The architect's question round
 
-The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand; starting it from a session comes later. Give it the talk so far as the task:
+The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
 scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]

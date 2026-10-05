@@ -13,10 +13,12 @@ import { runDetectors, type ActiveRun, type AreaLock, type Detector, type Detect
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
 import { decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
 import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
-import { findingsFile, loadFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
+import { findingsFile, loadFindings, readFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
 import { describeEntry, inQuietTime, loadGuard, openBreaker, storiesState, writeLog, type Loaded } from "./guard.js";
 import { activeMutes, expireMutes, muteFor } from "./mutes.js";
-import type { Reporter } from "./report.js";
+import type { Reporter, StoryNowResult } from "./report.js";
+import { withStory } from "./state.js";
+import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
 
 export interface MonitorDeps {
@@ -32,7 +34,7 @@ export interface MonitorDeps {
   beforeCheck?: () => Promise<void>;
   log: (msg: string) => void;
   /** Writes bug stories for findings that last (only when `report_to` is set). */
-  reporter?: Pick<Reporter, "report">;
+  reporter?: Pick<Reporter, "report"> & Partial<Pick<Reporter, "storyNow">>;
   /** For tests. */
   file?: string;
   detectors?: Detector[];
@@ -43,6 +45,9 @@ export interface MonitorDeps {
   /** The running Foundry's own build: its GitHub repository and whether it contains a commit. Without it, the fix commit is not known. */
   self?: { repo: string; contains: (commit: string) => boolean };
 }
+
+/** What "make a story now" answers: the reporter's answer, or that the finding is unknown or the check failed. */
+export type MonitorStoryResult = StoryNowResult | { ok: false; code: "unknown" | "failed" };
 
 /** At most this many runs are loaded in one check. */
 export const MAX_RUNS = 1000;
@@ -154,6 +159,10 @@ export class Monitor {
   private usualCache?: { at: number; hours: number; history: DurationHistory };
   /** The notes of the last check: one is logged when it first appears. */
   private noted = new Set<string>();
+  /** An admin's wish for one story: the next check makes it (and does no other reporting). Kept in memory only. */
+  private wish?: { hash: string; by: string; result?: MonitorStoryResult };
+  /** "Make a story now" calls run one after the other. */
+  private wishes: Promise<unknown> = Promise.resolve();
 
   constructor(public cfg: WatcherConfig, private d: MonitorDeps) {
     this.status = { id: cfg.id, lastActions: [] };
@@ -322,7 +331,12 @@ export class Monitor {
         }
       }
     }
-    if (this.d.reporter) {
+    const wish = this.wish;
+    this.wish = undefined;
+    if (wish && this.d.reporter?.storyNow) {
+      // A wished check makes that one story and nothing else: no "seen again", no other story, no comment, no notes.
+      wish.result = await this.makeWished(findings, wish, start, file);
+    } else if (this.d.reporter) {
       const r = await this.d.reporter.report(findings, start, (f) => saveFindings(keepEarlier(findings, f), file));
       for (const a of r.actions) this.act(a);
       for (const n of r.notes) if (!this.noted.has(n)) this.d.log(`[${this.cfg.id}] ${n}`);
@@ -330,6 +344,41 @@ export class Monitor {
       this.status.notes = r.notes.length ? r.notes : undefined;
     }
     return start.getTime();
+  }
+
+  /** Makes the story an admin asked for. The finding is saved onto the newest file, so another writer's changes are kept. */
+  private async makeWished(findings: Finding[], wish: { hash: string; by: string }, now: Date, file: string): Promise<MonitorStoryResult> {
+    const f = findings.find((x) => markerHash(x.fingerprint) === wish.hash);
+    if (!f) return { ok: false, code: "unknown" };
+    const r = await this.d.reporter!.storyNow!(findings, f.fingerprint, now, wish.by, (changed) => {
+      const newest = readFindings(file);
+      // Never write over a file that cannot be read now: the story is on GitHub and is taken up later by its marker.
+      if (newest.broken) throw new Error("the findings file cannot be read");
+      saveFindings(keepEarlier(newest.findings, withStory(newest.findings, changed)), file);
+    });
+    if (r.ok && r.made) this.act(`bug story #${r.issue} made (${f.detector}): an admin asked for it`);
+    return r;
+  }
+
+  /**
+   * "Make a story now" for the finding with this hash. Waits for a check in flight, then runs a check of its own that makes
+   * that one story. Never throws.
+   */
+  storyNow(hash: string, by: string): Promise<MonitorStoryResult> {
+    const run = async (): Promise<MonitorStoryResult> => {
+      while (this.inFlight) await this.inFlight;
+      const wish: { hash: string; by: string; result?: MonitorStoryResult } = { hash, by };
+      this.wish = wish;
+      try {
+        await this.tick(true);
+      } finally {
+        if (this.wish === wish) this.wish = undefined;
+      }
+      return wish.result ?? { ok: false, code: "failed" };
+    };
+    const next = this.wishes.then(run, run);
+    this.wishes = next.catch(() => undefined);
+    return next.catch((): MonitorStoryResult => ({ ok: false, code: "failed" }));
   }
 
   /**

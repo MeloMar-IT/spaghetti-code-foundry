@@ -4,7 +4,7 @@ import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
-import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps } from "../refinement/architect.js";
+import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
   DROP_KEEP_MS,
@@ -195,13 +195,20 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 3 && seg[2] === "restore" && method === "POST") {
     return send(res, 200, guarded(ctx, () => view(ctx, settled(restoreSession(actor, seg[1]!).id), user))), true;
   }
-  if (seg.length === 3 && seg[2] === "architect" && method === "POST") {
+  /** Starts (or resumes) a run of the architect for the session and answers 202 with the session. */
+  const startRun = (ask: ArchitectRequest) => {
     const body = guarded(ctx, () => {
-      const r = askArchitect(deps(ctx), actor, seg[1]!);
+      const r = askArchitect(deps(ctx), actor, seg[1]!, ask);
       auditAction(ctx.diagLog, user.id, r.resumed ? "run-resume" : "run-start", r.runId);
       return view(ctx, settled(seg[1]!), user);
     });
     return send(res, 202, body), true;
+  };
+  if (seg.length === 3 && seg[2] === "architect" && method === "POST") return startRun({ kind: "brief" });
+  if (seg.length === 3 && seg[2] === "round" && method === "POST") return startRun({ kind: "round" });
+  if (seg.length === 3 && seg[2] === "ask" && method === "POST") {
+    const body = await readJson(req);
+    return startRun({ kind: "question", question: body.question });
   }
   if (seg.length === 5 && seg[2] === "questions" && seg[4] === "answer" && method === "POST") {
     const body = await readJson(req);

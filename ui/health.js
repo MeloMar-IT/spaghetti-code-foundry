@@ -6,6 +6,8 @@ import { lastOkText } from "./admin.js";
 export const REFRESH_MS = 30_000;
 const NO_ANSWER = "The Foundry server does not answer. Check that it is still running.";
 
+const findingsLink = ({ open, unreadable }) => (unreadable ? "Findings of the monitor (the file cannot be read)" : open > 0 ? `${open} open finding${open === 1 ? "" : "s"} of the monitor` : "Findings of the monitor (none open)");
+
 /** Draws the line for one answer of GET /api/health; `health` null: the server did not answer. */
 export function renderHealth(el, health, { onCancel } = {}) {
   el.hidden = false;
@@ -22,6 +24,7 @@ export function renderHealth(el, health, { onCancel } = {}) {
     problems.length ? h("ul", { class: "holds" }, problems.map((n) => h("li", {},
       nextParts(n, { status: false }),
       n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
+    health.monitorFindings ? h("a", { class: "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,
     health.version || health.update ? h("span", { class: "health-version muted" },
       health.version ? `Version ${String(health.version.commit).slice(0, 7)} · ${new Date(health.version.date).toLocaleString()}` : "",

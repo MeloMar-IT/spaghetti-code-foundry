@@ -351,6 +351,18 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   after the engine's `core.hooksPath` (an empty `credential.helper`, a helper for the repository's
   host that prints the name and token from the environment, no extra header), https only, no
   prompt. A refusal ends the run (`Engine.accessFailed` skips `on_failure`).
+  A **deploy key** step gets `<runDir>/sign-in/` (0700) with `key` (0600, via `sshKeyEnv()`), a
+  `holder` note (pid and start time) and a `gh` stand-in that leaves a marker and fails with a
+  fixed sentence; `repoKeyEnv()` sets ssh-only git, no agent and no `GH_TOKEN`, and the marker
+  fails the step after it ends, whatever the script did with the exit code. A **GitHub App** step
+  asks `appTokenAccess()` for a fresh token limited to the repository (never cached), used like a
+  token; a refusal after its expiry gives the one-hour sentence. A step that holds a credential
+  runs in its own process group, killed when the step ends. The folder is removed (key first, one
+  chmod retry, a link removed as a link) in the step's `finally`, in `finish()`, in
+  `cancelWaitingRun()`, at the start of `drive()` and by `sweepSignInDirs()` at server start,
+  which keeps a folder only while its holder's pid runs with the recorded start time. Removal
+  fails closed: a folder that stays fails the step or the resume (`SIGN_IN_NOT_REMOVED`).
+  Limits: the `gh` stand-in catches `gh` by name only, and a process that leaves its group is not stopped.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
@@ -457,7 +469,14 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   session, which keeps the latest brief and the current run. The question round is the shipped flow
   `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
   `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
-  deletion. Not yet started from a session. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
+  deletion. A round and an own question start the same way: `askArchitect(deps, actor, id, { kind })`
+  with kind `brief`, `round` or `question` queues `refine-brief` or `refine-round` (`ask=round` or
+  `ask=question`); the talk goes in as `task` only, built by the pure `talkText()` in
+  `src/refinement/talk-text.ts` (at most 90,000 bytes: oldest rounds, then the brief, then the end are
+  left out, with a notice). The end is read from the step `check_round`, checked again with zod, and
+  stored by `endArchitectRun` (a round, an answer or a failed mark that leaves the talk unchanged); an
+  orphan run is adopted with its kind and question read back from the job's flow and task, and a run
+  keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
 - **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has

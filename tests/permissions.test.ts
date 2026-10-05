@@ -129,6 +129,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST monitor/mutes": no("monitor/mutes", 400, {}),
   "DELETE monitor/mutes/:id": no("monitor/mutes/0000000000000000", 404),
   "POST monitor/retry": no("monitor/retry", 400, {}),
+  "GET monitor/findings/:id": no("monitor/findings/0000000000000000", 404),
+  "POST monitor/story": no("monitor/story", 400, {}),
   "POST clean": no("clean", 200, {}),
   "GET providers": no("providers", 200),
   "POST providers/test": no("providers/test", 400, {}),
@@ -194,6 +196,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/drop": { path: `refinement/${UNKNOWN}/drop`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/restore": { path: `refinement/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/architect": { path: `refinement/${UNKNOWN}/architect`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/round": { path: `refinement/${UNKNOWN}/round`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/ask": { path: `refinement/${UNKNOWN}/ask`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/questions/:qid/answer": { path: `refinement/${UNKNOWN}/questions/${UNKNOWN}/answer`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/proposals/:pid/accept": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/proposals/:pid/reject": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
@@ -217,6 +221,8 @@ describe("the table", () => {
     expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
     expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");
+    expect(findRule("GET", ["monitor", "findings", "0000000000000000"])?.path).toBe("monitor/findings/:id");
+    expect(findRule("POST", ["monitor", "story"])?.path).toBe("monitor/story");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();
@@ -235,6 +241,8 @@ describe("the table", () => {
     expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
     expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
+    expect(findRule("POST", ["refinement", "a", "round"])?.path).toBe("refinement/:id/round");
+    expect(findRule("POST", ["refinement", "a", "ask"])?.path).toBe("refinement/:id/ask");
     expect(findRule("PUT", ["refinement", "a", "map", "b"])?.path).toBe("refinement/:id/map/:eid");
     expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
