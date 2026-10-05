@@ -195,7 +195,7 @@ describe("label and run disagree", () => {
     expect(find("label-mismatch", { watchers: [entry(3)] })).toEqual([]);
     const f = find("label-mismatch", { watchers: [entry(4)] });
     expect(f).toHaveLength(1);
-    expect(f[0]).toMatchObject({ severity: "minor", fingerprint: "label-mismatch|w", repo: "acme/app", evidence: { counts: { issues: 1, checks: 4 }, lines: ["#12: the label says failed, the run is succeeded"], watchers: ["w"] } });
+    expect(f[0]).toMatchObject({ severity: "major", fingerprint: "label-mismatch|w", repo: "acme/app", evidence: { counts: { issues: 1, checks: 4 }, lines: ["#12: the label says failed, the run is succeeded"], watchers: ["w"] } });
     expect(find("label-mismatch", { watchers: [entry(4)], config: withConfig({ label_mismatch: { checks: 4 } }) })).toEqual([]);
   });
 

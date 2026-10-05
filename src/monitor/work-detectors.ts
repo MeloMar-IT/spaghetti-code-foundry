@@ -154,7 +154,7 @@ const labelMismatch: Detector = {
       out.push({
         detector: "label-mismatch",
         fingerprint: `label-mismatch|${cfg.id}`,
-        severity: "minor",
+        severity: "major",
         summary: `${plural(off.length, "issue")} of ${cfg.github_repo || cfg.id} ${off.length === 1 ? "has" : "have"} a status label that does not match the run.`,
         evidence: { counts: { issues: off.length, checks: Math.max(...off.map((i) => i.labelOff!.checks)) }, lines, watchers: [cfg.id], ...(cfg.github_repo ? { repos: [cfg.github_repo] } : {}) },
         about: "foundry",
