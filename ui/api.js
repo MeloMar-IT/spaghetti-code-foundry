@@ -88,6 +88,10 @@ export const api = {
   addDraft: (id) => req("POST", `/api/refinement/${enc(id)}/drafts`, {}),
   saveDraft: (id, did, body) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}`, body, true),
   removeDraft: (id, did) => req("DELETE", `/api/refinement/${enc(id)}/drafts/${enc(did)}`),
+  // `stay`: a 401 must not reload the page while another field holds text that is not saved
+  suggestField: (id, did, field) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggest`, { field }, true),
+  acceptSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/accept`, body, true),
+  rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),

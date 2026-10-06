@@ -107,6 +107,26 @@ describe("pure functions", () => {
     expect(ui.architectStatus({ state: "paused", reason: "The usage limit is reached; ask again later" })).toMatchObject({ busy: false, text: "The architect paused.", detail: "The usage limit is reached; ask again later." });
     expect(ui.architectStatus({ state: "failed", reason: "It broke." })).toMatchObject({ bad: true, detail: "It broke." });
   });
+  it("architectStatus for a suggestion", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "suggest" })).toMatchObject({ busy: true, text: "The architect is waiting for its turn.", detail: "Then it writes a suggestion." });
+    expect(ui.architectStatus({ state: "running", kind: "suggest", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is writing a suggestion.", detail: "Checking the suggestion." });
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "suggest")).toBe("Checking the suggestion.");
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "question")).toBe("Checking the answer.");
+  });
+  it("askLabel for a suggestion", () => {
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "suggest", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe("Refresh");
+    expect(ui.askLabel(session({ architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe(ASK_LABEL);
+  });
+  it("the brief part draws no line for a suggestion run", async () => {
+    page = session({ brief: BRIEF, architect: { state: "running", kind: "suggest", draft: "d", field: "title", doing: "x" } });
+    await show();
+    // the line of a suggestion run is on the draft page (here: at the top of Story drafts, as its draft is not there)
+    const upperPart = main().children[0] as FakeElement;
+    expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
+    expect(upperPart.textContent).not.toContain("writing a suggestion");
+  });
   it("activityText never shows a folder or file name of the run", () => {
     for (const d of [running.doing, "Read the open issues with their comments into issues.md", "The architect reads the code and the issues and writes the context brief", "Check that the brief says so when the backlog was larger than what was read; pass the brief on", "Copy into out/x.json"]) {
       const t = ui.activityText(d);

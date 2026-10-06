@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, toast } from "./dom.js";
+import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
 // The story drafts of a refinement session: write, save as you type, preview. Every text is set as text, never as HTML.
 
@@ -7,7 +8,6 @@ export const DRAFTS_HIDDEN = "The story drafts are not shown while the repositor
 export const SAVE_MS = 1000;
 const SEP = "\u0001";
 const NONE = "None (can be built on its own).";
-const LABELS = { title: "Title", who: "As …", what: "I want …", why: "so that …", outOfScope: "Out of scope", notes: "Notes for the builder" };
 
 /** Texts typed but not saved yet: "<session>\u0001<draft>\u0001<field>" → text. They survive a redraw and a failed save. */
 export const unsaved = new Map();
@@ -94,13 +94,31 @@ export function previewNodes(d) {
     p.depends?.length ? h("ul", {}, p.depends.map((t) => h("li", {}, t))) : h("p", { class: "muted" }, NONE));
 }
 
+/** For a view that cannot change the drafts: the waiting suggestions and where the texts came from, without any button. */
+function readOnlyNodes(s, d) {
+  const sug = SUGGEST_FIELDS.map((f) => {
+    const n = nodes(suggestNodes(s, d, f, null));
+    return n.length ? [h("h4", {}, LABELS[f]), n] : null;
+  }).filter(Boolean);
+  const from = [
+    ...TEXT_FIELDS.filter((f) => fromText(d[f]?.from)).map((f) => `${LABELS[f]}: ${fromText(d[f].from)}`),
+    ...d.criteria.filter((c) => fromText(c.from)).map((c) => `${LABELS.criteria}: ${c.text} (${fromText(c.from)})`),
+    ...d.dependsOn.filter((x) => fromText(x.from)).map((x) => `${LABELS.dependsOn}: ${x.issue !== undefined ? `#${x.issue}` : `${draftTitle((s.drafts ?? []).find((o) => o.id === x.draft))} (draft)`} (${fromText(x.from)})`),
+  ];
+  if (!sug.length && !from.length) return null;
+  return h("div", { class: "card" },
+    sug.length ? [h("b", {}, "Suggested"), sug] : null,
+    from.length ? [h("b", {}, "Where the text came from"), h("ul", {}, from.map((t) => h("li", {}, t)))] : null);
+}
+
 const dependsItem = (x) => (x.issue !== undefined ? { id: x.id, issue: x.issue } : { id: x.id, draft: x.draft });
 const nodes = (v) => [v].flat(Infinity).filter(Boolean);
 
 /**
  * The "Story drafts" part. Returns { node, update(s), leave() }.
  * `ctx`: id of the session; `send(btn, call)` runs a button's change (shows the answer, reloads after a failure);
- * `save(call)` runs a change in turn and shows its answer (a failure is thrown); `errorText(e)`.
+ * `save(call)` runs a change in turn and shows its answer (a failure is thrown); `errorText(e)`;
+ * `statusLine(a)`: the status line node of the architect, or null.
  */
 export function draftSection(ctx) {
   const sid = ctx.id;
@@ -144,6 +162,7 @@ export function draftSection(ctx) {
   };
   const failed = new Set(); // keys whose last save failed: no request is planned for them until they change again
   let lastError = "";
+  let lastStatus; // the HTTP status of the last failed save
   const pending = () => [...unsaved.keys()].some((k) => placeOf(k) && !failed.has(k));
   const setStatus = (text, bad = false) => {
     status = { text, bad };
@@ -179,9 +198,9 @@ export function draftSection(ctx) {
   const flush = (key) => {
     clearTimeout(timers.get(key));
     timers.delete(key);
-    if (!unsaved.has(key) || !can()) return;
+    if (!unsaved.has(key) || !can()) return Promise.resolve(true);
     const p = placeOf(key);
-    if (!p) return;
+    if (!p) return Promise.resolve(true);
     const did = key.split(SEP)[1];
     const f = key.split(SEP)[2];
     const keyNow = () => (p.li ? p.key : key);
@@ -206,23 +225,25 @@ export function draftSection(ctx) {
       if (unsaved.get(p.key) === text) unsaved.delete(p.key);
       return next;
     };
-    ctx.save(run).then(
+    return ctx.save(run).then(
       (next) => {
-        if (next === undefined) return;
+        if (next === undefined) return true;
         failed.delete(keyNow());
         if (pending()) setStatus("Saving…");
         else if ([...failed].some((k) => unsaved.has(k) && placeOf(k))) setStatus(lastError, true); // another field is still not saved: keep saying so
         else setStatus("Saved");
+        return true;
       },
       (e) => {
         lastError = ctx.errorText(e);
+        lastStatus = e?.status;
         failed.add(keyNow());
         setStatus(lastError, true);
+        return false;
       });
   };
-  const flushAll = () => {
-    for (const k of [...unsaved.keys()]) if (k.startsWith(`${sid}${SEP}`)) flush(k);
-  };
+  /** Sends every typed text of the session; the promises say whether each was saved. */
+  const flushAll = () => [...unsaved.keys()].filter((k) => k.startsWith(`${sid}${SEP}`)).map((k) => flush(k));
 
   // ---- the criteria: one row each, a row in use is never taken out of the page ----
   const removeButton = (row) => h("button", { class: "danger", "data-focus": `crit-remove-${row.id}`, onClick: (e) => {
@@ -249,8 +270,12 @@ export function draftSection(ctx) {
     row.ta = h("textarea", { rows: 2, "aria-label": "Acceptance criterion", "data-focus": c ? `crit-${c.id}` : "crit-new",
       onInput: () => {
         const text = row.ta.value;
-        if (!text.trim()) return void forget(row.key); // an emptied one is not sent; it gets its text back when left
+        if (!text.trim()) {
+          forget(row.key); // an emptied one is not sent; it gets its text back when left
+          return markRow(row);
+        }
         unsaved.set(row.key, text);
+        markRow(row);
         setStatus("Saving…");
         plan(row.key);
       },
@@ -258,14 +283,21 @@ export function draftSection(ctx) {
         if (unsaved.has(row.key)) return flush(row.key);
         return syncRow(row, draftOf(ed?.did));
       } });
-    row.li = h("li", { class: "entry" }, row.ta, c ? removeButton(row) : null);
+    row.mark = h("small", { class: "muted" });
+    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null);
     return row;
   }
   const savedText = (row, d) => d?.criteria.find((c) => c.id === row.id)?.text ?? "";
+  // Where the text on the page came from: it follows what is visible, also while it is not saved.
+  const markRow = (row, d = draftOf(row.did)) => {
+    row.mark.textContent = fromText(shownFrom(d?.criteria.find((c) => c.id === row.id), row.ta.value));
+  };
   const syncRow = (row, d) => {
-    if (unsaved.has(row.key) || row.ta === document.activeElement) return;
-    const v = savedText(row, d);
-    if (row.ta.value !== v) row.ta.value = v;
+    if (!unsaved.has(row.key) && row.ta !== document.activeElement) {
+      const v = savedText(row, d);
+      if (row.ta.value !== v) row.ta.value = v;
+    }
+    markRow(row, d);
   };
 
   /** Puts the rows in the server's order, moving only rows that are not the focused one. */
@@ -320,6 +352,7 @@ export function draftSection(ctx) {
     const el = h(tag, { name: f, "aria-label": LABELS[f], "data-focus": `field-${f}`, ...(tag === "textarea" ? { rows } : { autocomplete: "off" }),
       onInput: () => {
         unsaved.set(key, el.value);
+        markField(f);
         setStatus("Saving…");
         plan(key);
       },
@@ -327,11 +360,22 @@ export function draftSection(ctx) {
         if (unsaved.has(key)) return flush(key);
         const v = draftOf(d.id)?.[f]?.text ?? "";
         if (el.value !== v && el !== document.activeElement) el.value = v;
+        markField(f); // the saved text may differ from what was typed (trimmed)
         return undefined;
       } });
     el.value = unsaved.get(key) ?? d[f]?.text ?? "";
     ed.fields.set(f, el);
-    return h("label", { class: "field" }, h("span", {}, LABELS[f]), el);
+    const mark = h("small", { class: "muted", "data-mark": f });
+    ed.marks.set(f, mark);
+    markField(f);
+    const box = h("div", { class: "suggest", "data-suggest": f });
+    ed.sug.set(f, box);
+    return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), box]; // buttons must not sit inside the label
+  };
+  const markField = (f) => {
+    const el = ed.fields.get(f);
+    const mark = ed.marks.get(f);
+    if (el && mark) mark.textContent = fromText(shownFrom(draftOf(ed.did)?.[f], el.value));
   };
 
   const dependsText = (x) => (x.issue !== undefined ? `#${x.issue}` : `${draftTitle(draftOf(x.draft))} (draft)`);
@@ -347,7 +391,7 @@ export function draftSection(ctx) {
     ed.dependsKey = key;
     const select = others.length ? h("select", { "aria-label": "Another draft" }, others.map((o) => h("option", { value: o.id }, draftTitle(o)))) : null;
     if (select) select.value = others[0].id;
-    ed.depList.replaceChildren(...nodes(d.dependsOn.length ? h("ul", {}, d.dependsOn.map((x) => h("li", { class: "entry" }, h("span", {}, dependsText(x)),
+    ed.depList.replaceChildren(...nodes(d.dependsOn.length ? h("ul", {}, d.dependsOn.map((x) => h("li", { class: "entry" }, h("span", {}, dependsText(x)), h("small", { class: "muted" }, fromText(x.from)),
       h("button", { class: "danger", onClick: (e) => changeDepends(e.currentTarget, d.id, (list) => list.filter((y) => y.id !== x.id)) }, "Remove")))) : h("p", { class: "muted" }, NONE)));
     ed.depChoose.replaceChildren(...nodes(select ? [select, h("button", { onClick: (e) => {
       if (!select.value) return undefined;
@@ -367,7 +411,9 @@ export function draftSection(ctx) {
   };
 
   const buildEditor = (d) => {
-    ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "" };
+    ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map() };
+    ed.hint = h("p", { class: "muted" });
+    for (const f of ["criteria", "dependsOn"]) ed.sug.set(f, h("div", { class: "suggest", "data-suggest": f }));
     ed.statusEl = h("p", { class: status.bad ? "status bad" : "status" }, status.text);
     ed.critList = h("ul", {});
     ed.newRow = makeRow(null);
@@ -388,10 +434,10 @@ export function draftSection(ctx) {
     const parts = [
       field(d, "title", "input"),
       h("div", { class: "field" }, field(d, "who", "textarea", 2), field(d, "what", "textarea", 2), field(d, "why", "textarea", 2)),
-      h("div", { class: "field" }, h("span", {}, "Acceptance criteria"), ed.critList),
+      h("div", { class: "field" }, h("span", {}, "Acceptance criteria"), ed.critList, ed.sug.get("criteria")),
       field(d, "outOfScope", "textarea", 3),
       h("div", { class: "field" }, h("span", {}, "Depends on"), ed.depList,
-        h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose),
+        h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose, ed.sug.get("dependsOn")),
       field(d, "notes", "textarea", 3),
     ];
     const remove = h("button", { class: "danger", onClick: (e) => {
@@ -412,8 +458,49 @@ export function draftSection(ctx) {
         return ok;
       });
     } }, "Remove draft");
-    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox)));
+    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox)));
     for (const k of keysOf(d.id)) if (placeOf(k)) plan(k); // text that waited for this editor is saved
+  };
+
+  /** What the suggest part of a field does: asks, and takes a suggestion. */
+  const sugAct = (did, f) => ({
+    line: ctx.statusLine,
+    label: LABELS[f],
+    ask: (btn) => {
+      const saved = flushAll();
+      // The architect must see what is typed: when a save fails, nothing is asked.
+      return ctx.send(btn, async () => {
+        if ((await Promise.all(saved)).includes(false)) throw Object.assign(new Error("Your text could not be saved, so the architect was not asked. Try again."), { status: lastStatus }); // a 401 keeps its status: send then does not reload
+        return api.suggestField(sid, did, f);
+      });
+    },
+    hasOther: () => Boolean(String(unsaved.get(K(did, f)) ?? draftOf(did)?.[f]?.text ?? "").trim()),
+    accept: (btn, x, text) => {
+      const body = text === undefined ? {} : { text };
+      if (!TEXT_FIELDS.includes(f)) return ctx.send(btn, () => api.acceptSuggestion(sid, did, x.id, body));
+      // Text typed in this field is replaced: no save may bring it back. It is forgotten before the answer is drawn, and planned again after a failure.
+      const key = K(did, f);
+      clearTimeout(timers.get(key));
+      timers.delete(key);
+      return ctx.send(btn, () => api.acceptSuggestion(sid, did, x.id, body).then((next) => {
+        forget(key);
+        return next;
+      })).then((ok) => {
+        if (!ok && unsaved.has(key)) plan(key);
+        return ok;
+      });
+    },
+    reject: (btn, x, reason) => ctx.send(btn, () => api.rejectSuggestion(sid, did, x.id, reason ? { reason } : {})),
+  });
+  const syncSuggest = (d) => {
+    ed.hint.textContent = sess.brief ? "" : NO_BRIEF;
+    for (const f of SUGGEST_FIELDS) {
+      const key = boxKey(sess, d, f);
+      if (key === ed.sugKeys.get(f)) continue;
+      ed.sugKeys.set(f, key);
+      ed.sug.get(f).replaceChildren(...nodes(suggestNodes(sess, d, f, sugAct(d.id, f))));
+    }
+    for (const f of ed.marks.keys()) markField(f);
   };
 
   const syncEditor = (d) => {
@@ -424,6 +511,7 @@ export function draftSection(ctx) {
     }
     syncCriteria(d);
     renderDepends(d);
+    syncSuggest(d);
     renderPreview(d);
   };
 
@@ -461,13 +549,22 @@ export function draftSection(ctx) {
     sess = s;
     const mine = mayChange(s);
     const drafts = s.draftsHidden ? [] : s.drafts ?? [];
-    fill("top", String(Boolean(s.draftsHidden)), () => (s.draftsHidden ? h("p", { class: "muted" }, DRAFTS_HIDDEN) : null));
+    // A suggestion run that has no open field on this page to show it: its line is at the top.
+    const a = s.architect;
+    const here = mine && a?.kind === "suggest" && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && SUGGEST_FIELDS.includes(a.field);
+    const stray = !s.draftsHidden && a?.kind === "suggest" && Boolean(a.state) && a.state !== "idle" && !here;
+    const strayDraft = stray ? drafts.find((x) => x.id === a.draft) : undefined;
+    fill("top", `${Boolean(s.draftsHidden)}|${stray ? JSON.stringify([a, opened.get(sid), draftTitle(strayDraft)]) : ""}`, () => [
+      s.draftsHidden ? h("p", { class: "muted" }, DRAFTS_HIDDEN) : null,
+      stray ? ctx.statusLine(a) : null,
+      stray && a.state === "paused" && mine && strayDraft ? h("p", { class: "muted" }, `Open the draft "${draftTitle(strayDraft)}" to ask again.`) : null,
+    ]);
     fill("epic", `${mine}|${s.epic}`, () => epicNodes(s, mine));
     if (!mine) {
       ed = null;
       memo.editor = null;
       boxes.editor.replaceChildren();
-      fill("list", `ro|${s.draftsHidden}|${JSON.stringify(drafts)}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map(previewNodes) : listNodes(drafts, false)));
+      fill("list", `ro|${s.draftsHidden}|${JSON.stringify([drafts, s.talk?.map])}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map((d) => [previewNodes(d), readOnlyNodes(s, d)]) : listNodes(drafts, false)));
     } else {
       fill("list", `rw|${opened.get(sid)}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d)]))}`, () => [
         listNodes(drafts, true),
