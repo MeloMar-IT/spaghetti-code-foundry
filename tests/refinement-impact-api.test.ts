@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
+import { addRepoWatcher, updateRepoWatcher } from "../src/repos/watchers.js";
 import { END_NO_IMPACT_DRAFT } from "../src/refinement/draft-impact.js";
 import { END_BAD_FORM, refinementsPath } from "../src/refinement/store.js";
 import { TALK_FIRST_LINE } from "../src/refinement/talk-text.js";
@@ -22,6 +23,7 @@ let started: Awaited<ReturnType<typeof startServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
+let annRepoId: string;
 const saved: Record<string, string | undefined> = {};
 const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND", "FAKE_GH_ISSUES"];
 const opts = (): ServerOptions => ({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
@@ -42,7 +44,7 @@ beforeEach(async () => {
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
-  addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
+  annRepoId = addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN }).id;
   addRepo(bob.user.id, { url: "other/thing", method: "github-token", token: TOKEN });
 });
 afterEach(async () => {
@@ -260,5 +262,133 @@ describe("impact", () => {
     expect(s.draftsHidden).toBe(true);
     expect(s.drafts).toBeUndefined();
     expect(s.log.find((l: any) => l.what === "architect-impact").detail).toBeUndefined();
+  });
+});
+
+describe("fit, plan review and the review label", () => {
+  const watch = (vars: Record<string, string> = {}, over: Record<string, unknown> = {}) => {
+    addRepoWatcher(annRepoId, { id: "app-w", vars, ...over });
+    started!.ctx.watchers.sync();
+  };
+  const viewOf = async (id: string, did: string, round?: unknown) => {
+    if (round !== undefined) process.env.FAKE_ROUND = JSON.stringify(round);
+    await impact(id, did);
+    await idle(id);
+    return (await draftOf(id)).impact;
+  };
+  const big = (files: number, lines: number) => answer({ size: { size: "large", files, lines, why: "Much work." } });
+  const sens = answer({ sensitive: [{ topic: "permissions", basis: "estimate", why: "It adds a route." }] });
+
+  it("gives no verdict when the repository has no watcher", async () => {
+    const { id, did } = await withDraft();
+    const v = await viewOf(id, did);
+    expect(v.fit).toEqual({ verdict: "unknown", text: "the build limits are not known" });
+    expect(v.planReview).toBeUndefined();
+  });
+
+  it("says a small draft fits and names the limits", async () => {
+    watch();
+    const { id, did } = await withDraft();
+    const v = await viewOf(id, did);
+    expect(v.fit).toMatchObject({ verdict: "fits", maxFiles: 15, maxCodeLines: 800 });
+    expect(v.fit.text).toContain("likely fits in one story");
+    expect(v.fit.text).toContain("15 files");
+    expect(v.fit.text).toContain("800 lines");
+    expect(JSON.stringify(await get(id))).not.toMatch(/app-w|issue-gitflow/);
+  });
+
+  it("says too big by files and by lines", async () => {
+    watch();
+    const { id, did } = await withDraft();
+    expect((await viewOf(id, did, big(16, 100))).fit).toMatchObject({ verdict: "too-big", over: ["files"] });
+    expect((await viewOf(id, did, big(3, 801))).fit).toMatchObject({ verdict: "too-big", over: ["lines"] });
+    expect((await draftOf(id)).impact.fit.text).toContain("likely too big — consider splitting");
+  });
+
+  it("lets the watcher override a limit", async () => {
+    watch({ max_files: "1" });
+    const { id, did } = await withDraft();
+    expect((await viewOf(id, did)).fit).toMatchObject({ verdict: "too-big", maxFiles: 1, over: ["files"] });
+  });
+
+  it("shows a changed limit on the next read without a new run", async () => {
+    watch();
+    const { id, did } = await withDraft();
+    expect((await viewOf(id, did)).fit.verdict).toBe("fits");
+    updateRepoWatcher(annRepoId, "app-w", { vars: { max_files: "1" } });
+    started!.ctx.watchers.sync();
+    expect((await draftOf(id)).impact.fit).toMatchObject({ verdict: "too-big", maxFiles: 1 });
+  });
+
+  it("gives no verdict for a flow without limits, but the label from the watcher", async () => {
+    watch({ review_plan_label: "Needs_review" }, { flow: "release-daily", source: "schedule", task: "Do the chore" });
+    const { id, did } = await withDraft();
+    const v = await viewOf(id, did, sens);
+    expect(v.fit.verdict).toBe("unknown");
+    expect(v.planReview).toMatchObject({ topics: ["permissions"], label: "Needs_review" });
+  });
+
+  it("recommends a plan review with the label, and without a label says so", async () => {
+    const { id, did } = await withDraft();
+    const none = await viewOf(id, did, sens);
+    expect(none.planReview.label).toBeUndefined();
+    expect(none.planReview.text).toContain("There is no review label");
+    watch();
+    const v = (await draftOf(id)).impact;
+    expect(v.planReview).toMatchObject({ topics: ["permissions"], label: "Factory_review_plan" });
+    expect(v.planReview.text).toContain("Factory_review_plan");
+  });
+
+  it("recommends nothing without a sensitive topic", async () => {
+    watch();
+    const { id, did } = await withDraft();
+    expect((await viewOf(id, did)).planReview).toBeUndefined();
+  });
+
+  describe("the choice", () => {
+    const label = (id: string, did: string, body: unknown, who = ann) => call(who, "PUT", url(id, `drafts/${did}/review-label`), body);
+
+    it("is stored with no view, kept after a new view and an edit, and cleared; no run and no GitHub call", async () => {
+      const { id, did } = await withDraft();
+      const log = gh.authLog();
+      log.clear();
+      const before = whats(await get(id));
+      const r = await label(id, did, { add: true });
+      expect(r.status).toBe(200);
+      expect(r.json().drafts[0].addReviewLabel).toBe(true);
+      expect(r.json().drafts[0].impact).toBeUndefined();
+      expect(log.rows()).toEqual([]);
+      expect(whats(await get(id))).toEqual(before);
+      await viewOf(id, did);
+      expect((await draftOf(id)).addReviewLabel).toBe(true);
+      await call(ann, "PUT", url(id, `drafts/${did}`), { why: "to share it widely" });
+      expect((await draftOf(id)).addReviewLabel).toBe(true);
+      const off = await label(id, did, { add: false });
+      expect(off.json().drafts[0]).not.toHaveProperty("addReviewLabel");
+    });
+
+    it("cannot be set through the draft", async () => {
+      const { id, did } = await withDraft();
+      await call(ann, "PUT", url(id, `drafts/${did}`), { addReviewLabel: true });
+      expect(await draftOf(id)).not.toHaveProperty("addReviewLabel");
+    });
+
+    it("is refused for others, bad bodies, unknown drafts and dropped sessions", async () => {
+      const { id, did } = await withDraft();
+      expect((await label(id, did, { add: true }, bob)).status).toBe(404);
+      expect((await label(id, did, { add: true }, admin)).status).toBe(403);
+      expect((await label(id, did, {})).status).toBe(400);
+      expect((await label(id, "00000000-0000-4000-8000-000000000000", { add: true })).status).toBe(404);
+      await call(ann, "POST", `/api/refinement/${id}/drop`, {});
+      expect((await label(id, did, { add: true })).status).toBe(409);
+    });
+
+    it("never blocks a change of the draft", async () => {
+      watch({ max_files: "1" });
+      const { id, did } = await withDraft();
+      await viewOf(id, did, { ...sens, size: { size: "large", files: 20, lines: 900, why: "Much work." } });
+      await label(id, did, { add: true });
+      expect((await call(ann, "PUT", url(id, `drafts/${did}`), { why: "to share it" })).status).toBe(200);
+    });
   });
 });

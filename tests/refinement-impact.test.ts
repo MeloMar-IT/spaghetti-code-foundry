@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
-import { areaOverlaps, draftMark, impactView, normArea, safeAreas, type ImpactRefs } from "../src/refinement/draft-impact.js";
+import { areaOverlaps, draftMark, fitOf, impactView, normArea, planReviewOf, safeAreas, type ImpactRefs } from "../src/refinement/draft-impact.js";
 import { impactOf, impactText } from "../src/refinement/impact-text.js";
 import { knownAreas, otherDrafts, planAreas } from "../src/refinement/known-areas.js";
 import {
@@ -19,6 +19,7 @@ import {
   removeDraft,
   saveDraft,
   setArchitectRun,
+  setReviewLabelOf,
 } from "../src/refinement/store.js";
 import { emptyTalk } from "../src/refinement/talk.js";
 import { TALK_FIRST_LINE, TALK_MAX_BYTES, byteLength, reviewText } from "../src/refinement/talk-text.js";
@@ -232,6 +233,50 @@ describe("the task", () => {
     saveDraft(ann, id, o, { title: "Import" }, T);
     return { id, did, o, s: getSession(id)! };
   };
+
+  it("fitOf compares the size with the limits", () => {
+    const l = { maxFiles: 15, maxCodeLines: 800 };
+    expect(fitOf({ files: 15, lines: 800 }, l)).toMatchObject({ verdict: "fits", maxFiles: 15, maxCodeLines: 800 });
+    expect(fitOf({ files: 16, lines: 800 }, l)).toMatchObject({ verdict: "too-big", over: ["files"] });
+    expect(fitOf({ files: 1, lines: 801 }, l)).toMatchObject({ verdict: "too-big", over: ["lines"] });
+    expect(fitOf({ files: 16, lines: 801 }, l)).toMatchObject({ over: ["files", "lines"] });
+    expect(fitOf({ files: 1, lines: 1 }, {})).toEqual({ verdict: "unknown", text: "the build limits are not known" });
+    expect(fitOf({ files: 1, lines: 1 }, { maxFiles: 5 }).verdict).toBe("unknown");
+  });
+
+  it("planReviewOf lists topics once, with or without a label", () => {
+    const s = (topic: "sign-in" | "secrets") => ({ topic, basis: "estimate" as const, why: "Why." });
+    expect(planReviewOf([], {})).toBeUndefined();
+    const withLabel = planReviewOf([s("sign-in"), s("secrets"), s("sign-in")], { reviewLabel: "Rev" })!;
+    expect(withLabel.topics).toEqual(["sign-in", "secrets"]);
+    expect(withLabel.label).toBe("Rev");
+    expect(withLabel.text).toContain('The review label is "Rev".');
+    const without = planReviewOf([s("secrets")], {})!;
+    expect(without).not.toHaveProperty("label");
+    expect(without.text.endsWith("There is no review label.")).toBe(true);
+  });
+
+  it("impactView without limits gives no verdict", () => {
+    const { id, did } = setup();
+    impact(id, did);
+    expect(impactView(draft(id, did), getSession(id)!.drafts)!.fit.verdict).toBe("unknown");
+  });
+
+  it("stores, clears and keeps the review label choice", () => {
+    const { id, did } = setup();
+    expect(draft(id, did).addReviewLabel).toBeUndefined();
+    setReviewLabelOf(ann, id, did, { add: true }, T);
+    expect(draft(id, did).addReviewLabel).toBe(true);
+    impact(id, did);
+    expect(draft(id, did).addReviewLabel).toBe(true);
+    setReviewLabelOf(ann, id, did, { add: false }, T);
+    expect(draft(id, did)).not.toHaveProperty("addReviewLabel");
+    const before = getSession(id)!.updated;
+    setReviewLabelOf(ann, id, did, { add: false }, T);
+    expect(getSession(id)!.updated).toBe(before);
+    for (const bad of [{}, { add: "yes" }, { add: true, x: 1 }, null, []]) expect(code(() => setReviewLabelOf(ann, id, did, bad, T))).toBe("bad-draft");
+    expect(code(() => setReviewLabelOf(ann, id, "nope", { add: true }, T))).toBe("not-found");
+  });
 
   it("has four head lines, names the other drafts by position and round-trips", () => {
     const { did, o, s } = two();

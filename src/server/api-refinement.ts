@@ -1,4 +1,6 @@
 import { basename } from "node:path";
+import { loadFlow } from "../flow/load.js";
+import { buildLimitsOf, type BuildLimits, type LoadFlowVars } from "../refinement/build-limits.js";
 import { listRepos, ownsRepo } from "../auth/repos.js";
 import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
@@ -21,6 +23,7 @@ import {
   addDraft,
   answerQuestion,
   moveToNotesOf,
+  setReviewLabelOf,
   rejectSuggestionOf,
   removeDraft,
   saveDraft,
@@ -89,13 +92,33 @@ function githubNames(userId: string): string[] {
   return out;
 }
 
+/** The vars of a flow, read fresh each time so a changed limit shows at once; undefined when the flow cannot be loaded. */
+const flowVarsOf =
+  (repo: string): LoadFlowVars =>
+  (name) => {
+    try {
+      return loadFlow(name, repo).flow.vars;
+    } catch {
+      return undefined;
+    }
+  };
+
+/** The build limits of the session's repository; never fails a read. */
+function limitsOf(ctx: ApiContext, s: Session): BuildLimits {
+  try {
+    return buildLimitsOf(s.repo, ctx.config().watchers, flowVarsOf(ctx.opts.repo), s.owner);
+  } catch {
+    return {};
+  }
+}
+
 /** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
-const draftView = (s: Session) => (d: Draft) => {
+const draftView = (s: Session, limits: BuildLimits) => (d: Draft) => {
   const { review: _stored, impact: _impact, ...rest } = d;
   const review = reviewView(d);
   // Drafts of the owner's other sessions are looked up only for an overlap with a draft that is not in this session.
   const outside = d.impact?.overlaps.some((o) => o.draft !== undefined && !s.drafts.some((x) => x.id === o.draft));
-  const impact = impactView(d, s.drafts, outside ? otherDrafts(s) : []);
+  const impact = impactView(d, s.drafts, outside ? otherDrafts(s) : [], limits);
   return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
 };
 
@@ -105,6 +128,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
   const draftsHidden = !repoAvailable && s.drafts.length > 0;
+  const limits = !draftsHidden && s.drafts.some((d) => d.impact) ? limitsOf(ctx, s) : {};
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -120,7 +144,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     idea: s.idea,
     state: s.state,
     // Like the talk, the drafts are not shown while the repository is not theirs.
-    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s)) }),
+    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s, limits)) }),
     ...(s.epic !== undefined ? { epic: s.epic } : {}),
     architect: architectView(deps(ctx), s),
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
@@ -268,6 +292,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review-label" && method === "PUT") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(setReviewLabelOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
