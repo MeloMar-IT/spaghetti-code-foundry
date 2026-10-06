@@ -39,6 +39,30 @@ case "$all" in
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$FAKE_GH_LOG.issues.json" "${all##*/issues/}"
     exit $? ;;
 esac
+# $FAKE_GH_STORIES=1: the issues made by the REST POST (bug stories) are real to "issue list/view/close" too. Without it, nothing here runs.
+# list: $FAKE_GH_ISSUES plus the open stories with the --label; view/close: for a number found in $FAKE_GH_LOG.issues.json.
+STORY_JS='const fs=require("fs"),f=process.argv[1],[mode,...a]=process.argv.slice(2);const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(a[0]));
+if(mode==="has")process.exit(i?0:1);
+if(mode==="list"){const base=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const extra=l.filter(x=>x.state==="open"&&x.labels.some(y=>y.name===a[0])).map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels,createdAt:x.created_at,state:"OPEN"}));console.log(JSON.stringify([...base,...extra]))}
+if(mode==="labels")console.log(i.labels.map(y=>y.name).join("\n"));
+if(mode==="title")console.log(i.title);
+if(mode==="text")console.log("# #"+i.number+": "+i.title+"\n"+i.html_url+"\nLabels: "+i.labels.map(y=>y.name).join(", ")+"\n\n"+i.body);
+if(mode==="close"){i.state="closed";i.state_reason=a[1]||"completed";i.closed_at=new Date().toISOString();fs.writeFileSync(f,JSON.stringify(l))}'
+story() { node -e "$STORY_JS" "$FAKE_GH_LOG.issues.json" "$@"; }
+if [ -n "$FAKE_GH_STORIES" ]; then
+  case "$1 $2" in
+    "issue list") case "$*" in *"--state closed"*|*"--search"*) ;;
+      *) lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done
+         story list "$lab"; exit 0 ;; esac ;;
+    "issue view") if story has "$3" 2>/dev/null; then
+      case "$*" in *"--json labels --jq"*) story labels "$3"; exit 0 ;; *"-q .title"*) story title "$3"; exit 0 ;;
+        *"--json number,title,body"*) story text "$3"; exit 0 ;; # pull_ticket (its jq would build this text)
+        *"--json"*) ;; *) story text "$3"; exit 0 ;; esac; fi ;;
+    "issue close") if story has "$3" 2>/dev/null; then
+      reason=completed; prev=""; for a in "$@"; do [ "$prev" = "--reason" ] && reason="$a"; prev="$a"; done
+      story close "$3" "$reason"; exit 0; fi ;;
+  esac
+fi
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")

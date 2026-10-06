@@ -28,6 +28,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [10. Troubleshooting](#10-troubleshooting)
 - [11. Upgrading from claude-factory](#11-upgrading-from-claude-factory)
 - [12. Refinement](#12-refinement)
+- [13. Self-repair (for admins)](#13-self-repair-for-admins)
 
 ---
 
@@ -661,7 +662,8 @@ do not have to find it. It is **off until you add it**: on the Watchers page cho
 and the source **The Foundry itself**. It needs only an id and an interval. It has no repository, no
 flow and no label, only one is allowed, and only an admin can add it. It starts nothing and changes
 no run, label or file of a run; it writes its findings and, if you set `report_to`, bug stories
-(see [Bug stories](#bug-stories-from-the-monitor)).
+(see [Bug stories](#bug-stories-from-the-monitor)). The whole loop, in one place, is in
+[chapter 13](#13-self-repair-for-admins).
 
 Each check runs these detectors. Each one reads the runs, the queue, the watchers and the server
 log; none calls an AI or GitHub.
@@ -675,7 +677,7 @@ log; none calls an AI or GitHub.
 | Unexplained failure | a run failed with an error no rule of the Foundry explains | minor | 1 run in 24 hours |
 | Stuck run | a running run wrote nothing to its log for longer than its step's timeout plus a margin (no timeout: 120 minutes) | major | timeout + 10 minutes |
 | Same step keeps failing | the same step of the same flow ended runs as failed for different issues | major | 3 issues in 24 hours |
-| Label and run disagree | an issue's status label does not match its newest run | minor | more than 3 checks |
+| Label and run disagree | an issue's status label does not match its newest run | major | more than 3 checks |
 | Lock without owner | a code-area lock or a run lock is held by a run that is not running | major | more than 10 minutes |
 | Queue not moving | jobs are queued, slots are free, and nothing started | critical | 15 minutes |
 | Restart overdue | a new version is installed and the server has not restarted | major | more than 2 hours |
@@ -1148,6 +1150,9 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 | Get the work into `main` | Merge the release pull request `develop` → `main` (gitflow), or the rolling Foundry pull request |
 
 #### Why is nothing happening?
+
+A line can say "waiting — a bug story goes first": a story with a `bug` label is repaired before
+anything new is built. There is nothing to do; the story goes on by itself after that.
 
 Look at the **Dashboard**: the **Waiting** card lists every labelled issue that isn't being
 worked on right now (the same list is on each watcher's card on the **Watchers** page). Every
@@ -2526,3 +2531,128 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 **Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on the Models page.
 
 **Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.
+
+---
+
+## 13. Self-repair (for admins)
+
+The Foundry can find problems of its own, write them up, fix them and check that the fix worked.
+This chapter is the overview; the details are in [chapter 6](#the-monitor-the-foundry-checks-itself).
+
+The loop: the **monitor** finds a problem that lasts → it writes one **bug story** on GitHub → the
+issue watcher builds that story **first** → as a **hotfix** it goes to `main` and `develop` → the
+monitor reads the **fix commit** and, once the running Foundry has it, watches for 24 hours → no
+more problem: the story gets "Not seen since the fix.".
+
+It is **off by default**. Nothing here starts until an admin does the five steps in
+[Switch it on and off](#switch-it-on-and-off).
+
+### What the monitor looks for
+
+These are the names as they appear in the log and in mutes. The thresholds are in the
+[table in chapter 6](#the-monitor-the-foundry-checks-itself).
+
+- `restart-loop` (critical): the same run is resumed again and again.
+- `watcher-error` (major): a watcher's checks fail one after the other.
+- `github-limit` (critical or major): GitHub's request limit is hit or nearly used up.
+- `watcher-silent` (critical): an enabled watcher finished no check.
+- `unexplained-failure` (minor): a run failed with an error no rule explains.
+- `stuck-run` (major): a running run wrote nothing to its log for too long.
+- `same-step-failing` (major): the same step ended runs as failed for different issues.
+- `label-mismatch` (major): an issue's status label does not match its newest run.
+- `orphan-lock` (major): a lock is held by a run that is not running.
+- `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
+- `restart-overdue` (major): a new version is installed and the server has not restarted.
+- `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
+- `slow-step` (minor): a step took much longer than usual.
+- `self-update` (major or critical): an update failed.
+- `detector-failed`: a detector crashed, so its problem is not checked.
+
+### What a bug story looks like
+
+One GitHub issue with the labels `bug` and the build label of the repository's issue watcher. A
+fixed template writes it, with no AI. It has nine headings: What happened; Since when and how
+often; Effect on work; Evidence; What should happen instead; How to see it again; Where to look in
+the code; Acceptance criteria; About this story.
+
+- **Hidden marker.** A comment line `<!-- claude-factory monitor=… -->` tells the monitor that the
+  story exists, so it is made only once, also when the findings file is lost.
+- **Cleaning.** Other repositories, people, e-mail addresses, folders, links and keys are removed.
+  Log lines are left out unless every word is on a fixed list.
+- **When.** Critical and major problems: after 2 checks in a row. Minor: after 3 different days.
+  A problem with a story at the second check is the goal; see the table at the end.
+
+### How bug stories go first
+
+A story with a `bug` label is built before all other work, and it does not count against
+`max_per_tick`. Other issues say "waiting — a bug story goes first". Details:
+[Bug stories go first](#bug-stories-go-first).
+
+### The hotfix path
+
+With **Hotfixes** on, the story is built on `hotfix/<issue>-…` from `main`, tested, merged into
+`main`, then `main` is merged into `develop`. The monitor reads the fix commit from the run. Details:
+[Branches: gitflow](#branches-gitflow-recommended-or-one-rolling-pull-request).
+
+### The guard rails
+
+- **Off by default.** No `report_to`, no stories.
+- **Cleaning.** Nothing private leaves in a story or a comment.
+- **Only once.** One open story per problem; the hidden marker finds it again.
+- **Limits.** 3 stories a day, 1 per check.
+- **Quiet time.** No story in the first `cooldown_minutes` after a server start.
+- **Circuit breaker.** A flood of new problems, or 3 failed fixes in a row, stops all stories
+  ([the circuit breaker](#the-circuit-breaker)).
+- **Never a story about a story.** Runs that build a bug story are never a finding.
+- **Two tries.** After two stories that did not fix it, a person decides.
+- **Mutes.** An admin can mute a detector or a finding ([mutes](#mute-a-detector-or-a-finding)).
+- **`main` only through the built-in flow.** Only the unchanged `issue-gitflow` may push `main`,
+  and only after the tests on the merge result. A feature run cannot.
+
+### Switch it on and off
+
+On, in five steps:
+
+1. Add the **monitor** watcher (source **The Foundry itself**).
+2. Set `monitor.report_to` to the repository for the stories.
+3. Have an `issue-gitflow` watcher for that repository, so the stories get built.
+4. Switch on **Hotfixes** in Settings → Safety.
+5. Switch on [Self-update](#self-update), so the running Foundry gets the fix.
+
+What "off" stops:
+
+- **No monitor watcher** (removed or disabled): no checks, no findings, no stories, no comments.
+- **No `report_to`, or `scf monitor off`:** findings are still recorded, but no story and no
+  comment ([the off switch](#stop-bug-stories-the-off-switch-and-the-quiet-time)).
+- **Stories that already exist** still carry the build label. The issue watcher keeps building
+  them, so also disable that watcher or remove the label to stop the work.
+- **Hotfixes off:** a bug story is built as a normal feature.
+- **Self-update off:** the monitor waits for the next server start, or `fix_wait_days`.
+
+### When it says "needs you"
+
+- **Two stories did not fix it.** No third is made. Read both stories, fix the cause by hand, then
+  press **Try again** on the Watchers page, or mute the finding.
+- **The breaker stopped stories.** Look at what went wrong first, then switch stories on again
+  (the button on the monitor's card, or `scf monitor on`).
+- **The fix failed.** The run of the bug story failed. Open the run, fix the cause, and resume it, or
+  remove the label and build the story as a feature.
+- **`develop` is behind after a hotfix.** The fix is on `main`, but `develop` could not take it.
+  Merge `main` into `develop` by hand and resolve the conflicts.
+
+### The incidents that are replayed in tests
+
+`tests/self-repair-incidents.test.ts` replays four real cases with the real parts and a fake GitHub.
+Each one makes its story at the second check at the latest, builds it first, takes it to `main`,
+and ends with "fixed" after 24 hours of normal work.
+
+| Incident | Detector | What the test proves |
+|---|---|---|
+| Runs that step aside are resumed again and again | `restart-loop` | Story "Runs that step aside are restarted in a loop" |
+| The watchers use up GitHub's request limit | `github-limit` | The story is made while the limit is used up, and fixed after it resets |
+| Every run fails at the tests before the change | `same-step-failing` | The story's hotfix brings the fix; the next story passes |
+| A label says working, the run has failed | `label-mismatch` | A major problem: its story comes after 2 checks |
+
+`tests/self-repair-rules.test.ts` proves the five rules: nothing private in any story, one open
+story per problem, the circuit breaker stops a flood, a feature run cannot reach `main`, and with
+the monitor off nothing is created.

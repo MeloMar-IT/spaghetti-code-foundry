@@ -20,7 +20,8 @@ these choices, [LESSONS_LEARNED.md](LESSONS_LEARNED.md).
 - [14. The server and its restarts](#14-the-server-and-its-restarts)
 - [15. The web interface](#15-the-web-interface)
 - [16. Tests](#16-tests)
-- [17. Where it is going](#17-where-it-is-going)
+- [17. Self-repair](#17-self-repair)
+- [18. Where it is going](#18-where-it-is-going)
 
 ---
 
@@ -299,8 +300,8 @@ gitGraph
   finished. The tests run on the merge result; conflicts are resolved by an agent and judged by
   the tests.
 - Once a day: one pull request from `develop` to `main`, merged by a person.
-- Urgent fixes: on `main`, then `main` is merged into `develop`. (Today by hand; an automatic
-  hotfix path for bug stories is planned.)
+- Urgent fixes: on `main`, then `main` is merged into `develop`. The hotfix path of `issue-gitflow`
+  does this for bug stories; it is off until an admin switches on Hotfixes.
 - `main` is protected: runs and agents cannot push to it.
 
 ---
@@ -461,7 +462,35 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 
 ---
 
-## 17. Where it is going
+## 17. Self-repair
+
+The Foundry watches itself and repairs what it can, in one loop:
+
+```text
+detectors → findings file → Reporter → bug story → goes first → hotfix → fix commit → 24-hour watch
+```
+
+- **Detectors** (`src/monitor/detectors.ts`, `work-detectors.ts`) read runs, queue, watchers and the
+  server log. Findings are kept in `monitor-findings.json`.
+- **The `Reporter`** (`src/monitor/report.ts`) turns a finding that lasts into one GitHub issue with
+  the labels `bug` and the build label, from a fixed template, after cleaning (`clean.ts`).
+- **Goes first.** The issue watcher builds a `bug` story before any other work, as a hotfix on `main`
+  when Hotfixes are on. Only the unchanged built-in `issue-gitflow` may push `main`, in its step
+  `push_main`.
+- **The fix commit** is read from the finished run (`COMMIT:` of `push_develop`, `MAIN:` of
+  `hotfix_done`). The 24-hour clock starts when the running Foundry has it; after 24 hours of normal
+  work without the problem the finding is *fixed* (`src/monitor/fix.ts`).
+- **Guard rails** (`guard.ts`, `breaker.ts`, `mutes.ts`): off by default, cleaning, one story per
+  problem, 3 a day and 1 per check, quiet time, circuit breaker, never a story about a story, two
+  tries, mutes.
+- **Proof.** `tests/self-repair-incidents.test.ts` replays four real incidents with the real
+  Monitor, Reporter, Watcher and flows; only the edges are fake (`gh`, `claude`, the git remote and
+  the clock). `tests/self-repair-rules.test.ts` proves the five rules. See the
+  [user guide](USER_GUIDE.md#13-self-repair-for-admins).
+
+---
+
+## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`
   has the schema and the pure `saveTyped` and `preview`, and each text and list item records `typed`,
@@ -482,8 +511,6 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
-- **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has
-  it built first, and merged to `main` as a gitflow hotfix — with limits and an off switch.
 - **Multi-user completion:** separate watchers per repository, runs with the repository's own
   credentials, fair-use limits.
 - **Later:** e-mail, per-user agent accounts, more than one machine.

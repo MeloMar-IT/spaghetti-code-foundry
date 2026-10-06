@@ -320,6 +320,11 @@ hotfix (an issue with a hotfix label, default `bug`):
 feature (everything else):  develop ──► feature/42-… ──► develop      (main: with the daily release)
 ```
 
+The monitor finds the commit of a fix in the output of the run. A succeeded step `push_develop`
+prints a line `COMMIT: <40 characters>`; on the hotfix path the succeeded step `hotfix_done` prints
+`MAIN: <40 characters>`. Keep these lines if you copy the flow. Without one, the monitor does not
+know the commit and waits for the next server start or `fix_wait_days`.
+
 ## Patterns
 
 **Test → fix loop** (the fix continues the coding session; at most 3 fixes):
