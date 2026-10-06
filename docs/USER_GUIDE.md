@@ -1911,6 +1911,21 @@ owner), the URL, the authentication method and the connection status ("Not teste
 - **The settings are only stored and shown.** Runs do not use them yet: the test command still comes from the
   flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. They are never in
   `GET /api/repos` and never shown on **My repositories**.
+- **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
+  the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
+  seven items: the value is clear (who and why); it stands on its own or its dependencies are named; every
+  acceptance criterion can be checked; it is small enough to build in one go; there are no open questions; it
+  says what is out of scope; it contains no implementation plan. The default items also have a fixed `rule`
+  key that later parts use to pick the check; an item an admin adds has none.
+  - **Admin:** the **Definition of Ready** button on a repository row opens a dialog: reword, add, remove,
+    move up or down, add a removed default item back, **Back to the default**, Save. The API is
+    `PUT /api/admin/repos/<id>/ready {"items": [{"id"?, "text"}]}`; `{"items": null}` or the unchanged default
+    list stores nothing. Limits: 1 to 20 items, each 1 to 200 characters on one line, no control characters, no
+    two items with the same text, no unknown or repeated `id`. A refusal is a 400 with one plain sentence.
+  - **Owner:** **My repositories** shows the list read-only. `GET /api/repos/<id>/ready` answers
+    `{ items, isDefault }` to the owner and to an admin; anyone else gets 404.
+  - A transfer keeps the list; removing the repository removes it. It is only stored and shown for now: no
+    story is checked against it yet.
 - **Transfer** moves a repository to another account, chosen by e-mail (any case). It is refused, with a plain
   message, when the e-mail is missing or not valid (400), no account has it (404), the account is blocked (409),
   or it already has 50 repositories (400). Afterwards the repository is in the new owner's list and no longer in
@@ -2093,10 +2108,12 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
+| `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
+| `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
 | `POST /api/admin/repos/:id/watchers` | yes | no | add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API) |

@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction } from "../auth/audit.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
@@ -16,7 +17,7 @@ import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the repository list is not working; see the server log";
-const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409 } as const;
+const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409, "bad-ready": 400 } as const;
 
 /**
  * Runs repository-list code. Input errors become 4xx; everything else is logged (the file name and the kind, never
@@ -124,7 +125,8 @@ const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r)
 function adminRow(rec: RepoRecord, users?: Map<string, User>) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
   const problem = watcherRepoProblem(rec, u ?? undefined);
-  return { ...rec, settings: rec.settings ?? {}, account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}) };
+  const { definitionOfReady, ...rest } = rec;
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}) };
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */
@@ -141,6 +143,16 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
     const body = await readJson(req);
     const r = guardedRepos(ctx, () => setRepoSettings(seg[2]!, body));
     if (r.changed.length) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `settings: ${r.changed.join(", ")}`);
+    const row = adminRow(r.repo);
+    return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg.length === 4 && seg[3] === "ready" && method === "PUT") {
+    const body = await readJson(req);
+    const r = guardedRepos(ctx, () => setRepoReady(seg[2]!, body));
+    if (r.changed) {
+      const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
+      auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
+    }
     const row = adminRow(r.repo);
     return send(res, 200, row, publicKeys([row])), true;
   }
@@ -309,6 +321,11 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 3 && seg[2] === "test" && method === "POST") {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;
+  }
+  if (seg.length === 3 && seg[2] === "ready" && method === "GET") {
+    const rec = guardedRepos(ctx, () => getRepo(seg[1]!));
+    if (!rec || (rec.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such repository");
+    return send(res, 200, readyView(rec.definitionOfReady)), true;
   }
   if (seg.length === 2 && method === "DELETE") {
     removeAndTell(ctx, user.id, () => removeRepo(user.id, seg[1]!));

@@ -271,6 +271,20 @@ async function whileBusy(btn, fn) {
   }
 }
 
+/** Shows the Definition of Ready of a repository, read-only. An error is toasted and no dialog opens. */
+export async function readyView(repo) {
+  let ready;
+  try {
+    ready = await api.repoReady(repo.id);
+  } catch (e) {
+    return toast(plainError(e), "error");
+  }
+  return modal("Definition of Ready", () => h("div", { style: { display: "grid", gap: "12px" } },
+    h("p", { class: "mono" }, repo.url),
+    h("ol", {}, (ready.items ?? []).map((i) => h("li", {}, i.text))),
+    h("small", {}, ready.isDefault ? "The default list." : "Set by your administrator.")));
+}
+
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
 const onPage = () => {
@@ -358,6 +372,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         await repoDialog({ admin, options, repo });
         reload();
       } }, "Change authentication"), " ",
+      h("button", { class: "small", onClick: (e) => whileBusy(e.currentTarget, () => readyView(repo)) }, "Definition of Ready"), " ",
       repo.method === "ssh-deploy-key" ? [h("button", { class: "small", onClick: (e) => newKey(e, repo) }, "Generate a new key"), " "] : null,
       h("button", { class: "small danger", onClick: (e) => {
         const btn = e.currentTarget;
