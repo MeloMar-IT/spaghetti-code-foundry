@@ -1,0 +1,764 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { RefinementError } from "../src/refinement/errors.js";
+import { changeEpic, dropDraft, newDraft, preview, saveTyped } from "../src/refinement/draft.js";
+import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let restore: () => void;
+let ui: any;
+let dr: any;
+let api: any;
+beforeAll(async () => {
+  restore = installFakeDom();
+  ui = await import("../ui/refinement.js" as string);
+  dr = await import("../ui/refinement-draft.js" as string);
+  api = (await import("../ui/api.js" as string)).api;
+});
+afterAll(() => restore());
+
+const realFetch = globalThis.fetch;
+const realConfirm = (globalThis as any).confirm;
+const reload = vi.fn();
+let state: { drafts: any[]; epic: number | undefined };
+let log: any[];
+let over: any; // what the view adds or changes
+let sent: { method: string; url: string; body: any }[];
+let gets: number;
+let holds: (() => void)[];
+let mode: "ok" | "hold" | "throw" | number;
+let confirmAnswer: boolean;
+let cleanup: (() => void) | undefined;
+
+const RUNNING = { state: "running", kind: "brief", doing: "x" };
+const view = () => ({
+  id: "s1", repo: "acme/app", repoAvailable: true, title: "My idea", idea: "An idea", state: "exploring", architect: { state: "idle" },
+  drafts: state.drafts.map((d) => ({ ...d, preview: preview(d, state) })), ...(state.epic !== undefined ? { epic: state.epic } : {}),
+  log: [{ at: new Date().toISOString(), what: "created", who: "Ann" }, ...log], created: "x", updated: "x", mine: true, ...over,
+});
+const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+const apply = (c: any) => {
+  if (!c) return;
+  state = { drafts: c.drafts, epic: c.epic };
+  if (c.line) log.push({ at: new Date().toISOString(), who: "Ann", what: c.line.what, ...(c.line.detail ? { detail: c.line.detail } : {}) });
+};
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  state = { drafts: [], epic: undefined };
+  log = [];
+  over = {};
+  sent = [];
+  gets = 0;
+  holds = [];
+  mode = "ok";
+  confirmAnswer = true;
+  dr.unsaved.clear();
+  dr.opened.clear();
+  reload.mockClear();
+  (document as any).getElementById("toast").textContent = "";
+  (document as any).activeElement = null;
+  (globalThis as any).location = { hash: "#/refinement/s1", reload };
+  (globalThis as any).confirm = () => confirmAnswer;
+  (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (init.method === "GET") {
+      gets++;
+      return reply(view());
+    }
+    sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });
+    if (mode === "hold") await new Promise<void>((r) => holds.push(r));
+    if (mode === "throw") throw new TypeError("fetch failed");
+    if (typeof mode === "number") return reply({ error: mode === 401 ? "sign in first" : "The title can have at most 120 characters" }, mode);
+    try {
+      const m = /\/drafts(?:\/([^/]+))?$/.exec(url);
+      if (url.endsWith("/epic")) apply(changeEpic(state, JSON.parse(init.body!)));
+      else if (init.method === "POST") apply(newDraft(state));
+      else if (init.method === "PUT") apply(saveTyped(state, m![1]!, JSON.parse(init.body!)));
+      else apply(dropDraft(state, m![1]!));
+    } catch (e) {
+      if (e instanceof RefinementError) return reply({ error: e.message }, 400);
+      throw e;
+    }
+    return reply(view(), 200);
+  };
+});
+afterEach(() => {
+  cleanup?.();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  globalThis.fetch = realFetch;
+  (globalThis as any).confirm = realConfirm;
+});
+
+const flush = () => vi.advanceTimersByTimeAsync(0);
+const main = () => (document as any).getElementById("main") as FakeElement;
+const upper = () => main().children[0] as FakeElement;
+const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
+const section = () => walk(main()).find((e) => e.attrs.class === "drafts")!;
+const buttons = () => walk(section()).filter((e) => e.tag === "button");
+const button = (t: string) => buttons().find((e) => e.textContent === t);
+const field = (name: string) => walk(section()).find((e) => e.attrs.name === name)!;
+const rows = () => walk(section()).filter((e) => e.tag === "li" && e.attrs.class === "entry" && e.children.some((c) => c instanceof FakeElement && c.tag === "textarea"));
+const press = async (el: FakeElement | undefined) => {
+  expect(el, "control").toBeDefined();
+  el!.click();
+  await flush();
+};
+const show = async (admin = false) => {
+  cleanup = await ui.renderRefinement(main(), { admin, id: "s1" });
+};
+const type = (el: FakeElement, v: string) => {
+  el.value = v;
+  el.fire("input");
+};
+const leave = (el: FakeElement) => {
+  (document as any).activeElement = null;
+  el.fire("blur");
+};
+const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+const release = async () => {
+  holds.shift()!();
+  await flush();
+};
+const statusText = () => walk(section()).find((e) => e.attrs.class?.startsWith("status"))?.textContent;
+const withDraft = async (d: object = {}) => {
+  state.drafts = [{ id: "11111111-1111-4111-8111-111111111111", criteria: [], dependsOn: [], ...d }];
+  await show();
+  await press(button("Open"));
+};
+const toastText = () => (document as any).getElementById("toast").textContent as string;
+const D1 = "11111111-1111-4111-8111-111111111111";
+const D2 = "22222222-2222-4222-8222-222222222222";
+const crit = (n: number, text: string) => ({ id: `c000000${n}-0000-4000-8000-000000000000`, text, from: "typed" });
+
+describe("pure functions", () => {
+  it("mayChange", () => {
+    const s = { mine: true, state: "drafting", repoAvailable: true };
+    expect(dr.mayChange(s)).toBe(true);
+    expect(dr.mayChange({ ...s, mine: false })).toBe(false);
+    expect(dr.mayChange({ ...s, state: "dropped" })).toBe(false);
+    expect(dr.mayChange({ ...s, repoAvailable: false })).toBe(false);
+    expect(dr.mayChange({ ...s, draftsHidden: true })).toBe(false);
+  });
+  it("draftTitle", () => {
+    expect(dr.draftTitle({ preview: { title: "Export" } })).toBe("Export");
+    expect(dr.draftTitle({ preview: { title: "" } })).toBe("Untitled draft");
+  });
+  it("issueNumber", () => {
+    for (const [v, n] of [["12", 12], [" #12 ", 12], ["007", 7], ["9007199254740991", 9007199254740991]]) expect(dr.issueNumber(v)).toBe(n);
+    for (const v of ["0", "1.5", "abc", "", "9007199254740992", "#"]) expect(dr.issueNumber(v)).toBeNull();
+  });
+  it("previewParts reads the fixed parts and takes the long texts from the draft", () => {
+    const d = { id: D1, criteria: [{ id: "c", text: "One", from: "typed" }], dependsOn: [{ id: "x", issue: 5, from: "typed" }], epic: 1,
+      who: { text: "a user", from: "typed" }, what: { text: "to export", from: "typed" }, why: { text: "I can share", from: "typed" },
+      outOfScope: { text: "Later\n\n### Notes for the builder\n- [ ] fake", from: "typed" }, notes: { text: "### Depends on\n- #999", from: "typed" } };
+    const p = dr.previewParts({ ...d, preview: preview(d as any, { drafts: [d as any], epic: 73 }) });
+    expect(p).toEqual({ epic: 73, sentence: "As a user, I want to export, so that I can share.", criteria: ["One"], outOfScope: d.outOfScope.text, notes: d.notes.text, depends: ["#5"] });
+  });
+  it("previewParts of an empty draft, with no Epic and with no body", () => {
+    const d = { id: D1, criteria: [], dependsOn: [] };
+    const pv = preview(d as any, { drafts: [d as any] });
+    expect(pv.body).toBe("As …, I want …, so that ….\n\n### Acceptance criteria\n\n### Depends on\nNone (can be built on its own).");
+    expect(dr.previewParts({ ...d, preview: pv })).toMatchObject({ epic: null, sentence: "As …, I want …, so that ….", criteria: [], depends: [] });
+    expect(dr.previewParts({ ...d })).toMatchObject({ sentence: "", criteria: null, depends: null });
+  });
+  it("beforeLeave asks only while text is not saved", () => {
+    const e = { preventDefault: vi.fn() };
+    dr.beforeLeave(e);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    dr.unsaved.set("k", "text");
+    dr.beforeLeave(e);
+    expect(e.preventDefault).toHaveBeenCalled();
+  });
+});
+
+describe("api", () => {
+  it("sends the right requests", async () => {
+    await api.addDraft("a b");
+    await api.saveDraft("a b", D1, { title: "T" }).catch(() => {});
+    await api.removeDraft("a b", D1).catch(() => {});
+    await api.setEpic("a b", null);
+    expect(sent.map((s) => [s.method, s.url])).toEqual([
+      ["POST", "/api/refinement/a%20b/drafts"], ["PUT", `/api/refinement/a%20b/drafts/${D1}`], ["DELETE", `/api/refinement/a%20b/drafts/${D1}`], ["PUT", "/api/refinement/a%20b/epic"],
+    ]);
+    expect(sent[3]!.body).toEqual({ issue: null });
+  });
+  it("a 401 reloads the page, except for a typing save", async () => {
+    mode = 401;
+    await expect(api.saveDraft("s1", "d", {})).rejects.toMatchObject({ status: 401, message: "sign in first" });
+    expect(reload).not.toHaveBeenCalled();
+    await expect(api.addDraft("s1")).rejects.toThrow("sign in first");
+    expect(reload).toHaveBeenCalled();
+  });
+});
+
+describe("new and remove", () => {
+  it("adds a draft, opens it with the Title focused, and logs it", async () => {
+    await show();
+    expect(section().textContent).toContain("No story drafts yet.");
+    await press(button("New draft"));
+    expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drafts", body: {} }]);
+    expect(section().textContent).toContain("Untitled draft");
+    expect(field("title").value).toBe("");
+    expect(field("who").value).toBe("");
+    expect((document as any).activeElement).toBe(field("title"));
+    expect(main().textContent).toContain("Ann added a story draft");
+  });
+  it("removes a draft after a confirmation", async () => {
+    await withDraft({ title: { text: "Export", from: "typed" } });
+    confirmAnswer = false;
+    await press(button("Remove draft"));
+    expect(sent).toEqual([]);
+    confirmAnswer = true;
+    await press(button("Remove draft"));
+    expect(sent[0]!.method).toBe("DELETE");
+    expect(walk(section()).some((e) => e.tag === "textarea")).toBe(false);
+    expect(section().textContent).toContain("No story drafts yet.");
+    expect(main().textContent).toContain('Ann removed a story draft: "Export"');
+  });
+  it("a removed draft with unsaved text leaves no Not saved card", async () => {
+    await withDraft();
+    type(field("title"), "Typed");
+    await press(button("Remove draft"));
+    expect(section().textContent).not.toContain("Not saved");
+    expect(dr.unsaved.size).toBe(0);
+  });
+  it("shows the server's sentence at the draft limit", async () => {
+    state.drafts = Array.from({ length: 20 }, (_, i) => ({ id: `${i.toString().padStart(8, "0")}-1111-4111-8111-111111111111`, criteria: [], dependsOn: [] }));
+    await show();
+    await press(button("New draft"));
+    expect(toastText()).toBe("at most 20 story drafts");
+  });
+});
+
+describe("typing and the delayed save", () => {
+  it("saves one second after the last key and keeps the field in use", async () => {
+    await withDraft();
+    const el = field("title");
+    el.focus();
+    const before = upper().children;
+    type(el, "Export");
+    expect(statusText()).toBe("Saving…");
+    await wait(999);
+    expect(sent).toEqual([]);
+    await wait(1);
+    expect(sent).toEqual([{ method: "PUT", url: `/api/refinement/s1/drafts/${D1}`, body: { title: "Export" } }]);
+    expect(statusText()).toBe("Saved");
+    expect(field("title")).toBe(el);
+    expect((document as any).activeElement).toBe(el);
+    expect(el.value).toBe("Export");
+    expect(section().textContent).toContain("Export");
+    expect(upper().children).toBe(before);
+  });
+  it("more typing restarts the timer; a blur sends at once; two fields give two requests", async () => {
+    await withDraft();
+    type(field("title"), "A");
+    await wait(600);
+    type(field("title"), "AB");
+    await wait(600);
+    expect(sent).toEqual([]);
+    await wait(400);
+    expect(sent).toHaveLength(1);
+    type(field("who"), "a user");
+    leave(field("who"));
+    await flush();
+    type(field("what"), "x");
+    type(field("why"), "y");
+    await wait(1000);
+    expect(sent.map((s) => Object.keys(s.body))).toEqual([["title"], ["who"], ["what"], ["why"]]);
+  });
+  it("an emptied field sends an empty text and the preview shows …", async () => {
+    await withDraft({ who: { text: "a user", from: "typed" } });
+    type(field("who"), "");
+    await wait(1000);
+    expect(sent[0]!.body).toEqual({ who: "" });
+    expect(section().textContent).toContain("As …, I want …");
+  });
+  it("keeps a trailing space while the field is focused and takes the saved text when it is left", async () => {
+    await withDraft();
+    const el = field("title");
+    el.focus();
+    type(el, "Hello ");
+    await wait(1000);
+    expect(el.value).toBe("Hello ");
+    leave(el);
+    expect(el.value).toBe("Hello");
+  });
+  it("a blur that sends shows the saved text when the answer comes", async () => {
+    await withDraft();
+    const el = field("title");
+    mode = "hold";
+    el.focus();
+    type(el, "Hello ");
+    leave(el);
+    await flush();
+    mode = "ok";
+    await release();
+    expect(el.value).toBe("Hello");
+  });
+  it("text typed after the save began is sent in a second request", async () => {
+    await withDraft();
+    const el = field("title");
+    el.focus();
+    mode = "hold";
+    type(el, "One");
+    await wait(1000);
+    type(el, "One two");
+    await release();
+    expect(el.value).toBe("One two");
+    mode = "ok";
+    await wait(1000);
+    await flush();
+    expect(sent.map((s) => s.body.title)).toEqual(["One", "One two"]);
+    expect(el.value).toBe("One two");
+    expect(dr.unsaved.size).toBe(0);
+  });
+});
+
+describe("a failed save", () => {
+  it("shows the server's sentence, keeps the text and tries again with the next change", async () => {
+    await withDraft();
+    const el = field("title");
+    mode = 400;
+    gets = 0;
+    type(el, "x".repeat(121));
+    await wait(1000);
+    expect(statusText()).toBe("The title can have at most 120 characters");
+    expect(walk(section()).find((e) => e.attrs.class === "status bad")).toBeDefined();
+    expect(gets).toBe(0);
+    expect(toastText()).toBe("");
+    expect(field("title")).toBe(el);
+    expect(el.value).toHaveLength(121);
+    mode = "ok";
+    type(el, "short");
+    await wait(1000);
+    expect(sent.at(-1)!.body).toEqual({ title: "short" });
+    expect(statusText()).toBe("Saved");
+  });
+  it("says when the server cannot be reached", async () => {
+    await withDraft();
+    mode = "throw";
+    type(field("title"), "x");
+    await wait(1000);
+    expect(statusText()).toBe("Could not reach the server.");
+  });
+  it("a 401 keeps the page and the text", async () => {
+    await withDraft();
+    const el = field("title");
+    mode = 401;
+    type(el, "Mine");
+    await wait(1000);
+    expect(statusText()).toBe("sign in first");
+    expect(reload).not.toHaveBeenCalled();
+    expect(field("title")).toBe(el);
+    expect(el.value).toBe("Mine");
+    mode = "ok";
+    type(el, "Mine!");
+    await wait(1000);
+    expect(sent.at(-1)!.body).toEqual({ title: "Mine!" });
+  });
+  it("a failed field does not stop another one from saving", async () => {
+    await withDraft();
+    mode = 400;
+    type(field("title"), "x".repeat(121));
+    await wait(1000);
+    mode = "ok";
+    type(field("who"), "a user");
+    await wait(1000);
+    expect(sent.at(-1)!.body).toEqual({ who: "a user" });
+    expect(field("title").value).toHaveLength(121);
+  });
+  it("keeps saying so while a failed field is not saved, even when another field saves", async () => {
+    await withDraft();
+    mode = 400;
+    type(field("title"), "x".repeat(121));
+    await wait(1000);
+    mode = "ok";
+    type(field("who"), "a user");
+    await wait(1000);
+    expect(statusText()).toBe("The title can have at most 120 characters");
+  });
+  it("unsaved text is back in the new field after a failed button action reloaded the page", async () => {
+    await withDraft();
+    type(field("title"), "Kept");
+    mode = 400;
+    await press(button("New draft"));
+    mode = "ok";
+    await flush();
+    expect(field("title").value).toBe("Kept");
+    await wait(1000);
+    expect(sent.at(-1)!.body).toEqual({ title: "Kept" });
+  });
+});
+
+describe("races with the poll", () => {
+  it("a poll never overwrites unsaved text", async () => {
+    over = { architect: RUNNING };
+    await withDraft();
+    const el = field("who");
+    mode = 400;
+    type(el, "typed");
+    await wait(1000);
+    state.drafts = [{ ...state.drafts[0], who: { text: "from elsewhere", from: "typed" } }];
+    await wait(5000);
+    expect(field("who")).toBe(el);
+    expect(el.value).toBe("typed");
+  });
+  it("a poll changes a clean field, but not a clean focused one until it is left", async () => {
+    over = { architect: RUNNING };
+    await withDraft();
+    state.drafts = [{ ...state.drafts[0], who: { text: "a", from: "typed" }, what: { text: "b", from: "typed" } }];
+    field("what").focus();
+    await wait(5000);
+    expect(field("who").value).toBe("a");
+    expect(field("what").value).toBe("");
+    leave(field("what"));
+    expect(field("what").value).toBe("b");
+  });
+  it("a poll that sees a change before its own answer is not drawn", async () => {
+    over = { architect: RUNNING };
+    await withDraft();
+    mode = "hold";
+    await press(button("New draft"));
+    apply(newDraft(state)); // the server has committed; the answer is still on its way
+    await wait(5000);
+    expect(section().querySelectorAll("li").filter((e) => e.textContent.startsWith("Untitled draft"))).toHaveLength(1);
+    expect(gets).toBeGreaterThan(1);
+    holds.shift()!();
+    await flush();
+  });
+  it("New draft waits for a save in flight", async () => {
+    await withDraft();
+    mode = "hold";
+    type(field("title"), "T");
+    await wait(1000);
+    await press(button("New draft"));
+    expect(sent).toHaveLength(1);
+    mode = "ok";
+    await release();
+    expect(sent.map((s) => s.method)).toEqual(["PUT", "POST"]);
+    expect(state.drafts).toHaveLength(2);
+  });
+  it("opening another draft sends the text of the first", async () => {
+    state.drafts = [{ id: D1, criteria: [], dependsOn: [] }, { id: D2, criteria: [], dependsOn: [] }];
+    await show();
+    await press(button("Open"));
+    type(field("title"), "First");
+    await press(button("Open"));
+    await flush();
+    expect(sent[0]).toMatchObject({ method: "PUT", url: `/api/refinement/s1/drafts/${D1}`, body: { title: "First" } });
+    expect(field("title").value).toBe("");
+  });
+});
+
+describe("acceptance criteria", () => {
+  it("adds one by typing in the last field and keeps typing in the same element", async () => {
+    await withDraft();
+    expect(rows()).toHaveLength(1);
+    const ta = rows()[0]!.children[0] as FakeElement;
+    ta.focus();
+    type(ta, "It works");
+    await wait(1000);
+    expect(sent[0]!.body).toEqual({ criteria: [{ text: "It works" }] });
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0]!.children[0]).toBe(ta);
+    expect(button("Remove")).toBeDefined();
+    expect(ta.attrs["data-focus"]).toMatch(/^crit-/);
+    type(ta, "It works well");
+    await wait(1000);
+    expect(sent[1]!.body.criteria).toEqual([{ id: state.drafts[0].criteria[0].id, text: "It works well" }]);
+    expect(state.drafts[0].criteria).toHaveLength(1);
+  });
+  it("typing on while the first save is held gives one criterion with the newer text", async () => {
+    await withDraft();
+    const ta = rows()[0]!.children[0] as FakeElement;
+    mode = "hold";
+    type(ta, "a");
+    await wait(1000);
+    type(ta, "ab");
+    await wait(1000);
+    mode = "ok";
+    await release();
+    await wait(1000);
+    await flush();
+    expect(state.drafts[0].criteria.map((c: any) => c.text)).toEqual(["ab"]);
+    expect(rows()).toHaveLength(2);
+  });
+  it("an emptied criterion is not sent and gets its text back when left; Remove sends the list without it", async () => {
+    await withDraft({ criteria: [crit(1, "One"), crit(2, "Two")] });
+    const ta = rows()[0]!.children[0] as FakeElement;
+    type(ta, "");
+    await wait(1000);
+    expect(sent).toEqual([]);
+    leave(ta);
+    expect(ta.value).toBe("One");
+    await press(walk(rows()[0]!).find((e) => e.tag === "button"));
+    expect(sent[0]!.body).toEqual({ criteria: [{ id: crit(2, "").id, text: "Two" }] });
+    expect(rows()).toHaveLength(2);
+  });
+  it("Remove builds its list after a save in flight, so the saved edit is kept", async () => {
+    await withDraft({ criteria: [crit(1, "One"), crit(2, "Two")] });
+    mode = "hold";
+    type(rows()[1]!.children[0] as FakeElement, "Two!");
+    await wait(1000);
+    await press(walk(rows()[0]!).find((e) => e.tag === "button"));
+    mode = "ok";
+    await release();
+    await flush();
+    expect(state.drafts[0].criteria.map((c: any) => c.text)).toEqual(["Two!"]);
+  });
+  it("a new criterion typed on while its save is in flight is not added twice when the draft is closed", async () => {
+    await withDraft();
+    const ta = rows()[0]!.children[0] as FakeElement;
+    mode = "hold";
+    type(ta, "a");
+    await wait(1000);
+    type(ta, "ab");
+    await press(button("Close"));
+    mode = "ok";
+    await release();
+    await flush();
+    await wait(1000);
+    expect(state.drafts[0].criteria.map((c: any) => c.text)).toEqual(["ab"]);
+  });
+  it("Remove draft keeps typed text when the request is refused", async () => {
+    await withDraft();
+    mode = "hold";
+    await press(button("New draft"));
+    type(field("title"), "Typed");
+    await press(button("Remove draft"));
+    expect(dr.unsaved.size).toBe(1);
+    mode = "ok";
+    await release();
+    expect(dr.unsaved.size).toBe(1);
+    expect(section().textContent).toContain("Typed"); // its draft is no longer open, so the text shows in the Not saved card
+  });
+  it("a blank new field sends nothing", async () => {
+    await withDraft();
+    type(rows()[0]!.children[0] as FakeElement, "   ");
+    await wait(1000);
+    expect(sent).toEqual([]);
+  });
+  it("a row in use keeps its place when a poll changes the other rows", async () => {
+    over = { architect: RUNNING };
+    await withDraft({ criteria: [crit(1, "One"), crit(2, "Two")] });
+    const li = rows()[1]!;
+    const ta = li.children[0] as FakeElement;
+    ta.focus();
+    type(ta, "Two!");
+    mode = 400;
+    await wait(1000);
+    const list = li.parent!;
+    const insert = vi.spyOn(list, "insertBefore");
+    const replace = vi.spyOn(list, "replaceChildren");
+    const removed = vi.spyOn(li, "remove");
+    state.drafts = [{ ...state.drafts[0], criteria: [crit(3, "Three"), crit(2, "Two"), crit(1, "One")] }];
+    await wait(5000);
+    expect(removed).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(insert.mock.calls.some((c) => c[0] === li)).toBe(false);
+    expect(rows()[1]).toBe(li);
+    expect(rows().map((r) => (r.children[0] as FakeElement).value)).toEqual(["Three", "Two!", "One", ""]);
+    expect((document as any).activeElement).toBe(ta);
+  });
+  it("text whose criterion was removed elsewhere goes to the Not saved card until it is discarded", async () => {
+    over = { architect: RUNNING };
+    await withDraft({ criteria: [crit(1, "One"), crit(2, "Two")] });
+    const ta = rows()[1]!.children[0] as FakeElement;
+    mode = 400;
+    type(ta, "Two!");
+    await wait(1000);
+    const before = sent.length;
+    state.drafts = [{ ...state.drafts[0], criteria: [crit(1, "One")] }];
+    await wait(5000);
+    expect(section().textContent).toContain("Not saved");
+    expect(section().textContent).toContain("Two!");
+    await wait(2000);
+    expect(sent).toHaveLength(before);
+    await press(button("Discard"));
+    expect(section().textContent).not.toContain("Not saved");
+    expect(dr.unsaved.size).toBe(0);
+  });
+});
+
+describe("text whose place is gone", () => {
+  it("the draft was removed elsewhere", async () => {
+    over = { architect: RUNNING };
+    await withDraft();
+    mode = 400;
+    type(field("title"), "Mine");
+    await wait(1000);
+    const before = sent.length;
+    state.drafts = [];
+    await wait(5000);
+    expect(walk(section()).some((e) => e.tag === "textarea")).toBe(false);
+    expect(section().textContent).toContain("Mine");
+    await wait(2000);
+    expect(sent).toHaveLength(before);
+  });
+  it("the session can no longer be changed; when it can again the text is back and is sent", async () => {
+    over = { architect: RUNNING };
+    await withDraft();
+    mode = 400;
+    type(field("title"), "Mine");
+    await wait(1000);
+    mode = "ok";
+    const before = sent.length;
+    over = { architect: RUNNING, state: "dropped" };
+    await wait(5000);
+    expect(walk(section()).some((e) => ["button", "textarea", "select", "input"].includes(e.tag))).toBe(false);
+    expect(section().textContent).toContain("Mine");
+    await wait(2000);
+    expect(sent).toHaveLength(before);
+    over = { architect: RUNNING };
+    await wait(5000);
+    expect(field("title").value).toBe("Mine");
+    await wait(1000);
+    expect(sent.at(-1)!.body).toEqual({ title: "Mine" });
+  });
+});
+
+describe("depends on and the Epic", () => {
+  it("adds an issue number and removes it", async () => {
+    await withDraft();
+    const input = field("depends-issue");
+    type(input, "#12");
+    await press(button("Add issue"));
+    expect(sent[0]!.body).toEqual({ dependsOn: [{ issue: 12 }] });
+    expect(section().textContent).toContain("#12");
+    await press(button("Add issue"));
+    expect(toastText()).not.toBe("");
+    expect(sent).toHaveLength(1);
+    type(field("depends-issue"), "abc");
+    await press(button("Add issue"));
+    expect(sent).toHaveLength(1);
+    await press(buttons().filter((b) => b.textContent === "Remove").at(-1));
+    expect(sent[1]!.body).toEqual({ dependsOn: [] });
+  });
+  it("chooses another draft of the session", async () => {
+    state.drafts = [{ id: D1, criteria: [], dependsOn: [{ id: "d0000000-0000-4000-8000-000000000000", issue: 12, from: "typed" }] },
+      { id: D2, criteria: [], dependsOn: [], title: { text: "Other", from: "typed" } }];
+    await show();
+    await press(button("Open"));
+    expect(walk(section()).filter((e) => e.tag === "option").map((o) => o.textContent)).toEqual(["Other"]);
+    await press(button("Add draft"));
+    expect(sent[0]!.body).toEqual({ dependsOn: [{ id: "d0000000-0000-4000-8000-000000000000", issue: 12 }, { draft: D2 }] });
+    expect(section().textContent).toContain("Other (draft)");
+    expect(walk(section()).some((e) => e.tag === "select")).toBe(false);
+  });
+  it("has no select with one draft", async () => {
+    await withDraft();
+    expect(walk(section()).some((e) => e.tag === "select")).toBe(false);
+  });
+  it("sets and clears the Epic", async () => {
+    await show();
+    expect(button("Clear Epic")).toBeUndefined();
+    type(field("epic"), "73");
+    await press(button("Set Epic"));
+    expect(sent[0]).toMatchObject({ method: "PUT", url: "/api/refinement/s1/epic", body: { issue: 73 } });
+    expect(section().textContent).toContain("Epic: #73");
+    expect(main().textContent).toContain("Ann set the Epic to #73");
+    type(field("epic"), "9007199254740991");
+    await press(button("Set Epic"));
+    expect(sent[1]!.body).toEqual({ issue: 9007199254740991 });
+    type(field("epic"), "x");
+    await press(button("Set Epic"));
+    expect(sent).toHaveLength(2);
+    await press(button("Clear Epic"));
+    expect(sent[2]!.body).toEqual({ issue: null });
+    expect(main().textContent).toContain("Ann cleared the Epic");
+  });
+});
+
+describe("the preview", () => {
+  const full = () => ({
+    title: { text: "Export", from: "typed" }, who: { text: "a user", from: "typed" }, what: { text: "to export", from: "typed" }, why: { text: "I can share", from: "typed" },
+    criteria: [crit(1, "One"), crit(2, "Two")], dependsOn: [{ id: "d0000000-0000-4000-8000-000000000000", issue: 5, from: "typed" }],
+    outOfScope: { text: "Later\n\n### Notes for the builder\n- [ ] fake", from: "typed" }, notes: { text: "### Depends on\n- #999", from: "typed" },
+  });
+  const previewBox = () => walk(section()).find((e) => e.attrs.class === "card" && e.children.some((c) => c instanceof FakeElement && c.tag === "h4"))!;
+  it("draws the fixed parts and the typed text as text", async () => {
+    state.epic = 73;
+    await withDraft(full());
+    const p = previewBox();
+    expect(p.textContent).toContain("Epic: #73");
+    expect(p.textContent).toContain("As a user, I want to export, so that I can share.");
+    expect(walk(p).filter((e) => e.tag === "h4").map((e) => e.textContent)).toEqual(["Acceptance criteria", "Out of scope", "Notes for the builder", "Depends on"]);
+    const boxes = walk(p).filter((e) => e.tag === "input");
+    expect(boxes).toHaveLength(2);
+    expect(boxes.every((b) => b.disabled)).toBe(true);
+    expect(walk(p).filter((e) => e.tag === "li").map((e) => e.textContent)).toEqual(["One", "Two", "#5"]);
+    expect(p.textContent).toContain("- [ ] fake");
+    expect(p.textContent).toContain("- #999");
+  });
+  it("shows the exact Markdown and goes back", async () => {
+    await withDraft(full());
+    const body = state.drafts.length ? preview(state.drafts[0], state).body : "";
+    await press(button("Show as Markdown"));
+    const pre = walk(section()).find((e) => e.tag === "pre")!;
+    expect(pre.textContent).toBe(body);
+    await press(button("Show the preview"));
+    expect(walk(section()).some((e) => e.tag === "pre")).toBe(false);
+  });
+  it("follows what is saved", async () => {
+    await withDraft();
+    type(field("title"), "New title");
+    expect(previewBox().textContent).not.toContain("New title");
+    await wait(1000);
+    expect(previewBox().textContent).toContain("New title");
+  });
+});
+
+describe("who sees fields", () => {
+  const readOnly = () => {
+    expect(walk(section()).filter((e) => ["button", "textarea", "select"].includes(e.tag))).toEqual([]);
+    expect(walk(section()).filter((e) => e.tag === "input").every((e) => e.disabled)).toBe(true);
+  };
+  const some = () => {
+    state.drafts = [{ id: D1, criteria: [crit(1, "One")], dependsOn: [], title: { text: "Export", from: "typed" } }];
+    state.epic = 3;
+  };
+  for (const [name, extra] of [["dropped", { state: "dropped" }], ["not mine", { mine: false }], ["repository gone", { repoAvailable: false }]] as const) {
+    it(`shows text only: ${name}`, async () => {
+      some();
+      over = extra;
+      await show(name === "not mine");
+      expect(section().textContent).toContain("Export");
+      expect(section().textContent).toContain("One");
+      expect(section().textContent).toContain("Epic: #3");
+      readOnly();
+    });
+  }
+  it("a hidden list says so", async () => {
+    some();
+    over = { repoAvailable: false, draftsHidden: true, drafts: undefined };
+    await show();
+    expect(section().textContent).toContain(dr.DRAFTS_HIDDEN);
+    expect(section().textContent).toContain("Epic: #3");
+    readOnly();
+  });
+  it("a gone repository with no drafts has no New draft", async () => {
+    over = { repoAvailable: false };
+    await show();
+    expect(section().textContent).toContain("No story drafts yet.");
+    expect(button("New draft")).toBeUndefined();
+  });
+  it("shows the same controls on the admin display for an own session", async () => {
+    await show();
+    const a = buttons().map((b) => b.textContent);
+    cleanup?.();
+    await show(true);
+    expect(buttons().map((b) => b.textContent)).toEqual(a);
+  });
+});
+
+describe("text and wiring", () => {
+  const evil = "<img src=x onerror=alert(1)><script>boom()</script>";
+  it("shows every text as text", async () => {
+    await withDraft({ title: { text: evil, from: "typed" }, criteria: [crit(1, evil)], notes: { text: evil, from: "typed" } });
+    type(field("who"), evil);
+    expect(walk(main()).some((e) => e.tag === "img" || e.tag === "script")).toBe(false);
+    expect(section().textContent).toContain(evil);
+    expect(walk(section()).some((e) => e.tag === "h3")).toBe(false);
+    expect(section().attrs.tabindex).toBeUndefined();
+  });
+});

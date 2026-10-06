@@ -2384,7 +2384,7 @@ The folder of your clone can keep its name.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too; later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the story drafts (listed by title; "No story drafts yet." when there are none; the page for writing them comes later) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -2398,7 +2398,25 @@ The folder of your clone can keep its name.
 
 A session keeps story drafts, so that what you write is saved. A draft has a **title**, **who**, **what** and **why** (the parts of "As …, I want …, so that …"), **acceptance criteria** (a list), **out of scope**, **depends on** (a list) and **notes for the builder**. A new draft is empty: nothing is filled in from the idea, the brief or the map. A session has at most 20 drafts and one optional **Epic** that applies to all of them.
 
-**The calls.** All answer with the session; the page for them comes later.
+**On the page.** The **Story drafts** part lists the drafts by title ("Untitled draft" when empty; "No story drafts yet." when there are none). **New draft** adds an empty one and opens it. **Open** shows a draft on the session page, **Close** hides it, **Remove draft** removes it after a question. An open draft has these fields in order: Title; "As …", "I want …", "so that …"; Acceptance criteria; Out of scope; Depends on; Notes for the builder. The Epic of the session (an issue number) is set with **Set Epic** and cleared with **Clear Epic**.
+
+**Saving.** What you type is saved by itself one second after you stop, and when you leave the field. The page says "Saving…", "Saved", or the server's sentence when a save failed. A failed save keeps your text in the field and your next change tries again. The page you see never overwrites text that is not saved, also while the architect works.
+
+**When you are signed out.** The page says "sign in first" and keeps your text. Copy it, load the page again and sign in.
+
+**Leaving the page.** The browser asks first while text is not saved.
+
+**Not saved.** Text whose draft or criterion was removed elsewhere, or typed just before the session could no longer be changed, shows in a **Not saved** card until you discard it or load the page again.
+
+**Acceptance criteria.** Type in the last empty field to add one. An emptied criterion keeps its text when you leave it; use **Remove** to take one away.
+
+**Depends on** and **Epic.** For Depends on, type an issue number ("12" or "#12") and press **Add issue**, or choose another draft of this session and press **Add draft**; **Remove** takes one out. The Epic is a whole number from 1. A wrong number is refused with a message.
+
+**Preview.** Under the fields, **Preview** shows the story as it will look on GitHub: the title, the Epic line, the sentence, the criteria with check boxes that cannot be ticked, Out of scope, Notes for the builder and Depends on. Your text shows as typed, also when it looks like Markdown. **Show as Markdown** shows the exact text; **Show the preview** goes back. The preview follows what is saved.
+
+**Who sees fields.** Fields and buttons show only on your own, open session whose repository is in My repositories. A dropped session, another account's session (admin) and a session whose repository is gone show the drafts as text. A hidden list says that it is not shown.
+
+**The calls.** The page uses these; all answer with the session.
 - `POST /api/refinement/:id/drafts` adds an empty draft (201).
 - `PUT /api/refinement/:id/drafts/:did` saves what you typed, for example `{ "title": "Export a report", "who": "an admin", "what": "to export a report", "why": "I can share it", "criteria": [{ "text": "It downloads" }], "dependsOn": [{ "issue": 12 }] }`.
 - `DELETE /api/refinement/:id/drafts/:did` removes a draft, and it from the depends-on lists of the other drafts.

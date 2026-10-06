@@ -409,3 +409,20 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .talk .entry > button { margin-left: 6px; }
 .talk .open-line { font-weight: 550; }
 .talk textarea { font-family: var(--sans); font-size: inherit; }
+
+/* The story drafts of a refinement session (ui/refinement-draft.js) */
+.drafts, .drafts > div { display: grid; gap: 10px; min-width: 0; }
+.drafts > div:empty { display: none; }
+.drafts { margin: 14px 0; }
+.drafts .card > *, .drafts li { min-width: 0; }
+.drafts p, .drafts h4 { margin: 0; }
+.drafts h4 { font-size: 13px; }
+.drafts p, .drafts li, .drafts b, .drafts label, .drafts pre { overflow-wrap: anywhere; }
+.drafts .said, .drafts pre { white-space: pre-wrap; }
+.drafts ul { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.drafts textarea { font-family: var(--sans); font-size: inherit; }
+.drafts .entry { display: flex; gap: 6px; align-items: flex-start; }
+.drafts .entry > textarea { flex: 1; }
+.drafts .row input, .drafts .row select { width: auto; flex: 1 1 160px; }
+.drafts .checks { list-style: none; padding-left: 0; }
+.drafts .checks input { width: auto; margin-right: 6px; }

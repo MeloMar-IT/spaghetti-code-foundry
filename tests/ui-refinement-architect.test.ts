@@ -69,6 +69,8 @@ afterEach(() => {
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const main = () => (document as any).getElementById("main") as FakeElement;
+/** The part of the page above the drafts: the part a poll must not draw again when nothing changed. */
+const upper = () => main().children[0] as FakeElement;
 const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
 /** True for an element inside a part of the talk (ui/refinement-talk.js). */
 const inTalk = (el: FakeElement): boolean => {
@@ -218,22 +220,22 @@ describe("busy", () => {
   it("does not redraw an equal answer", async () => {
     page = session({ architect: running });
     await show();
-    const before = main().children;
+    const before = upper().children;
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
   });
   it("stops with the cleanup; a held answer is not drawn and starts no timer", async () => {
     page = session({ architect: running });
     await show();
     getMode = "hold";
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    const before = main().children;
+    const before = upper().children;
     page = session({ architect: running, title: "Changed" });
     cleanup();
     getHold!(1);
     getMode = "ok";
     await flush();
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
     gets = [];
     await vi.advanceTimersByTimeAsync(3 * ui.POLL_MS);
     expect(gets).toEqual([]);
@@ -259,13 +261,13 @@ describe("busy", () => {
     expect(gets.length).toBe(1); // the replacement render polls
     getMode = "hold";
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    const before = main().children;
+    const before = upper().children;
     first();
     page = session({ architect: running, title: "Changed" });
     getHold!(1);
     getMode = "ok";
     await flush();
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
     gets = [];
     await vi.advanceTimersByTimeAsync(3 * ui.POLL_MS);
     expect(gets).toEqual([]);
