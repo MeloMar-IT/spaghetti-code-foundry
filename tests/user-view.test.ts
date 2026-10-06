@@ -314,7 +314,7 @@ async function stream(s: Srv, who: TestSession, path: string, ms = 400) {
 const writeRun = (s: Srv, id: string, extra: Record<string, unknown> = {}) => {
   mkdirSync(join(s.runsDir, id), { recursive: true });
   writeFileSync(join(s.runsDir, id, "run.json"), JSON.stringify({
-    runId: id, flow: "old", task: "", vars: {}, repo: s.repo, status: "succeeded", runDir: join(s.runsDir, id),
+    runId: id, flow: "old", task: "", vars: {}, repo: s.repo, source: "ui", status: "succeeded", runDir: join(s.runsDir, id),
     startedAt: "2026-01-01T00:00:00.000Z", totalCostUsd: 0, history: [], state: { next: null, steps: {}, visits: {} }, ...extra,
   }));
 };

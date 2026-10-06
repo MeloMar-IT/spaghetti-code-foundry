@@ -2,15 +2,40 @@ import { githubKey, githubNameOf, validGithubName } from "./auth/repo-url.js";
 import type { Config } from "./config.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoTokenEnv, stepRepoAccess } from "./engine/repo-access.js";
 import type { RunSummary } from "./engine/state.js";
+import { flowFiles } from "./flow/load.js";
 import { issueState } from "./github.js";
 import { type IssueState, knownIssueState, putIssueState } from "./issue-states.js";
+import { runOrigin } from "./your-turn.js";
 
 export const CLOSED_MESSAGE = "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.";
 export const FORCE_HINT = " Use --force to resume it anyway.";
 export const GATE_TIMEOUT_MS = 15_000;
 
-export type GateRun = Pick<RunSummary, "vars" | "owner" | "source" | "flow">;
-export type GateResult = { ok: true; unchecked?: true } | { ok: false; reason: "issue_closed"; message: string };
+export const retiredMessage = (flow: string): string =>
+  `The flow "${flow}" is retired — this run cannot be resumed. Start the work again with a current flow.`;
+
+export type GateRun = Pick<RunSummary, "vars" | "owner" | "source" | "flow"> & { repo?: string };
+export type GateResult = { ok: true; unchecked?: true } | { ok: false; reason: "issue_closed" | "flow_retired"; message: string };
+export type RetiredRun = { flow?: string; repo?: string; source?: string };
+
+// Any file name part: only path separators and NUL are out, so no path can be built from it.
+const PLAIN_NAME = /^[^/\\\0]+$/;
+
+/** A flow file of this name exists in one of the three flow folders of `repo`. */
+export function flowExists(flow: string, repo: string): boolean {
+  // A name that is not a plain file name cannot be a flow file; no path is built from it.
+  if (!PLAIN_NAME.test(flow)) return false;
+  return flowFiles(flow, repo).length > 0;
+}
+
+/** A watcher started the run (or it has no source) and its flow is in none of the flow folders. A hand-started run is never retired. */
+export function flowRetired(run: RetiredRun, exists: (flow: string, repo: string) => boolean = flowExists): boolean {
+  if (!run.flow || !run.repo) return false;
+  if (typeof run.source === "string" && run.source !== "" && runOrigin(run.source) !== "watcher") return false;
+  // An unsafe name is looked up nowhere: no such flow file can exist.
+  if (!PLAIN_NAME.test(run.flow)) return true;
+  return !exists(run.flow, run.repo);
+}
 export interface GateOptions {
   /** The environment for gh; undefined is the server's own gh. */
   env?: NodeJS.ProcessEnv;
@@ -83,6 +108,13 @@ const NO_API = () => Promise.reject(new Error("no API access"));
  * (a stored "closed" still refuses). No token or GitHub text is returned.
  */
 export async function gateRun(run: GateRun, config: Pick<Config, "github_app" | "watchers">, o: Pick<GateOptions, "timeoutMs" | "read"> = {}): Promise<GateResult> {
+  // The live closed check comes first; the retired flow only counts when the issue is not closed.
+  const gate = await issueGate(run, config, o);
+  if (!gate.ok) return gate;
+  return flowRetired(run) ? { ok: false, reason: "flow_retired", message: retiredMessage(run.flow) } : gate;
+}
+
+async function issueGate(run: GateRun, config: Pick<Config, "github_app" | "watchers">, o: Pick<GateOptions, "timeoutMs" | "read">): Promise<GateResult> {
   const target = runIssue(run);
   if (!target) return { ok: true };
   const watcher = issuesWatcher(config.watchers, target.repo);

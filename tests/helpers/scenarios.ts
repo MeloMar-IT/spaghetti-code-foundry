@@ -1,6 +1,7 @@
 import { ConfigSchema, type Config } from "../../src/config.js";
 import type { RunSummary } from "../../src/engine/state.js";
 import { briefsOf } from "./briefs.js";
+import { flowRepo } from "./flow-repo.js";
 import { nextStep, runNextStep, type NextStep, type NextWho } from "../../src/next-step.js";
 import type { ApiContext } from "../../src/server/server.js";
 
@@ -15,7 +16,7 @@ export const issuesWatcher = { id: "a", github_repo: REPO, flow: "github-issue" 
 const issueUrl = (n: number) => `https://github.com/${REPO}/issues/${n}`;
 
 export const run = (runId: string, over: Record<string, unknown> = {}) => ({
-  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: REPO }, repo: "/x",
+  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: REPO }, repo: flowRepo(),
   status: "failed", reason: "boom", runDir: "/tmp/none", startedAt: ago(1), finishedAt: ago(1), history: [],
   state: { next: null, steps: {}, visits: {} }, totalCostUsd: 0, ...over,
 }) as never as RunSummary;

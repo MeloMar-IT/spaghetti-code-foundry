@@ -52,6 +52,8 @@ export interface NextStep {
   stories?: { issue: number; url?: string }[];
   /** The last check of the issue on GitHub failed and nothing is stored. */
   issueUnchecked?: true;
+  /** The flow of the run is gone: it cannot be resumed. */
+  retired?: true;
 }
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
@@ -117,6 +119,8 @@ export interface NextData {
   runWaits?: boolean;
   /** `failed`: false when the run has no step to resume at, so it must start over. */
   canResume?: boolean;
+  /** The flow of the run is retired: it cannot be resumed, only started again. */
+  retired?: boolean;
   /** `watcher_stale`: ISO time of the last finished check. */
   lastCheck?: string;
   /** `restart`: runs the server still waits for (without it the text is the one issue records use). */
@@ -422,7 +426,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       const e = explainError(d.reason, "run", d.forUser);
       const factory = d.cause === "factory";
       limit = !!e.limit;
-      const startOver = (!factory && e.startOver) || d.canResume === false;
+      const startOver = (!factory && e.startOver) || d.canResume === false || !!d.retired;
       if (factory && d.forUser) {
         why = "The Foundry failed, not the code";
       } else if (factory) {
@@ -444,7 +448,8 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
         retry = startOver ? "then start a new run" : "then resume the run on its page";
         w = runWhere ?? where;
       }
-      const todo = factory ? (d.forUser ? "ask the administrator" : clean(d.fix)) : lowerFirst(e.todo);
+      // A retired run cannot be resumed: a fix that says "resume" would contradict "start a new run".
+      const todo = factory ? (d.forUser ? "ask the administrator" : d.retired ? "" : clean(d.fix)) : lowerFirst(e.todo);
       say = todo ? `${todo}, ${retry}` : retry.replace(/^then /, "");
       action = upperFirst(say);
       break;
@@ -524,17 +529,20 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
     case "interrupted":
       why = "The run was interrupted";
-      if (d.watched) say = "nothing to do, it resumes at the next check";
+      if (d.retired) { who = "You"; action = "Start a new run"; say = "start a new run"; w = runWhere ?? where; }
+      else if (d.watched) say = "nothing to do, it resumes at the next check";
       else { who = "You"; action = "Resume the run on its page"; say = "resume the run on its page"; w = runWhere ?? where; }
       break;
     case "cancelled":
       why = "The run was cancelled";
-      if (d.watched) say = "nothing to do, it resumes at the next check";
+      if (d.retired) { who = "You"; action = "Start a new run if you want it"; say = "start a new run if you want it"; w = runWhere ?? where; }
+      else if (d.watched) say = "nothing to do, it resumes at the next check";
       else { who = "You"; action = "Resume the run on its page if you want it"; say = "resume the run on its page if you want it"; w = runWhere ?? where; }
       break;
     case "stopped":
       who = "You"; why = "The run stopped and needs attention";
-      action = "Look at the run and resume it"; say = "look at the run and resume it";
+      action = d.retired ? "Look at the run and start a new run" : "Look at the run and resume it";
+      say = d.retired ? "look at the run and start a new run" : "look at the run and resume it";
       w = runWhere ?? where;
       break;
     case "superseded":
@@ -561,6 +569,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(kind === "area_lock" && d.areaWait ? { afterRun: d.areaWait.runId } : {}),
     ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
+    ...(d.retired ? { retired: true as const } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
     ...(kind === "monitor_needs_you" && d.evidence?.length ? { evidence: d.evidence } : {}),
     ...(kind === "monitor_needs_you" && d.stories?.length ? { stories: d.stories } : {}),
@@ -660,7 +669,9 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
   const issue = v.issue && /^\d+$/.test(v.issue) ? Number(v.issue) : undefined;
   const base: NextBase = { repo: v.github_repo ?? run.repo, issue, title: o.title ?? (run.task ?? "").split("\n")[0] ?? "", runId: run.runId };
   const gh = v.github_repo && issue ? `https://github.com/${v.github_repo}/issues/${issue}` : undefined;
-  const d: NextData = { ...o, issueUrl: o.issueUrl ?? (o.watched ? gh : undefined), reason: o.reason ?? run.reason, finishedAt: o.finishedAt ?? run.finishedAt ?? run.startedAt };
+  // A closed issue wins over a retired flow: its record carries no flag.
+  const closed = !!o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !o.queued && !(o.superseded) && !runClosedIssue(run);
+  const d: NextData = { ...o, retired: o.retired && !closed ? true : undefined, issueUrl: o.issueUrl ?? (o.watched ? gh : undefined), reason: o.reason ?? run.reason, finishedAt: o.finishedAt ?? run.finishedAt ?? run.startedAt };
   const make = (k: NextKind, extra: NextData = {}) => nextStep(k, base, { ...d, ...extra });
   const reason = run.reason ?? "";
 
@@ -680,6 +691,8 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     }
     case "cancelled": return make("cancelled");
     case "stopped": {
+      // A retired run is not continued by a limit, a answer or a release: only an interruption keeps its own record.
+      if (d.retired && !/interrupted/.test(reason)) return make("stopped");
       if (/daily budget/.test(reason)) return make("daily_budget");
       if (/usage limit reached|signed out —/.test(reason)) return make("usage_limit", { unreachable: !/signed out —/.test(reason) && !!run.history?.at(-1)?.unreachable });
       if (/interrupted/.test(reason)) return make("interrupted");
@@ -692,7 +705,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     default: {
       const f = classifyFailure(run);
       if (/interrupted/.test(reason)) return make("interrupted", { cause: f.cause });
-      const canResume = o.canResume ?? (run.state ? run.state.next != null : undefined);
+      const canResume = o.retired ? false : o.canResume ?? (run.state ? run.state.next != null : undefined);
       const failure = failureSummary(run, { watched: o.watched, failedLabel: o.failedLabel, canResume, forUser: o.forUser });
       return make("failed", { ...f, canResume, failure });
     }

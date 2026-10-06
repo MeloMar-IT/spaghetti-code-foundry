@@ -7,6 +7,7 @@ import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, i
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
+import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
@@ -588,15 +589,15 @@ export class Watcher {
   /** A hold for an issue with the failed label: the run's own record when it failed, else a plain one (a cancelled run also gets the label). */
   private failedHold(issue: { number: number; title: string }, run?: RunSummary, reason?: string): Hold {
     if (run?.status === "failed") {
-      const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title });
+      const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run) });
       if (next.kind === "failed") return toHold(next);
     }
-    return this.held("failed", issue, { failedLabel: this.L.failed, runId: run?.runId, reason });
+    return this.held("failed", issue, { failedLabel: this.L.failed, runId: run?.runId, reason, retired: !!run && flowRetired(run) });
   }
 
   /** A hold for an issue whose run exists. */
   private heldRun(issue: Issue, run: RunSummary, extra: Parameters<typeof runNextStep>[1] = {}): Hold {
-    return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, ...extra }));
+    return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run), ...extra }));
   }
 
   private async tickIssues() {
@@ -628,7 +629,7 @@ export class Watcher {
       if (own) return { issue: b, next: own };
       anyRuns ??= this.latestRuns("issue", true);
       const r = anyRuns.get(String(b));
-      if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed }) };
+      if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed, retired: flowRetired(r) }) };
       const blocker = everyIssue?.find((i) => i.number === b);
       if (!blocker || seen.has(b)) return { issue: b };
       const deps = (await openDepsOf(blocker)).filter((d) => !seen.has(d));
@@ -843,7 +844,7 @@ export class Watcher {
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
         } else if (!resumable) {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
-          const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run) });
+          const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run), retired: flowRetired(run) });
           if (["usage_limit", "daily_budget", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
         } else {
           // Resumable, but max_per_tick is used up: only the per-check limit is in the way.

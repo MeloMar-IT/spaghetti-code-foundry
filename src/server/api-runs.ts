@@ -217,7 +217,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (action === "events" && method === "GET") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
     // What a viewer sees of the record, sent last.
-    const shown = (n: NextStep) => [n.kind, n.issueUnchecked ? "unchecked" : "", n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
+    const shown = (n: NextStep) => [n.kind, n.issueUnchecked ? "unchecked" : "", n.retired ? "retired" : "", n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
     const first = scheduler.get(id);
     let last = first ? shown(view(nextFor(ctx, undefined, !admin)(first))) : "";
     let lastCan = false;

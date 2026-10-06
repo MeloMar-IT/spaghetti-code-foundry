@@ -6,6 +6,7 @@ import { answerRoom, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { runIssueState } from "../issue-states.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
+import { flowExists, flowRetired } from "../run-gate.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
 import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
@@ -97,6 +98,21 @@ function workKey(repo?: string, issue?: string, pr?: string, ciRun?: string): st
   return undefined;
 }
 
+/** "Is this run's flow retired?", with the "flow file exists" answers (not the results) kept per repository folder and flow name. */
+function retiredCheck(): (run: RunSummary) => boolean {
+  const seen = new Map<string, boolean>();
+  const exists = (flow: string, repo: string): boolean => {
+    const key = `${repo}\n${flow}`;
+    let hit = seen.get(key);
+    if (hit === undefined) seen.set(key, (hit = flowExists(flow, repo)));
+    return hit;
+  };
+  return (run) => flowRetired(run, exists);
+}
+
+/** Kinds whose watcher hold says "resume" and so must be replaced by the run's own record when the flow is retired. */
+const RETIRED_REPLACES = new Set<NextStep["kind"]>(["failed", "interrupted", "cancelled", "stopped"]);
+
 /**
  * Builds the record of any run. Reads the context when called, so do not keep the returned
  * function across requests or events.
@@ -120,6 +136,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     return map;
   };
   const waitLeft = waitLeftFor(ctx);
+  const isRetired = retiredCheck();
   return (run) => {
     const v = run.vars ?? {};
     const queued = pending.find((p) => p.runId === run.runId);
@@ -145,6 +162,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       title,
       areaWait: areaWait(run),
       forUser,
+      retired: isRetired(run),
     });
     // A closed issue whose run is still busy: the watcher's record says so.
     if (queued || run.status === "running" || run.status === "waiting") {
@@ -159,7 +177,9 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       : tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.runId === run.runId && (h.next.kind === rec.kind ||
         // "A bug story goes first" holds a stopped run that the watcher would resume: only while the run still is stopped.
         (h.next.kind === "bug_first" && !queued && (run.status === "stopped" || run.status === "cancelled" || rec.kind === "interrupted"))));
-    const out = waitLeft(hold?.next ?? rec);
+    // A retired run keeps its own record (it says "start a new run"), not a hold that says "resume"; any other hold only gets the flag.
+    const picked = hold?.next ?? rec;
+    const out = waitLeft(rec.retired && !picked.retired ? (RETIRED_REPLACES.has(picked.kind) && RETIRED_REPLACES.has(rec.kind) ? rec : { ...picked, retired: true as const }) : picked);
     if (out.kind === "done" || out.kind === "superseded") return out;
     const timing = out.kind === "running" && run.status === "running" ? runTiming(run, historyFor(ctx)) : runProgress(run);
     const withTiming = timing ? { ...out, timing } : out;
@@ -311,6 +331,7 @@ export function collectNext(ctx: ApiContext, list: RunSummary[]) {
   const q = ctx.scheduler.queue();
   const tracked = ctx.watchers.tracked();
   const restartWhy = ctx.restart?.why;
+  const isRetired = retiredCheck();
 
   const server = ctx.restart ? [nextStep("restart", {}, { restartWhy })] : [];
 
@@ -348,6 +369,11 @@ export function collectNext(ctx: ApiContext, list: RunSummary[]) {
       else if (rec.source === "hold") e = holdEntry(t, hold!);
       else e = { next: rec.next };
       if (run && !isLive && e.next.runId === run.runId) e = { ...e, next: unchecked(e.next, run) };
+      // A hold chosen over the run's record knows nothing of a retired flow: the run's own record replaces it.
+      if (run && !isLive && e.next.runId === run.runId && !e.next.retired && e.next.kind !== "issue_closed" && e.next.kind !== "closed_elsewhere" && isRetired(run)) {
+        const fresh = RETIRED_REPLACES.has(e.next.kind) ? next(run) : undefined;
+        e = { ...e, next: fresh?.retired ? fresh : { ...e.next, retired: true as const } };
+      }
       issues.push({ ...e, watcher: t.watcher.id, runId: i.runId, key: `${base.repo}#${i.issue}`, rank: issueRank(isLive, !!i.done), priority: i.priority });
     }
   }

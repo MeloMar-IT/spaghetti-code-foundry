@@ -67,6 +67,8 @@ describe("helpers", () => {
     expect(k("waiting", { next: { kind: "issue_closed" } })).toEqual(["cancel"]);
     expect(k("failed", { next: { kind: "failed" } })).toEqual(["retry"]);
     expect(k("waiting", {}, true)).toEqual(["cancel"]);
+    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "failed", retired: true } })).toEqual([]);
+    expect(k("waiting", { next: { kind: "approval", retired: true } })).toEqual(["cancel"]);
   });
 
   it("runCard does not throw without a next record", () => {
@@ -576,6 +578,18 @@ describe("renderMyRun", () => {
     await flush();
     expect(labels()).toEqual(["Approve", "Reject", "Cancel"]);
     expect(button("approve").disabled).toBe(false);
+  });
+
+  it("a retired flow has no Retry and shows the line; without the flag the line is absent", async () => {
+    const LINE = "This run's flow is retired — it cannot be resumed.";
+    state.summary = summaryOf({ status: "failed", next: { ...rec("failed"), failure, retired: true } });
+    await open();
+    expect(find(main, "button", { "data-focus": "act-retry" })).toHaveLength(0);
+    expect(main.textContent).toContain(LINE);
+    state.summary = summaryOf({ status: "failed", next: { ...rec("failed"), failure } });
+    await open();
+    expect(find(main, "button", { "data-focus": "act-retry" })).toHaveLength(1);
+    expect(main.textContent).not.toContain(LINE);
   });
 
   it("retries with the run id only, and shows a refusal", async () => {
