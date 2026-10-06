@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Gitflow: when `develop` got a commit the run has not fetched yet, the secret scan of the push failed on the unknown commit and the run failed. That case is now read as "develop moved": merge again and test again.
 - Gitflow, models matched to the work: one Codex review per code change (a second round only when `review_twice_above_risk` is set; default `off`); the plan is made at high effort and only plans with a risk above 75 are rewritten after the review (`revise_above_risk`, was 50 — Codex scores risk higher than the planner, so three of four plans were rewritten); the docs step and merge-conflict step each start a fresh, small session instead of continuing the whole coding conversation.
 - Self-repair 9 — proof with real incidents, and the admin chapter (#93).
   - **Changed.** The detector "Label and run disagree" (`label-mismatch`) is now *major*, not minor. Its bug story comes after 2 checks in a row instead of after 3 different days. This also holds for existing installs that set `report_to`: a mismatch that lasts 2 checks now gets a story. It is one word in `src/monitor/work-detectors.ts`.

@@ -1570,7 +1570,7 @@ write("issue-plan", {
       'out=$(git push origin "$dev" 2>&1); printf \'%s\\n\' "$out"',
       '# GitHub refused the push because of a branch rule: that is not "the branch moved", and merging again cannot help.',
       'if printf \'%s\\n\' "$out" | grep -qE "GH013|GH006|rule violations|through a pull request|protected branch"; then echo "GitHub refused the push: a branch rule of the repository does not let this account push to $dev directly. Let it bypass the rule (Settings → Rules), then retry this step."; exit 1; fi',
-      'if printf \'%s\\n\' "$out" | grep -qE "\\[rejected\\]|fetch first|non-fast-forward"; then echo "develop moved meanwhile — merging again"; echo "MOVED"; exit 0; fi',
+      'if printf \'%s\\n\' "$out" | grep -qE "\\[rejected\\]|fetch first|non-fast-forward|Invalid revision range"; then echo "develop moved meanwhile — merging again"; echo "MOVED"; exit 0; fi',
       'echo "pushing $dev failed (see above)"; exit 1',
     ].join("\n"),
     // Only a develop that moved meanwhile means "merge again"; any other push error stops the run.
