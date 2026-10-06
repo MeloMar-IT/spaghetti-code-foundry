@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
 // Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
-// (`round`, the default, `question`, `suggest`, `review` or `impact`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
-// criteria, outOfScope, dependsOn or notes).
+// (`round`, the default, `question`, `suggest`, `review`, `impact` or `ready`), for `suggest` $FACTORY_VAR_FIELD (title, who, what, why,
+// criteria, outOfScope, dependsOn or notes) and, for `ready`, $FACTORY_VAR_ITEMS (the ids of the items to judge, comma separated).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
 // For `suggest` it prints { "field": …, "suggestions": [ … ] }: the first suggestion for a text field, the first 10 for
 // criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
 // For `review` it prints { "remarks": [ { field, item?, kind, text } ] }: the first 20, `item` ("C1") only for criteria, the text on one
 // line, cut at 300 characters, in at most two sentences (more fails).
+// For `ready` it prints { "items": [ { id, result, reason, field, item? } ] } in the asked order, one result for each asked item: `result` is
+// met, not-met or unsure, `reason` one sentence of at most 300 characters (never cut), `field` a field of the draft, `item` ("C1") only for
+// criteria. Anything else in the answer (other keys, other lists, an `item` on another field) fails.
 // For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open }: known fields only, lists cut at their
 // limits. `open` holds the numbers of the open issues of issues.md (when there); the Foundry decides which issue overlaps stay. The
 // size word is set from files and lines. An overlap names an issue or a draft ("D1") and is always an `estimate` here (the Foundry sets
 // the basis itself); an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
 import { readFileSync } from "node:fs";
 
+const READY_ITEMS_MAX = 20, READY_REASON_MAX = 300, READY_RESULTS = ["met", "not-met", "unsure"];
 const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20, REMARK_MAX_COUNT = 20, REMARK_MAX = 300;
 const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
 const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
@@ -112,6 +116,36 @@ function checkReview(obj) {
     return { field: x.field, ...(x.field === "criteria" ? { item: x.item } : {}), kind: x.kind, text };
   });
   return { remarks };
+}
+
+// Exactly the asked items, once each, in the asked order. The answer may hold nothing else: no other key, no proposed text.
+function checkReady(obj, asked) {
+  if (!asked.length || asked.length > READY_ITEMS_MAX || !asked.every((id) => /^[a-z0-9-]{1,40}$/.test(id)) || new Set(asked).size !== asked.length) {
+    bad("set the variable items to the ids of the items to judge");
+  }
+  if (["questions", "proposals", "suggestions", "remarks"].some((k) => listOf(obj[k], k).length)) {
+    bad("the architect's answer has questions, proposals, suggestions or remarks, but only results were asked for");
+  }
+  if (Object.keys(obj).some((k) => k !== "items")) bad("the architect's answer has more than the results that were asked for");
+  if (!Array.isArray(obj.items)) bad("items is not a list");
+  const byId = new Map();
+  obj.items.forEach((x, i) => {
+    const n = i + 1;
+    if (!isObject(x)) bad(`result ${n} is not an object`);
+    if (typeof x.id !== "string" || !asked.includes(x.id)) bad(`result ${n} names an item that was not asked`);
+    if (byId.has(x.id)) bad(`result ${n} names an item a second time`);
+    if (!READY_RESULTS.includes(x.result)) bad(`result ${n} has no result of met, not-met or unsure`);
+    const reason = clean(x.reason).replace(/\s*[\n\t]\s*/g, " ");
+    if (!reason) bad(`result ${n} has no reason`);
+    if ([...reason].length > READY_REASON_MAX) bad(`result ${n} has a reason of more than ${READY_REASON_MAX} characters`);
+    if (sentences(reason) > 1) bad(`result ${n} has more than one sentence`);
+    if (!FIELDS.includes(x.field)) bad(`result ${n} does not name a field of the draft`);
+    if (x.item !== undefined && (x.field !== "criteria" || typeof x.item !== "string" || !/^C\d+$/.test(x.item))) bad(`result ${n} does not name a criterion`);
+    if (Object.keys(x).some((k) => !["id", "result", "reason", "field", "item"].includes(k))) bad(`result ${n} has more than a result, a reason and a field`);
+    byId.set(x.id, { id: x.id, result: x.result, reason, field: x.field, ...(x.item !== undefined ? { item: x.item } : {}) });
+  });
+  if (byId.size < asked.length) bad(`the answer has no result for ${asked.length - byId.size} of the ${asked.length} items`);
+  return { items: asked.map((id) => byId.get(id)) };
 }
 
 const IMPACT_MAX = { areas: 15, dependsOn: 10, dependents: 10, risks: 12, overlaps: 20, sensitive: 5 };
@@ -221,9 +255,9 @@ function checkImpact(obj) {
   return { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open: [...known].sort((p, q) => p - q) };
 }
 
-function check(raw, ask, field) {
+function check(raw, ask, field, items) {
   const kind = ask || "round";
-  if (!["round", "question", "suggest", "review", "impact"].includes(kind)) bad("set the variable ask to round, question, suggest, review or impact");
+  if (!["round", "question", "suggest", "review", "impact", "ready"].includes(kind)) bad("set the variable ask to round, question, suggest, review, impact or ready");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
@@ -236,6 +270,7 @@ function check(raw, ask, field) {
   if (kind === "suggest") return checkSuggestions(obj, field);
   if (kind === "review") return checkReview(obj);
   if (kind === "impact") return checkImpact(obj);
+  if (kind === "ready") return checkReady(obj, (items ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
     const answer = cut(clean(obj.answer), ANSWER_MAX);
@@ -251,7 +286,7 @@ function check(raw, ask, field) {
 }
 
 try {
-  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD)));
+  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD, process.env.FACTORY_VAR_ITEMS)));
 } catch (e) {
   console.log(e instanceof Bad ? e.message : "the architect's answer could not be checked");
   process.exitCode = 1; // not process.exit(): let stdout drain

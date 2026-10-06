@@ -40,6 +40,8 @@ export const REMARK_SENTENCES = 2;
 
 /** How many sentences a text has: a stop, question mark or exclamation mark followed by a space starts the next one. */
 export const sentenceCount = (t: string): number => t.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+/** The same, as `tools/refine-round-check` counts: closing quotes and brackets may sit between the mark and the space. */
+export const strictSentenceCount = (t: string): number => t.split(/(?<=[.!?]["'”’)\]]*)\s+/).filter(Boolean).length;
 
 export const DRAFT_LOG_KINDS = [
   "draft-added",
@@ -56,6 +58,8 @@ export const DRAFT_LOG_KINDS = [
   "architect-impact",
   "moved-to-notes",
   "ready-checked",
+  "ready-asked",
+  "architect-judged",
   "ready-accepted",
   "ready-unaccepted",
 ] as const;
@@ -109,17 +113,28 @@ const RemarkSchema = z
   .refine((r) => (r.field === "criteria") === (r.item !== undefined));
 const ReviewSchema = z.object({ at: z.iso.datetime(), remarks: z.array(RemarkSchema).max(REVIEW_MAX) }).strict();
 export const READY_RESULTS = ["met", "not-met", "unsure"] as const;
-export const READY_BY = ["code"] as const;
+export const READY_BY = ["code", "architect"] as const;
 const READY_ID = z.string().regex(/^[a-z0-9-]{1,40}$/);
-/** The result of a readiness check: for each item of the list as it was then, its text, the result and why. */
-const ReadinessSchema = z
+/**
+ * One result of a readiness check. Of the architect (`by`): `field` is the field of the draft its sentence points at, `item` the
+ * criterion (its id) when it is about one, `about` the text of that field or criterion when it was judged. Of code: none of these.
+ */
+const ReadyResultSchema = z
   .object({
-    at: z.iso.datetime(),
-    items: z
-      .array(z.object({ id: READY_ID, text: text(READY_TEXT_MAX, true), result: z.enum(READY_RESULTS), reason: text(REASON_MAX, true), by: z.enum(READY_BY) }).strict())
-      .max(READY_MAX),
+    id: READY_ID,
+    text: text(READY_TEXT_MAX, true),
+    result: z.enum(READY_RESULTS),
+    reason: text(REASON_MAX, true),
+    by: z.enum(READY_BY),
+    field: z.enum(SUGGEST_FIELDS).optional(),
+    item: z.uuid().optional(),
+    about: text(LONG_TEXT_MAX).optional(),
   })
-  .strict();
+  .strict()
+  .refine((r) => (r.by === "architect" ? r.field !== undefined && r.about !== undefined : r.field === undefined && r.item === undefined && r.about === undefined))
+  .refine((r) => r.item === undefined || r.field === "criteria");
+/** The result of a readiness check: for each item of the list as it was then, its text, the result and why. */
+const ReadinessSchema = z.object({ at: z.iso.datetime(), items: z.array(ReadyResultSchema).max(READY_MAX) }).strict();
 /** Items the person accepted anyway, with the item text they were given for and the reason. */
 const AcceptedSchema = z
   .array(z.object({ id: READY_ID, text: text(READY_TEXT_MAX, true), reason: text(REASON_MAX, true), at: z.iso.datetime() }).strict())
