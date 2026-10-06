@@ -397,6 +397,12 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .run-now h2 { margin: 0 0 8px; font-size: 15px; }
 .run-dialog { display: grid; gap: 12px; }
+.run-answer { display: grid; gap: 12px; margin-bottom: 16px; min-width: 0; }
+.run-answer[hidden] { display: none; }
+.run-answers { margin-bottom: 16px; min-width: 0; }
+.run-answers h2 { margin: 0 0 8px; font-size: 15px; }
+.run-answers ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.run-answers li { white-space: pre-wrap; overflow-wrap: anywhere; }
 .user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }
 
 /* The talk of a refinement session (ui/refinement-talk.js) */

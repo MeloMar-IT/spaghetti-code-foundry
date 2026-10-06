@@ -333,6 +333,21 @@ It is never in `queue.json`, the audit log or a server log line.
   as `{ at, text }` (no `by`, folders hidden) and `canAnswer: true` exactly when the call would be
   accepted now. `canAnswer` is absent while a resume is queued. An admin sees the raw `answers`.
 - The audit log gets `run-answer` for an accepted answer only.
+- **On the run page of the user display.** Under the questions of a run with `canAnswer`, the page
+  shows **Your answer**, a text box and **Send answer**. Ctrl/⌘+Enter sends too. An empty box shows
+  "Write your answer first." and sends nothing. The text is sent trimmed; the button is off while
+  the call is out. On success the box is emptied, the form goes away, a toast says "Answer sent —
+  continuing" and the page shows the run as queued or running. A refusal shows the server's
+  sentence in the form; your text stays. The form is not shown without `canAnswer` or while the
+  run has a queued job. Updates of the page keep your text and the focus. When the run stops with
+  questions again, the form comes back by itself. The answers given are listed under **Answers
+  given**, oldest first, as plain text — also after a cancelled resume, when **Retry** continues
+  with them.
+- **What happens next.** For a user's run that can be answered on the run page, the sentence reads
+  "The planner has questions — answer the questions on the run page and it continues." and links
+  to the run page. A run a watcher follows, a run that cannot read an answer, and every record an
+  admin reads still say "… on the issue" (the admin pages have no box). The comment on GitHub does
+  not change.
 
 **The failure summary.** A failed run (the run page and the comment on the issue) says what
 failed, why, what was tried and the kind of problem:
@@ -1724,7 +1739,8 @@ it ends.
 show as "n runs ahead of you", without ids.
 
 **Answering a run.** On a run that waits, a user can approve or reject it with a note
-(`POST /api/runs/<id>/approve` or `/reject` with `{"note": "…"}`). The note reaches the run.
+(`POST /api/runs/<id>/approve` or `/reject` with `{"note": "…"}`). The note reaches the run. A user whose run stopped with questions answers them on the run page
+(see "Answer a run's questions"); the card in My runs says so and sorts on top.
 
 ![My repositories](images/repos.png)
 
