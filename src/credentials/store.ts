@@ -299,6 +299,11 @@ export function listCredentials(userId: string): PublicCredential[] {
     .map(publicCredential);
 }
 
+/** The credentials of all accounts with their owner, without any Keychain call. For the admin page. */
+export function listAllCredentials(): (PublicCredential & { userId: string })[] {
+  return read().credentials.map((c) => ({ ...publicCredential(c), userId: c.userId }));
+}
+
 /** The secret of one of the user's credentials; sets `lastUsed`. */
 export function readSecret(userId: string, id: string): string {
   return withAuthLock(() => {

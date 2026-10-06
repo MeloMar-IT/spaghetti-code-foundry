@@ -84,6 +84,7 @@ admin for a new one.
 | **Runs** | Everything that ran or is running; the ones that need you on top |
 | **My repositories** | The repositories you work in, and how the Foundry signs in to them |
 | **Repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
+| **Credentials** | Admin: the stored credentials of all accounts, without any secret |
 | **Watchers** | Automatic runs from GitHub issues, PR comments, red CI, or a schedule |
 | **Models** | Which agents and models are available, and which model runs which step |
 | **Dashboard** | Spend, success rate, where runs fail, eval results |
@@ -1843,6 +1844,13 @@ owner), the URL, the authentication method and the connection status ("Not teste
   type the token again.
 - Queued and running runs of the old owner are not stopped.
 
+**The Credentials page (admin).** `#/credentials` is the admin page **Credentials**, after **Repositories**; a
+user never gets it. It is a table of the stored credentials of all accounts, sorted by owner name and then by
+name, with Owner, Name, Type, Fingerprint, Created and Last used ("never" when it was not used yet). The
+owner shows "deleted account" when the account is gone. It is for looking only: there is no add, change or
+remove button, and no secret is ever sent. One call, admin only (a user gets 403): `GET /api/admin/credentials`.
+If the store cannot be read, the call answers 500 with the same sentence as `GET /api/credentials`.
+
 **Repositories.** Every account has its own list of GitHub repositories, kept in `repos.json` in
 the data folder (mode `0600`). A repository is a record: `id`, `owner` (account id), `url`, `method`
 and `added`, and it may hold `settings`, which only an admin can read (`GET /api/repos` never has them).
@@ -2009,6 +2017,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
+| `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
 | `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |

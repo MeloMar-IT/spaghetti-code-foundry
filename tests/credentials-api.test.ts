@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { deleteUser } from "../src/auth/users.js";
-import { CredentialError, addCredential, credentialsPath } from "../src/credentials/store.js";
+import { CredentialError, addCredential, credentialsPath, listCredentials, readSecret, removeCredential } from "../src/credentials/store.js";
 import { startServer } from "../src/server/server.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -207,6 +208,59 @@ describe("credentials API", () => {
     expect((await call(ann, "GET", "/api/credentials")).json()).toEqual([]);
     expect(JSON.parse(readFileSync(credentialsPath(), "utf8")).credentials).toEqual([]);
     expect(Object.keys(kc.items()).length).toBeLessThanOrEqual(before.length);
+  });
+
+  it("lists the credentials of all accounts for an admin, sorted, with the stored values and only the public fields", async () => {
+    const ghost = randomUUID();
+    const tokens = [fakeToken("Bq1"), fakeToken("Aq2"), fakeToken("Zq3"), fakeToken("Gh1")];
+    try {
+      const post = async (who: TestSession, name: string, secret: string) => (await call(who, "POST", "/api/credentials", { type: "token", name, secret })).json();
+      const recB2 = await post(ann, "b-cred", tokens[0]!);
+      const recA1 = await post(ann, "a-cred", tokens[1]!);
+      const recZ = await post(bob, "zed", tokens[2]!);
+      const recG = addCredential({ userId: ghost, type: "token", name: "orphan", secret: tokens[3]! }, { ownerOk: () => true });
+      readSecret(ann.user.id, recA1.id);
+      const used = (await call(ann, "GET", "/api/credentials")).json().find((c: { id: string }) => c.id === recA1.id).lastUsed;
+      expect(used).not.toBeNull();
+
+      const r = await call(ann, "GET", "/api/admin/credentials");
+      expect(r.status).toBe(200);
+      expect(r.json()).toEqual([
+        { ...recZ, owner: bob.user.id, ownerName: "Bob" },
+        { ...recG, owner: ghost, ownerName: "deleted account" },
+        { ...recA1, lastUsed: used, owner: ann.user.id, ownerName: "Test Admin" },
+        { ...recB2, owner: ann.user.id, ownerName: "Test Admin" },
+      ]);
+      for (const row of r.json()) expect(Object.keys(row).sort()).toEqual(["created", "fingerprint", "id", "lastUsed", "name", "owner", "ownerName", "type"]);
+      const keyId = JSON.parse(readFileSync(credentialsPath(), "utf8")).keyId as string;
+      for (const s of ['"iv"', '"tag"', '"data"', '"keyId"', '"userId"', ...tokens, keyId]) expect(r.text).not.toContain(s);
+    } finally {
+      for (const u of [ann.user.id, bob.user.id, ghost]) for (const c of listCredentials(u)) removeCredential(u, c.id);
+    }
+    expect((await call(ann, "GET", "/api/admin/credentials")).json()).toEqual([]);
+    seen.length = 0;
+  });
+
+  it("refuses a user, and has no other method", async () => {
+    expect((await call(bob, "GET", "/api/admin/credentials")).status).toBe(403);
+    expect((await call(ann, "POST", "/api/admin/credentials", {})).status).toBe(404);
+    expect((await call(ann, "GET", "/api/admin/credentials/x")).status).toBe(404);
+  });
+
+  it("answers 500 with a fixed sentence when the store cannot be read", async () => {
+    const good = readFileSync(credentialsPath(), "utf8");
+    logs.length = 0;
+    try {
+      writeFileSync(credentialsPath(), "not json");
+      const r = await call(ann, "GET", "/api/admin/credentials");
+      expect(r.status).toBe(500);
+      expect(r.json()).toEqual({ error: "the stored credentials cannot be read, so no output can be shown safely" });
+      expect(logs.filter((l) => l.startsWith("credentials:"))).toEqual(["credentials: credentials.json not-json"]);
+      expect((await call(ann, "GET", "/api/credentials")).text).toBe(r.text);
+    } finally {
+      writeFileSync(credentialsPath(), good);
+    }
+    expect((await call(ann, "GET", "/api/admin/credentials")).status).toBe(200);
   });
 
   it("ends the sessions and wipes the credentials of a deleted user", async () => {

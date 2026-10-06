@@ -98,6 +98,7 @@ export const RULES: Rule[] = [
   r("GET", "admin/repos", "no", "the repositories of all accounts, with their settings"),
   r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches and branch names of a repository"),
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
+  r("GET", "admin/credentials", "no", "the stored credentials of all accounts, without any secret"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
   r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),

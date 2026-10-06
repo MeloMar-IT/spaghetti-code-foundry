@@ -216,6 +216,7 @@ const EXAMPLES: Record<string, Example> = {
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
+  "GET admin/credentials": no("admin/credentials", 200),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
 };
 
@@ -228,6 +229,8 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("GET", ["admin", "credentials"])?.path).toBe("admin/credentials");
+    expect(findRule("POST", ["admin", "credentials"])).toBeUndefined();
     expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
     expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");

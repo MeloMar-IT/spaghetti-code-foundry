@@ -72,6 +72,7 @@ export const api = {
   allRepos: () => req("GET", "/api/admin/repos"),
   setRepoSettings: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/settings`, body),
   transferRepo: (id, email) => req("POST", `/api/admin/repos/${enc(id)}/transfer`, { email }),
+  allCredentials: () => req("GET", "/api/admin/credentials"),
   refinement: () => req("GET", "/api/refinement"),
   createRefinement: (body) => req("POST", "/api/refinement", body),
   refinementSession: (id) => req("GET", `/api/refinement/${enc(id)}`),

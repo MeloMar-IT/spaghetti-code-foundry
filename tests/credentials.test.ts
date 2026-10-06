@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StoreError, withAuthLock } from "../src/auth/store.js";
 import { KEYCHAIN_SERVICE, KeyError } from "../src/credentials/keychain.js";
 import {
-  CredentialError, addCredential, addCredentialLocked, checkKeychain, credentialsPath, listCredentials, moveCredentialLocked, readSecret, removeCredential, removeCredentialsLocked, rotateKey,
+  CredentialError, addCredential, addCredentialLocked, checkKeychain, credentialsPath, listAllCredentials, listCredentials, moveCredentialLocked, readSecret, removeCredential, removeCredentialsLocked, rotateKey,
 } from "../src/credentials/store.js";
 import { fakeKey, fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
 
@@ -94,6 +94,19 @@ describe("encrypted at rest", () => {
     add(B, "two", fakeToken("Bb2"));
     kc.clearLog();
     expect(listCredentials(A).map((c) => c.name)).toEqual(["one"]);
+    expect(kc.calls()).toEqual([]);
+  });
+
+  it("lists the credentials of all accounts with their owner, without a Keychain call", () => {
+    const a = add(A, "one", fakeToken("Aa1"));
+    const b = add(B, "two", fakeToken("Bb2"));
+    readSecret(A, a.id);
+    const used = listCredentials(A)[0]!.lastUsed;
+    expect(used).not.toBeNull();
+    kc.clearLog();
+    const all = listAllCredentials();
+    expect(all).toEqual([{ ...a, lastUsed: used, userId: A }, { ...b, userId: B }]);
+    for (const row of all) expect(Object.keys(row).sort()).toEqual(["created", "fingerprint", "id", "lastUsed", "name", "type", "userId"]);
     expect(kc.calls()).toEqual([]);
   });
 

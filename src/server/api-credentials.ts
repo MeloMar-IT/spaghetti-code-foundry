@@ -3,7 +3,8 @@ import { auditAction } from "../auth/audit.js";
 import { StoreError } from "../auth/store.js";
 import { KeyError } from "../credentials/keychain.js";
 import { removeUserCredential } from "../auth/repos.js";
-import { CredentialError, addCredential, listCredentials } from "../credentials/store.js";
+import { ownerNames } from "../auth/run-owner.js";
+import { CredentialError, addCredential, listAllCredentials, listCredentials } from "../credentials/store.js";
 import { sessionUser } from "./api-auth.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { Route } from "./server.js";
@@ -27,8 +28,23 @@ function guarded<T>(log: ((m: string) => void) | undefined, fn: () => T): T {
   }
 }
 
-/** The caller's own stored credentials: list, add, delete. A secret is only ever accepted, never returned. */
+/** A row of the admin list: the public fields and the owner. Built field by field, so nothing else can get in. */
+function adminList() {
+  const names = ownerNames();
+  return listAllCredentials()
+    .map((c) => ({ id: c.id, type: c.type, name: c.name, created: c.created, lastUsed: c.lastUsed, fingerprint: c.fingerprint,
+      owner: c.userId, ownerName: names.get(c.userId) ?? "deleted account" }))
+    .sort((a, b) => a.ownerName.localeCompare(b.ownerName) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+/** The caller's own stored credentials: list, add, delete. A secret is only ever accepted, never returned. Also the admin list of all accounts' credentials (metadata only). */
 export const credentialRoutes: Route = async (ctx, req, res, seg, method) => {
+  if (seg[0] === "admin" && seg[1] === "credentials") {
+    // the permission table lets only an admin through
+    if (seg.length !== 2 || method !== "GET") return false;
+    send(res, 200, guarded(ctx.diagLog, adminList));
+    return true;
+  }
   if (seg[0] !== "credentials" || seg.length > 2) return false;
   const log = ctx.diagLog; // fixed-word diagnostics only (see ApiContext.diagLog)
   const user = sessionUser(ctx, req);
