@@ -1946,6 +1946,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts` | yes | yes | add an empty story draft to your refinement session (at most 20) |
 | `PUT /api/refinement/:id/drafts/:did` | yes | yes | save what you typed in a story draft of your refinement session; only the fields in the body change |
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
+| `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
+| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
+| `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 
 **What comes later.** Pages for users (starting runs).
@@ -2406,7 +2409,23 @@ A session keeps story drafts, so that what you write is saved. A draft has a **t
 
 **Only what you send changes.** A field you leave out stays. An empty field (`""`, spaces or `null`) is removed. A list is sent whole: an item with a known `id` and the same text stays as it is, a known `id` with a new text is changed, an item without `id` is new, and an item you leave out is removed. So send the `id` of every item you keep: the same text without its `id` is stored as a new item. An unknown or repeated `id` answers 400 ("load the session again").
 
-**Where a text came from.** Every text field and list item has `from`: `typed`, `accepted` (from a suggestion) or `accepted-edited`. The server sets it and ignores a `from` you send: new text is `typed`, and changing an `accepted` text makes it `accepted-edited`. Suggestions come in a later step.
+**Where a text came from.** Every text field and list item has `from`: `typed`, `accepted` (from a suggestion) or `accepted-edited`. The server sets it and ignores a `from` you send: new text is `typed`, and changing an `accepted` text makes it `accepted-edited`.
+
+### Suggestions from the architect
+
+You can ask the architect for a proposal for one field of a draft. It is only a proposal: it waits beside the draft (`suggestions`) and is in no field and not in `preview` until you accept it.
+
+- `POST /api/refinement/:id/drafts/:did/suggest` with `{ "field": "title" }` (`title`, `who`, `what`, `why`, `criteria`, `outOfScope`, `dependsOn` or `notes`) starts an architect run and answers 202. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, and a paused run is resumed by the same call (the same draft and field). `criteria` answers 409 when the map has no rule and no example.
+- `POST …/drafts/:did/suggestions/:sid/accept` with `{}` puts it in as `accepted`: a text field is replaced, a list gets one more item. With `{ "text": "…" }` (Edit and accept) your text goes in as `accepted-edited`; this is not possible for depends on (400). The suggestion is gone after that.
+- `POST …/drafts/:did/suggestions/:sid/reject` with an optional `{ "reason": "…" }` (at most 300 characters) removes it and keeps its text and reason with the draft (the newest 30). The next suggestion run of the session gets them; they are used in this session only.
+
+**What the architect gets.** The idea, the brief, the map (rules and examples are numbered R1, E1), the draft as it is now, the other drafts and the rejected suggestions with their reasons. It works from this text and opens a file only to check a claim. A run costs at most $1.
+
+**One or many.** One suggestion for a text field; up to 10 for acceptance criteria and depends on. A new run replaces the waiting suggestions of its field; at most 20 wait per draft. Each criterion names the rule or example it comes from (`tie`) and says what can be observed; one whose rule or example is not in the map is left out. The tie stays when you edit the criterion; when the map entry is removed, the tie is dropped and the waiting suggestions from it go. Depends-on suggestions are an issue number or another draft of the session; anything else is left out.
+
+**Very large sessions.** The task is at most 90,000 bytes. Then the brief is cut first, then map lines and other drafts, and the draft last; a "Left out" part names what is missing.
+
+**Log.** The log tells that a suggestion was asked for (with the field), that the architect suggested, and that a suggestion was accepted or rejected.
 
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
@@ -2508,7 +2527,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…]
 ```
 
 **What it reads.** The code of the repository only (the `develop` branch when there is one, else the default branch). The open issues are not read again: what the talk says about the backlog is what the architect knows of it.
@@ -2516,6 +2535,8 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 **`ask=round` (the default).** The answer is one JSON object. `questions` has at most 5 entries, the most important first. Each has a `view` (`need`, `build` or `test`), a `text`, a `why`, 2 to 4 `options` (each with a `text` and a `tradeoff`) and `recommended`, the position of the recommended option counted from 1. In the first round there is at least one question from each view. `proposals` has at most 20 entries for the lists of the story: a `list` (`rule`, `example` or `open`) and a `text`, from the answers the talk marks as new. `done` is one sentence; it is required when there are no questions, because the architect has nothing important left to ask.
 
 **`ask=question`.** The answer is `{ "answer": "…" }`, with no questions and no proposals. Every claim about the code names its file.
+
+**`ask=suggest`.** Run with `--var field=title|who|what|why|criteria|outOfScope|dependsOn|notes`. The answer is `{ "suggestions": [ … ] }`: `{ "text": "…" }` for a text field (one), `{ "text": "…", "from": "R1" }` for criteria (up to 10; `from` is a rule or example number of the task) and `{ "issue": 12 }` or `{ "draft": "D1" }` for depends on (up to 10; other items are left out). No questions and no proposals; never an implementation plan. The check prints `{ "field": …, "suggestions": [ … ] }`. Texts are cut at title 120 (on one line), who, what, why and criterion 500, out of scope and notes 5,000 characters. It fails with one plain sentence, without text of the answer, for questions or proposals, a `suggestions` that is not a list, an item that is not an object or has no text, a criterion without a rule or example number, an unknown `field`, or an `ask` that is not `round`, `question` or `suggest`.
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 

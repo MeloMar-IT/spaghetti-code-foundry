@@ -473,7 +473,11 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
   `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
   deletion. A round and an own question start the same way: `askArchitect(deps, actor, id, { kind })`
-  with kind `brief`, `round` or `question` queues `refine-brief` or `refine-round` (`ask=round` or
+  with kind `brief`, `round`, `question` or `suggest` (a draft and a field; `ask=suggest`, the field as flow
+  variable, a cost limit of $1; suggestions are stored beside the draft by `addSuggested` in
+  `src/refinement/draft.ts`; the task is built by `suggestText()`, whose third line holds the ids behind
+  R1/E1/D1 so an orphan run can be adopted; a criterion's `tie` must name a rule or example, checked on load)
+  queues `refine-brief` or `refine-round` (`ask=round` or
   `ask=question`); the talk goes in as `task` only, built by the pure `talkText()` in
   `src/refinement/talk-text.ts` (at most 90,000 bytes: oldest rounds, then the brief, then the end are
   left out, with a notice). The end is read from the step `check_round`, checked again with zod, and

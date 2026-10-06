@@ -10,8 +10,10 @@ import { z } from "zod";
 import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../flow/usage.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { refinementSessionOf, userError } from "../server/user-view.js";
+import { SUGGESTIONS_MAX, SUGGEST_FIELDS, type SuggestField } from "./draft.js";
 import {
   END_BAD_FORM,
+  END_NO_DRAFT,
   LOG_LIMIT,
   RefinementError,
   architectLogRoom,
@@ -27,7 +29,10 @@ import {
   type Session,
 } from "./store.js";
 import { ASKED_LIMIT, DONE_MAX, ENTRY_MAX, LISTS, OPTION_MAX, QUESTION_MAX, REPLY_MAX, ROUND_PROPOSALS_MAX, ROUND_QUESTIONS_MAX, VIEWS, chars, emptyTalk, ownQuestion } from "./talk.js";
-import { TALK_FIRST_LINE, questionOf, talkText } from "./talk-text.js";
+import { TALK_FIRST_LINE, questionOf, suggestOf, suggestText, talkText } from "./talk-text.js";
+
+/** A suggestion for one field is mostly wording from the brief and the map: its run has a lower cost limit than a round. */
+export const SUGGEST_MAX_COST_USD = 1;
 
 /** What the architect code needs of the scheduler (a test passes a stub). */
 export type ArchitectScheduler = Pick<Scheduler, "submit" | "cancel" | "get" | "isActive" | "isQueued" | "queue" | "briefs">;
@@ -48,6 +53,9 @@ export interface ArchitectView {
   state: ArchitectState;
   /** What the run is for: the context brief, a round of questions, or the answer to a question of the owner. Not there when idle. */
   kind?: ArchitectKind;
+  /** For kind `suggest`: the draft and the field the suggestion is for. */
+  draft?: string;
+  field?: SuggestField;
   runId?: string;
   /** What the architect is doing now: the description of the current step. */
   doing?: string;
@@ -116,7 +124,7 @@ const statusOf = (deps: ArchitectDeps, runId: string): string | undefined => {
 /** What a run is for, by its flow and its `ask` variable. */
 export function kindOfRun(run: Pick<RunSummary, "flow" | "vars">): ArchitectKind {
   if (run.flow !== REFINE_ROUND_FLOW) return "brief";
-  return run.vars?.ask === "question" ? "question" : "round";
+  return run.vars?.ask === "question" ? "question" : run.vars?.ask === "suggest" ? "suggest" : "round";
 }
 
 /**
@@ -126,6 +134,10 @@ export function kindOfRun(run: Pick<RunSummary, "flow" | "vars">): ArchitectKind
 export function askOfJob(flow?: string, ask?: string, task?: string): ArchitectAsk {
   if (flow !== REFINE_ROUND_FLOW) return { kind: "brief" };
   const first = task?.split("\n", 1)[0];
+  if (ask === "suggest" || (ask === undefined && first === TALK_FIRST_LINE.suggest)) {
+    const s = suggestOf(task ?? "");
+    return s ? { kind: "suggest", draft: s.draft, field: s.field } : { kind: "suggest" };
+  }
   if (ask === "question" || (ask === undefined && first === TALK_FIRST_LINE.question)) {
     try {
       return { kind: "question", question: ownQuestion(questionOf(task ?? "")) };
@@ -159,7 +171,7 @@ const RoundOutput = z
 const AnswerOutput = z.object({ answer: str(REPLY_MAX) }).strict();
 
 /** The checked output of the step `check_round`, read again: never trust the run. */
-function roundEnd(run: RunSummary, kind: "round" | "question"): ArchitectEnd {
+function roundEnd(run: RunSummary, kind: "round" | "question" | "suggest"): ArchitectEnd {
   const rec = [...(run.history ?? [])].reverse().find((h) => h.id === "check_round" && h.ok);
   let json: unknown;
   try {
@@ -167,6 +179,8 @@ function roundEnd(run: RunSummary, kind: "round" | "question"): ArchitectEnd {
   } catch {
     return { failed: END_BAD_FORM };
   }
+  // The store checks the form of the suggestions; the numbers of the map are read back from the head of the task.
+  if (kind === "suggest") return { suggested: json, refs: suggestOf(run.task ?? "")?.refs ?? {} };
   if (kind === "round") {
     const r = RoundOutput.safeParse(json);
     return r.success ? { round: r.data } : { failed: END_BAD_FORM };
@@ -241,10 +255,14 @@ function adoptOrphan(deps: ArchitectDeps, s: Session): Session {
       // not readable now: recorded as a brief, as before
     }
   }
+  // A suggestion whose draft and field cannot be read from its task could never be stored: it is cancelled and marked.
+  const unreadable = ask.kind === "suggest" && (!ask.draft || !ask.field);
   try {
-    const adopted = setArchitectRun({ id: s.owner, admin: false }, s.id, found, ask);
+    const adopted = setArchitectRun({ id: s.owner, admin: false }, s.id, found, unreadable ? { kind: "round" } : ask);
     if (scan) seen.add(s.id);
-    return adopted;
+    if (!unreadable) return adopted;
+    deps.scheduler.cancel(found);
+    return endArchitectRun(s.id, found, { failed: END_NO_DRAFT }) ?? adopted;
   } catch {
     // Not recorded (the lock was busy, for example): the next read looks again.
     return s;
@@ -269,7 +287,8 @@ export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">
   if (!a) return { state: "idle" };
   const runId = a.runId;
   const kind = a.kind ?? "brief";
-  if (deps.scheduler.isQueued(runId)) return { state: "queued", kind, runId };
+  const what = kind === "suggest" ? { kind, draft: a.draft, field: a.field } : { kind };
+  if (deps.scheduler.isQueued(runId)) return { state: "queued", ...what, runId };
   if (deps.scheduler.isActive(runId)) {
     let run: RunSummary | undefined;
     try {
@@ -277,26 +296,28 @@ export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">
     } catch {
       run = undefined;
     }
-    return { state: "running", kind, runId, doing: doingOf(run) };
+    return { state: "running", ...what, runId, doing: doingOf(run) };
   }
-  if (a.failed !== undefined) return { state: "failed", kind, runId, reason: a.failed };
+  if (a.failed !== undefined) return { state: "failed", ...what, runId, reason: a.failed };
   const end = endFor(deps, runId);
   if (end === "paused") {
     const run = runOf(deps, runId)!;
-    return { state: "paused", kind, runId, reason: pausedReason(run) };
+    return { state: "paused", ...what, runId, reason: pausedReason(run) };
   }
   // Not settled yet (the hook has not run, or the lock was busy): what it would be, not stored.
-  return { state: "failed", kind, runId, reason: "failed" in end ? end.failed : kind === "brief" ? "The brief is being stored" : "The answer is being stored" };
+  return { state: "failed", ...what, runId, reason: "failed" in end ? end.failed : kind === "brief" ? "The brief is being stored" : "The answer is being stored" };
 }
 
 const busy = (m: string) => new RefinementError("busy", m);
 
-const DOING: Record<ArchitectKind, string> = { brief: "reading the code", round: "asking its questions", question: "answering your question" };
+const DOING: Record<ArchitectKind, string> = { brief: "reading the code", round: "asking its questions", question: "answering your question", suggest: "writing a suggestion" };
 
-/** What the owner asks of the architect. `question` is the text of an own question (checked here). */
+/** What the owner asks of the architect. `question` is the text of an own question, `field` and `draft` those of a suggestion (checked here). */
 export interface ArchitectRequest {
   kind: ArchitectKind;
   question?: unknown;
+  draft?: string;
+  field?: unknown;
 }
 
 /**
@@ -311,7 +332,9 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   if (found.owner !== actor.id) throw actor.admin ? new RefinementError("not-owner", "only the owner can ask the architect") : new RefinementError("not-found", "no such refinement session");
   if (found.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
   if (!ownsRepo(found.owner, found.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
-  const s = settleSession(deps, id);
+  const field = ask.field as SuggestField;
+  if (kind === "suggest" && !(SUGGEST_FIELDS as readonly unknown[]).includes(ask.field)) throw new RefinementError("bad-draft", `the field is ${SUGGEST_FIELDS.join(", ")}`);
+  let s = settleSession(deps, id);
   if (!s) throw new RefinementError("not-found", "no such refinement session");
   if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
 
@@ -328,18 +351,31 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   }
 
   const source = sourceOf(s.id);
-  if (s.architect && s.architect.failed === undefined) {
-    const paused = statusOf(deps, s.architect.runId) === "stopped";
-    const pausedKind = s.architect.kind ?? "brief";
-    if (paused && pausedKind !== kind) throw busy(`the architect paused while ${DOING[pausedKind]} for this session; ask that again first`);
-    if (paused) {
-      const run = runOf(deps, s.architect.runId);
-      if (run?.workdir && existsSync(run.workdir)) {
-        deps.scheduler.submit({ kind: "resume", runId: s.architect.runId }, { source, queuedBy: actor.id, lockKey: source });
-        noteArchitectResumed(s.id, s.architect.runId);
-        return { runId: s.architect.runId, resumed: true };
+  const cur = s.architect;
+  if (cur && cur.failed === undefined) {
+    const paused = statusOf(deps, cur.runId) === "stopped";
+    const pausedKind = cur.kind ?? "brief";
+    if (paused && pausedKind === "suggest" && !s.drafts.some((d) => d.id === cur.draft)) {
+      // The draft is gone: the paused suggestion could never be stored. The paused run is cancelled, so it does not stay paused for good.
+      try {
+        const old = runOf(deps, cur.runId);
+        if (old) saveRun({ ...old, status: "cancelled", reason: "cancelled by user", waiting: undefined, finishedAt: new Date().toISOString() });
+      } catch {
+        deps.log?.("refinement: the paused run could not be saved as cancelled");
       }
-      endArchitectRun(s.id, s.architect.runId, { failed: "The folder of the read is gone" });
+      endArchitectRun(s.id, cur.runId, { failed: END_NO_DRAFT });
+      s = getSession(id) ?? s;
+    } else if (paused && (pausedKind !== kind || (kind === "suggest" && (cur.draft !== ask.draft || cur.field !== field)))) {
+      throw busy(`the architect paused while ${DOING[pausedKind]} for this session; ask that again first`);
+    } else if (paused) {
+      const run = runOf(deps, cur.runId);
+      if (run?.workdir && existsSync(run.workdir)) {
+        deps.scheduler.submit({ kind: "resume", runId: cur.runId }, { source, queuedBy: actor.id, lockKey: source });
+        noteArchitectResumed(s.id, cur.runId);
+        return { runId: cur.runId, resumed: true };
+      }
+      endArchitectRun(s.id, cur.runId, { failed: "The folder of the read is gone" });
+      s = getSession(id) ?? s;
     }
   }
 
@@ -353,17 +389,34 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
     question = ownQuestion(ask.question);
     if (talk.asked.length >= ASKED_LIMIT) throw new RefinementError("limit", `at most ${ASKED_LIMIT} own questions are kept`);
   }
+  const draft = kind === "suggest" ? s.drafts.find((d) => d.id === ask.draft) : undefined;
+  if (kind === "suggest") {
+    if (!s.brief) throw new RefinementError("bad-state", "ask the architect to look at the code first");
+    if (!draft) throw new RefinementError("not-found", "no such story draft");
+    if (field === "criteria" && !talk.map.rules.length && !talk.map.examples.length) {
+      throw new RefinementError("bad-state", "there is no rule and no example in the map yet; ask for a round of questions and accept some entries first");
+    }
+    if ((draft.suggestions ?? []).filter((x) => x.field !== field).length >= SUGGESTIONS_MAX) throw new RefinementError("limit", `at most ${SUGGESTIONS_MAX} suggestions wait for a draft; accept or reject some first`);
+  }
 
   if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
-  const flow = parseFlow(readFileSync(join(flowDir("builtin", ""), `${kind === "brief" ? REFINE_BRIEF_FLOW : REFINE_ROUND_FLOW}.yaml`), "utf8"));
-  const rejected = s.log.flatMap((l) => (l.what === "entry-rejected" && l.detail && l.list ? [{ list: l.list, text: l.detail }] : []));
-  const task = kind === "brief" ? s.idea : talkText({ kind, idea: s.idea, brief: s.brief?.text, talk, rejected, question });
+  const parsed = parseFlow(readFileSync(join(flowDir("builtin", ""), `${kind === "brief" ? REFINE_BRIEF_FLOW : REFINE_ROUND_FLOW}.yaml`), "utf8"));
+  const flow = kind === "suggest" ? { ...parsed, limits: { ...parsed.limits, max_cost_usd: SUGGEST_MAX_COST_USD } } : parsed;
+  let task: string;
+  if (kind === "brief") task = s.idea;
+  else if (draft) {
+    const rejectedHere = s.drafts.flatMap((d) => (d.rejected ?? []).map((r) => ({ ...r, own: d.id === draft.id && r.field === field })));
+    task = suggestText({ idea: s.idea, brief: s.brief?.text, talk, draft, field, drafts: s.drafts, rejected: rejectedHere });
+  } else {
+    const rejected = s.log.flatMap((l) => (l.what === "entry-rejected" && l.detail && l.list ? [{ list: l.list, text: l.detail }] : []));
+    task = talkText({ kind: kind as "round" | "question", idea: s.idea, brief: s.brief?.text, talk, rejected, question });
+  }
   const runId = deps.scheduler.submit(
-    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}) }, frozenVars: true },
+    { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(kind === "suggest" ? { field } : {}) }, frozenVars: true },
     { source, owner: actor.id, queuedBy: actor.id, lockKey: source },
   );
   try {
-    setArchitectRun(actor, s.id, runId, { kind, question });
+    setArchitectRun(actor, s.id, runId, { kind, question, ...(draft ? { draft: draft.id, field } : {}) });
   } catch (e) {
     deps.scheduler.cancel(runId);
     throw e;
