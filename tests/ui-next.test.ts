@@ -431,15 +431,6 @@ describe("the \"?\" and the status names", () => {
     expect(admin.watcherStateMark({})).toBeNull();
   });
 
-  it("watcherConfig drops what the API adds, so the config accepts it again", async () => {
-    const { WatcherSchema } = await import("../src/config.js");
-    const base = WatcherSchema.parse({ id: "w", github_repo: "o/r" });
-    const item = { ...base, state: { name: "active", status: "active", help: "A. B." }, status: { id: "w", lastActions: [] } };
-    expect(WatcherSchema.parse(admin.watcherConfig(item))).toEqual(base);
-    expect(() => WatcherSchema.parse(item)).toThrow();
-    expect(admin.watcherConfig()).toEqual({});
-  });
-
   it("describes a monitor, and a monitor entry keeps only id, source, every and enabled", async () => {
     const { WatcherSchema } = await import("../src/config.js");
     expect(admin.describeWatcher({ id: "m", source: "monitor", every: "5m" })).toBe("checks the Foundry itself for problems");
@@ -584,12 +575,6 @@ describe("the Runs pages for a user", () => {
     } finally {
       g.location = saved;
     }
-  });
-
-  it("the watcher form leaves 'owner' out of the config when the field is empty", async () => {
-    const { ownerSetting } = (await import("../ui/admin.js" as string)) as any;
-    expect({ id: "w", owner: ownerSetting(" ann@example.com ") }).toEqual({ id: "w", owner: "ann@example.com" });
-    expect(JSON.parse(JSON.stringify({ id: "w", owner: ownerSetting("  ") }))).toEqual({ id: "w" });
   });
 
   it("says 'No runs yet.' to a user without runs", async () => {

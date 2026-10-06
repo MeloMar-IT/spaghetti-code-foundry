@@ -122,7 +122,8 @@ const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r)
 /** A record for the admin page: with its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
 function adminRow(rec: RepoRecord, users?: Map<string, User>) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
-  return { ...rec, settings: rec.settings ?? {}, account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null };
+  const problem = watcherRepoProblem(rec, u ?? undefined);
+  return { ...rec, settings: rec.settings ?? {}, account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}) };
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */

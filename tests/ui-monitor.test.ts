@@ -37,7 +37,7 @@ beforeEach(() => {
         { id: "w", source: "issues", enabled: true, github_repo: "o/a", flow: "issue-gitflow", label: "x", every: "5m", max_per_tick: 1, state: { name: "active" }, status: { id: "w", lastActions: [] } },
       ]);
     }
-    if (url === "/api/flows") return reply([]);
+    if (url === "/api/flows" || url === "/api/admin/repos") return reply([]);
     if (url === "/api/monitor") return stateFails ? reply({ error: "no" }, 500) : reply(state);
     if (url === "/api/monitor/off") return reply({ ...state, state: "off", since: iso(14, 5) });
     if (url === "/api/monitor/on") return reply({ ...state, state: "on" });

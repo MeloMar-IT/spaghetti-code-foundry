@@ -185,8 +185,9 @@ describe("ui server", () => {
     expect(app).toContain("Welcome to Spaghetti Code Foundry");
     expect(app).toContain("Build your own coding flows: pick a flow on the left,");
     const admin = await text("/admin.js");
-    expect(admin).toContain("Review comments on Foundry PRs");
-    expect(admin).toContain('label: "claude-factory"');
+    const form = await text("/watcher-form.js");
+    expect(form).toContain("Review comments on Foundry PRs");
+    expect(form).toContain('label: "claude-factory"');
     expect(admin).toContain('placeholder: "claude-factory[bot]"');
   });
 
