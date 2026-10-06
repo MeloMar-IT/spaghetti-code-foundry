@@ -1725,7 +1725,15 @@ that is gone shows as "deleted user". A detail, such as `user -> admin` for a ro
 
 An account with the role `user` never sees the link or the page; a user who opens `/#/audit` lands on My runs.
 
-**View as user (server).** An admin can see the display of one user, read-only. The page for this comes later; the server part is ready.
+**View as user.** An admin can open the display of one user and see what that user sees, read-only.
+
+- **Start.** On the Users page, press **View as user** on an account with the role user (admins do not have the button). The user display opens at `/user/?as=<id>` with that user's My runs, run page, My repositories, Refinement and Start work.
+- **The bar.** A bar at the top says "You are viewing as <name>. Nothing can be changed here." Press **Back to the admin display** to end the view and return to the Users page. The top bar still shows your own name and Sign out.
+- **Read-only.** Buttons that only change things are not shown: Start, Add repository, Remove, Approve, Reject, Retry, Cancel, Send answer and the buttons of a refinement session. A button that is still there, such as Change password, shows "This is a preview. Nothing can be changed here." and sends nothing. The page sends no changing call in this mode.
+- **When the view ends.** A view ends after 30 minutes, or when the server restarts. The page then says so and offers **View again** (a new start, a new audit line) and **Back to the admin display**. It never shows your own data instead. A view opened in another tab, or when the browser cannot keep the user's name, also shows this card.
+- **Other cases.** `/user/` without `as` still sends an admin to the admin display. If a user opens `/user/?as=…`, the parameter is ignored.
+
+**View as user (server).** The part below is what the server does for the page above.
 
 - **Start.** `POST /api/admin/view-as` with `{"userId": "…"}` starts a view for your session and answers `{id, name}` of the user. It writes one audit line with the action `view-as` (you as the actor, the user as the target). If that line cannot be written, the view does not start (503 when the log is busy, 500 otherwise). An unknown account answers 404; an account with the role admin, or your own account, answers 400. A blocked user can still be viewed.
 - **Use.** While the view runs, a `GET` call with `?as=<userId>` is answered as it would be for that user: the same rules (a call marked `no` for users is 403), and the same cut-down answers (no costs, no folders, no runs of other accounts; a foreign run is 404). This holds for `flows`, `queue`, `runs`, `runs/:id`, `runs/:id/events`, `runs/:id/diff`, `repos`, `repos/methods`, `credentials`, `refinement` and `refinement/:id`. Unexpected errors show the user's fixed sentence. `GET /api/session` still shows you as the admin. Calls without `as=` are not changed. Reads leave no audit line.

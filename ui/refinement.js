@@ -259,13 +259,15 @@ function renameDialog(session, onRenamed) {
 }
 
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
-export async function renderRefinement(main, { admin = false, id } = {}) {
+export async function renderRefinement(main, { admin = false, id, readOnly = false } = {}) {
+  // In a preview the server answers as the viewed user (`mine: true`); every button hangs on `mine`, so it is turned off here.
+  const seen = (s) => (readOnly ? { ...s, mine: false } : s);
   const mine = ++generation;
   stopPoll();
   const current = () => mine === generation && onPage();
   // A reload draws a new page; the cleanup the app holds must reach that page, so navigation always ends the current one.
   let reloaded;
-  const reload = () => renderRefinement(main, { admin, id }).then((c) => {
+  const reload = () => renderRefinement(main, { admin, id, readOnly }).then((c) => {
     reloaded = c;
   }, (e) => toast(errorText(e), "error"));
   const restore = (btn, sid) =>
@@ -290,7 +292,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     const gone = (e) => mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
     let s;
     try {
-      s = await api.refinementSession(id);
+      s = seen(await api.refinementSession(id));
     } catch (e) {
       if (!current()) return () => {};
       gone(e);
@@ -319,7 +321,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
       const before = draws;
       let next;
       try {
-        next = await api.refinementSession(id);
+        next = seen(await api.refinementSession(id));
       } catch (e) {
         if (!current()) return;
         if (e?.status === 404) return gone(e);
@@ -431,7 +433,8 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     throw err;
   }
   if (!current()) return () => {};
-  const { sessions, repos } = listed;
+  const { repos } = listed;
+  const sessions = listed.sessions.map(seen);
   const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
@@ -452,7 +455,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
       h("span", { class: "muted" }, "Where a rough idea grows into a story"),
       h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
-      h("button", { class: "primary", onClick: async () => {
+      readOnly ? null : h("button", { class: "primary", onClick: async () => {
         await newSessionDialog(repos, (made) => {
           if (!made?.id) return;
           if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);

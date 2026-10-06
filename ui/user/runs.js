@@ -74,7 +74,7 @@ export function runCard({ run, job }, onRemove) {
     h("div", { class: "row" },
       when[1] ? h("span", { class: "muted" }, `${when[0]} ${timeAgo(when[1])}`) : null,
       h("span", { class: "spacer" }),
-      job ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null));
+      job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null));
 }
 
 /** A yes/no dialog. Resolves true for the yes button, false for the other, Close, Escape or the backdrop. */
@@ -132,7 +132,7 @@ export async function decisionDialog(kind, send) {
 // ── My runs ──
 
 /** The My runs page; refreshes every 30 seconds. Returns a cleanup. */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog } = {}) {
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false } = {}) {
   let gone = false;
   let entries = [];
   let seq = 0;
@@ -141,7 +141,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog } = {}) 
 
   const draw = () => {
     mount(list, entries.length
-      ? h("ul", { class: "run-cards" }, entries.map((e) => runCard(e, remove)))
+      ? h("ul", { class: "run-cards" }, entries.map((e) => runCard(e, readOnly ? null : remove)))
       : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", href: "#/start" }, "Start work")));
   };
   async function load() {
@@ -187,7 +187,7 @@ const LABELS = {
 };
 
 /** The run page. Returns a cleanup that stops the stream and the timer. */
-export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; } } = {}) {
+export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {
   let summary = null;
   let job = null;
   let runError = null;
@@ -269,6 +269,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const back = () => h("a", { class: "btn ghost", href: "#/runs", "aria-label": "Back to My runs" }, "←");
 
   function actionButtons(kinds) {
+    if (readOnly) return null;
     return h("div", { class: "run-actions" }, kinds.map((k) => {
       const l = LABELS[k];
       const b = h("button", { type: "button", class: l.cls, title: l.title, "data-focus": `act-${k}`, onClick: () => onAction(k) }, l.text);
@@ -290,7 +291,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     mount(givenBox, given.length
       ? h("section", { class: "card run-answers", "aria-label": "Answers given" }, h("h2", {}, "Answers given"), h("ol", {}, given.map((x) => h("li", {}, String(x?.text ?? "")))))
       : null);
-    const show = !!s && !!s.questions && s.canAnswer === true && job === null && s.status !== "queued";
+    const show = !readOnly && !!s &&!!s.questions && s.canAnswer === true && job === null && s.status !== "queued";
     if (answerForm.hidden === !show) return;
     answerForm.hidden = !show;
     if (!show) answerErr.textContent = "";
@@ -298,7 +299,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   async function sendAnswer(e) {
     e?.preventDefault?.();
-    if (sending) return;
+    if (readOnly || sending) return;
     const text = answerInput.value.trim();
     if (!text) { answerErr.textContent = NO_ANSWER; return; }
     sending = true;
@@ -408,7 +409,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   }
 
   async function onAction(kind) {
-    if (busy || acting) return;
+    if (readOnly || busy || acting) return;
     acting = true;
     setAlert("");
     try {
@@ -475,6 +476,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     if (follow) logEl.scrollTop = logEl.scrollHeight;
   });
   es.onerror = () => {
+    // A stream is not a fetch: in a preview a closed stream is checked with a GET, which shows a 403 when the view has ended.
+    if (es.readyState === 2 && readOnly) return void refresh();
     if (es.readyState === 2 && summary) toast("Lost connection to the run stream", "error");
   };
 

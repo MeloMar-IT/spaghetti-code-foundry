@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { errorText, linkHash } from "./auth.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { rememberView } from "./view-as.js";
 
 const text = (s) => String(s ?? "").trim();
 const ROLES = ["user", "admin"];
@@ -9,6 +10,7 @@ const browserPage = {
   origin: () => location.origin,
   clipboard: () => (typeof navigator === "undefined" ? undefined : navigator.clipboard),
   reload: () => location.reload(),
+  go: (to) => location.assign(to),
 };
 
 /** True while the account is locked after too many wrong tries (`lockedUntil` is a time in the future). */
@@ -34,6 +36,7 @@ export const actionsFor = (u, now = Date.now()) => [
   u.hasPassword ? "reset" : "link",
   ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
   u.status === "blocked" ? "unblock" : "block",
+  ...(u.role === "user" ? ["view"] : []),
   "delete",
 ];
 
@@ -247,7 +250,7 @@ const deleteDialog = (u, { me }) => callDialog({
 });
 
 const DIALOGS = { edit: editDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
-const LABELS = { edit: "Edit", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", delete: "Delete" };
+const LABELS = { edit: "Edit", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
@@ -278,6 +281,16 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     else if (answer && kind === "delete") toast(`${u.name} was deleted`);
     return reload(next);
   };
+  // Starts the read-only preview (an audit line on the server) and opens it in this tab; the name is kept for the bar.
+  const view = async (u) => {
+    try {
+      const v = await api.startViewAs(u.id);
+      rememberView(v);
+      page.go(`/user/?as=${encodeURIComponent(v.id)}`);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const add = async () => {
     await addDialog(null, { page });
     reload();
@@ -289,7 +302,7 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     h("td", {}, h("span", { class: pillClass(u) }, statusText(u))),
     h("td", { class: "muted" }, lastSignInText(u)),
     h("td", { class: "mono" }, u.runs),
-    h("td", {}, actionsFor(u).map((k) => [h("button", { class: k === "delete" ? "small danger" : "small", onClick: () => act(u, k) }, LABELS[k]), " "])));
+    h("td", {}, actionsFor(u).map((k) => [h("button", { class: k === "delete" ? "small danger" : "small", onClick: () => (k === "view" ? view(u) : act(u, k)) }, LABELS[k]), " "])));
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
       h("span", { class: "spacer" }), h("button", { class: "primary", onClick: add }, "+ Add user")),

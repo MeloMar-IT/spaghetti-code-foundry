@@ -374,6 +374,10 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .user-display .user { margin-left: auto; flex-wrap: wrap; white-space: normal; min-width: 0; }
 .user-display .user > span { overflow-wrap: anywhere; min-width: 0; }
 .user-display main { overflow-wrap: break-word; }
+/* "View as user": the bar of the read-only preview */
+.view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
+.view-bar[hidden] { display: none; }
+.view-as .top { position: static; }
 @media (max-width: 760px) {
   .user-display .top { position: static; overflow-x: visible; }
 }

@@ -46,7 +46,7 @@ beforeEach(() => {
   held = undefined;
   heldGets = [];
   clipboard = { writeText: vi.fn(async () => {}) };
-  page = { origin: () => ORIGIN, clipboard: () => clipboard, reload: vi.fn() };
+  page = { origin: () => ORIGIN, clipboard: () => clipboard, reload: vi.fn(), go: vi.fn() };
   delete (globalThis as any).location;
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).getElementById("main").replaceChildren();
@@ -151,14 +151,15 @@ describe("pure functions", () => {
     expect(ui.lastSignInText({ lastSignIn: new Date().toISOString() })).toBe("just now");
   });
   it("actionsFor", () => {
-    expect(ui.actionsFor(user())).toEqual(["edit", "reset", "block", "delete"]);
-    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "reset", "unblock", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "link", "block", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "link", "unblock", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "reset", "unlock", "block", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "reset", "unlock", "unblock", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "link", "block", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "reset", "block", "delete"]);
+    expect(ui.actionsFor(user())).toEqual(["edit", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "reset", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "link", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "reset", "unlock", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "reset", "unlock", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "reset", "block", "delete"]);
   });
   it("blockedLinkText", () => {
     expect(ui.blockedLinkText(user())).toBe("");
@@ -214,10 +215,34 @@ describe("the list", () => {
     expect(cells("Bob")[4]).toBe("never");
     expect(cells("Cy")[3]).toBe("no password yet");
     const labels = (n: string) => rowOf(n).all("button").map((b) => b.textContent);
-    expect(labels("Ann")).toEqual(["Edit", "Reset password", "Block", "Delete"]);
-    expect(labels("Bob")).toEqual(["Edit", "Reset password", "Unblock", "Delete"]);
-    expect(labels("Cy")).toEqual(["Edit", "New link", "Block", "Delete"]);
+    expect(labels("Ann")).toEqual(["Edit", "Reset password", "Block", "View as user", "Delete"]);
+    expect(labels("Bob")).toEqual(["Edit", "Reset password", "Unblock", "View as user", "Delete"]);
+    expect(labels("Cy")).toEqual(["Edit", "New link", "Block", "View as user", "Delete"]);
+    expect(labels("Root")).not.toContain("View as user");
     expect(main().all("input")).toHaveLength(0);
+  });
+
+  it("View as user starts the view and opens the preview", async () => {
+    await show();
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (init.method === "POST") {
+        sent.push({ method: init.method, url, body: JSON.parse(init.body) });
+        return { ok: true, status: 200, statusText: "OK", json: async () => ({ id: "u1", name: "Ann" }) };
+      }
+      return real(url, init);
+    };
+    await open("Ann", "View as user");
+    expect(sent).toEqual([{ method: "POST", url: "/api/admin/view-as", body: { userId: "u1" } }]);
+    expect(page.go).toHaveBeenCalledWith("/user/?as=u1");
+  });
+
+  it("a refusal of View as user shows the sentence and goes nowhere", async () => {
+    await show();
+    answers.push({ status: 400, error: "that account is not a user" });
+    await open("Ann", "View as user");
+    expect(toastText()).toBe("that account is not a user");
+    expect(page.go).not.toHaveBeenCalled();
   });
 });
 
