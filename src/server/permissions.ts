@@ -116,6 +116,8 @@ export const RULES: Rule[] = [
   r("PUT", "refinement/:id/drafts/:did", "yes", "save what you typed in a story draft of your refinement session; only the fields in the body change"),
   r("DELETE", "refinement/:id/drafts/:did", "yes", "remove a story draft from your refinement session"),
   r("POST", "refinement/:id/drafts/:did/suggest", "yes", "ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time)"),
+  r("POST", "refinement/:id/drafts/:did/review", "yes", "ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes"),
+  r("POST", "refinement/:id/drafts/:did/move-to-notes", "yes", "move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish"),
   r("POST", "refinement/:id/drafts/:did/suggestions/:sid/accept", "yes", "accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft"),
   r("POST", "refinement/:id/drafts/:did/suggestions/:sid/reject", "yes", "reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed"),
   r("PUT", "refinement/:id/epic", "yes", "set or clear the Epic of your refinement session"),

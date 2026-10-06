@@ -208,6 +208,8 @@ const EXAMPLES: Record<string, Example> = {
   "PUT refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "DELETE refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggest": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggest`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/reject": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
@@ -232,6 +234,8 @@ describe("the table", () => {
     expect(findRule("GET", ["monitor", "findings", "0000000000000000"])?.path).toBe("monitor/findings/:id");
     expect(findRule("POST", ["monitor", "story"])?.path).toBe("monitor/story");
     expect(findRule("POST", ["runs", "abc", "answer"])?.path).toBe("runs/:id/answer");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();

@@ -517,7 +517,10 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
   `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
   `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
   deletion. A round and an own question start the same way: `askArchitect(deps, actor, id, { kind })`
-  with kind `brief`, `round`, `question` or `suggest` (a draft and a field; `ask=suggest`, the field as flow
+  with kind `brief`, `round`, `question`, `suggest` or `review` (a review needs only the draft: `ask=review`, stored beside the
+  draft by `setReview` in `src/refinement/draft-review.ts` with the text each remark was about, so `reviewView` marks it `stale`;
+  `moveToNotes` there moves a text with a plan or how remark to the notes; the code checks are the pure
+  `src/refinement/draft-check.ts`, computed in `view()` and never stored) (a draft and a field; `ask=suggest`, the field as flow
   variable, a cost limit of $1; suggestions are stored beside the draft by `addSuggested` in
   `src/refinement/draft.ts`; the task is built by `suggestText()`, whose third line holds the ids behind
   R1/E1/D1 so an orphan run can be adopted; a criterion's `tie` must name a rule or example, checked on load)

@@ -5,7 +5,9 @@ import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
-import { isDraftKind, preview } from "../refinement/draft.js";
+import { draftRemarks } from "../refinement/draft-check.js";
+import { reviewView } from "../refinement/draft-review.js";
+import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
   DROP_KEEP_MS,
@@ -16,6 +18,7 @@ import {
   acceptSuggestionOf,
   addDraft,
   answerQuestion,
+  moveToNotesOf,
   rejectSuggestionOf,
   removeDraft,
   saveDraft,
@@ -84,6 +87,13 @@ function githubNames(userId: string): string[] {
   return out;
 }
 
+/** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
+const draftView = (s: Session) => (d: Draft) => {
+  const { review: _stored, ...rest } = d;
+  const review = reviewView(d);
+  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}) };
+};
+
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
 function view(ctx: ApiContext, s: Session, viewer: User) {
   const repoAvailable = ownsRepo(s.owner, s.repo);
@@ -105,7 +115,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     idea: s.idea,
     state: s.state,
     // Like the talk, the drafts are not shown while the repository is not theirs.
-    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map((d) => ({ ...d, preview: preview(d, s) })) }),
+    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s)) }),
     ...(s.epic !== undefined ? { epic: s.epic } : {}),
     architect: architectView(deps(ctx), s),
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
@@ -250,6 +260,11 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "suggest" && method === "POST") {
     const body = await readJson(req);
     return startRun({ kind: "suggest", draft: seg[3]!, field: body.field });
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
   }
   if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "suggestions" && (seg[6] === "accept" || seg[6] === "reject") && method === "POST") {
     const body = await readJson(req);

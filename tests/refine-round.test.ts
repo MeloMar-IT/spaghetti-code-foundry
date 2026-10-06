@@ -116,10 +116,21 @@ describe("refine-round flow", { timeout: 60_000 }, () => {
     expect(checked(s).questions).toHaveLength(1);
   });
 
-  it("fails for an ask that is not round, question or suggest", async () => {
+  it("fails for an ask that is not round, question, suggest or review", async () => {
     const s = await run("talk", { ask: "both" });
     expect(s.status).toBe("failed");
-    expect(out(s, "check_round")).toBe("set the variable ask to round, question or suggest");
+    expect(out(s, "check_round")).toBe("set the variable ask to round, question, suggest or review");
+  });
+
+  it("reviews a draft: the remarks of the fake claude pass the check", async () => {
+    const s = await run("talk", { ask: "review" });
+    expect(s.status).toBe("succeeded");
+    expect(checked(s)).toEqual({
+      remarks: [
+        { field: "criteria", item: "C1", kind: "uncheckable", text: "Nobody can tell when this is met." },
+        { field: "what", kind: "how", text: "This says how to build it." },
+      ],
+    });
   });
 
   it("suggests criteria that name a rule or an example", async () => {
@@ -374,6 +385,23 @@ describe("refine-round definition", () => {
     ]) expect(round.prompt, s).toContain(s);
   });
 
+  it("pins the sentences of the review part", () => {
+    for (const s of [
+      "## When it is `review`: point out weak spots in the story draft",
+      "You only point out. Propose no new text, rewrite nothing and decide nothing: the person fixes the draft.",
+      "Never write an implementation plan",
+      "Do not review the notes for the builder.",
+      "Open a file only to check a claim",
+      "`uncheckable`",
+      "`contradiction`",
+      "`how`",
+      "`plan`",
+      "`vague`",
+      "Give at most 20 remarks",
+      '{ "remarks": [] }',
+    ]) expect(round.prompt, s).toContain(s);
+  });
+
   it("holds exactly five placeholders, with the talk once between the markers", () => {
     expect([...round.prompt.matchAll(/\{\{[^}]*\}\}/g)].map((m) => m[0]).sort()).toEqual(["{{steps.clone.output}}", "{{task}}", "{{vars.ask}}", "{{vars.field}}", "{{vars.github_repo}}"]);
     const lines = round.prompt.split("\n");
@@ -485,5 +513,55 @@ describe("refine-round-check for suggestions", () => {
     const r = check({ suggestions: [{ issue: 0 }, { issue: 1.5 }, { issue: "3" }, { draft: "x" }, { draft: "D2" }, { issue: 7, draft: "D1" }, {}] }, "dependsOn");
     expect(r.json().suggestions).toEqual([{ draft: "D2" }, { issue: 7 }]);
     expect(check({ suggestions: [{ draft: "D2" }] }, "dependsOn").json().suggestions).toEqual([{ draft: "D2" }]);
+  });
+});
+
+describe("refine-round-check for a review", () => {
+  const tool = join(process.cwd(), "tools", "refine-round-check");
+  const check = (raw: unknown) => {
+    const env = { ...(process.env as Record<string, string>), FACTORY_OUT_ROUND: typeof raw === "string" ? raw : JSON.stringify(raw), FACTORY_VAR_ASK: "review" };
+    const r = spawnSync(process.execPath, [tool], { env, encoding: "utf8" });
+    return { status: r.status, stdout: r.stdout.trim(), json: () => JSON.parse(r.stdout) };
+  };
+  const fails = (raw: unknown, sentence: string) => {
+    const r = check(raw);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe(sentence);
+    expect(r.stdout).not.toContain("SECRET");
+  };
+
+  it("prints a good review with known keys only", () => {
+    const r = check({ remarks: [{ field: "criteria", item: "C2", kind: "vague", text: " Say how fast. ", extra: 1 }, { field: "what", item: "C1", kind: "how", text: "It says how." }], other: 1 });
+    expect(r.status).toBe(0);
+    expect(r.json()).toEqual({ remarks: [{ field: "criteria", item: "C2", kind: "vague", text: "Say how fast." }, { field: "what", kind: "how", text: "It says how." }] });
+  });
+
+  it("lets an empty or missing list pass", () => {
+    expect(check({ remarks: [] }).json()).toEqual({ remarks: [] });
+    expect(check({}).json()).toEqual({ remarks: [] });
+  });
+
+  it("keeps the first 20 without checking the rest, and cuts a text at 300 characters on one line", () => {
+    const items = Array.from({ length: 20 }, () => ({ field: "why", kind: "plan", text: "ok" }));
+    expect(check({ remarks: [...items, 5] }).json().remarks).toHaveLength(20);
+    expect(check({ remarks: [{ field: "why", kind: "plan", text: `${"a".repeat(400)}` }] }).json().remarks[0].text).toHaveLength(300);
+    expect(check({ remarks: [{ field: "why", kind: "plan", text: "one\n\ttwo" }] }).json().remarks[0].text).toBe("one two");
+  });
+
+  it.each([
+    ["suggestions", { suggestions: [{ text: "SECRET" }] }, "the architect's answer has questions, proposals or suggestions, but only remarks were asked for"],
+    ["questions", { questions: [{}] }, "the architect's answer has questions, proposals or suggestions, but only remarks were asked for"],
+    ["a remarks that is no list", { remarks: "SECRET" }, "remarks is not a list"],
+    ["a string item", { remarks: ["SECRET"] }, "remark 1 is not an object"],
+    ["an unknown field", { remarks: [{ field: "notes", kind: "how", text: "SECRET" }] }, "remark 1 does not name a field of the draft"],
+    ["an unknown kind", { remarks: [{ field: "what", kind: "SECRET", text: "x" }] }, "remark 1 has no kind of uncheckable, vague, contradiction, how or plan"],
+    ["uncheckable on a text field", { remarks: [{ field: "why", kind: "uncheckable", text: "SECRET" }] }, "remark 1 is uncheckable but is not about a criterion"],
+    ["a criterion without a number", { remarks: [{ field: "criteria", kind: "how", text: "SECRET" }] }, "remark 1 does not name a criterion"],
+    ["no text", { remarks: [{ field: "what", kind: "how", text: " " }] }, "remark 1 has no text"],
+    ["three sentences", { remarks: [{ field: "what", kind: "how", text: "SECRET one. Two. Three." }] }, "remark 1 has more than two sentences"],
+  ])("fails for %s, and the sentence holds no text", (_n, raw, sentence) => fails(raw, sentence));
+
+  it("lets two sentences pass, also over two lines", () => {
+    expect(check({ remarks: [{ field: "what", kind: "how", text: "One.\nTwo." }] }).json().remarks[0].text).toBe("One. Two.");
   });
 });

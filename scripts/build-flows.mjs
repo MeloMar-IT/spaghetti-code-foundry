@@ -25,7 +25,7 @@ const swap = (text, from, to) => {
 //   human in the loop — issue-plan → (you add Factory_code) → issue-code-daily → daily-pr
 //   gitflow           — epic-questions → issue-gitflow → release-daily
 //   refinement        — refine-brief (the architect reads a repository and its backlog; changes nothing)
-//                       refine-round — the architect asks the questions of a refinement round, answers one, or suggests text for a draft (read-only)
+//                       refine-round — the architect asks the questions of a refinement round, answers one, suggests text for a draft, or reviews a draft (read-only)
 // Everything else is retired: still generated (the tests run on these flows), but not shipped.
 const RETIRED = new Set(["chore", "ci-fix", "github-auto", "github-issue", "github-pr", "jira-ticket", "linear-ticket", "pr-feedback", "issue-deliver"]);
 
@@ -2091,20 +2091,21 @@ write("refine-brief", {
   ],
 });
 
-// ── refine-round: the architect asks the questions of a refinement round, answers one, or suggests text (read-only) ──
+// ── refine-round: the architect asks the questions of a refinement round, answers one, suggests text, or reviews a draft (read-only) ──
 // Like refine-brief: only reads, the repository is in repo/, the talk is only {{task}} in the agent prompt. The open
 // issues are not read again. check_round (tools/refine-round-check) checks the form and the limits of the answer.
 write("refine-round", {
   title: "Refinement: a question round of the architect",
   lines: [
-    'scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…]',
+    'scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review]',
     "",
     "clone (develop, else the default branch) → round (read-only: Read, Glob, Grep) → check_round",
     "ask=round (default): questions, proposals and done. ask=question: an answer. ask=suggest: text for one field of a story",
-    "draft (--var field=title, who, what, why, criteria, outOfScope, dependsOn or notes). Nothing is written to GitHub.",
+    "draft (--var field=title, who, what, why, criteria, outOfScope, dependsOn or notes). ask=review: remarks on a story draft",
+    "(uncheckable, vague, contradiction, how or plan); it only points out. Nothing is written to GitHub.",
   ],
 }, {
-  description: "The architect asks the questions of a refinement round, answers a question of the person, or suggests text for a story draft (read-only)",
+  description: "The architect asks the questions of a refinement round, answers a question of the person, suggests text for a story draft, or reviews one (read-only)",
   workspace: "empty",
   defaults: { timeout_sec: 1800 },
   limits: { max_cost_usd: 3 },
@@ -2114,7 +2115,7 @@ write("refine-round", {
     {
       id: "round",
       type: "claude",
-      description: "The architect asks its questions, answers the question of the person, or suggests text for a story draft",
+      description: "The architect asks its questions, answers the question of the person, suggests text for a story draft, or reviews one",
       model: "claude-opus-5-5",
       permission_mode: "dontAsk",
       allowed_tools: ["Read", "Glob", "Grep"],
@@ -2206,6 +2207,27 @@ write("refine-round", {
         "",
         'When you have nothing to suggest, answer { "suggestions": [] }.',
         "Answer with one JSON object and nothing else. Ask no questions and propose no entries.",
+        "",
+        "## When it is `review`: point out weak spots in the story draft",
+        "",
+        "Work from the talk: the idea, the context brief, the map and the draft. Open a file only to check a claim.",
+        "The third and fourth lines of the talk hold ids and texts for the Foundry. Do not use them.",
+        "You only point out. Propose no new text, rewrite nothing and decide nothing: the person fixes the draft.",
+        "Never write an implementation plan, and never say how to build it.",
+        "Review the title, who, what, why, the acceptance criteria (C1, C2, …) and out of scope. Do not review the notes for the builder.",
+        "",
+        "The kinds of remark:",
+        "- `uncheckable` — a criterion that nobody can check: it says nothing that can be seen or measured.",
+        "- `vague` — a word or phrase that can mean many things.",
+        "- `contradiction` — it contradicts another criterion or a rule of the map. Name the other criterion (C2) or the rule.",
+        "- `how` — it describes how to build, not what is wanted.",
+        "- `plan` — it is an implementation plan: files, code, steps to build.",
+        "",
+        "Give at most 20 remarks, the most important first. Each is one or two sentences and names one field.",
+        'Form: { "remarks": [ { "field": "criteria", "item": "C2", "kind": "uncheckable", "text": "…" }, { "field": "what", "kind": "how", "text": "…" } ] }',
+        "- `field` is `title`, `who`, `what`, `why`, `criteria` or `outOfScope`. `item` is only for `criteria`: the number of the criterion.",
+        'When you find nothing, answer { "remarks": [] }.',
+        "Answer with one JSON object and nothing else. Ask no questions, propose no entries and make no suggestions.",
       ].join("\n"),
     },
     {

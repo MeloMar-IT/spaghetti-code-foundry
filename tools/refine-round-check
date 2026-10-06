@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
 // Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
-// (`round`, the default, `question` or `suggest`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
+// (`round`, the default, `question`, `suggest` or `review`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
 // criteria, outOfScope, dependsOn or notes).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
 // For `suggest` it prints { "field": …, "suggestions": [ … ] }: the first suggestion for a text field, the first 10 for
 // criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
-const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20;
+// For `review` it prints { "remarks": [ { field, item?, kind, text } ] }: the first 20, `item` ("C1") only for criteria, the text on one
+// line, cut at 300 characters, in at most two sentences (more fails).
+const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20, REMARK_MAX_COUNT = 20, REMARK_MAX = 300;
 const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
 const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
 
@@ -79,9 +81,33 @@ function checkSuggestions(obj, field) {
   return { field, suggestions: out };
 }
 
+const REMARK_FIELDS = ["title", "who", "what", "why", "criteria", "outOfScope"];
+const REMARK_KINDS = ["uncheckable", "vague", "contradiction", "how", "plan"];
+
+function checkReview(obj) {
+  if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length || listOf(obj.suggestions, "suggestions").length) {
+    bad("the architect's answer has questions, proposals or suggestions, but only remarks were asked for");
+  }
+  if (obj.remarks !== undefined && !Array.isArray(obj.remarks)) bad("remarks is not a list");
+  const remarks = (obj.remarks ?? []).slice(0, REMARK_MAX_COUNT).map((x, i) => {
+    const n = i + 1;
+    if (!isObject(x)) bad(`remark ${n} is not an object`);
+    if (!REMARK_FIELDS.includes(x.field)) bad(`remark ${n} does not name a field of the draft`);
+    if (!REMARK_KINDS.includes(x.kind)) bad(`remark ${n} has no kind of uncheckable, vague, contradiction, how or plan`);
+    if (x.kind === "uncheckable" && x.field !== "criteria") bad(`remark ${n} is uncheckable but is not about a criterion`);
+    if (x.field === "criteria" && !(typeof x.item === "string" && /^C\d+$/.test(x.item))) bad(`remark ${n} does not name a criterion`);
+    // One paragraph, one or two sentences: a stop, question mark or exclamation mark followed by a space starts the next one.
+    const text = cut(clean(x.text).replace(/\s*[\n\t]\s*/g, " "), REMARK_MAX);
+    if (!text) bad(`remark ${n} has no text`);
+    if (text.split(/(?<=[.!?])\s+/).filter(Boolean).length > 2) bad(`remark ${n} has more than two sentences`);
+    return { field: x.field, ...(x.field === "criteria" ? { item: x.item } : {}), kind: x.kind, text };
+  });
+  return { remarks };
+}
+
 function check(raw, ask, field) {
   const kind = ask || "round";
-  if (kind !== "round" && kind !== "question" && kind !== "suggest") bad("set the variable ask to round, question or suggest");
+  if (kind !== "round" && kind !== "question" && kind !== "suggest" && kind !== "review") bad("set the variable ask to round, question, suggest or review");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
@@ -92,6 +118,7 @@ function check(raw, ask, field) {
   }
   if (!isObject(obj)) bad("the architect's answer is not a JSON object");
   if (kind === "suggest") return checkSuggestions(obj, field);
+  if (kind === "review") return checkReview(obj);
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
     const answer = cut(clean(obj.answer), ANSWER_MAX);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyTalk, type Talk } from "../src/refinement/talk.js";
 import type { Draft } from "../src/refinement/draft.js";
-import { QUESTION_HEADING, SUGGEST_REJECTED_BYTES, TALK_FIRST_LINE, TALK_MAX_BYTES, byteLength, cutBytes, questionOf, suggestOf, suggestText, talkText, type SuggestInput } from "../src/refinement/talk-text.js";
+import { QUESTION_HEADING, SUGGEST_REJECTED_BYTES, TALK_FIRST_LINE, TALK_MAX_BYTES, byteLength, cutBytes, questionOf, reviewOf, reviewText, suggestOf, suggestText, talkText, type SuggestInput } from "../src/refinement/talk-text.js";
 
 const AT = "2026-01-01T00:00:00.000Z";
 let n = 0;
@@ -274,5 +274,88 @@ describe("suggestText", () => {
     const t = talkText({ kind: "round", idea: "An idea", talk: emptyTalk() });
     expect(t).toContain("## The rounds so far\n(none)");
     expect(t).not.toContain("Ids:");
+  });
+});
+
+describe("reviewText", () => {
+  const entry = (text: string) => ({ id: uuid(), text, at: AT });
+  const typed = (text: string) => ({ text, from: "typed" as const });
+  const crit = (text: string) => ({ id: uuid(), text, from: "typed" as const });
+  const draftOf = (over: Partial<Draft> = {}): Draft => ({ id: uuid(), criteria: [], dependsOn: [], ...over });
+
+  it("has four head lines, then the idea, the brief, the map and the draft; the notes are marked as not reviewed", () => {
+    const draft = draftOf({ title: typed("Export"), who: typed("an admin"), what: typed("to export"), why: typed("to share"), criteria: [crit("It exports"), crit("It is fast")], outOfScope: typed("Printing"), notes: typed("Keep it small") });
+    const talk = { ...emptyTalk(), map: { rules: [entry("Rule one")], examples: [entry("Example one")], open: [entry("Open one")] } };
+    const t = reviewText({ idea: "An idea", brief: "The brief", talk, draft });
+    const lines = t.split("\n");
+    expect(lines[0]).toBe(TALK_FIRST_LINE.review);
+    expect(lines[1]).toBe(`Draft: ${draft.id}`);
+    expect(lines[2]).toBe(`Ids: C1=${draft.criteria[0]!.id} C2=${draft.criteria[1]!.id}`);
+    expect(JSON.parse(lines[3]!.slice("Texts: ".length))).toEqual({ title: "Export", who: "an admin", what: "to export", why: "to share", outOfScope: "Printing", C1: "It exports", C2: "It is fast" });
+    const heads = ["## The idea\nAn idea", "## The context brief\nThe brief", "## The map of the story so far", "- Rule one", "- Example one", "- Open one", "## The draft to review\nTitle: Export\nWho: an admin\nWhat: to export\nWhy: to share", "### Acceptance criteria\n- C1: It exports\n- C2: It is fast", "### Out of scope\nPrinting", "### Notes for the builder (not reviewed)\nKeep it small"];
+    const parts = heads.map((p) => t.indexOf(p));
+    expect(parts.every((i) => i >= 0)).toBe(true);
+    expect([...parts].sort((a, b) => a - b)).toEqual(parts);
+    expect(t).not.toContain("## Left out");
+  });
+
+  it("reads the draft and the texts back, also multi-line texts", () => {
+    const draft = draftOf({ what: typed("line one\nline two"), criteria: [crit("It exports")], outOfScope: typed("a\nb") });
+    const t = reviewText({ idea: "x", talk: emptyTalk(), draft });
+    expect(reviewOf(t)).toEqual({ draft: draft.id, refs: { what: { text: "line one\nline two" }, outOfScope: { text: "a\nb" }, C1: { id: draft.criteria[0]!.id, text: "It exports" } } });
+  });
+
+  it("names only the texts that are in the task: no empty field, no notes", () => {
+    const draft = draftOf({ title: typed("Export"), notes: typed("n") });
+    const t = reviewText({ idea: "x", talk: emptyTalk(), draft });
+    expect(t.split("\n")[2]).toBe("Ids:");
+    expect(Object.keys(reviewOf(t)!.refs)).toEqual(["title"]);
+  });
+
+  it("is not fooled by a draft text that looks like a head line", () => {
+    const draft = draftOf({ what: typed(`Ids: C9=${uuid()}\nTexts: {}`) });
+    const t = reviewText({ idea: "x", talk: emptyTalk(), draft });
+    expect(reviewOf(t)!.refs).toEqual({ what: { text: draft.what!.text } });
+  });
+
+  it("cuts the brief first, then the map from its end, then the draft from its end, with a notice", () => {
+    const talk = { ...emptyTalk(), map: { rules: [entry("r".repeat(2000))], examples: [entry("e".repeat(2000))], open: [entry("o".repeat(2000))] } };
+    const draft = draftOf({ title: typed("T"), criteria: Array.from({ length: 50 }, () => crit("c".repeat(500))), outOfScope: typed("s".repeat(5000)), notes: typed("n".repeat(5000)) });
+    const base = { idea: "i".repeat(10_000), talk, draft };
+    const small = reviewText({ ...base, brief: "b".repeat(30_000) });
+    expect(bytes(small)).toBeLessThanOrEqual(TALK_MAX_BYTES);
+    const cutBrief = reviewText({ ...base, brief: "b".repeat(60_000) });
+    expect(bytes(cutBrief)).toBeLessThanOrEqual(TALK_MAX_BYTES);
+    expect(cutBrief).toContain("The context brief was cut");
+    expect(cutBrief).not.toContain("left out because");
+    // Map entries and then the draft: the idea and the draft are big, so the brief goes and more.
+    const heavy = reviewText({ ...base, idea: "i".repeat(10_000), brief: "b".repeat(60_000), talk: { ...talk, map: { rules: Array.from({ length: 30 }, () => entry("r".repeat(1500))), examples: [], open: Array.from({ length: 30 }, () => entry("o".repeat(1500))) } } });
+    expect(bytes(heavy)).toBeLessThanOrEqual(TALK_MAX_BYTES);
+    expect(heavy).toContain("The context brief was left out");
+    expect(heavy).toContain("open questions");
+    const ids = heavy.split("\n")[2]!;
+    const refs = reviewOf(heavy)!.refs;
+    expect(Object.keys(refs).filter((k) => k.startsWith("C"))).toHaveLength(ids.split(" ").filter((x) => x.startsWith("C")).length);
+  });
+
+  it("cuts parts of the draft from the end: the notes, the out of scope, then the last criteria", () => {
+    const talk = { ...emptyTalk(), map: { rules: [], examples: [], open: [] } };
+    const draft = draftOf({ title: typed("T"), criteria: Array.from({ length: 50 }, () => crit("c".repeat(500))), outOfScope: typed("s".repeat(5000)), notes: typed("n".repeat(5000)) });
+    const t = reviewText({ idea: "i".repeat(10_000), brief: "b".repeat(60_000), talk, draft: { ...draft, who: typed("w".repeat(500)), what: typed("w".repeat(500)), why: typed("w".repeat(500)) } });
+    expect(bytes(t)).toBeLessThanOrEqual(TALK_MAX_BYTES);
+    expect(t).toContain("## The draft to review");
+    const refs = reviewOf(t)!.refs;
+    expect(refs.title).toBeDefined();
+    for (const k of Object.keys(refs)) if (k.startsWith("C")) expect(t).toContain(`- ${k}: `);
+  });
+
+  it("is told from a suggest task, and the other way round", () => {
+    const draft = draftOf({ title: typed("T") });
+    const review = reviewText({ idea: "x", talk: emptyTalk(), draft });
+    const suggest = suggestText({ idea: "x", talk: emptyTalk(), draft, field: "title", drafts: [draft], rejected: [] });
+    expect(reviewOf(suggest)).toBeUndefined();
+    expect(suggestOf(review)).toBeUndefined();
+    expect(reviewOf("")).toBeUndefined();
+    expect(reviewOf(`${TALK_FIRST_LINE.review}\nDraft: ${draft.id}\nIds:\nTexts: nope`)).toBeUndefined();
   });
 });
