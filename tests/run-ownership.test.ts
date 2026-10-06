@@ -408,27 +408,23 @@ describe("the owner options", () => {
 });
 
 describe("the owner of a watcher in the config", () => {
-  it("must be an account when new or changed; an old unknown one can stay", async () => {
+  it("is refused for a new or changed watcher: watchers other than the monitor live on the Watchers page", async () => {
     const p = prepare();
     mkdirSync(p.home, { recursive: true });
     writeFileSync(join(p.home, "config.yaml"), "watchers:\n  - id: old\n    github_repo: a/b\n    owner: gone@example.com\n");
     const s = await boot(p);
     const admin = await signInAs(s.base);
-    await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
     const file = join(p.home, "config.yaml");
     const text = readFileSync(file, "utf8");
     const watcher = (id: string, owner: string) => ({ id, github_repo: "a/b", owner });
 
-    const bad = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("new", "nobody@example.com")] });
+    const bad = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("new", "ann@example.com")] });
     expect(bad.status).toBe(400);
-    expect(bad.text).toContain("new");
+    expect(bad.text).toContain("Watchers page");
     expect(readFileSync(file, "utf8")).toBe(text);
     const changed = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("old", "other@example.com")] });
     expect(changed.status).toBe(400);
-
-    expect((await call(s, admin, "PUT", "/api/config", { watchers: [watcher("w", "ann@example.com")] })).status).toBe(200);
-    // the saved one stays valid when another setting changes
-    expect((await call(s, admin, "PUT", "/api/config", { concurrency: 3, watchers: [watcher("w", "ann@example.com")] })).status).toBe(200);
+    expect(changed.text).toContain("Watchers page");
   });
 
   it("keeps a watcher whose unknown owner was saved before, when another setting changes", async () => {

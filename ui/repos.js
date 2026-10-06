@@ -85,7 +85,8 @@ const installLink = (options) => {
 export function methodLabel(repo, admin) {
   const m = METHODS.find((x) => x.id === repo.method);
   if (!m) return String(repo.method);
-  if (m.id === "none") return admin ? m.label : "Needs authentication";
+  // "legacy" is the word for the method none: repositories of watchers that moved out of config.yaml have it
+  if (m.id === "none") return admin ? `${m.label} (legacy)` : "Needs authentication";
   return m.id === "https-token" && repo.username ? `${m.label} (${repo.username})` : m.label;
 }
 

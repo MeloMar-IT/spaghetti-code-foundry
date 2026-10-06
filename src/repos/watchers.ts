@@ -1,14 +1,16 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { githubNameOf } from "../auth/repo-url.js";
+import { githubKey, githubNameOf } from "../auth/repo-url.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { RepoWatcherSchema, type RepoWatcherOptions, type WatcherConfig } from "../config.js";
 
 /**
  * The watchers that belong to a repository connection: `repo-watchers.json` in the data folder,
  * `{ version: 1, watchers: [{ repoId, …options }] }`. The options are those of a watcher in config.yaml, except
- * `github_repo` and `owner` (they come from the repository record) and source "monitor".
+ * `github_repo` and `owner` (they come from the repository record) and source "monitor". An entry may also hold `repoName`:
+ * the spelling of the GitHub name the watcher had in config.yaml when it differs from the repository's lower-case name
+ * (status comments and run history match on it).
  * This module does not import src/auth/repos.ts (import cycle); the API layer checks that the repository exists.
  */
 
@@ -23,19 +25,22 @@ export class RepoWatcherError extends Error {
   }
 }
 
-export type StoredWatcher = RepoWatcherOptions & { repoId: string };
+export type StoredWatcher = RepoWatcherOptions & { repoId: string; repoName?: string };
+
+const RepoNameSchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/);
 
 const EntrySchema = z
   .object({ repoId: z.uuid() })
   .passthrough()
   .transform((e, ctx): StoredWatcher => {
-    const { repoId, ...rest } = e;
+    const { repoId, repoName, ...rest } = e;
     const r = RepoWatcherSchema.safeParse(rest);
-    if (!r.success) {
+    const name = repoName === undefined ? undefined : RepoNameSchema.safeParse(repoName);
+    if (!r.success || (name && !name.success)) {
       ctx.addIssue({ code: "custom", message: "invalid" });
       return z.NEVER;
     }
-    return { repoId, ...r.data };
+    return { repoId, ...r.data, ...(name?.success ? { repoName: name.data } : {}) };
   });
 
 const FileSchema = z
@@ -67,12 +72,12 @@ function parseOptions(input: unknown): RepoWatcherOptions {
 }
 
 /** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. */
-export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[] } = {}): StoredWatcher {
+export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string } = {}): StoredWatcher {
   const options = parseOptions(input);
   return withAuthLock(() => {
     const all = read();
     if (all.some((w) => w.id === options.id) || (opts.taken ?? []).includes(options.id)) throw dup(options.id);
-    const w: StoredWatcher = { repoId, ...options };
+    const w: StoredWatcher = { repoId, ...options, ...(opts.repoName ? { repoName: opts.repoName } : {}) };
     save([...all, w]);
     return w;
   });
@@ -87,7 +92,7 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown): {
     const all = read();
     const at = all.findIndex((w) => w.id === id && w.repoId === repoId);
     if (at < 0) throw notFound();
-    const { repoId: _r, ...current } = all[at]!;
+    const { repoId: _r, repoName, ...current } = all[at]!;
     const merged: Record<string, unknown> = { ...current };
     for (const [k, v] of Object.entries(p)) {
       if (v === null) delete merged[k];
@@ -97,7 +102,7 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown): {
     const before = current as Record<string, unknown>;
     const after = options as Record<string, unknown>;
     const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
-    const watcher: StoredWatcher = { repoId, ...options };
+    const watcher: StoredWatcher = { repoId, ...options, ...(repoName ? { repoName } : {}) };
     if (changed.length) {
       all[at] = watcher;
       save(all);
@@ -179,7 +184,7 @@ export function effectiveRepoWatchers(
 ): { runnable: WatcherConfig[]; blocked: BlockedWatcher[] } {
   const runnable: WatcherConfig[] = [];
   const blocked: BlockedWatcher[] = [];
-  for (const w of stored) {
+  for (const { repoName, ...w } of stored) {
     const rec = getRepo(w.repoId);
     if (taken.includes(w.id)) {
       blocked.push({ ...w, github_repo: (rec && githubNameOf(rec.url)) || "", problem: "this watcher's id is used by another watcher in config.yaml; change the id or delete the watcher" });
@@ -190,7 +195,9 @@ export function effectiveRepoWatchers(
       continue;
     }
     const owner = getUser(rec.owner);
-    const github_repo = githubNameOf(rec.url) ?? "";
+    const lower = githubNameOf(rec.url) ?? "";
+    // the spelling the watcher had in config.yaml, when it names this repository
+    const github_repo = repoName && githubKey(repoName) === `github.com/${lower}` ? repoName : lower;
     const problem = watcherRepoProblem(rec, owner);
     if (problem || !owner) {
       blocked.push({ ...w, github_repo, owner: owner?.email, problem: problem ?? "the owner of this repository is not an account any more" });
@@ -199,6 +206,17 @@ export function effectiveRepoWatchers(
     } else runnable.push({ ...w, github_repo, owner: owner.email, ownerId: rec.owner });
   }
   return { runnable, blocked };
+}
+
+/** A sentence when a new config.yaml adds or changes a watcher other than the monitor. One that is in the file unchanged still saves. */
+export function fileWatcherProblem(next: WatcherConfig[], current: WatcherConfig[]): string | undefined {
+  const had = new Set(current.map((w) => JSON.stringify(w)));
+  for (const w of next) {
+    if (w.source !== "monitor" && !had.has(JSON.stringify(w))) {
+      return `watcher "${w.id}": watchers other than the monitor are not kept in config.yaml any more; add or change it on the Watchers page`;
+    }
+  }
+  return undefined;
 }
 
 /**

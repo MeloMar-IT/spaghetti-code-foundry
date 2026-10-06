@@ -714,7 +714,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
 - **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`.
-- **From config.yaml.** A watcher that is still in `config.yaml` shows read-only with the note "moves to its repository at the next update", and **Check now**. A watcher whose repository is gone can only be deleted.
+- **From config.yaml.** A watcher that is still in `config.yaml` (for example while there is no admin account, or at the connection limit) shows read-only with a note, and **Check now**. A watcher whose repository is gone can only be deleted.
 
 ### Watchers of a repository (API)
 
@@ -731,7 +731,23 @@ repository. The source `monitor` is not allowed.
 - **When the sign-in does not work** (missing, unreadable or refused, or the owner of a `none` repository is no admin), the watcher makes no GitHub call and its status says so in a plain sentence. It works again by itself at the next check once you fix the credential.
 - **Status comments:** a status comment is only edited by the account that wrote it. When a watcher's account changes (for example a new token of another account), it posts a new status comment and the old one stays as it is on open issues.
 - **Request limit:** a repository token or app has its own GitHub request limit. The limit the Foundry shows is that of the server's own login and the bot.
-- **Not yet:** the Watchers page lists stored watchers, but Edit, Disable and Delete work only on watchers from `config.yaml`.
+
+### Watchers move from config.yaml to their repositories
+
+When the server starts after the update, every watcher in `config.yaml` except the monitor moves to the repository store. Nothing to do — it happens by itself.
+
+- **Same watcher.** Its id, options and enabled state stay the same, so run history, status comments and labels on GitHub keep matching. A repository name with capital letters (`Acme/App`) keeps its spelling.
+- **Repository not connected yet:** it is connected for the first admin with the method `none`. The admin pages show it as **none (legacy)**: the watcher uses the server's own `gh` login, as before.
+- **Repository already connected** (for example by a user): it keeps its owner and method, and the watcher is attached to it. If that method cannot run a watcher (a deploy key, or `none` owned by someone who is no admin), the watcher moves but is **disabled**. The log and the Watchers page say why.
+- **The `owner` option goes away.** The repository's owner owns the runs. If the option named another account, the log says so.
+- **The backup.** Before it changes `config.yaml`, the Foundry copies it to `config.yaml.before-watcher-move-<date>-<time>` next to it. The moved watchers are then removed from `config.yaml`; the rest stays the same. Comments in the file are lost, so use the backup to see them. The log names every moved watcher.
+- **No admin account yet:** nothing moves. The watchers keep running from `config.yaml` and move at a later start, once an admin exists.
+- **At the connection limit** (50 per account): the remaining watchers stay in `config.yaml` and the log says so.
+- **Safe to repeat.** If the server stops halfway, the next start finishes the move without duplicates. A watcher you add to `config.yaml` by hand later moves at the next start. A watcher whose stored copy differs, or whose id is used twice in the file, stays in the file and is logged.
+- **After the move,** saving `config.yaml` through `PUT /api/config` with a new or changed watcher other than the monitor is refused, with a sentence that points to the Watchers page. Add and edit watchers there.
+- **`scf watch`** works as before, with the server's own login.
+
+**Going back.** Stop the server, copy the backup over `config.yaml`, and delete the moved watchers on the Watchers page first (or remove them from `repo-watchers.json` in the data folder). Otherwise the next start moves them again.
 
 The watchers are kept in `repo-watchers.json` in the data folder.
 

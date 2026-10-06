@@ -111,8 +111,14 @@ describe("the page", () => {
   it("reads none as the server's own access for an admin's repository", async () => {
     repos = [rec({ method: "none", account: { name: "Root", email: "root@example.com", role: "admin", status: "active" } })];
     await show();
-    expect(main().textContent).toContain("The server's own access");
+    expect(main().textContent).toContain("The server's own access (legacy)");
     expect(main().textContent).not.toContain("Needs authentication");
+  });
+
+  it("does not call a user's none repository legacy", async () => {
+    repos = [rec({ method: "none", account: { name: "Bob", email: "bob@example.com", role: "user", status: "active" } })];
+    await show();
+    expect(main().textContent).not.toContain("legacy");
   });
 
   it("shows an unknown account and a blocked owner", async () => {

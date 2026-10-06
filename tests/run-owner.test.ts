@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, s
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adoptRuns, defaultOwner, ownerNames, watcherOwner, watcherOwnerProblem } from "../src/auth/run-owner.js";
+import { adoptRuns, defaultOwner, ownerNames, watcherOwner } from "../src/auth/run-owner.js";
 import { createUser, firstAdmin } from "../src/auth/users.js";
 import { runFlow } from "../src/engine/runner.js";
 import { adoptRun, listRunBriefs } from "../src/engine/state.js";
@@ -68,18 +68,6 @@ describe("watcherOwner", () => {
     expect(watcherOwner("ann@example.com")).toBeUndefined();
     expect(defaultOwner()).toBeUndefined();
     expect(ownerNames().size).toBe(0);
-  });
-});
-
-describe("watcherOwnerProblem", () => {
-  it("accepts no owner, a known owner and an unknown owner that was there before; names a new unknown one", async () => {
-    await make("Admin", "admin@example.com", "admin");
-    await make("Ann", "ann@example.com", "user");
-    expect(watcherOwnerProblem([{ id: "w" }], [])).toBeUndefined();
-    expect(watcherOwnerProblem([{ id: "w", owner: "ann@example.com" }], [])).toBeUndefined();
-    expect(watcherOwnerProblem([{ id: "w", owner: "gone@example.com" }], [{ id: "w", owner: "gone@example.com" }])).toBeUndefined();
-    expect(watcherOwnerProblem([{ id: "w2", owner: "gone@example.com" }], [{ id: "w", owner: "gone@example.com" }])).toMatch(/"w2"/);
-    expect(watcherOwnerProblem([{ id: "w", owner: "other@example.com" }], [{ id: "w", owner: "gone@example.com" }])).toMatch(/"w"/);
   });
 });
 

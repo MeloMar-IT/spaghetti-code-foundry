@@ -32,6 +32,7 @@ import { getRepo } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
 import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers } from "../repos/watchers.js";
 import { getUser } from "../auth/users.js";
+import { moveConfigWatchers } from "../repos/migrate-watchers.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
@@ -54,7 +55,7 @@ export interface ServerOptions {
   runsDir: string;
   port: number;
   claudeBin?: string;
-  /** Run the watchers from config.yaml (default true). */
+  /** Run the watchers (default true). */
   watchers?: boolean;
   log?: (msg: string) => void;
   /** How often an open response re-checks its session, in ms (default 4000). */
@@ -196,6 +197,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     listen,
   };
+  // Existing watchers of config.yaml move to their repositories (the store first, the file second) before they are read.
+  if (moveConfigWatchers({ log }).changed) config = loadConfig();
   refreshStored();
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while

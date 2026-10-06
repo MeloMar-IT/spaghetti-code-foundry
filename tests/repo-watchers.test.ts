@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WatcherSchema } from "../src/config.js";
 import {
-  addRepoWatcher, configIdProblem, effectiveRepoWatchers, listRepoWatchers, removeRepoWatcher, removeWatchersOfRepos, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
+  addRepoWatcher, configIdProblem, effectiveRepoWatchers, fileWatcherProblem, listRepoWatchers, removeRepoWatcher, removeWatchersOfRepos, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
 } from "../src/repos/watchers.js";
 
 let home: string;
@@ -149,5 +150,50 @@ describe("configIdProblem", () => {
     expect(configIdProblem(ids("s"), ids(), ids("s"))).toMatch(/repository/);
     expect(configIdProblem(ids("y"), ids("x"), ids("y"))).toMatch(/repository/);
     expect(configIdProblem(ids("s"), ids("s"), ids("s"))).toBeUndefined();
+  });
+});
+
+describe("repoName", () => {
+  const ann = { id: randomUUID(), email: "ann@example.com", role: "user", status: "active" };
+  const rec = { id: repo, url: "https://github.com/acme/app", method: "github-token", owner: ann.id };
+
+  it("is stored when given, kept through an update, and gives the spelling of github_repo", () => {
+    addRepoWatcher(repo, { id: "w" }, { repoName: "Acme/App" });
+    expect(listRepoWatchers()[0]).toMatchObject({ id: "w", repoName: "Acme/App" });
+    updateRepoWatcher(repo, "w", { every: "10m" });
+    expect(file().watchers[0]).toMatchObject({ every: "10m", repoName: "Acme/App" });
+    const r = effectiveRepoWatchers(listRepoWatchers(), () => rec, () => ann);
+    expect(r.runnable[0]).toMatchObject({ id: "w", github_repo: "Acme/App" });
+    expect(r.runnable[0]).not.toHaveProperty("repoName");
+  });
+
+  it("is refused in API input as an unknown option", () => {
+    refused(() => addRepoWatcher(repo, { id: "w", repoName: "Acme/App" }), "bad-watcher");
+    addRepoWatcher(repo, { id: "x" });
+    refused(() => updateRepoWatcher(repo, "x", { repoName: "Acme/App" }), "bad-watcher");
+  });
+
+  it("is ignored when it names another repository, and never reaches a blocked row", () => {
+    addRepoWatcher(repo, { id: "w" }, { repoName: "Other/Place" });
+    expect(effectiveRepoWatchers(listRepoWatchers(), () => rec, () => ann).runnable[0]!.github_repo).toBe("acme/app");
+    const blocked = effectiveRepoWatchers(listRepoWatchers(), () => undefined, () => ann).blocked[0]!;
+    expect(blocked).not.toHaveProperty("repoName");
+  });
+
+  it("a stored name that is not a name makes the file wrong-format", () => {
+    writeFileSync(repoWatchersPath(), JSON.stringify({ version: 1, watchers: [{ repoId: repo, id: "w", repoName: "no spaces/here" }] }));
+    expect(() => listRepoWatchers()).toThrow(expect.objectContaining({ kind: "wrong-format" }));
+  });
+});
+
+describe("fileWatcherProblem", () => {
+  const w = (id: string, over: object = {}) => WatcherSchema.parse({ id, github_repo: "acme/app", ...over });
+  it("refuses a new or changed watcher other than the monitor; an unchanged one and the monitor pass", () => {
+    const mon = WatcherSchema.parse({ id: "mon", source: "monitor" });
+    expect(fileWatcherProblem([w("a")], [])).toMatch(/Watchers page/);
+    expect(fileWatcherProblem([w("a", { every: "1h" })], [w("a")])).toMatch(/watcher "a"/);
+    expect(fileWatcherProblem([w("a")], [w("a")])).toBeUndefined();
+    expect(fileWatcherProblem([mon], [])).toBeUndefined();
+    expect(fileWatcherProblem([], [w("a")])).toBeUndefined();
   });
 });
