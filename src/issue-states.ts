@@ -94,6 +94,12 @@ export function noteIssueState(repo: string, issue: number, state: IssueState, n
   write(repo, { ...r, issues: { ...r.issues, [String(issue)]: { state, at: now.toISOString() } } });
 }
 
+/** Like noteIssueState, but makes an entry with this one issue when there is none (the watcher's next check replaces it). */
+export function putIssueState(repo: string, issue: number, state: IssueState, now = new Date()) {
+  const r = readIssueStates(repo) ?? { repo, issues: {} };
+  write(repo, { ...r, issues: { ...r.issues, [String(issue)]: { state, at: now.toISOString() } } });
+}
+
 /** A check failed: stored states stay, failedAt is set. */
 export function markIssueCheckFailed(repo: string, now = new Date()) {
   const r = readIssueStates(repo) ?? { repo, issues: {} };

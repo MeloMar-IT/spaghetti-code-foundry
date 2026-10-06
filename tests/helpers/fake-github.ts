@@ -126,7 +126,8 @@ export function fakeGithub() {
     remoteGit: (...a: string[]) => git(remote, ...a),
     restore: () => {
       process.env = { ...env };
-      rmSync(tmp, { recursive: true, force: true });
+      // a late fake gh call may still write into the folder: try again instead of failing the suite
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }

@@ -8,6 +8,8 @@ import { nextStep, type NextStep } from "../src/next-step.js";
 import { readAct, turnAct, turnDetail } from "../src/server/turn-actions.js";
 import { turnFor } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
+import { saveIssueStates } from "../src/issue-states.js";
+import { CLOSED_MESSAGE } from "../src/run-gate.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 
 // The answer, approve and retry actions against a stub context and the fake gh.
@@ -239,6 +241,54 @@ describe("retry", () => {
     const log = gh.ghLog();
     expect(log.indexOf("issue comment 8")).toBeLessThan(log.indexOf("issue edit 8"));
     expect(turnFor(ctx, NOW).data.continuing!.map((i) => i.key)).toEqual([FKEY]);
+  });
+});
+
+describe("retry of a closed issue", () => {
+  const closedIssue = (state = "CLOSED") => (process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 8, state }]));
+  const untouched = (ctx: ApiContext) => {
+    expect(comments()).toBe(0);
+    expect(gh.ghLog()).not.toContain("issue edit");
+    expect(kick).not.toHaveBeenCalled();
+    expect(turnFor(ctx, NOW).data.continuing).toBeUndefined();
+  };
+
+  it("refuses retry with the closed sentence and makes no label or comment call", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    const err = await act(ctx, { key: FKEY, action: "retry" }).catch((e: Error & { status: number }) => e);
+    expect(err).toMatchObject({ status: 409, message: CLOSED_MESSAGE });
+    untouched(ctx);
+  });
+
+  it("refuses retry_hint too", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry_hint", stamp: SINCE, text: "try again" }))).toBe(409);
+    untouched(ctx);
+  });
+
+  it("goes through after a reopen", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
+    closedIssue("OPEN");
+    await act(ctx, { key: FKEY, action: "retry" });
+    expect(gh.ghLog()).toContain("issue edit 8 --repo acme/app");
+  });
+
+  it("lets retry through when GitHub cannot be reached", async () => {
+    process.env.FAKE_GH_FAIL = "api graphql";
+    await act(ctxAll(), { key: FKEY, action: "retry" });
+    expect(gh.ghLog()).toContain("issue edit 8 --repo acme/app");
+  });
+
+  it("refuses retry on a stored closed state when GitHub cannot be reached", async () => {
+    process.env.FAKE_GH_FAIL = "api graphql";
+    saveIssueStates("acme/app", new Map([[8, "closed"]]));
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
+    untouched(ctx);
   });
 });
 

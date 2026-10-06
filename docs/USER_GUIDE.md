@@ -183,7 +183,8 @@ A line under the top bar of every page says **All good**, or the number of probl
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
 - **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
-- **An issue closed on GitHub while its run still works:** with a **Cancel run** button. It asks you to confirm, cancels that run and reloads the line. You can resume the run later.
+- **An issue closed on GitHub while its run still works:** with a **Cancel run** button. It asks you to confirm, cancels that run and reloads the line. You can resume the run later, unless the issue is still closed (see below).
+- **A run of a closed issue:** Resume, Approve, Reject, **Retry** and **Retry with a hint…** look at the issue on GitHub first. If it is closed they are refused (409) with "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.", and no label or comment is posted. After a reopen they work again. The check uses the GitHub access of the run's owner (stored token or GitHub App); a run without an owner uses the server's `gh`. With a deploy key, or when access is refused, the Foundry cannot ask GitHub. When GitHub cannot be reached, only an issue stored as closed is refused; otherwise the run continues. The answer is stored only for a repository with an enabled issues watcher. A run without an issue makes no GitHub call. `scf resume`, `scf approve` and `scf reject` print the same sentence plus "Use --force to resume it anyway."; with `--force` they run. If the check cannot be made, they print one line and continue.
 - **A run that failed because of the Foundry:** the newest run per issue that no newer run replaced, from the last 7 days, at most 5. The line says "The Foundry failed, not the code" with the fix and a link to the run; the reason is on the run page.
 - **Last check per repository:** each repository of an enabled watcher is listed with the time of its last successful check (the oldest, when it has several watchers), or "no successful check yet".
 
@@ -1993,10 +1994,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
-| `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session) |
+| `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |
 | `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
-| `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note |
-| `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note |
+| `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
+| `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
@@ -2008,7 +2009,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/your-turn/dismiss` | yes | no | dismiss an item |
 | `POST /api/your-turn/restore` | yes | no | restore dismissed items |
 | `GET /api/your-turn/detail` | yes | no | the questions, plan or split of an item |
-| `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue |
+| `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
 | `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
 | `GET /api/credentials` | yes | yes | your stored credentials |
@@ -2271,8 +2272,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf serve [--port 4777]` | The same without opening a browser |
 | `scf service install \| uninstall \| status` | Run `scf serve` in the background (macOS) |
 | `scf run <flow> --task "…" [--var k=v] [--repo dir]` | Run a flow |
-| `scf resume <run-id> [--from <step>]` | Continue a run |
-| `scf approve <run-id> [--note "…"]` / `scf reject …` | Decide on a waiting run |
+| `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
+| `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf validate <flow or file>` | Check a flow |
