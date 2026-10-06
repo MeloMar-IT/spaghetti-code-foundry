@@ -53,7 +53,7 @@ export function answerBlock(s: RunSummary, watchers: WatcherConfig[]): string | 
   return undefined;
 }
 
-export const USER_ERROR ="something went wrong on the server; ask the administrator";
+export const USER_ERROR = "something went wrong on the server; ask the administrator";
 
 const PATH_HIDDEN = "(folder)";
 const upper = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);

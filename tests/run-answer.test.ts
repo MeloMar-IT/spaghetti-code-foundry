@@ -49,11 +49,8 @@ describe("engine: the task with the answers", () => {
   let tmp: string;
   let repo: string;
   let runsDir: string;
-  let kcl: FakeKeychain;
   const saved = process.env.FACTORY_HOME;
-  beforeAll(() => void (kcl = fakeKeychain()));
   afterAll(() => {
-    kcl.remove();
     if (saved === undefined) delete process.env.FACTORY_HOME;
     else process.env.FACTORY_HOME = saved;
   });
@@ -256,6 +253,47 @@ describe("scheduler: answer()", () => {
     s.answer(id, "x", "u1");
     expect(JSON.parse(file().toString()).answers).toHaveLength(1);
   });
+
+  // pump() asks accountActive between the first and the second write of the queue file
+  for (const started of [false, true]) {
+    it(`keeps the answer and does not throw when the second queue write fails (job ${started ? "started" : "pending"})`, async () => {
+      let breakQueue: (() => void) | undefined;
+      let savedQueue = "";
+      const { id, queueFile, mk, file } = await setup({
+        accountActive: () => {
+          breakQueue?.();
+          return started;
+        },
+      });
+      const s = mk();
+      await new Promise((r) => setTimeout(r, 20));
+      breakQueue = () => {
+        breakQueue = undefined;
+        savedQueue = readFileSync(queueFile, "utf8");
+        mkdirSync(`${queueFile}.tmp`); // the second write cannot be made; queue.json stays as the first write left it
+      };
+      expect(() => s.answer(id, "use B", "u1", { queuedBy: "u1" })).not.toThrow();
+      rmSync(`${queueFile}.tmp`, { recursive: true, force: true });
+      expect(savedQueue).toContain(id);
+      expect(readFileSync(queueFile, "utf8")).toBe(savedQueue);
+      expect(JSON.parse(file().toString()).answers).toHaveLength(1);
+      if (started) {
+        await s.wait(id);
+        await s.idle();
+        const run = s.get(id)!;
+        expect(run.status).toBe("stopped");
+        expect(run.history.at(-1)!.output).toContain("Q2");
+        return;
+      }
+      expect(s.isQueued(id)).toBe(true);
+      const again = mk({ accountActive: () => true });
+      await again.idle();
+      const run = again.get(id)!;
+      expect(run.status).toBe("stopped");
+      expect(run.history.at(-1)!.output).toContain("Q2");
+      expect(JSON.parse(file().toString()).answers).toHaveLength(1);
+    });
+  }
 });
 
 /* ---- the server ---- */

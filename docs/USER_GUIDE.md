@@ -321,6 +321,13 @@ It is never in `queue.json`, the audit log or a server log line.
   with questions, when a watcher follows it (answer on the issue; a run started by hand is
   answered here), when its saved flow has no step that reads the task (an older run), and for an
   architect run of a refinement session; 500 when the stored secrets cannot be read.
+- **When a file cannot be written.** If the queue file cannot be written, the call fails and the
+  answer is taken out of `run.json` again. If that fails too, the answer stays saved without a job;
+  resume the run and it continues with the answer. Once the job is in the queue file the call is
+  accepted.
+- **Not together with `scf resume`.** The server does not see a run that `scf resume` continues in
+  a terminal. Do not do both for the same run at the same moment: the answer can be lost and the
+  run can run twice.
 - **In the run view** (`GET /api/runs/:id`, the list and the `update` events) a user sees `answers`
   as `{ at, text }` (no `by`, folders hidden) and `canAnswer: true` exactly when the call would be
   accepted now. `canAnswer` is absent while a resume is queued. An admin sees the raw `answers`.

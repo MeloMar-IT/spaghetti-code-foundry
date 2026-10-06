@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
@@ -135,19 +135,29 @@ export class Scheduler {
     if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
     const { undo } = saveAnswer(this.o.runsDir, runId, text, by);
     try {
-      this.submit({ kind: "resume", runId }, meta);
+      this.put({ kind: "resume", runId }, meta);
     } catch (e) {
+      // the job is not in the queue file and nothing started: take the answer back
       const i = this.pending.findIndex((p) => p.runId === runId);
-      if (i >= 0) {
-        // not started: as if the call never came
-        this.pending.splice(i, 1);
-        undo();
-      }
+      if (i >= 0) this.pending.splice(i, 1);
+      undo(); // if this write fails too, the answer stays without a job; a later resume reads it
       throw e;
+    }
+    try {
+      this.pump();
+    } catch {
+      // The answer and its job are saved: a queue write that fails now does not fail the call. The next queue change writes the file again.
     }
   }
 
   submit(job: Job, meta: JobMeta = {}): string {
+    const runId = this.put(job, meta);
+    this.pump();
+    return runId;
+  }
+
+  /** Checks a job, puts it into the queue and writes the queue file. Starts nothing. */
+  private put(job: Job, meta: JobMeta): string {
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);
@@ -155,7 +165,6 @@ export class Scheduler {
     const q: QueuedJob = { runId, job, ...rest, ...(repoLock ? { repoLock } : {}), enqueuedAt: new Date().toISOString(), ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}) };
     this.enqueue(q);
     this.persist();
-    this.pump();
     return runId;
   }
 
@@ -396,7 +405,15 @@ export class Scheduler {
   private persist() {
     if (!this.o.queueFile) return;
     mkdirSync(dirname(this.o.queueFile), { recursive: true });
-    writeFileSync(this.o.queueFile, JSON.stringify(this.pending, null, 2));
+    // write beside the file and rename, so a failed write leaves the old queue file whole
+    const tmp = `${this.o.queueFile}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(this.pending, null, 2));
+      renameSync(tmp, this.o.queueFile);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   }
 
   /** Set while the server waits to restart: queued jobs stay saved and start in the new server. */
