@@ -257,7 +257,7 @@ In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
 
 | Placeholder | Value |
 |---|---|
-| `{{task}}` | The task text the user typed when starting the run |
+| `{{task}}` | The task text the user typed when starting the run, followed (after a resume) by the answers given on the run page, oldest first, under the heading `## Answers to the questions of this run (oldest first)` |
 | `{{vars.NAME}}` | A flow variable |
 | `{{workdir}}` | The workspace path |
 | `{{run.id}}`, `{{run.dir}}`, `{{run.branch}}` | Run id, the run's own folder (for logs/files), the run's branch |
@@ -276,7 +276,7 @@ these environment variables instead (always quote them: `"$FACTORY_TASK"`):
 
 | Variable | Value |
 |---|---|
-| `$FACTORY_TASK` | The task text |
+| `$FACTORY_TASK` | The task text, followed by the answers given on the run page under the heading `## Answers to the questions of this run (oldest first)` (also `$SCF_TASK`) |
 | `$FACTORY_OUT_<STEP_ID>` | Output of a step; id upper-cased, `-` → `_` (step `run-tests` → `$FACTORY_OUT_RUN_TESTS`) |
 | `$FACTORY_VAR_<NAME>` | A flow variable (`github_repo` → `$FACTORY_VAR_GITHUB_REPO`) |
 | `$FACTORY_RUN_ID`, `$FACTORY_WORKDIR`, `$FACTORY_BRANCH` | Run id, workspace, branch |

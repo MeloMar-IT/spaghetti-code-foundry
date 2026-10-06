@@ -24,6 +24,7 @@ export const EVENT_ACTIONS = [
   "run-approve",
   "run-reject",
   "run-resume",
+  "run-answer",
   "repo-add",
   "repo-change",
   "repo-remove",

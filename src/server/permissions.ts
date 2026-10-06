@@ -57,6 +57,7 @@ export const RULES: Rule[] = [
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run"),
   r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session)"),
+  r("POST", "runs/:id/answer", "own", "answer the questions a run stopped with; the run continues with the answer"),
   r("POST", "runs/:id/approve", "own", "approve a run, with a note"),
   r("POST", "runs/:id/reject", "own", "reject a run, with a note"),
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),

@@ -8,8 +8,8 @@ import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
 import { isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
-import { effectiveVars } from "../engine/runner.js";
-import type { RunSummary } from "../engine/state.js";
+import { AnswerRefused, effectiveVars } from "../engine/runner.js";
+import { ANSWER_MAX_CHARS, answerRoom, type RunSummary } from "../engine/state.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
@@ -17,9 +17,9 @@ import { guardedRepos } from "./api-repos.js";
 import { publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
-import { hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
+import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
-import type { RunEvent } from "../queue/scheduler.js";
+import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import type { Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
@@ -32,8 +32,18 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const mine = (rid: string) => scheduler.ownerOf(rid) === user.id;
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
   const hide = <T,>(v: T): T => (admin ? v : hideForeign(v, mine));
+  // Present only when an answer sent now would be accepted. The active check is left out on purpose: finish() sends its last update while the run is still active.
+  const answerable = (r: RunSummary) => (!scheduler.isQueued(r.runId) && !answerBlock(r, ctx.config().watchers) && answerRoom(r) > 0 ? { canAnswer: true as const } : {});
+  // The lock key and the place of a bug story, for a job that resumes a run.
+  const jobMeta = (s: RunSummary, source: string): JobMeta => {
+    const vars = s.vars ?? {};
+    const lockKey = vars.github_repo && (vars.issue || vars.pr) ? `${vars.github_repo}#${vars.issue || vars.pr}` : undefined;
+    // A bug story keeps its place at the front: its watcher saw the label at its last check.
+    const story = ctx.watchers.tracked().flatMap((t) => t.issues).find((i) => i.runId === s.runId && i.priority);
+    return { lockKey, source, queuedBy: user.id, ...(story ? { priority: true, storyAt: story.createdAt } : {}) };
+  };
   if (seg[0] === "queue" && method === "GET") {
     // A queued architect read says which refinement session it is for; the source itself stays with the admin.
     const sessionOf = new Map(scheduler.queue().pending.flatMap((p) => (refinementSessionOf(p.source) ? [[p.runId, refinementSessionOf(p.source)!] as const] : [])));
@@ -69,6 +79,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const names = admin ? ownerNames() : undefined;
     return send(res, 200, runs.map((r) => hide(shape({
       ...r,
+      ...answerable(r),
       ...(replaced.has(r.runId) ? { superseded: true } : {}),
       ...(names && r.owner ? { ownerName: names.get(r.owner) ?? "deleted account" } : {}),
       next: view(next(r)),
@@ -148,6 +159,34 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { cancelled }), true;
   }
 
+  if (action === "answer" && method === "POST") {
+    const body = await readJson(req);
+    let s = scheduler.get(id);
+    if (!s) throw new HttpError(404, "run not found");
+    const text = str(body, "text"); // not trimmed: the text is kept as sent
+    if ([...text].length > ANSWER_MAX_CHARS) throw new HttpError(400, `the answer can have at most ${ANSWER_MAX_CHARS} characters`);
+    if (text.includes("\u0000")) throw new HttpError(400, "the answer has characters that are not allowed");
+    if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
+    // A run in its finish window (the notify command runs) is still active, but its last update said "stopped".
+    if (scheduler.isActive(id) && !scheduler.isQueued(id) && s.status !== "running") {
+      await scheduler.wait(id);
+      s = scheduler.get(id);
+      if (!s) throw new HttpError(404, "run not found");
+    }
+    // Everything from here on is synchronous, so two calls cannot both pass.
+    if (scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(400, `run ${id} is already queued or running`);
+    const block = answerBlock(s, ctx.config().watchers);
+    if (block) throw new HttpError(409, block);
+    try {
+      scheduler.answer(id, text, user.id, jobMeta(s, "ui answer"));
+    } catch (e) {
+      if (e instanceof AnswerRefused) throw new HttpError(e.kind === "state" ? 409 : e.kind === "size" ? 400 : 500, e.message);
+      throw e;
+    }
+    auditAction(ctx.diagLog, user.id, "run-answer", id);
+    return send(res, 202, { runId: id }), true;
+  }
+
   if ((action === "resume" || action === "approve" || action === "reject") && method === "POST") {
     const body = await readJson(req);
     const s = scheduler.get(id);
@@ -156,17 +195,13 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
     if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
     const from = str(body, "from", false) || undefined;
-    const vars = s.vars ?? {};
-    const lockKey = vars.github_repo && (vars.issue || vars.pr) ? `${vars.github_repo}#${vars.issue || vars.pr}` : undefined;
     // The same answer for both roles; any other failure of submit is unexpected (and generic for a user).
     if (scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(400, `run ${id} is already queued or running`);
-    // A bug story keeps its place at the front: its watcher saw the label at its last check.
-    const story = ctx.watchers.tracked().flatMap((t) => t.issues).find((i) => i.runId === id && i.priority);
     scheduler.submit(
       action === "resume"
         ? { kind: "resume", runId: id, from }
         : { kind: "resume", runId: id, decision: { approved: action === "approve", by: "ui", note: str(body, "note", false) || undefined } },
-      { lockKey, source: `ui ${action}`, queuedBy: user.id, ...(story ? { priority: true, storyAt: story.createdAt } : {}) },
+      jobMeta(s, `ui ${action}`),
     );
     auditAction(ctx.diagLog, user.id, `run-${action}`, id);
     return send(res, 202, { runId: id }), true;
@@ -177,6 +212,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     // What a viewer sees of the record, sent last.
     const shown = (n: NextStep) => [n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
     let last = "";
+    let lastCan = false;
     // The folders of the run, to take out of what a user reads.
     let known = admin ? undefined : scheduler.get(id);
     const write = (e: RunEvent) => {
@@ -185,7 +221,9 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         known = admin ? undefined : e.summary;
         const next = view(nextFor(ctx, undefined, !admin)(e.summary));
         last = shown(next);
-        out = { type: "update", summary: shape({ ...e.summary, next }) };
+        const can = answerable(e.summary);
+        lastCan = "canAnswer" in can;
+        out = { type: "update", summary: shape({ ...e.summary, ...can, next }) };
       } else if (!admin) {
         const line = userLogLine(e.line);
         if (line === undefined) return;
@@ -199,7 +237,9 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     // A wait for a code area shows up in the step log only, without an update event: look again now and then.
     const recheck = setInterval(() => {
       const s = scheduler.get(id);
-      if (s?.status === "running" && shown(view(nextFor(ctx, undefined, !admin)(s))) !== last) write({ type: "update", summary: s });
+      if (!s) return;
+      // A queued, dropped or cancelled resume sends no update: also look at whether an answer would be accepted.
+      if ((s.status === "running" && shown(view(nextFor(ctx, undefined, !admin)(s))) !== last) || ("canAnswer" in answerable(s)) !== lastCan) write({ type: "update", summary: s });
     }, NEXT_RECHECK_MS);
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
     req.on("close", () => {
@@ -212,7 +252,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   const s = scheduler.get(id);
   if (!s) throw new HttpError(404, "run not found");
-  if (!action && method === "GET") return send(res, 200, hide(shape({ ...s, next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
+  if (!action && method === "GET") return send(res, 200, hide(shape({ ...s, ...answerable(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
   if (action === "diff" && method === "GET") return send(res, 200, runDiff(s)), true;
   if (action === "transcript" && method === "GET") {
     const n = Number(seg[3]);

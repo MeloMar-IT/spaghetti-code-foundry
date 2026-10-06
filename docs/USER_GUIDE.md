@@ -301,6 +301,39 @@ a **What happens next** block with **You** as who and the approval message as th
 Runs survive restarts: if the Foundry stops mid-run, the run is marked *interrupted* and can be
 resumed (watchers do this automatically).
 
+**Answer a run's questions.** When a run stopped with questions (it stopped at `send_back` or
+`ask_for_info` and that step printed something), its owner or an admin can answer with
+`POST /api/runs/:id/answer` and the body `{ "text": "…" }`. The call answers 202 with `{ "runId" }`.
+The answer is saved with the run (`answers` in `run.json`: `at`, `text`, `by` = account id) when the
+call is accepted, and a resume is queued at the step the run would resume at. From then on every
+step reads the task followed by all answers so far, oldest first, under the heading
+`## Answers to the questions of this run (oldest first)`; this holds for `{{task}}`, `$FACTORY_TASK`
+and `$SCF_TASK`. The `task` of the run itself stays as it was typed. The answer stays when the
+queued resume is cancelled or dropped, when the account is blocked, and over a restart; a later
+resume continues with it. The text is saved as sent, except that stored secrets become `[redacted]`.
+It is never in `queue.json`, the audit log or a server log line.
+
+- **Limits.** At most 4000 characters per answer, and at most 100000 bytes for the task with all
+  answers. A call over a limit is refused; nothing is cut.
+- **Refused, and nothing is written** (no change in `run.json`, no job, no audit line):
+  404 for an unknown run, and for a user a run of another account (same body); 400 when `text` is
+  missing, not a string, empty, only spaces, or has a NUL character; 400 over 4000 characters or
+  over 100000 bytes; 400 `run <id> is already queued or running`; 409 when the run did not stop
+  with questions, when a watcher follows it (answer on the issue; a run started by hand is
+  answered here), when its saved flow has no step that reads the task (an older run), and for an
+  architect run of a refinement session; 500 when the stored secrets cannot be read.
+- **When a file cannot be written.** If the queue file cannot be written, the call fails and the
+  answer is taken out of `run.json` again. If that fails too, the answer stays saved without a job;
+  resume the run and it continues with the answer. Once the job is in the queue file the call is
+  accepted.
+- **Not together with `scf resume`.** The server does not see a run that `scf resume` continues in
+  a terminal. Do not do both for the same run at the same moment: the answer can be lost and the
+  run can run twice.
+- **In the run view** (`GET /api/runs/:id`, the list and the `update` events) a user sees `answers`
+  as `{ at, text }` (no `by`, folders hidden) and `canAnswer: true` exactly when the call would be
+  accepted now. `canAnswer` is absent while a resume is queued. An admin sees the raw `answers`.
+- The audit log gets `run-answer` for an accepted answer only.
+
 **The failure summary.** A failed run (the run page and the comment on the issue) says what
 failed, why, what was tried and the kind of problem:
 
@@ -532,7 +565,7 @@ In **agent prompts** you can use:
 
 | Template | Value |
 |---|---|
-| `{{task}}` | The run's task |
+| `{{task}}` | The run's task, followed by the answers given on the run page (also `$FACTORY_TASK` / `$SCF_TASK`) |
 | `{{vars.name}}` | A flow variable |
 | `{{steps.<id>.output}}` | Output of an earlier step (also `.ok`, `.exit_code`) |
 | `{{learnings}}` | Lessons saved by earlier runs in this repo |
@@ -1585,6 +1618,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 |---|---|---|---|
 | `run-start` | A run is started | run id | |
 | `run-cancel`, `run-approve`, `run-reject`, `run-resume` | A run is cancelled, approved, rejected or resumed (a cancel that cancelled nothing writes no line) | run id | |
+| `run-answer` | An answer to the questions of a run was accepted (a refused call writes no line; the text is never logged) | run id | |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
 | `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
@@ -1918,6 +1952,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session) |
+| `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note |
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |

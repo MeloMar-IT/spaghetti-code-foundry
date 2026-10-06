@@ -200,7 +200,8 @@ describe("runs of other accounts", () => {
   });
 
   it("lets the owner and the admin through", async () => {
-    for (const rule of own) {
+    // The answer route has its own tests (tests/run-answer.test.ts): it needs a run that stopped with questions.
+    for (const rule of own.filter((r) => !r.path.endsWith("/answer"))) {
       const mine = await waitingRun(ann);
       const r = await ask(ann, rule, mine);
       expect(r.status, ruleKey(rule)).toBeLessThan(300);
