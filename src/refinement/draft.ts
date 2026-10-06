@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
+import { ImpactSchema } from "./draft-impact.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
 // ---- limits (characters are counted as code points) ------------------------------------------------
@@ -50,6 +51,8 @@ export const DRAFT_LOG_KINDS = [
   "suggestion-rejected",
   "review-asked",
   "architect-reviewed",
+  "impact-asked",
+  "architect-impact",
   "moved-to-notes",
 ] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
@@ -120,6 +123,7 @@ const DraftSchema = z
     suggestions: z.array(SuggestionSchema).max(SUGGESTIONS_MAX).optional(),
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
     review: ReviewSchema.optional(),
+    impact: ImpactSchema.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {

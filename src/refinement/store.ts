@@ -7,6 +7,7 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
+import { END_NO_IMPACT_DRAFT, setImpact, type ImpactRefs } from "./draft-impact.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
@@ -14,7 +15,7 @@ import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
-export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review"] as const;
+export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
@@ -52,7 +53,7 @@ const ArchitectSchema = z
   .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional(), draft: z.uuid().optional(), field: z.enum(SUGGEST_FIELDS).optional() })
   .strict()
   .refine((a) =>
-    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
+    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
   );
 
 const SessionSchema = z
@@ -354,6 +355,7 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
   const kind = ask.kind ?? "brief";
   if (kind === "suggest" && (!ask.draft || !ask.field)) throw new Error("a suggestion run needs a draft and a field");
   if (kind === "review" && !ask.draft) throw new Error("a review run needs a draft");
+  if (kind === "impact" && !ask.draft) throw new Error("an impact run needs a draft");
   return change(actor, id, opts, false, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
     if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
@@ -363,7 +365,7 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
       ...(kind !== "brief" ? { kind } : {}),
       ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}),
       ...(kind === "suggest" ? { draft: ask.draft, field: ask.field } : {}),
-      ...(kind === "review" ? { draft: ask.draft } : {}),
+      ...(kind === "review" || kind === "impact" ? { draft: ask.draft } : {}),
     };
     const entry: LogItem =
       kind === "question"
@@ -372,7 +374,9 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
           ? { at, by: actor.id, what: "suggestion-asked", detail: ask.field }
           : kind === "review"
             ? { at, by: actor.id, what: "review-asked" }
-            : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
+            : kind === "impact"
+              ? { at, by: actor.id, what: "impact-asked" }
+              : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
     return { ...s, architect, updated: at, log: [...s.log, entry] };
   });
 }
@@ -390,7 +394,7 @@ export function noteArchitectResumed(id: string, runId: string, opts: StoreOptio
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { failed: string };
 
 /**
  * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
@@ -430,6 +434,17 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
         const c = setReview({ drafts: s.drafts, epic: s.epic }, a.draft, end.reviewed, end.refs ?? {}, at);
         if (!c) return fail(END_NO_REVIEW_DRAFT);
         return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-reviewed", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
+    if ("impact" in end) {
+      if (a.kind !== "impact" || !a.draft) return fail(END_NO_IMPACT_DRAFT);
+      try {
+        const c = setImpact({ drafts: s.drafts, epic: s.epic }, a.draft, end.impact, end.refs, at);
+        if (!c) return fail(END_NO_IMPACT_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-impact", c.line?.detail) };
       } catch (e) {
         if (!(e instanceof RefinementError)) throw e;
         return fail(END_BAD_FORM);
