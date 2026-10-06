@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { codexSandbox } from "../src/agents/run.js";
-import { isQuotaError, isTransientError, parseSpec, resolveTarget, toTarget } from "../src/agents/targets.js";
+import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { readTranscript } from "../src/engine/transcript.js";
@@ -43,6 +43,16 @@ describe("model specs", () => {
     expect(() => toTarget({ provider: "nope" }, c)).toThrow(/unknown provider/);
     const withDefault = cfg({ providers: { ollama: { kind: "ollama", default_model: "qwen3-coder" } } });
     expect(toTarget({ provider: "ollama" }, withDefault)).toMatchObject({ model: "qwen3-coder", provider: { base_url: "http://localhost:11434" } });
+  });
+});
+
+describe("providerKeyVars", () => {
+  it("lists the config's key variables and the well-known ones, once each", () => {
+    const c = cfg({ providers: { a: { kind: "anthropic-compatible", base_url: "http://x", api_key_env: "MY_KEY" }, b: { kind: "anthropic-compatible", base_url: "http://y", api_key_env: "OPENAI_API_KEY" } } });
+    const names = providerKeyVars(c);
+    expect(names).toEqual(expect.arrayContaining(["MY_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"]));
+    expect(new Set(names).size).toBe(names.length);
+    expect(providerKeyVars(cfg())).toEqual(KNOWN_KEY_VARS);
   });
 });
 

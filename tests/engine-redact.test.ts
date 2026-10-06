@@ -60,6 +60,20 @@ describe("stored secrets are redacted", () => {
     }
   });
 
+  it("hides the value of a provider key variable named in the config", async () => {
+    const value = "provider-key-0123456789abcdef";
+    process.env.KEY_VAR_FOR_TEST = value;
+    try {
+      const config = ConfigSchema.parse({ protected_branches: [], providers: { p: { kind: "anthropic-compatible", base_url: "http://127.0.0.1:1", api_key_env: "KEY_VAR_FOR_TEST" } } });
+      const s = await start("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'echo \"$KEY_VAR_FOR_TEST\"'}\n", { config });
+      expect(s.history[0]!.output.trim()).toBe("[redacted]");
+      for (const t of [readFileSync(s.history[0]!.logFile, "utf8"), readFileSync(liveLogFile(s.runDir), "utf8"), readFileSync(join(s.runDir, "run.json"), "utf8")]) expect(t).not.toContain(value);
+    } finally {
+      delete process.env.KEY_VAR_FOR_TEST;
+      resetRedactCache();
+    }
+  });
+
   it("hides the token in a failing shell step and everything that records it", async () => {
     const s = await start(`
 name: t

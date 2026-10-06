@@ -7,7 +7,8 @@ import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { claimRunStart } from "../home.js";
-import { CANNOT_READ, redactText, requireRedaction } from "../credentials/redact.js";
+import { providerKeyVars } from "../agents/targets.js";
+import { CANNOT_READ, hideKeyVars, redactText, requireRedaction } from "../credentials/redact.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
@@ -185,6 +186,7 @@ async function drive(
   }
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
+  hideKeyVars(providerKeyVars(config));
   try {
     requireRedaction();
   } catch (e) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Stand-in for `codex exec --json`: reads the prompt from stdin, emits Codex JSONL events.
 // Prompt directives: "WRITE <file> <text>" writes a file; "SAY <text>" sets the answer;
+// "SHOWALLENV" answers "env: " and the sorted names (no values) of its environment.
 // "LIMIT" fails with a rate limit. Args are echoed into the answer for assertions.
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 
@@ -37,6 +38,7 @@ for (const line of prompt.split("\n")) {
   if (s) answer = s[1];
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
   if (line === "SHOWGHDIR") {
     const d = process.env.GH_CONFIG_DIR;
     shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);

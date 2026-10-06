@@ -16,3 +16,5 @@ process.env.FACTORY_NO_NOTIFY = "1";
 // Suites that start failing runs without a fake `claude` must never reach a real one for the failure summary.
 process.env.FACTORY_NO_FAILURE_MODEL = "1";
 process.env.FACTORY_TRANSIENT_RETRY_MS = "20,20"; // retries of a briefly unavailable service: quick in tests
+// Steps of a user's run get a short environment; the tests' own FAKE_* switches and the area-lock poll must still reach them.
+process.env.FACTORY_STEP_ENV_PASS = "FAKE_*,AREA_LOCK_POLL_MS";

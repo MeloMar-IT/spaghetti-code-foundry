@@ -10,6 +10,7 @@ import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
+import { shortEnv, shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
@@ -200,6 +201,8 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       // The push exception is a one-time token that only this step gets (see grantPush), not a plain name.
       const grant = env.FACTORY_PUSH_ALLOW ? grantPush(env.FACTORY_PUSH_ALLOW) : undefined;
       if (grant) Object.assign(env, grant.env);
+      // A step of a user's run gets only the short environment, not the server's (see short-env.ts).
+      const short = shortEnvRun(engine.summary.owner);
       let r: Awaited<ReturnType<typeof runShell>> | undefined;
       let thrown: unknown;
       let gone = true;
@@ -208,7 +211,8 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         r = await runShell({
           command: render(step.run, ctx, SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
-          env,
+          env: short ? shortEnv(env, engine.config) : env,
+          cleanEnv: short,
           logFile,
           timeoutMs,
           signal: engine.signal,

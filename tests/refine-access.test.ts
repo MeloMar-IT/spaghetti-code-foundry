@@ -371,7 +371,7 @@ describe("a token in the process", { timeout: 60_000 }, () => {
     const s = await go(flow, { source: REFINE, owner: user.id });
     expect(out(s, "clone")).toBe("t=unset p=unset c=unset v=unset r=1");
     expect(out(s, "list_issues")).toBe("t=unset p=unset c=unset v=unset r=1");
-    expect(out(s, "other")).toBe("t=unset p=unset c=unset v=unset r=0"); // tracing is off in every step of a user run
+    expect(out(s, "other")).toBe("t=unset p=unset c=unset v=unset r="); // a user run's step gets nothing of the server's tracing variables, not even GIT_TRACE_REDACT
   });
 
   it("hides the token of a step even when the stored one was never known to the live set", async () => {

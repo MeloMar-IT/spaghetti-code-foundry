@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { StoreError } from "../auth/store.js";
 import { KeyError } from "./keychain.js";
 import { PUBLIC_KEY_RE } from "./ssh-keygen.js";
-import { allSecrets, credentialsPath } from "./store.js";
+import { allSecrets, credentialsPath, TOKEN_MIN } from "./store.js";
 
 export const REDACTED = "[redacted]";
 export const CANNOT_READ = "the stored credentials cannot be read, so no output can be shown safely";
@@ -165,11 +165,39 @@ function signature(): string {
   }
 }
 
+/** Names of variables whose values are provider keys. Add-only until restart. */
+const keyVarNames = new Set<string>();
+
+/**
+ * Hides the values of these variables (read from the server's environment) in output, like stored credentials.
+ * A value shorter than a stored token may be (`TOKEN_MIN`) is not hidden: it would damage all output. Returns the names
+ * that are set but too short.
+ */
+export function hideKeyVars(names: Iterable<string>): string[] {
+  const tooShort: string[] = [];
+  for (const name of names) {
+    keyVarNames.add(name);
+    const v = process.env[name];
+    if (v && v.length < TOKEN_MIN) tooShort.push(name);
+  }
+  return tooShort;
+}
+
+function keyVarValues(): string[] {
+  const out = new Set<string>();
+  for (const name of keyVarNames) {
+    const v = process.env[name];
+    if (v && v.length >= TOKEN_MIN) out.add(v);
+  }
+  return [...out];
+}
+
 /** The redactor for every stored secret. One `stat` while the file is unchanged. Throws StoreError or KeyError. */
 export function secretRedactor(): Redactor {
-  const sig = signature();
+  const values = keyVarValues();
+  const sig = `${signature()}|${values.join("\0")}`;
   if (cache?.sig === sig) return cache.redactor;
-  const redactor = makeRedactor(allSecrets());
+  const redactor = makeRedactor([...allSecrets(), ...values]);
   cache = { sig, redactor };
   return redactor;
 }
@@ -256,4 +284,5 @@ export function redactText(text: string): string {
 /** Forgets the cached set (tests). */
 export function resetRedactCache(): void {
   cache = undefined;
+  keyVarNames.clear();
 }

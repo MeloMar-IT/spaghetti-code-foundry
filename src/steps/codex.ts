@@ -42,6 +42,8 @@ export interface CodexRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  /** Pass only `env`, nothing of the server's environment. */
+  cleanEnv?: boolean;
   onProgress?: (msg: string) => void;
 }
 
@@ -117,6 +119,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
     res = await runProcess(bin, buildCodexArgs(o), {
       cwd: o.cwd,
       env,
+      cleanEnv: o.cleanEnv,
       stdin: prompt,
       timeoutMs: o.timeoutMs,
       signal: o.signal,

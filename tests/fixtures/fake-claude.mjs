@@ -38,6 +38,8 @@ for (const line of prompt.split("\n")) {
   // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  // "SHOWALLENV": "env: " and the sorted names (no values) of its environment.
+  if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
   if (line === "SHOWGHDIR") {
     const d = process.env.GH_CONFIG_DIR;
     shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
