@@ -117,6 +117,7 @@ describe("pure functions", () => {
     expect(talk.kindOf({ kind: "round" })).toBe("round");
     expect(talk.kindOf({ kind: "question" })).toBe("question");
     expect(talk.kindOf({ kind: "suggest" })).toBe("suggest");
+    expect(talk.kindOf({ kind: "impact" })).toBe("impact");
     expect(talk.kindOf({ kind: "review" })).toBe("review");
     expect(talk.roundLabel(session({ architect: { state: "paused", kind: "review" } }))).toBe("");
     expect(talk.canAsk(session({ architect: { state: "paused", kind: "review" } }))).toBe(false);

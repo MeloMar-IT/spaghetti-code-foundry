@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
-import { areaOverlaps, draftMark, fitOf, impactView, normArea, planReviewOf, safeAreas, type ImpactRefs } from "../src/refinement/draft-impact.js";
+import { areaOverlaps, draftMark, legacyDraftMark, fitOf, impactView, normArea, planReviewOf, safeAreas, type ImpactRefs } from "../src/refinement/draft-impact.js";
 import { impactOf, impactText } from "../src/refinement/impact-text.js";
 import { knownAreas, otherDrafts, planAreas } from "../src/refinement/known-areas.js";
 import {
@@ -128,12 +128,23 @@ describe("a stored view", () => {
     expect(view(id, did)!.outOfDate).toBe(true);
   });
 
-  it("is out of date when depends-on changes, but not when the notes change", () => {
+  it("is out of date when the notes or depends-on change", () => {
     const { id, did } = setup();
     impact(id, did);
     saveDraft(ann, id, did, { notes: "Keep it small" }, T);
+    expect(view(id, did)!.outOfDate).toBe(true);
+    impact(id, did);
     expect(view(id, did)!.outOfDate).toBeUndefined();
     saveDraft(ann, id, did, { dependsOn: [{ issue: 5 }] } as never, T);
+    expect(view(id, did)!.outOfDate).toBe(true);
+  });
+
+  it("a view stored with the earlier fingerprint (no notes) stays fresh until the draft changes", () => {
+    const { id, did } = setup();
+    saveDraft(ann, id, did, { notes: "Keep it small" }, T);
+    impact(id, did, ANSWER(), { drafts: {}, mark: legacyDraftMark(draft(id, did)) });
+    expect(view(id, did)!.outOfDate).toBeUndefined();
+    saveDraft(ann, id, did, { why: "to know" }, T);
     expect(view(id, did)!.outOfDate).toBe(true);
   });
 

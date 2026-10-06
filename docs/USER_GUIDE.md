@@ -2706,6 +2706,16 @@ When the run ends, the checked view (see `ask=impact` below) is stored with the 
 - No text in any field changes unless you type or press a button. Remarks and buttons show only where the fields of the draft show; elsewhere (dropped session, admin, missing repository) the remarks show as text without buttons.
 - The log tells a review asked for, a review made and a text moved. The Context brief part does not show the line of a review run. A review run for a draft that is not open shows its line at the top of Story drafts, like a suggestion run.
 
+**The architect's view on the page.** Every open draft has a part **Architect's view** with the button **Ask for the architect's view**. It shows when the session has a brief and the draft has some text; otherwise the page says to write something first. While the architect works the page shows the same status line as the other architect runs; a paused run shows its reason with **Ask again**, a failed one **Try again**. Unsaved text is saved first; if that save fails, nothing is asked.
+- The view shows the areas with their files, what the draft depends on, what depends on it, the risks by kind (data, security, compatibility, users) with one sentence each, the size (small, medium or large) with the estimated files and lines, and the sentence that compares the size with the build limits.
+- It lists the other open stories and drafts that touch the same code. For code the Foundry found, it says they cannot be built at the same time. For an estimate it says "May touch the same code — likely cannot be built at the same time."
+- Every statement is marked **found in the code** or **estimate**. The size and the fit sentence are always estimates. The page never shows hours or days.
+- When a plan review is recommended, the page says why and shows the checkbox **Add the review label when this story is published**, with the label name. It is off until you tick it. The choice is only kept with the draft; nothing is sent to GitHub.
+- A view written before your last change shows **out of date** with **Ask again**. The notes for the builder count as a change, because the architect reads them.
+- The view is advice. It has no button that changes a field, and nothing on the page is disabled because of it.
+- Where the fields of the draft are not shown (another account's session as an admin, a dropped session) the view shows as text without buttons; a ticked review label shows as a sentence.
+- The log tells `impact-asked` and `architect-impact` in words.
+
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
 **The preview.** Every draft in the session has `preview`: `{ title, body }`, the story as Markdown. It is only your text and fixed words; show it as text. For example:

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, toast } from "./dom.js";
+import { impactKey, impactNodes } from "./refinement-impact.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
 import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
@@ -421,6 +422,7 @@ export function draftSection(ctx) {
     ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map(), rem: new Map(), remKeys: new Map() };
     ed.hint = h("p", { class: "muted" });
     ed.reviewBox = h("div", { class: "review", "data-review": "" });
+    ed.impactBox = h("div", { class: "impact", "data-impact": "" });
     ed.reviewKey = "";
     ed.orphans = h("div", { class: "remarks", "data-remarks": "criteria" });
     ed.orphanKey = "";
@@ -469,7 +471,7 @@ export function draftSection(ctx) {
         return ok;
       });
     } }, "Remove draft");
-    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox)));
+    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox, ed.impactBox)));
     for (const k of keysOf(d.id)) if (placeOf(k)) plan(k); // text that waited for this editor is saved
   };
 
@@ -482,6 +484,16 @@ export function draftSection(ctx) {
       return call();
     });
   };
+
+  /** What the architect's view does: asks for it, and keeps the person's choice about the review label. */
+  const impactAct = (did) => ({
+    line: ctx.statusLine,
+    ask: (btn) => afterSave(btn, () => api.askImpact(sid, did), NOT_ASKED),
+    setLabel: (box, add) => ctx.send(box, () => api.setReviewLabel(sid, did, add)).then((ok) => {
+      if (!ok) box.checked = !add;
+      return ok;
+    }),
+  });
 
   /** What the review box does: asks for a review (the architect must see what is typed). */
   const reviewAct = (did) => ({ line: ctx.statusLine, ask: (btn) => afterSave(btn, () => api.reviewDraft(sid, did), NOT_ASKED) });
@@ -555,6 +567,7 @@ export function draftSection(ctx) {
     const orphans = orphanRemarks(d);
     fillBox(ed.orphans, ed.remKeys, "orphans", JSON.stringify(orphans), () => [...new Set(orphans.map((r) => r.item))].map((item) => remarkNodes({ review: { remarks: orphans } }, "criteria", item, null)));
     fillBox(ed.reviewBox, ed.remKeys, "review", reviewKey(sess, d), () => reviewNodes(sess, d, reviewAct(d.id)));
+    fillBox(ed.impactBox, ed.remKeys, "impact", impactKey(sess, d), () => impactNodes(sess, d, impactAct(d.id)));
   };
 
   const syncEditor = (d) => {
@@ -606,8 +619,8 @@ export function draftSection(ctx) {
     const drafts = s.draftsHidden ? [] : s.drafts ?? [];
     // A suggestion or review run that has no open field on this page to show it: its line is at the top.
     const a = s.architect;
-    const own = a?.kind === "suggest" || a?.kind === "review";
-    const here = mine && own && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && (a.kind === "review" || SUGGEST_FIELDS.includes(a.field));
+    const own = a?.kind === "suggest" || a?.kind === "review" || a?.kind === "impact";
+    const here = mine && own && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && (a.kind === "review" || a.kind === "impact" || SUGGEST_FIELDS.includes(a.field));
     const stray = !s.draftsHidden && own && Boolean(a.state) && a.state !== "idle" && !here;
     const strayDraft = stray ? drafts.find((x) => x.id === a.draft) : undefined;
     fill("top", `${Boolean(s.draftsHidden)}|${stray ? JSON.stringify([a, opened.get(sid), draftTitle(strayDraft)]) : ""}`, () => [
@@ -620,7 +633,10 @@ export function draftSection(ctx) {
       ed = null;
       memo.editor = null;
       boxes.editor.replaceChildren();
-      fill("list", `ro|${s.draftsHidden}|${JSON.stringify([drafts, s.talk?.map])}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map((d) => [previewNodes(d), readOnlyNodes(s, d)]) : listNodes(drafts, false)));
+      fill("list", `ro|${s.draftsHidden}|${JSON.stringify([drafts, s.talk?.map])}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map((d) => {
+        const n = impactNodes(s, d, null);
+        return [previewNodes(d), readOnlyNodes(s, d), n.length ? h("div", { class: "card impact" }, n) : null];
+      }) : listNodes(drafts, false)));
     } else {
       fill("list", `rw|${opened.get(sid)}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d)]))}`, () => [
         listNodes(drafts, true),
