@@ -2572,6 +2572,14 @@ The result is stored with the draft as `review`: `{ at, remarks }`, at most 20 r
 
 **Log.** The log tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
 
+**Remarks on the page.** Under a field or a criterion the page shows the remarks about that text. They are plain text, never HTML.
+- The remarks of the code checks show after each save, with the word that was found (for example: "fast" is vague — say what can be observed). They update by themselves; the field you are typing in is not redrawn, so its text and cursor stay.
+- **Review draft** asks the architect for a review. It shows when the session has a brief and the draft has some text (otherwise the page says to write something first). While the architect works a line says so and the button is gone; a paused run shows the reason and **Ask again**, a failed one **Try again**. It saves unsaved text first and sends nothing if that save fails.
+- The architect's remarks show next to their field or criterion, with the kind in words: "Cannot be checked", "Vague", "Contradicts", "Describes how to build" and "An implementation plan". A remark about a text that changed after the review says "written before your last change". The page says when the review was made. Remarks about a criterion that is gone show once, under the criteria.
+- A plan or how-to-build remark says "This belongs in the build step." and has **Move to notes for the builder**. The page asks first ("Move this text to the notes for the builder? It is taken out of its field."). After you confirm, the text is added to the notes as a "Wish:" line and the page shows it. A stale review remark has no button. Text you typed in other fields and have not saved is saved first and stays.
+- No text in any field changes unless you type or press a button. Remarks and buttons show only where the fields of the draft show; elsewhere (dropped session, admin, missing repository) the remarks show as text without buttons.
+- The log tells a review asked for, a review made and a text moved. The Context brief part does not show the line of a review run. A review run for a draft that is not open shows its line at the top of Story drafts, like a suggestion run.
+
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
 **The preview.** Every draft in the session has `preview`: `{ title, body }`, the story as Markdown. It is only your text and fixed words; show it as text. For example:

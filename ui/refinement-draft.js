@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, toast } from "./dom.js";
+import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
 import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
 // The story drafts of a refinement session: write, save as you type, preview. Every text is set as text, never as HTML.
@@ -187,7 +188,8 @@ export function draftSection(ctx) {
     }
     if (!live) return;
     row.ta.setAttribute("data-focus", `crit-${id}`);
-    row.li.append(removeButton(row));
+    row.li.insertBefore(removeButton(row), row.rem);
+    row.rem.setAttribute("data-remarks", `crit-${id}`);
     ed.rows.set(row.key, row);
     ed.byId.set(id, row);
     ed.newRow = makeRow(null);
@@ -284,7 +286,9 @@ export function draftSection(ctx) {
         return syncRow(row, draftOf(ed?.did));
       } });
     row.mark = h("small", { class: "muted" });
-    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null);
+    row.rem = h("div", { class: "remarks", "data-remarks": c ? `crit-${c.id}` : "crit-new" });
+    row.remKey = "";
+    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null, row.rem);
     return row;
   }
   const savedText = (row, d) => d?.criteria.find((c) => c.id === row.id)?.text ?? "";
@@ -370,7 +374,10 @@ export function draftSection(ctx) {
     markField(f);
     const box = h("div", { class: "suggest", "data-suggest": f });
     ed.sug.set(f, box);
-    return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), box]; // buttons must not sit inside the label
+    if (!REMARK_FIELDS.includes(f)) return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), box]; // buttons must not sit inside the label
+    const rem = h("div", { class: "remarks", "data-remarks": f });
+    ed.rem.set(f, rem);
+    return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), rem, box];
   };
   const markField = (f) => {
     const el = ed.fields.get(f);
@@ -411,8 +418,12 @@ export function draftSection(ctx) {
   };
 
   const buildEditor = (d) => {
-    ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map() };
+    ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map(), rem: new Map(), remKeys: new Map() };
     ed.hint = h("p", { class: "muted" });
+    ed.reviewBox = h("div", { class: "review", "data-review": "" });
+    ed.reviewKey = "";
+    ed.orphans = h("div", { class: "remarks", "data-remarks": "criteria" });
+    ed.orphanKey = "";
     for (const f of ["criteria", "dependsOn"]) ed.sug.set(f, h("div", { class: "suggest", "data-suggest": f }));
     ed.statusEl = h("p", { class: status.bad ? "status bad" : "status" }, status.text);
     ed.critList = h("ul", {});
@@ -434,7 +445,7 @@ export function draftSection(ctx) {
     const parts = [
       field(d, "title", "input"),
       h("div", { class: "field" }, field(d, "who", "textarea", 2), field(d, "what", "textarea", 2), field(d, "why", "textarea", 2)),
-      h("div", { class: "field" }, h("span", {}, "Acceptance criteria"), ed.critList, ed.sug.get("criteria")),
+      h("div", { class: "field" }, h("span", {}, "Acceptance criteria"), ed.critList, ed.orphans, ed.sug.get("criteria")),
       field(d, "outOfScope", "textarea", 3),
       h("div", { class: "field" }, h("span", {}, "Depends on"), ed.depList,
         h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose, ed.sug.get("dependsOn")),
@@ -458,22 +469,44 @@ export function draftSection(ctx) {
         return ok;
       });
     } }, "Remove draft");
-    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox)));
+    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.previewBox)));
     for (const k of keysOf(d.id)) if (placeOf(k)) plan(k); // text that waited for this editor is saved
   };
+
+  const NOT_ASKED = "Your text could not be saved, so the architect was not asked. Try again.";
+  /** Saves every typed text first; when a save fails nothing is called and `sorry` is the error. */
+  const afterSave = (btn, call, sorry) => {
+    const saved = flushAll();
+    return ctx.send(btn, async () => {
+      if ((await Promise.all(saved)).includes(false)) throw Object.assign(new Error(sorry), { status: lastStatus }); // a 401 keeps its status: send then does not reload
+      return call();
+    });
+  };
+
+  /** What the review box does: asks for a review (the architect must see what is typed). */
+  const reviewAct = (did) => ({ line: ctx.statusLine, ask: (btn) => afterSave(btn, () => api.reviewDraft(sid, did), NOT_ASKED) });
+
+  /** Moves the text of a field or a criterion to the notes, after a confirmation and after the typed texts are saved. */
+  const moveAct = (did, f, row) => ({
+    move: (btn) => {
+      if (!confirm(MOVE_ASK)) return undefined;
+      const keyNow = () => (row ? row.key : K(did, f));
+      clearTimeout(timers.get(keyNow()));
+      timers.delete(keyNow());
+      // No `forget` after the answer: the save before the move cleared the moved text, and text typed meanwhile is newer and stays.
+      return afterSave(btn, () => api.moveToNotes(sid, did, row ? { field: "criteria", item: row.id } : { field: f }), "Your text could not be saved, so nothing was moved. Try again.").then((ok) => {
+        if (!ok && unsaved.has(keyNow())) plan(keyNow());
+        return ok;
+      });
+    },
+  });
 
   /** What the suggest part of a field does: asks, and takes a suggestion. */
   const sugAct = (did, f) => ({
     line: ctx.statusLine,
     label: LABELS[f],
-    ask: (btn) => {
-      const saved = flushAll();
-      // The architect must see what is typed: when a save fails, nothing is asked.
-      return ctx.send(btn, async () => {
-        if ((await Promise.all(saved)).includes(false)) throw Object.assign(new Error("Your text could not be saved, so the architect was not asked. Try again."), { status: lastStatus }); // a 401 keeps its status: send then does not reload
-        return api.suggestField(sid, did, f);
-      });
-    },
+    // The architect must see what is typed: when a save fails, nothing is asked.
+    ask: (btn) => afterSave(btn, () => api.suggestField(sid, did, f), NOT_ASKED),
     hasOther: () => Boolean(String(unsaved.get(K(did, f)) ?? draftOf(did)?.[f]?.text ?? "").trim()),
     accept: (btn, x, text) => {
       const body = text === undefined ? {} : { text };
@@ -503,6 +536,27 @@ export function draftSection(ctx) {
     for (const f of ed.marks.keys()) markField(f);
   };
 
+  /** Draws `build()` into `el` only when the key changed. */
+  const fillBox = (el, seen, name, key, build) => {
+    if (seen.get(name) === key) return;
+    seen.set(name, key);
+    el.replaceChildren(...nodes(build()));
+  };
+  const syncRemarks = (d) => {
+    for (const [f, el] of ed.rem) fillBox(el, ed.remKeys, f, remarkKey(d, f), () => remarkNodes(d, f, undefined, moveAct(d.id, f)));
+    for (const row of ed.rows.values()) {
+      if (!row.id) continue;
+      const key = remarkKey(d, "criteria", row.id);
+      if (row.remKey === key) continue;
+      row.remKey = key;
+      row.rem.replaceChildren(...nodes(remarkNodes(d, "criteria", row.id, moveAct(d.id, "criteria", row))));
+    }
+    // Remarks about a criterion that is gone: one group for each criterion, in the order of the review.
+    const orphans = orphanRemarks(d);
+    fillBox(ed.orphans, ed.remKeys, "orphans", JSON.stringify(orphans), () => [...new Set(orphans.map((r) => r.item))].map((item) => remarkNodes({ review: { remarks: orphans } }, "criteria", item, null)));
+    fillBox(ed.reviewBox, ed.remKeys, "review", reviewKey(sess, d), () => reviewNodes(sess, d, reviewAct(d.id)));
+  };
+
   const syncEditor = (d) => {
     for (const [f, el] of ed.fields) {
       if (unsaved.has(K(d.id, f)) || el === document.activeElement) continue;
@@ -512,6 +566,7 @@ export function draftSection(ctx) {
     syncCriteria(d);
     renderDepends(d);
     syncSuggest(d);
+    syncRemarks(d);
     renderPreview(d);
   };
 
@@ -549,10 +604,11 @@ export function draftSection(ctx) {
     sess = s;
     const mine = mayChange(s);
     const drafts = s.draftsHidden ? [] : s.drafts ?? [];
-    // A suggestion run that has no open field on this page to show it: its line is at the top.
+    // A suggestion or review run that has no open field on this page to show it: its line is at the top.
     const a = s.architect;
-    const here = mine && a?.kind === "suggest" && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && SUGGEST_FIELDS.includes(a.field);
-    const stray = !s.draftsHidden && a?.kind === "suggest" && Boolean(a.state) && a.state !== "idle" && !here;
+    const own = a?.kind === "suggest" || a?.kind === "review";
+    const here = mine && own && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && (a.kind === "review" || SUGGEST_FIELDS.includes(a.field));
+    const stray = !s.draftsHidden && own && Boolean(a.state) && a.state !== "idle" && !here;
     const strayDraft = stray ? drafts.find((x) => x.id === a.draft) : undefined;
     fill("top", `${Boolean(s.draftsHidden)}|${stray ? JSON.stringify([a, opened.get(sid), draftTitle(strayDraft)]) : ""}`, () => [
       s.draftsHidden ? h("p", { class: "muted" }, DRAFTS_HIDDEN) : null,

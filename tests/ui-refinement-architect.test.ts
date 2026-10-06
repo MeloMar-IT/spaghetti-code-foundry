@@ -119,6 +119,21 @@ describe("pure functions", () => {
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe("Refresh");
     expect(ui.askLabel(session({ architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe(ASK_LABEL);
   });
+  it("architectStatus and askLabel for a review", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "review" })).toMatchObject({ busy: true, text: "The architect is waiting for its turn.", detail: "Then it reviews your draft." });
+    expect(ui.architectStatus({ state: "running", kind: "review", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is reviewing your draft.", detail: "Checking the review." });
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "review")).toBe("Checking the review.");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "review", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "review", reason: "x" } }))).toBe("Refresh");
+  });
+  it("the brief part draws no line for a review run", async () => {
+    page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
+    await show();
+    const upperPart = main().children[0] as FakeElement;
+    expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
+    expect(upperPart.textContent).not.toContain("reviewing your draft");
+  });
   it("the brief part draws no line for a suggestion run", async () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "suggest", draft: "d", field: "title", doing: "x" } });
     await show();

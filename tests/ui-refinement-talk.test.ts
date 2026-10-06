@@ -117,6 +117,11 @@ describe("pure functions", () => {
     expect(talk.kindOf({ kind: "round" })).toBe("round");
     expect(talk.kindOf({ kind: "question" })).toBe("question");
     expect(talk.kindOf({ kind: "suggest" })).toBe("suggest");
+    expect(talk.kindOf({ kind: "review" })).toBe("review");
+    expect(talk.roundLabel(session({ architect: { state: "paused", kind: "review" } }))).toBe("");
+    expect(talk.canAsk(session({ architect: { state: "paused", kind: "review" } }))).toBe(false);
+    const review = talk.talkSection(session({ architect: { state: "running", kind: "review" } }), { send: () => {}, errorText: String, line: null });
+    expect(review.map((p: any) => p.textContent).join(" ")).not.toContain("The architect is");
     expect(talk.kindOf({ kind: "other" })).toBe("brief");
     // a suggestion run is no round: no round button, no ask field; a failed one gives the normal buttons
     expect(talk.roundLabel(session({ architect: { state: "paused", kind: "suggest" } }))).toBe("");
