@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary } from "../src/engine/state.js";
+import { briefsOf } from "./helpers/briefs.js";
 import { findingsFile, saveFindings, type Finding } from "../src/monitor/findings.js";
 import { saveGuard } from "../src/monitor/guard.js";
 import { nextStep } from "../src/next-step.js";
@@ -51,6 +52,7 @@ const ctxOf = (s: Setup = {}): ApiContext => {
     config: () => ConfigSchema.parse({ protected_branches: [], ...s.config }),
     scheduler: {
       list: () => runs,
+      briefs: () => briefsOf(runs as never),
       get: (id: string) => s.get?.(id) ?? runs.find((r) => r.runId === id),
       queue: () => ({ active: (s.active ?? []).map((runId) => ({ runId })), pending: (s.pending ?? []).map((runId) => ({ runId, kind: "run" })) }),
     },

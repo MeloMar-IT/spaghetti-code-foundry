@@ -7,7 +7,6 @@ import { issueRank, issueRecord } from "../issue-record.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
-import { supersededRuns } from "../stats.js";
 import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
@@ -82,6 +81,15 @@ function waitLeftFor(ctx: ApiContext): (rec: NextStep) => NextStep {
   };
 }
 
+/** What a run works on, as in `supersededRuns` (stats.ts): issue, else pull request, else CI run. */
+function workKey(repo?: string, issue?: string, pr?: string, ciRun?: string): string | undefined {
+  if (!repo) return undefined;
+  if (issue) return `${repo}#issue:${issue}`;
+  if (pr) return `${repo}#pr:${pr}`;
+  if (ciRun) return `${repo}#ci:${ciRun}`;
+  return undefined;
+}
+
 /**
  * Builds the record of any run. Reads the context when called, so do not keep the returned
  * function across requests or events.
@@ -92,7 +100,18 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
   const tracked = ctx.watchers.tracked();
   let list = runs;
   const load = () => (list ??= ctx.scheduler.list(200));
-  let replaced: Set<string> | undefined;
+  // The newest run per issue, pull request or CI run, from the briefs of every run (no run.json is read again).
+  let newest: Map<string, { runId: string; startedAt: string }> | undefined;
+  const newestOf = () => {
+    if (newest) return newest;
+    const map = (newest = new Map());
+    for (const b of ctx.scheduler.briefs()) {
+      const k = workKey(b.githubRepo, b.issue, b.pr, b.ciRun);
+      const cur = k ? map.get(k) : undefined;
+      if (k && (!cur || b.startedAt > cur.startedAt)) map.set(k, b);
+    }
+    return map;
+  };
   const waitLeft = waitLeftFor(ctx);
   return (run) => {
     const v = run.vars ?? {};
@@ -101,9 +120,8 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     const hasWork = !!v.github_repo && !!(v.issue || v.pr || v.ci_run);
     let superseded = false;
     if (run.status !== "running" && !queued && hasWork) {
-      const known = load();
-      if (known.some((r) => r.runId === run.runId)) superseded = (replaced ??= supersededRuns(known)).has(run.runId);
-      else superseded = supersededRuns([...known, run]).has(run.runId); // an older run beyond the loaded list
+      const n = newestOf().get(workKey(v.github_repo, v.issue, v.pr, v.ci_run)!);
+      superseded = !!n && n.runId !== run.runId && n.startedAt >= run.startedAt;
     }
     const title = tracked.flatMap((t) => t.issues.filter(() => t.watcher.github_repo === v.github_repo)).find((i) => String(i.issue) === v.issue)?.title;
     // The same test as `canAnswer` (api-runs.ts): the answer box is on the user's run page only.
