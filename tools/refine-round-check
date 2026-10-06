@@ -9,9 +9,10 @@
 // criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
 // For `review` it prints { "remarks": [ { field, item?, kind, text } ] }: the first 20, `item` ("C1") only for criteria, the text on one
 // line, cut at 300 characters, in at most two sentences (more fails).
-// For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive }: known fields only, lists cut at their
-// limits. It reads issues.md (when there) for the numbers of the open issues. The size word is set from files and lines. Every
-// overlap is an `estimate`; an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
+// For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open }: known fields only, lists cut at their
+// limits. `open` holds the numbers of the open issues of issues.md (when there); the Foundry decides which issue overlaps stay. The
+// size word is set from files and lines. An overlap names an issue or a draft ("D1") and is always an `estimate` here (the Foundry sets
+// the basis itself); an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
 import { readFileSync } from "node:fs";
 
 const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20, REMARK_MAX_COUNT = 20, REMARK_MAX = 300;
@@ -200,13 +201,15 @@ function checkImpact(obj) {
   const overlaps = list("overlaps").map((x, i) => {
     const what = `overlap ${i + 1}`;
     if (!isObject(x)) bad(`${what} is not an object`);
-    if (!Number.isSafeInteger(x.issue) || x.issue < 1) bad(`${what} names no issue`);
-    if (!known.has(x.issue)) bad(`${what} names an issue that is not among the open issues that were read`);
+    let target;
+    if (Number.isSafeInteger(x.issue) && x.issue >= 1) target = { issue: x.issue };
+    else if (typeof x.draft === "string" && new RegExp(`^D\\d{1,${DRAFT_MAX}}$`).test(x.draft)) target = { draft: x.draft };
+    else bad(`${what} names no issue and no draft`);
     basisOf(x, what); // must be there; whatever it says, the answer of this step is an estimate
     const own = paths(x.areas, what, OVERLAP_AREAS_MAX, "areas");
     if (!own.length) bad(`${what} names no area`);
     if (!own.every((a) => areas.some((r) => r.area === a))) bad(`${what} names an area that is not among the areas of the answer`);
-    return { issue: x.issue, areas: own, basis: "estimate", why: prose(x.why, what, "why", 2) };
+    return { ...target, areas: own, basis: "estimate", why: prose(x.why, what, "why", 2) };
   });
   const sensitive = list("sensitive").map((x, i) => {
     const what = `sensitive topic ${i + 1}`;
@@ -215,7 +218,7 @@ function checkImpact(obj) {
     const basis = basisOf(x, what);
     return { topic: x.topic, basis, why: prose(x.why, what, "why", 2) };
   });
-  return { areas, dependsOn, dependents, risks, size, overlaps, sensitive };
+  return { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open: [...known].sort((p, q) => p - q) };
 }
 
 function check(raw, ask, field) {

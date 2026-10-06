@@ -13,6 +13,7 @@ import { refinementSessionOf, userError } from "../server/user-view.js";
 import { SUGGESTIONS_MAX, SUGGEST_FIELDS, type SuggestField } from "./draft.js";
 import { END_NO_IMPACT_DRAFT } from "./draft-impact.js";
 import { impactOf, impactText } from "./impact-text.js";
+import { knownAreas } from "./known-areas.js";
 import {
   END_BAD_FORM,
   END_NO_DRAFT,
@@ -427,7 +428,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   let task: string;
   if (kind === "brief") task = s.idea;
   else if (draft && kind === "review") task = reviewText({ idea: s.idea, brief: s.brief?.text, talk, draft });
-  else if (draft && kind === "impact") task = impactText({ idea: s.idea, brief: s.brief?.text, talk, draft, drafts: s.drafts });
+  else if (draft && kind === "impact") task = impactText({ idea: s.idea, brief: s.brief?.text, talk, draft, drafts: s.drafts, known: knownAreas(deps.scheduler, s) });
   else if (draft) {
     const rejectedHere = s.drafts.flatMap((d) => (d.rejected ?? []).map((r) => ({ ...r, own: d.id === draft.id && r.field === field })));
     task = suggestText({ idea: s.idea, brief: s.brief?.text, talk, draft, field, drafts: s.drafts, rejected: rejectedHere });
