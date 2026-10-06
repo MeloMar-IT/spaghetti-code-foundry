@@ -1,4 +1,6 @@
 import { basename } from "node:path";
+import { auditAction } from "../auth/audit.js";
+import { checkLimitsPatch, getLimits, setDefaultLimits, setUserLimits, type LimitsChange } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
@@ -14,7 +16,7 @@ import type { ApiContext, Route } from "./server.js";
 const INTERNAL = "the account list is not working; see the server log";
 const STATUS: Record<UserErrorCode, number> = {
   "bad-name": 400, "bad-email": 400, "bad-password": 400, "bad-role": 400, "email-taken": 409, "admin-exists": 409, "not-found": 404, "last-admin": 409, "has-password": 409,
-  "wrong-password": 403, "no-password": 409,
+  "wrong-password": 403, "no-password": 409, "bad-limits": 400,
 };
 
 /** Turns an error into a 4xx for input problems; anything else is logged (file and kind, never a path or value) and answered with a plain 500. */
@@ -102,6 +104,17 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     return send(res, 201, { user: view(ctx, r.user, 0, false), token: r.token, expires: r.expires }), true;
   }
 
+  // The limits are stored and shown only (nothing is enforced yet). An audit line names the fields, never the amounts.
+  const answer = (target: string, r: LimitsChange) => {
+    if (r.changed.length) auditAction(log, by, "limits-change", target, r.changed.join(", "));
+    return send(res, 200, r.limits), true;
+  };
+  if (seg.length === 2 && seg[1] === "limits" && method === "GET") return send(res, 200, guardedUsers(ctx, () => getLimits())), true;
+  if (seg.length === 2 && seg[1] === "limits" && method === "PUT") {
+    const body = await readJson(req);
+    return answer("defaults", guardedUsers(ctx, () => setDefaultLimits(checkLimitsPatch(body), { by })));
+  }
+
   const id = seg[1];
   if (id === undefined) return false;
 
@@ -110,6 +123,11 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     const u = await guardedUsersAsync(ctx, () => updateUser(id, { name: body.name as string, email: body.email as string, role: body.role as "admin" }, { by }));
     ctx.watchers.sync(); // a new role or e-mail changes who may own a watcher
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
+  }
+
+  if (seg.length === 3 && seg[2] === "limits" && method === "PUT") {
+    const body = await readJson(req);
+    return answer(id, guardedUsers(ctx, () => setUserLimits(id, checkLimitsPatch(body), { by })));
   }
 
   if (seg.length === 3 && seg[2] === "block" && method === "POST") {

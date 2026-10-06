@@ -30,6 +30,8 @@ let held: { release: () => void } | undefined;
 let heldGets: (() => void)[][];
 let clipboard: any;
 let page: any;
+let limits: { defaults: any; users: Record<string, any> };
+let limitsFail: boolean;
 const realFetch = globalThis.fetch;
 
 const user = (over: object = {}) => ({
@@ -40,6 +42,8 @@ const user = (over: object = {}) => ({
 beforeEach(() => {
   users = [user({ id: "me", name: "Root", email: "root@example.com", role: "admin", runs: 0 }), user()];
   gets = 0;
+  limits = { defaults: {}, users: {} };
+  limitsFail = false;
   sent = [];
   answers = [];
   holdNext = false;
@@ -54,6 +58,21 @@ beforeEach(() => {
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (url.endsWith("/limits")) {
+      if (init.method === "GET") return limitsFail ? reply({ error: "broken" }, 500) : reply(limits);
+      const patch = JSON.parse(init.body!);
+      sent.push({ method: init.method, url, body: patch });
+      const answer = answers.shift();
+      if (answer && answer !== "throw") return reply({ error: answer.error }, answer.status);
+      const m = /^\/api\/users\/([^/]+)\/limits$/.exec(url);
+      const into = m ? (limits.users[m[1]!] ??= {}) : limits.defaults;
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null) delete into[k];
+        else into[k] = v;
+      }
+      if (m && !Object.keys(into).length) delete limits.users[m[1]!];
+      return reply(limits);
+    }
     if (init.method === "GET") {
       gets++;
       const snapshot = users.map((u) => ({ ...u }));
@@ -151,15 +170,42 @@ describe("pure functions", () => {
     expect(ui.lastSignInText({ lastSignIn: new Date().toISOString() })).toBe("just now");
   });
   it("actionsFor", () => {
-    expect(ui.actionsFor(user())).toEqual(["edit", "reset", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "reset", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "link", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "reset", "unlock", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "reset", "unlock", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "reset", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "reset", "block", "delete"]);
+    expect(ui.actionsFor(user())).toEqual(["edit", "limits", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "limits", "reset", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "limits", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "limits", "link", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "limits", "reset", "unlock", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "limits", "reset", "unlock", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "limits", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "limits", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "limits", "reset", "block", "delete"]);
+  });
+  it("limitParts", () => {
+    expect(ui.limitParts({ defaults: {}, users: {} }, "u1")).toEqual([]);
+    expect(ui.limitParts(null, "u1")).toEqual([]);
+    expect(ui.limitParts({ defaults: { maxConcurrent: 2, dailyBudgetUsd: 5 }, users: {} }, "u1")).toEqual([
+      { key: "maxConcurrent", text: "2 at a time", override: false },
+      { key: "dailyBudgetUsd", text: "$5 a day", override: false },
+    ]);
+    expect(ui.limitParts({ defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, maxRunsPerDay: 10 } } }, "u1")).toEqual([
+      { key: "maxConcurrent", text: "9 at a time", override: true },
+      { key: "maxRunsPerDay", text: "10 runs a day", override: true },
+    ]);
+  });
+  it("readLimits", () => {
+    expect(ui.readLimits({ maxConcurrent: " ", maxRunsPerDay: "", dailyBudgetUsd: "" })).toEqual({ values: {} });
+    expect(ui.readLimits({ maxConcurrent: "3", maxRunsPerDay: " 10 ", dailyBudgetUsd: "2.5" })).toEqual({ values: { maxConcurrent: 3, maxRunsPerDay: 10, dailyBudgetUsd: 2.5 } });
+    expect(ui.readLimits({ dailyBudgetUsd: "1e+100" })).toEqual({ values: { dailyBudgetUsd: 1e100 } });
+    for (const bad of ["0", "-1", "1.5", "x", "9007199254740993"]) expect(ui.readLimits({ maxConcurrent: bad }).problem, bad).toBe("Runs at the same time must be a whole number of 1 or more, or empty.");
+    expect(ui.readLimits({ maxRunsPerDay: "0" }).problem).toBe("Runs per day must be a whole number of 1 or more, or empty.");
+    for (const bad of ["0", "-1", "abc", "1e999", "0.0"]) expect(ui.readLimits({ dailyBudgetUsd: bad }).problem, bad).toBe("Daily budget must be a number above 0, or empty.");
+  });
+  it("limitsPatch", () => {
+    expect(ui.limitsPatch({ maxConcurrent: 2, maxRunsPerDay: 5 }, { maxConcurrent: 3, maxRunsPerDay: 5 })).toEqual({ maxConcurrent: 3 });
+    expect(ui.limitsPatch({ maxConcurrent: 2, maxRunsPerDay: 5 }, { maxRunsPerDay: 5 })).toEqual({ maxConcurrent: null });
+    expect(ui.limitsPatch({}, { dailyBudgetUsd: 1 })).toEqual({ dailyBudgetUsd: 1 });
+    expect(ui.limitsPatch({ maxConcurrent: 2 }, { maxConcurrent: 2 })).toEqual({});
+    expect(ui.limitsPatch(undefined, {})).toEqual({});
   });
   it("blockedLinkText", () => {
     expect(ui.blockedLinkText(user())).toBe("");
@@ -207,17 +253,17 @@ describe("the list", () => {
   it("shows the columns and one row per account", async () => {
     users.push(user({ id: "u2", name: "Bob", status: "blocked", lastSignIn: null }), user({ id: "u3", name: "Cy", hasPassword: false, lastSignIn: null }));
     await show();
-    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", ""]);
+    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", ""]);
     const cells = (n: string) => rowOf(n).all("td").map((t) => t.textContent);
     expect(cells("Root").slice(0, 4)).toEqual(["Root (you)", "root@example.com", "admin", "active"]);
-    expect(cells("Ann")).toEqual(["Ann", "ann@example.com", "user", "active", "just now", "2", "EditBlockDelete "].map((x, i) => (i === 6 ? cells("Ann")[6]! : x)));
+    expect(cells("Ann").slice(0, 7)).toEqual(["Ann", "ann@example.com", "user", "active", "just now", "2", "no limits"]);
     expect(cells("Bob")[3]).toBe("blocked");
     expect(cells("Bob")[4]).toBe("never");
     expect(cells("Cy")[3]).toBe("no password yet");
     const labels = (n: string) => rowOf(n).all("button").map((b) => b.textContent);
-    expect(labels("Ann")).toEqual(["Edit", "Reset password", "Block", "View as user", "Delete"]);
-    expect(labels("Bob")).toEqual(["Edit", "Reset password", "Unblock", "View as user", "Delete"]);
-    expect(labels("Cy")).toEqual(["Edit", "New link", "Block", "View as user", "Delete"]);
+    expect(labels("Ann")).toEqual(["Edit", "Limits", "Reset password", "Block", "View as user", "Delete"]);
+    expect(labels("Bob")).toEqual(["Edit", "Limits", "Reset password", "Unblock", "View as user", "Delete"]);
+    expect(labels("Cy")).toEqual(["Edit", "Limits", "New link", "Block", "View as user", "Delete"]);
     expect(labels("Root")).not.toContain("View as user");
     expect(main().all("input")).toHaveLength(0);
   });
@@ -434,6 +480,71 @@ describe("Edit", () => {
     await flush();
     expect(page.reload).toHaveBeenCalledTimes(1);
     expect(gets).toBe(1);
+  });
+});
+
+describe("Limits", () => {
+  it("shows defaults, and an own value marked (own)", async () => {
+    limits = { defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, dailyBudgetUsd: 5 } } };
+    await show();
+    expect(rowOf("Root").all("td")[6]!.textContent).toBe("2 at a time");
+    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("9 at a time (own) · $5 a day (own)");
+  });
+  it("the dialog is prefilled, shows the default as placeholder and sends only changes", async () => {
+    limits = { defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, dailyBudgetUsd: 5 } } };
+    await show();
+    await open("Ann", "Limits");
+    expect(field(root(), "maxConcurrent")!.value).toBe("9");
+    expect(field(root(), "maxRunsPerDay")!.attrs.placeholder).toBe("default: no limit");
+    field(root(), "maxConcurrent")!.value = "";
+    field(root(), "maxRunsPerDay")!.value = "7";
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent).toEqual([{ method: "PUT", url: "/api/users/u1/limits", body: { maxConcurrent: null, maxRunsPerDay: 7 } }]);
+    expect(toastText()).toBe("Saved");
+    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("2 at a time · 7 runs a day (own) · $5 a day (own)");
+  });
+  it("shows a problem and sends nothing; no change closes without a call", async () => {
+    await show();
+    await open("Ann", "Limits");
+    field(root(), "maxConcurrent")!.value = "0";
+    press(button(root(), "Save"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toBe("Runs at the same time must be a whole number of 1 or more, or empty.");
+    field(root(), "maxConcurrent")!.value = "";
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent).toEqual([]);
+    expect(root().children).toHaveLength(0);
+  });
+  it("shows a server error in the dialog", async () => {
+    await show();
+    await open("Ann", "Limits");
+    field(root(), "maxConcurrent")!.value = "3";
+    answers.push({ status: 500, error: "nope" });
+    press(button(root(), "Save"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toContain("nope");
+  });
+  it("Default limits sends the defaults", async () => {
+    await show();
+    press(button(main(), "Default limits"));
+    await flush();
+    field(root(), "dailyBudgetUsd")!.value = "12.5";
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent).toEqual([{ method: "PUT", url: "/api/users/limits", body: { dailyBudgetUsd: 12.5 } }]);
+    expect(toastText()).toBe("Saved");
+    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("$12.5 a day");
+  });
+  it("still lists users when the limits cannot be read", async () => {
+    limitsFail = true;
+    await show();
+    expect(rows()).toHaveLength(2);
+    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("not available");
+    expect(button(main(), "Default limits")!.attrs.disabled).toBe("");
+    expect(button(rowOf("Ann"), "Limits")!.attrs.disabled).toBe("");
+    expect(button(rowOf("Ann"), "Edit")!.attrs.disabled).toBeUndefined();
   });
 });
 
