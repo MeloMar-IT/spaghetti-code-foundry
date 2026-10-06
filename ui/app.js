@@ -11,6 +11,7 @@ import { renderDashboard } from "./dashboard.js";
 import { renderProblems } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
+import { renderCredentials } from "./admin-credentials.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
@@ -397,6 +398,11 @@ async function route() {
     else if (section === "settings") await renderSettings(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
+    else if (section === "credentials") {
+      const off = await renderCredentials(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
     else if (section === "repos") S.cleanup = await renderRepos(main, { admin: true });
     else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
@@ -415,6 +421,7 @@ async function route() {
     else if (section === "flows" && arg) await openFlow(arg);
     else welcome();
   } catch (e) {
+    if (mine !== routeGen) return; // a late error must not replace the page that is shown now
     mount(main, h("div", { class: "errors" }, e.message));
   }
   renderSidebar();

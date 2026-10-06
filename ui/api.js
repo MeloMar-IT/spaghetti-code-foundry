@@ -75,6 +75,7 @@ export const api = {
   addRepoWatcher: (repoId, body) => req("POST", `/api/admin/repos/${enc(repoId)}/watchers`, body),
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
+  allCredentials: () => req("GET", "/api/admin/credentials"),
   refinement: () => req("GET", "/api/refinement"),
   createRefinement: (body) => req("POST", "/api/refinement", body),
   refinementSession: (id) => req("GET", `/api/refinement/${enc(id)}`),

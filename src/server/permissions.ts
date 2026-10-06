@@ -105,6 +105,7 @@ export const RULES: Rule[] = [
   r("DELETE", "admin/repos/:id/watchers/:wid", "no", "delete a watcher of a repository"),
   r("POST", "admin/view-as", "no", "start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line"),
   r("DELETE", "admin/view-as", "no", "end the view of a user's display"),
+  r("GET", "admin/credentials", "no", "the stored credentials of all accounts, without any secret"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
   r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
