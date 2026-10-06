@@ -354,9 +354,10 @@ describe("the Epic", () => {
     edit((f) => (f.sessions[0].state = "drafting"));
     expect(setEpic(ann, id, { issue: 1 }, T).state).toBe("drafting");
     edit((f) => (f.sessions[0].state = "ready"));
+    // a new draft is not ready (it has no check), so the session is drafting again; with no draft left it is exploring
     const d = add(id);
-    expect(getSession(id)!.state).toBe("ready");
-    expect(removeDraft(ann, id, d, T).state).toBe("ready");
+    expect(getSession(id)!.state).toBe("drafting");
+    expect(removeDraft(ann, id, d, T).state).toBe("exploring");
   });
 
   it("refuses a bad value", () => {
