@@ -180,6 +180,13 @@ describe("live set", () => {
     expect(liveRedactor().redact(t)).not.toContain(t);
   });
 
+  it("hides the stored token of a repository in a log line (a watcher's gh uses it)", async () => {
+    const { addRepo } = await import("../src/auth/repos.js");
+    const t = ["github", "pat", ""].join("_") + "Wa7".repeat(12);
+    addRepo(U, { url: "acme/app", method: "github-token", token: t }, { ownerOk: () => true });
+    expect(redactText(`[w] ! gh failed: HTTP 401 with ${t}`)).toBe(`[w] ! gh failed: HTTP 401 with ${REDACTED}`);
+  });
+
   it("fails closed when a changed store cannot be read after a good read", () => {
     store("one", fakeToken("Aa1"));
     secretRedactor();

@@ -6,6 +6,7 @@ import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../e
 import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
+import { withGhEnv } from "../github.js";
 
 const MAX_LOG_LINES = 5000;
 
@@ -465,7 +466,15 @@ export class Scheduler {
     return this.lastStartAt;
   }
 
+  /**
+   * A job never inherits the gh identity of the code that called submit(), setPriority(), answer() or pump():
+   * it starts in a host scope (a repository's watcher may be the caller).
+   */
   private start(q: QueuedJob) {
+    withGhEnv(undefined, () => this.startJob(q));
+  }
+
+  private startJob(q: QueuedJob) {
     this.lastStartAt = new Date().toISOString();
     const a: Active = {
       queued: q,

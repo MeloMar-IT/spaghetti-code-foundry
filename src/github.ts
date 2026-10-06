@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -8,18 +9,72 @@ export const BOT_MARKER = "<!-- claude-factory";
 /** Markers that identify our own comments: the one we write, and the new product name's. */
 export const BOT_MARKERS = [BOT_MARKER, "<!-- spaghetti-code-foundry"] as const;
 
+/**
+ * The identity `gh` acts as for the code that runs inside `withGhEnv`: the env that makes it use one repository's credential
+ * (and nothing from the host), whether it is the GitHub App, and a stamp that changes when the account changes.
+ * A session is frozen: a check that started with it keeps it until it ends.
+ */
+export interface GhSession {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  /** gh acts as a GitHub App installation: there is no user, so `api user` and collaborator checks do not work. */
+  readonly app?: boolean;
+  readonly stamp: string;
+}
+
+const sessions = new AsyncLocalStorage<GhSession | undefined>();
+
+/** Runs `fn` (and everything it starts: timers, promises) with this identity for every `gh` call. `undefined` is the host login. */
+export const withGhEnv = <T>(session: GhSession | undefined, fn: () => T): T => sessions.run(session, fn);
+
+/** The identity of the running code, if a repository's. */
+export const currentGhSession = (): GhSession | undefined => sessions.getStore();
+
+/** Does `gh` act as a GitHub App here? */
+export const ghActsAsApp = (): boolean => sessions.getStore()?.app === true;
+
+/** The host's variables that would make `gh` act as someone else. */
+const GH_AUTH_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
+
+function childEnv(env: NodeJS.ProcessEnv | undefined, session: GhSession | undefined): NodeJS.ProcessEnv {
+  if (env) return { ...process.env, ...env };
+  if (!session?.env) return process.env;
+  const out: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of GH_AUTH_VARS) delete out[k];
+  for (const [k, v] of Object.entries(session.env)) {
+    if (v === undefined) delete out[k];
+    else out[k] = v;
+  }
+  return out;
+}
+
+/** An error of a call made with a token: the token is replaced wherever the error holds it. */
+function scrub(e: unknown, token: string): unknown {
+  if (!e || typeof e !== "object") return e;
+  const err = e as Record<string, unknown>;
+  for (const k of ["message", "stderr", "stdout", "cmd"]) {
+    if (typeof err[k] === "string" && (err[k] as string).includes(token)) err[k] = (err[k] as string).split(token).join("[redacted]");
+  }
+  return e;
+}
+
 /** `timeoutMs` kills the process and rejects; without it gh may take as long as it likes. */
 export async function gh(args: string[], env?: NodeJS.ProcessEnv, timeoutMs?: number, input?: string): Promise<string> {
+  const session = sessions.getStore();
   const p = exec(process.env.FACTORY_GH_BIN ?? "gh", args, {
     maxBuffer: 20_000_000,
-    env: env ? { ...process.env, ...env } : process.env,
+    env: childEnv(env, session),
     timeout: timeoutMs,
   });
   if (input !== undefined) {
     p.child.stdin?.on("error", () => {}); // gh may exit before it reads everything; its exit code tells
     p.child.stdin?.end(input);
   }
-  return (await p).stdout;
+  const token = !env ? session?.env?.GH_TOKEN : undefined;
+  try {
+    return (await p).stdout;
+  } catch (e) {
+    throw token ? scrub(e, token) : e;
+  }
 }
 
 /** One resource of GitHub's request limit (`gh api rate_limit`). */
@@ -158,6 +213,7 @@ export interface UpsertResult {
 }
 
 const MAX_REMOVE = 5;
+export const APP_NO_AUTHOR = "this gh does not tell who wrote a comment, so the app cannot tell its own status comment; update gh";
 
 /**
  * Keeps one status comment of ours on an issue: edits it, or creates it. Ours means: marker on the last line and
@@ -180,8 +236,11 @@ export async function upsertStatusComment(repo: string, issue: number, body: str
   }
   const comments = await issueComments(repo, issue, limit());
   const ours: Comment[] = [];
+  const app = ghActsAsApp();
   for (const c of comments) {
     if (!isStatusComment(c)) continue;
+    // An app has no user to compare with: only what gh itself says is ours counts.
+    if (app && c.viewerDidAuthor === undefined) throw new Error(APP_NO_AUTHOR);
     if (c.viewerDidAuthor === undefined) login ??= await ghLogin(limit());
     if (c.viewerDidAuthor === true || (c.viewerDidAuthor === undefined && c.author.login === login)) ours.push(c);
   }
