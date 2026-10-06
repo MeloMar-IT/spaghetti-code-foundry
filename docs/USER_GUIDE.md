@@ -448,7 +448,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
 | waiting for you — two fixes did not work | The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page. |
 | watcher silent | The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page. |
-| closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
+| closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
 | issue closed | The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work. |
 | restarting soon | The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done. |
 | replaced by a newer run | A newer run took over the same work. Nothing to do with this run. |
@@ -1315,9 +1315,13 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
-- **The issue was closed on GitHub, but its run is still working or waits for approval.** The
+- **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
+  A run that waits for you or is stopped is not cancelled when its issue is closed: it only
+  leaves your lists. If you reopen the issue, the watcher puts the status label back and the
+  same run is listed again; no second run starts. Runs that an older version already cancelled
+  stay cancelled.
 - **The watcher has not checked for a long time** (more than three times its interval). The line
   says since when ("has not checked since 11:20"). Press **Check now** on the Watchers page; the
   line is gone after the next check.
