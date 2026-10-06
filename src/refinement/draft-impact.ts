@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type { BuildLimits } from "./build-limits.js";
 import type { Draft, DraftChange, DraftState } from "./draft.js";
 import { RefinementError } from "./errors.js";
 import { HAS_CONTROL, chars } from "./talk.js";
@@ -130,18 +131,72 @@ export function setImpact(st: DraftState, draftId: string, output: unknown, refs
   return { ...st, drafts: st.drafts.map((y) => (y === d ? next : y)), line: { what: "architect-impact", detail: impact.size.size } };
 }
 
-export type ImpactView = Omit<Impact, "mark" | "size"> & { size: Impact["size"] & { basis: "estimate" }; outOfDate?: true };
+export const FIT_TEXT = { fits: "likely fits in one story", "too-big": "likely too big — consider splitting", unknown: "the build limits are not known" } as const;
+
+export type Fit =
+  | { verdict: "fits"; text: string; maxFiles: number; maxCodeLines: number }
+  | { verdict: "too-big"; text: string; maxFiles: number; maxCodeLines: number; over: ("files" | "lines")[] }
+  | { verdict: "unknown"; text: string };
+export interface PlanReview {
+  topics: Impact["sensitive"][number]["topic"][];
+  label?: string;
+  text: string;
+}
+
+/** The estimated size against the build limits; no verdict unless both limits are known. */
+export function fitOf(size: { files: number; lines: number }, limits: BuildLimits): Fit {
+  const { maxFiles, maxCodeLines } = limits;
+  if (typeof maxFiles !== "number" || typeof maxCodeLines !== "number") return { verdict: "unknown", text: FIT_TEXT.unknown };
+  const over: ("files" | "lines")[] = [];
+  if (size.files > maxFiles) over.push("files");
+  if (size.lines > maxCodeLines) over.push("lines");
+  const limitsText = `The build limits are ${maxFiles} files and ${maxCodeLines} lines of code.`;
+  return over.length === 0
+    ? { verdict: "fits", text: `${FIT_TEXT.fits}. ${limitsText}`, maxFiles, maxCodeLines }
+    : { verdict: "too-big", text: `${FIT_TEXT["too-big"]}. ${limitsText}`, maxFiles, maxCodeLines, over };
+}
+
+/** A plan review by a person is recommended when the view has a sensitive topic. */
+export function planReviewOf(sensitive: Impact["sensitive"], limits: BuildLimits): PlanReview | undefined {
+  if (sensitive.length === 0) return undefined;
+  const topics = [...new Set(sensitive.map((x) => x.topic))];
+  const first = `A plan review by a person is recommended: this draft touches ${topics.join(", ")}.`;
+  const label = limits.reviewLabel;
+  return label ? { topics, label, text: `${first} The review label is "${label}".` } : { topics, text: `${first} There is no review label.` };
+}
+
+/** The person's choice to add the review label when the story is published. Only the person sets it; undefined when nothing changes. */
+export function setReviewLabel(st: DraftState, draftId: string, input: unknown): DraftChange | undefined {
+  const d = st.drafts.find((x) => x.id === draftId);
+  if (!d) throw new RefinementError("not-found", "no such story draft");
+  const keys = typeof input === "object" && input !== null && !Array.isArray(input) ? Object.keys(input) : [];
+  const add = keys.length === 1 && keys[0] === "add" ? (input as { add: unknown }).add : undefined;
+  if (typeof add !== "boolean") throw bad("send add: true or false");
+  if (add === (d.addReviewLabel === true)) return undefined;
+  let next: Draft;
+  if (add) next = { ...d, addReviewLabel: true };
+  else {
+    const { addReviewLabel: _gone, ...rest } = d;
+    next = rest;
+  }
+  return { ...st, drafts: st.drafts.map((y) => (y === d ? next : y)) };
+}
+
+export type ImpactView = Omit<Impact, "mark" | "size"> & { size: Impact["size"] & { basis: "estimate" }; fit: Fit; planReview?: PlanReview; outOfDate?: true };
 
 /** The stored view for the caller: no mark; `outOfDate` when the draft changed since it was asked; no links to drafts that are gone. */
-export function impactView(d: Draft, drafts: Draft[]): ImpactView | undefined {
+export function impactView(d: Draft, drafts: Draft[], limits: BuildLimits = {}): ImpactView | undefined {
   if (!d.impact) return undefined;
   const { mark, size, dependsOn, dependents, ...rest } = d.impact;
+  const planReview = planReviewOf(rest.sensitive, limits);
   const here = (l: { draft?: string }) => l.draft === undefined || drafts.some((o) => o.id === l.draft);
   return {
     ...rest,
     dependsOn: dependsOn.filter(here),
     dependents: dependents.filter(here),
     size: { ...size, basis: "estimate" },
+    fit: fitOf(size, limits),
+    ...(planReview ? { planReview } : {}),
     ...(draftMark(d) !== mark ? { outOfDate: true as const } : {}),
   };
 }

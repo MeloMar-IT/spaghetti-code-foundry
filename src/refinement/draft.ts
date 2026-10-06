@@ -124,6 +124,7 @@ const DraftSchema = z
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
     review: ReviewSchema.optional(),
     impact: ImpactSchema.optional(),
+    addReviewLabel: z.literal(true).optional(),
   })
   .strict()
   .superRefine((d, ctx) => {

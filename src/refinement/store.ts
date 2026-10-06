@@ -7,7 +7,7 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
-import { END_NO_IMPACT_DRAFT, setImpact, type ImpactRefs } from "./draft-impact.js";
+import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
@@ -564,4 +564,6 @@ export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, si
   changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input));
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
 export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
+export const setReviewLabelOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input));
 export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));
