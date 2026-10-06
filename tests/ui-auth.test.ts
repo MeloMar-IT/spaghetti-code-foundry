@@ -549,7 +549,20 @@ describe("roles in the page", () => {
     for (const h of ["", undefined, "#", "#/"]) expect(auth.isNoHash(h), String(h)).toBe(true);
     expect(auth.isNoHash("#/runs")).toBe(false);
     expect(auth.otherDisplay({ role: "user" }, "admin", "#/start")).toBe("/user/#/start");
-    expect(auth.otherDisplay({ role: "admin" }, "user", "#/start")).toBe("/");
+    expect(auth.otherDisplay({ role: "admin" }, "user", "#/start")).toBe("/#/start");
+  });
+
+  it("the admin display has the Start work page", () => {
+    const html = readFileSync("ui/index.html", "utf8");
+    const link = html.indexOf('<a href="#/start" data-nav="start">Start work</a>');
+    expect(link).toBeGreaterThan(-1);
+    expect(link).toBeLessThan(html.indexOf('data-nav="runs"'));
+    const app = readFileSync("ui/app.js", "utf8");
+    expect(app).toContain('from "./user/start.js"');
+    expect(app).toContain('section === "start"');
+    // a slow Start work page must not overwrite the page that took over
+    expect(app).toContain("renderStart(box, { admin: true })");
+    expect(app).toContain("if (mine !== routeGen) done?.();");
   });
 
   it("userPage gives the hash, the section and the id", () => {
@@ -568,10 +581,21 @@ describe("roles in the page", () => {
     for (const h of ["#/settings", "", "#/flows/x"]) expect(auth.otherDisplay(user, "admin", h)).toBe("/user/");
     expect(auth.otherDisplay(admin, "user", "")).toBe("/");
     expect(auth.otherDisplay(admin, "user", "#/runs/abc")).toBe("/#/runs/abc");
+    expect(auth.otherDisplay(admin, "user", "#/start")).toBe("/#/start");
     expect(auth.otherDisplay(admin, "admin", "#/flows")).toBe("");
     expect(auth.otherDisplay(user, "user", "#/runs")).toBe("");
     expect(auth.otherDisplay(undefined, "user", "")).toBe("");
     expect(auth.otherDisplay(undefined, "admin", "")).toBe("/user/");
+  });
+
+  it("otherDisplay keeps an admin on the user display only for a view", () => {
+    const user = { role: "user" };
+    const admin = { role: "admin" };
+    expect(auth.otherDisplay(admin, "user", "#/runs", "u1")).toBe("");
+    expect(auth.otherDisplay(admin, "user", "", "")).toBe("/");
+    expect(auth.otherDisplay(user, "user", "#/runs", "u1")).toBe("");
+    expect(auth.otherDisplay(user, "admin", "#/repos", "u1")).toBe("/user/#/repos");
+    expect(auth.otherDisplay(admin, "admin", "#/flows", "u1")).toBe("");
   });
 
   describe("enterDisplay", () => {
@@ -597,6 +621,16 @@ describe("roles in the page", () => {
       expect(go).toHaveBeenCalledWith("/user/#/repos");
       expect(done).not.toHaveBeenCalled();
       expect(signedOut()).toBe(true);
+    });
+
+    it("keeps an admin on the user display for a view and sends one without", async () => {
+      const admin = { id: "a1", role: "admin" };
+      const go = vi.fn();
+      await expect(auth.enterDisplay("user", { signIn: async () => admin, go, hash: () => "", viewAs: "u1" })).resolves.toBe(admin);
+      expect(go).not.toHaveBeenCalled();
+      void auth.enterDisplay("user", { signIn: async () => admin, go, hash: () => "", viewAs: "" });
+      await settle();
+      expect(go).toHaveBeenCalledWith("/");
     });
 
     it("does not redirect while the sign-in is pending", async () => {

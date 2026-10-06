@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { KEY_MISSING, KEY_UNREADABLE } from "../src/auth/repos.js";
 import {
   APP_BROKEN_RUN, APP_FAILED_RUN, APP_NOT_INSTALLED_RUN, APP_NOT_SET_UP_RUN, APP_RATE_LIMIT_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, APP_UNREACHABLE_RUN,
-  DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, SIGN_IN_NOT_REMOVED,
+  DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, NO_COMMIT_IDENTITY, SIGN_IN_NOT_REMOVED,
 } from "../src/engine/guards.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { classifyFailure, shortDenied, type FailureCause } from "../src/failure.js";
@@ -55,6 +55,7 @@ describe("classifyFailure", () => {
   it.each([
     [[KEY_MISSING, KEY_UNREADABLE, KEY_REFUSED_RUN, APP_REFUSED_RUN, DEPLOY_KEY_NO_GH, APP_NOT_SET_UP_RUN, APP_NOT_INSTALLED_RUN, APP_BROKEN_RUN], "the repository's sign-in could not be used", "reconnect the repository under My repositories, or ask an admin"],
     [[KEY_NOT_READY, APP_UNREACHABLE_RUN, APP_RATE_LIMIT_RUN, APP_FAILED_RUN, APP_TOKEN_EXPIRED], "the repository's sign-in was not available for the step", "resume the run"],
+    [[NO_COMMIT_IDENTITY], "the account that owns the run is gone", "set the bot name and e-mail in Settings, then resume the run"],
     [[SIGN_IN_NOT_REMOVED], "the sign-in folder of the run could not be removed", 'ask an admin to delete the folder "sign-in" in the run folder, then resume the run'],
   ])("is factory for the sentences of a deploy key or the GitHub App: %#", (errors, what, fix) => {
     for (const error of errors) {

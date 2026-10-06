@@ -89,7 +89,8 @@ steps:
         printf '%s\n' "$out" | sed -E '/^(PLAN_STATUS|ROUTE):/d'
         echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1
+      printf '%s\n' "$out" | sed -E '/^(PLAN_STATUS|ROUTE):/d'
     on_success: stop
     resume_from: pull_ticket
   - id: push_plan

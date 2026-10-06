@@ -1,6 +1,6 @@
 // Start work: pick a flow, a repository, fill in the fields and start. The server does every real check
 // (published flow, inputs, ownership); this page only shows its answer. Relative imports, so a test can load it:
-// in the browser "../api.js" from /user/start.js is the same module as "/api.js".
+// in the browser "../api.js" from /user/start.js is the same module as "/api.js". The admin display uses the page too.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, mount, toast } from "../dom.js";
@@ -8,6 +8,7 @@ import { connectionStatus, repoDialog } from "../repos.js";
 
 export const REPO_FIELD = "github_repo";
 export const NO_FLOWS = "No flows yet. Ask your administrator to publish one.";
+export const NO_FLOWS_ADMIN = "No published flows yet. Publish one in the flow editor.";
 export const NO_REPOS = "You have no GitHub repository yet. Add the repository you work in.";
 
 /** Where a user lands with no hash: Start work for someone with no runs at all, else My runs. Any error gives My runs. */
@@ -62,10 +63,10 @@ const fixedField = (f, label) =>
   h("div", { class: "field" }, h("span", {}, label), h("span", { class: "mono" }, f.value === "" ? "—" : f.value), f.help ? h("small", {}, f.help) : null);
 
 /** The Start work page. Returns a cleanup. */
-export async function renderStart(main, { a = api, dialog = repoDialog, go = (hash) => { location.hash = hash; } } = {}) {
-  const flows = await a.flows();
+export async function renderStart(main, { a = api, dialog = repoDialog, go = (hash) => { location.hash = hash; }, admin = false, readOnly = false } = {}) {
+  const flows = admin ? await a.flows(true) : await a.flows();
   if (!Array.isArray(flows) || flows.length === 0) {
-    mount(main, h("h1", {}, "Start work"), h("div", { class: "empty" }, NO_FLOWS));
+    mount(main, h("h1", {}, "Start work"), h("div", { class: "empty" }, admin ? NO_FLOWS_ADMIN : NO_FLOWS));
     return () => {};
   }
   let gone = false;
@@ -116,10 +117,12 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     const legend = h("legend", {}, `${n}. Repository`);
     if (field.mode === "fixed") return h("fieldset", {}, legend, fixedField(field, field.label === REPO_FIELD ? "Repository" : field.label));
     const list = repoData.repos ?? [];
-    const add = h("button", { type: "button", "data-focus": "add-repo", onClick: addRepository }, "Add repository");
+    // a preview never adds anything
+    const add = readOnly ? null : h("button", { type: "button", "data-focus": "add-repo", onClick: addRepository }, "Add repository");
     addBtn = add;
+    const addRow = add ? h("div", { class: "row" }, add) : null;
     if (!list.length) {
-      return h("fieldset", {}, legend, repoData.error ? h("p", { class: "status bad" }, repoData.error) : null, h("p", { class: "muted" }, NO_REPOS), h("div", { class: "row" }, add));
+      return h("fieldset", {}, legend, repoData.error ? h("p", { class: "status bad" }, repoData.error) : null, h("p", { class: "muted" }, NO_REPOS), addRow);
     }
     repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null },
       list.map((r) => h("option", { value: r.github }, `${r.github} — ${connectionStatus(r)}`)));
@@ -128,7 +131,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     mine[REPO_FIELD] = repoSelect.value;
     return h("fieldset", {}, legend,
       h("label", { class: "field" }, h("span", {}, field.label === REPO_FIELD ? "Repository" : field.label, field.required ? h("span", { class: "req" }, " (required)") : null), repoSelect, field.help ? h("small", {}, field.help) : null),
-      h("div", { class: "row" }, add));
+      addRow);
   }
 
   function detailsStep(n) {
@@ -185,7 +188,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   async function addRepository() {
     keep();
     err.textContent = "";
-    const created = await dialog({ admin: false, options: repoData.options });
+    const created = await dialog({ admin, options: repoData.options });
     try {
       const after = await a.repos();
       repoData.repos = githubRepos(after);
@@ -200,6 +203,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   }
 
   async function submit() {
+    if (readOnly) return;
     if (busy || loading) return;
     keep();
     const flow = state.flow;
@@ -216,7 +220,8 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     submitBtn.disabled = true;
     err.textContent = "";
     try {
-      const run = await a.startRun(startBody(flow, state.task, values));
+      const body = startBody(flow, state.task, values);
+      const run = await a.startRun(admin ? { ...body, likeUser: true } : body);
       if (gone) return toast("Run started");
       go("#/runs/" + run.runId);
     } catch (e) {
@@ -230,7 +235,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   if (needsRepos(state.flow)) await loadRepos();
   drawRest();
   const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
-    flowStep(), rest, err, h("div", { class: "row" }, submitBtn));
+    flowStep(), rest, err, readOnly ? null : h("div", { class: "row" }, submitBtn));
   mount(main, h("h1", {}, "Start work"), form);
   return () => { gone = true; };
 }

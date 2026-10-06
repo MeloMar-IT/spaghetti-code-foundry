@@ -121,6 +121,13 @@ describe("pure functions", () => {
     expect(ui.logText({ what: "renamed", who: "Ann", detail: "New" })).toBe('Ann renamed it to "New"');
     expect(ui.logText({ what: "dropped", who: "an administrator" })).toBe("an administrator dropped the session");
     expect(ui.logText({ what: "restored", who: "Ann" })).toBe("Ann restored the session");
+    expect(ui.logText({ what: "suggestion-asked", who: "Ann", detail: "title" })).toBe("Ann asked the architect for a suggestion for the title");
+    expect(ui.logText({ what: "architect-suggested", detail: "notes" })).toBe("The architect made a suggestion for the notes");
+    expect(ui.logText({ what: "suggestion-accepted", who: "Ann" })).toBe("Ann accepted a suggestion");
+    expect(ui.logText({ what: "suggestion-rejected", who: "Ann", detail: "why" })).toBe("Ann rejected a suggestion for “so that …”");
+    expect(ui.logText({ what: "review-asked", who: "Ann" })).toBe("Ann asked the architect to review a story draft");
+    expect(ui.logText({ what: "architect-reviewed", detail: "2" })).toBe("The architect reviewed a story draft: 2 remarks");
+    expect(ui.logText({ what: "moved-to-notes", who: "Ann", detail: "what" })).toBe("Ann moved “I want …” to the notes for the builder");
     expect(ui.errorText(new TypeError("x"))).toBe("Could not reach the server.");
     expect(ui.errorText(new Error("sentence"))).toBe("sentence");
     expect(ui.errorText({})).toBe("Something went wrong.");
@@ -275,6 +282,29 @@ describe("the session page", () => {
     expect(text).toContain("No story drafts yet.");
     expect(text).toContain("Ann started the session");
     expect(walk(main()).some((e) => e.tag === "a" && e.textContent === "← All sessions")).toBe(true);
+  });
+  it("lists the story drafts by their title", async () => {
+    sessions = [session({ drafts: [{ id: "d1", preview: { title: "Export", body: "x" } }, { id: "d2", preview: { title: "", body: "y" } }] })];
+    await showPage();
+    const text = main().textContent;
+    expect(text).toContain("Export");
+    expect(text).toContain("Untitled draft");
+    expect(text).not.toContain("No story drafts yet.");
+  });
+  it("says so when the story drafts are hidden", async () => {
+    const s = session({ draftsHidden: true }) as any;
+    delete s.drafts;
+    sessions = [s];
+    await showPage();
+    expect(main().textContent).toContain("The story drafts are not shown while the repository is not in My repositories.");
+  });
+  it("writes the log lines of the drafts", () => {
+    expect(ui.logText({ what: "draft-added", who: "Ann" })).toBe("Ann added a story draft");
+    expect(ui.logText({ what: "draft-removed", who: "Ann" })).toBe("Ann removed a story draft");
+    expect(ui.logText({ what: "draft-removed", who: "Ann", detail: "Export" })).toBe('Ann removed a story draft: "Export"');
+    expect(ui.logText({ what: "epic-set", who: "Ann", detail: "#73" })).toBe("Ann set the Epic to #73");
+    expect(ui.logText({ what: "epic-set", who: "Ann" })).toBe("Ann set the Epic");
+    expect(ui.logText({ what: "epic-cleared", who: "Ann" })).toBe("Ann cleared the Epic");
   });
   it("follows the rules for the buttons", async () => {
     sessions = [session()];

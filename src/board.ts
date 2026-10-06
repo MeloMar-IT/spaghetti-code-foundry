@@ -37,6 +37,9 @@ export interface BoardSource {
   watcher?: string;
   /** A bug story: it goes before other stories. */
   goesFirst?: boolean;
+  /** The account of the card's run, and its name (admin views). */
+  owner?: string;
+  ownerName?: string;
 }
 
 export interface BoardCard {
@@ -57,6 +60,8 @@ export interface BoardCard {
   group?: string;
   watcher?: string;
   goesFirst?: true;
+  owner?: string;
+  ownerName?: string;
 }
 
 export interface BoardColumn { id: ColumnId; title: string; cards: BoardCard[] }
@@ -108,7 +113,7 @@ export function columnOf(next: NextStep, phase?: Phase): ColumnId | undefined {
     case "usage_limit": case "daily_budget": case "queued": case "checking": case "starting": case "restart": return "queued";
     case "running": return phase ?? "coding";
     case "done": return "done";
-    case "superseded": return undefined;
+    case "superseded": case "issue_closed": return undefined;
     case "release": return needsUser(next) ? "your_turn" : "merging";
     case "interrupted": case "cancelled": return next.who === "You" ? "your_turn" : "queued";
     default: return "your_turn";
@@ -154,6 +159,8 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
       chain: [],
       since: s.since,
       ...(group ? { group } : {}),
+      ...(s.owner ? { owner: s.owner } : {}),
+      ...(s.ownerName ? { ownerName: s.ownerName } : {}),
       watcher: s.watcher,
       ...(s.goesFirst && column !== "done" ? { goesFirst: true as const } : {}),
     });

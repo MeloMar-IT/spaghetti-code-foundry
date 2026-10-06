@@ -6,6 +6,7 @@ import type { Config } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import type { FailureNote, RunSummary } from "./engine/state.js";
 import { spentToday } from "./engine/state.js";
+import { tokenVarNames } from "./engine/isolation.js";
 import { classifyFailure, failedIndex, hideFolders, safeSentence } from "./failure.js";
 import { runClaude } from "./steps/claude.js";
 
@@ -17,6 +18,9 @@ const TIMEOUT_MS = 45_000;
 
 type Folders = Partial<Pick<RunSummary, "workdir" | "runDir" | "repo">>;
 const folders = (run: Folders) => [run.workdir, run.runDir, run.repo];
+
+/** Overrides that remove every GitHub token variable, the bot's own included. */
+const withoutTokens = (config: Config): Record<string, undefined> => Object.fromEntries(tokenVarNames(config).map((n) => [n, undefined]));
 
 /** The prompt: the reason, the tail of the failing output and the agent's last message. No folders. */
 export function explainPrompt(run: RunSummary): string {
@@ -122,7 +126,7 @@ export async function explainFailure(i: ExplainInput): Promise<Explained | undef
       maxBudgetUsd: cap,
       timeoutMs: TIMEOUT_MS,
       signal: i.signal,
-      env: { GH_TOKEN: undefined, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, ...claudeProviderEnv(target) },
+      env: { ...claudeProviderEnv(target, tokenVarNames(config)), ...withoutTokens(config) },
     });
     const costUsd = target.free ? 0 : (r.costUsd ?? 0);
     const note = r.ok ? noteFrom(r.output, target.label, run, i.redact) : undefined;

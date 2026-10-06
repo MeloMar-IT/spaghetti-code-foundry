@@ -85,6 +85,28 @@ export interface RunSummary {
   source?: string;
   /** The id of the account that started the run. Absent for runs of watchers, the CLI and older versions. */
   owner?: string;
+  /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
+  answers?: RunAnswer[];
+}
+
+/** An answer a person gave on the run page to the questions a run stopped with. */
+export interface RunAnswer { at: string; text: string; by: string }
+
+export const ANSWER_MAX_CHARS = 4000;
+export const TASK_MAX_BYTES = 100_000;
+export const ANSWERS_HEADING = "## Answers to the questions of this run (oldest first)";
+
+/** The task as the steps read it: the typed task, then all answers under one fixed heading. */
+export function taskWithAnswers(s: { task: string; answers?: RunAnswer[] }): string {
+  const answers = Array.isArray(s.answers) ? s.answers : [];
+  if (!answers.length) return s.task;
+  return [s.task, ANSWERS_HEADING + "\n\n" + answers.map((a, i) => "Answer " + (i + 1) + ":\n" + a.text).join("\n\n")].filter(Boolean).join("\n\n");
+}
+
+/** How many bytes the text of one more answer may have. Below 1: no answer fits. */
+export function answerRoom(s: { task: string; answers?: RunAnswer[] }): number {
+  const old = Array.isArray(s.answers) ? s.answers : [];
+  return TASK_MAX_BYTES - Buffer.byteLength(taskWithAnswers({ task: s.task, answers: [...old, { at: "", text: "", by: "" }] }));
 }
 
 /** The few fields of a run that are cheap to keep for every run. */
@@ -104,6 +126,9 @@ export interface RunBrief {
   /** `vars.github_repo` and `vars.issue` of the run, when it has them. */
   githubRepo?: string;
   issue?: string;
+  /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
+  pr?: string;
+  ciRun?: string;
   /** A "running" run.json with no live process (set by the scheduler). */
   interrupted?: boolean;
 }
@@ -143,7 +168,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;

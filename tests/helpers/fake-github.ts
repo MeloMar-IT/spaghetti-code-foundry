@@ -18,6 +18,16 @@ export interface FakeIssue {
   closed_at: string | null;
 }
 
+/** One call of the fake gh as the auth log has it ("-" when a token was not set). */
+export interface AuthRow {
+  token: string;
+  githubToken: string;
+  enterpriseToken: string;
+  /** "host" when GH_CONFIG_DIR was not set, else the number of entries in that folder. */
+  configDir: string;
+  args: string;
+}
+
 /**
  * Puts a `git` wrapper next to the fake `gh`: the https address `url` is the fake remote, and every call logs the
  * GIT_ALLOW_PROTOCOL it got. Call it after fakeGithub(); that one's restore() undoes it. Only blocks that clone or push need it.
@@ -82,6 +92,7 @@ export function fakeGithub() {
   const labelsFile = `${ghLog}.labels`;
   // The status comments the Foundry remembers must not leak from one test into the next.
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "status-comments.json"), { force: true });
+  rmSync(join(process.env.FACTORY_HOME ?? tmp, "issue-states"), { recursive: true, force: true });
   Object.assign(process.env, {
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_GH_LOG: ghLog,
@@ -122,10 +133,28 @@ export function fakeGithub() {
       process.env.FAKE_GH_HOLD_ON = on;
       return () => rmSync(file, { force: true });
     },
+    /**
+     * Turns on the auth log of the fake gh: one row per call with the tokens it was called with, the settings folder
+     * ("host" when none, else the number of entries) and the arguments.
+     */
+    authLog: () => {
+      const file = join(tmp, "auth.log");
+      writeFileSync(file, "");
+      process.env.FAKE_GH_AUTH_LOG = file;
+      return {
+        rows: (): AuthRow[] =>
+          readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => {
+            const [token, githubToken, enterpriseToken, configDir, args] = l.split("\t") as [string, string, string, string, string];
+            return { token, githubToken, enterpriseToken, configDir, args };
+          }),
+        clear: () => writeFileSync(file, ""),
+      };
+    },
     remoteGit: (...a: string[]) => git(remote, ...a),
     restore: () => {
       process.env = { ...env };
-      rmSync(tmp, { recursive: true, force: true });
+      // a late fake gh call may still write into the folder: try again instead of failing the suite
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }

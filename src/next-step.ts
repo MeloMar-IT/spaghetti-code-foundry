@@ -10,7 +10,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first";
+  | "superseded" | "bug_first" | "issue_closed";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -50,6 +50,8 @@ export interface NextStep {
   /** `monitor_needs_you`: the finding's evidence as plain lines, and its bug stories. Never in `text`. */
   evidence?: string[];
   stories?: { issue: number; url?: string }[];
+  /** The last check of the issue on GitHub failed and nothing is stored. */
+  issueUnchecked?: true;
 }
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
@@ -85,6 +87,8 @@ export interface NextData {
   /** Link to the issue or pull request (default: none). */
   issueUrl?: string;
   questions?: number;
+  /** `planner_questions`: the answer is typed on the run page of the user display (no watcher follows the run, its flow reads the task). */
+  answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
   message?: string;
   reason?: string;
@@ -105,6 +109,8 @@ export interface NextData {
   restartWhy?: "new_version" | "data_folder";
   /** The run was replaced by a newer run on the same work. */
   superseded?: boolean;
+  /** The issue is known closed on GitHub (the store of the watcher). */
+  issueClosed?: boolean;
   /** The run the record is about (when `base` has none). */
   runId?: string;
   /** `closed_elsewhere`: the run waits for approval (it is not working). */
@@ -204,6 +210,7 @@ function blockerClause(b: BlockerInfo): string {
     case "bug_first": return "which waits for a bug story";
     case "usage_limit": case "daily_budget": return "which is paused by a limit";
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
+    case "issue_closed": return "which is closed";
     case "failed": return "which failed";
     case "interrupted": case "stopped": case "cancelled": return "which is stopped";
     default: return "which is to be done";
@@ -281,8 +288,10 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "You";
       why = kind === "questions" ? "It has questions before it starts" : "The planner has questions";
       action = q ? `Answer ${plural(q, "question")}` : "Answer the questions";
-      say = kind === "questions" ? `${action.toLowerCase()} on the issue, or reply /defaults to go with the recommendations` : `${action.toLowerCase()} on the issue and it continues`;
-      if (kind === "planner_questions" && !d.watched) w = runWhere ?? where;
+      const here = kind === "planner_questions" && !!d.answerHere && !!runWhere;
+      say = kind === "questions" ? `${action.toLowerCase()} on the issue, or reply /defaults to go with the recommendations`
+        : `${action.toLowerCase()} ${here ? "on the run page" : "on the issue"} and it continues`;
+      if (kind === "planner_questions" && (here || !d.watched)) w = runWhere ?? where;
       break;
     }
     case "approve_plan":
@@ -532,6 +541,10 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       why = "A newer run took over this work"; say = "nothing to do";
       action = "Nothing — a newer run took over";
       break;
+    case "issue_closed":
+      why = `${issue ? `#${issue}` : "The issue"} is closed on GitHub`; say = "nothing to do";
+      action = "Nothing — the issue is closed";
+      break;
     case "done":
       why = "It is done";
       say = "nothing to do";
@@ -653,6 +666,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
 
   if (o.queued) return o.queued.waitingFor ? make("one_at_a_time", { blockingRun: o.queued.waitingFor }) : make(o.queued.behindPriority ? "bug_first" : "queued");
   if (o.superseded && run.status !== "running" && run.status !== "succeeded") return make("superseded");
+  if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !runClosedIssue(run)) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
   switch (run.status) {
     case "succeeded": return o.releaseAt ? make("release") : make("done");
     case "running": {

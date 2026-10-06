@@ -1,8 +1,11 @@
-import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
+import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
+import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
 import type { RunStatus, RunSummary } from "../engine/state.js";
+import { usesTask } from "../flow/publish.js";
 import { REFINE_ROUND_FLOW } from "../flow/usage.js";
-import type { NextStep } from "../next-step.js";
+import { trackingWatcher, type NextStep } from "../next-step.js";
+import { runOrigin } from "../your-turn.js";
 
 /**
  * What a user may see of a run. Everything is built from a list of fields (never "all fields except"), so a field added
@@ -22,19 +25,32 @@ export interface UserRun {
   waiting?: { stepId: string; message: string; since: string }; next?: NextStep;
   /** The questions of a run that stopped to ask them: the output of that one step, nothing else. */
   questions?: string;
+  /** What was answered on the run page, oldest first. */
+  answers?: { at: string; text: string }[];
+  /** Present (true) only when an answer sent now would be accepted. */
+  canAnswer?: true;
 }
 
 const QUESTION_STEPS = ["send_back", "ask_for_info"];
 const MAX_QUESTIONS = 4000;
 
 /** The text of the questions a run stopped with, taken from the step that asks them. */
-function questionsOf(s: RunSummary): string | undefined {
+export function questionsOf(s: RunSummary): string | undefined {
   if (s.status !== "stopped") return undefined;
   const m = /stopped at step "(?:[\w-]+\/)*([\w-]+)"/.exec(s.reason ?? "");
   if (!m || !QUESTION_STEPS.includes(m[1]!)) return undefined;
   const step = [...(s.history ?? [])].reverse().find((h) => h.id.split("/").at(-1) === m[1]);
   const text = step?.output?.trim();
   return text ? text.slice(0, MAX_QUESTIONS) : undefined;
+}
+
+/** Why a run cannot take an answer on its page; undefined when it can. Reads the run and the watchers, not the queue. */
+export function answerBlock(s: RunSummary, watchers: WatcherConfig[]): string | undefined {
+  if (isRefinementRun(s.source)) return "this run belongs to a refinement session; ask the architect again from that session";
+  if (!questionsOf(s) || !s.state?.next) return "this run did not stop with questions";
+  if (runOrigin(s.source) !== "hand" && trackingWatcher(watchers, s)) return "a watcher follows this run; answer on the issue";
+  if (!s.flowDef?.steps || !usesTask(s.flowDef)) return "the flow of this run does not read the task, so it cannot read an answer";
+  return undefined;
 }
 
 export const USER_ERROR = "something went wrong on the server; ask the administrator";
@@ -90,7 +106,7 @@ export const userTask = (flow: string | undefined, source: string | undefined, t
   flow === REFINE_ROUND_FLOW && refinementSessionOf(source) ? (task.split("\n", 1)[0] ?? "") : task;
 
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
-export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean }): UserRun {
+export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
   for (const [k, spec] of Object.entries(s.flowDef?.publish?.vars ?? {})) if (spec.mode === "fixed" || spec.mode === "input") shown.add(k);
   const vars = Object.fromEntries(Object.entries(s.vars ?? {}).filter(([k]) => shown.has(k)));
@@ -119,6 +135,8 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean 
     ...(s.waiting ? { waiting: { stepId: s.waiting.stepId, message: s.waiting.message, since: s.waiting.since } } : {}),
     ...(s.next ? { next: userRecord(s.next) } : {}),
     ...(questionsOf(s) ? { questions: questionsOf(s) } : {}),
+    ...(Array.isArray(s.answers) && s.answers.length ? { answers: s.answers.map((a) => ({ at: a.at, text: a.text })) } : {}),
+    ...(s.canAnswer ? { canAnswer: true as const } : {}),
   };
   return hidePaths(out, s);
 }

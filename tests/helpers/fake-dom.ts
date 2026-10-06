@@ -32,6 +32,19 @@ export class FakeElement extends FakeNode {
   private adopt(nodes: (FakeNode | string)[]) { for (const n of nodes) if (n instanceof FakeElement) n.parent = this; }
   append(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.children.push(...nodes); }
   replaceChildren(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.text = undefined; this.children = [...nodes]; }
+  get parentNode(): FakeElement | null { return this.parent ?? null; }
+  /** Takes the element out of its parent, as the DOM does. */
+  remove(): void {
+    if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this);
+    this.parent = undefined;
+  }
+  /** Puts `node` before `ref` (at the end when `ref` is null); a node that is somewhere else is moved. */
+  insertBefore(node: FakeElement, ref: FakeNode | null): void {
+    node.remove();
+    const i = ref ? this.children.indexOf(ref) : -1;
+    this.children.splice(i < 0 ? this.children.length : i, 0, node);
+    node.parent = this;
+  }
   /** A click as a browser sends it: the listeners of this element, then of each parent, until one calls stopPropagation. */
   click(): void {
     let stopped = false;

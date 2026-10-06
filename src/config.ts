@@ -6,8 +6,7 @@ import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 
-const WatcherSchema = z
-  .object({
+const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
     enabled: z.boolean().default(true),
     /**
@@ -62,10 +61,27 @@ const WatcherSchema = z
     timezone: z.string().optional(),
     /** The e-mail of the account that owns this watcher's runs (default: the first admin). Only an admin can set it. */
     owner: z.string().max(254).optional(),
-  })
+};
+
+const scheduleNeedsTask = (w: { source: string; task?: string }) => w.source !== "schedule" || !!w.task?.trim();
+const zoneKnown = (w: { timezone?: string }) => !w.timezone || validTimeZone(w.timezone);
+
+/**
+ * The options of a watcher that belongs to a repository (stored in repo-watchers.json): the same as in config.yaml,
+ * except `github_repo` and `owner`, which come from the repository record, and without source "monitor".
+ */
+const { github_repo: _repo, owner: _owner, ...repoWatcherShape } = watcherShape;
+const RepoWatcherSchema = z
+  .object({ ...repoWatcherShape, source: z.enum(["issues", "pr-feedback", "ci-failures", "schedule"]).default("issues") })
   .strict()
-  .refine((w) => w.source !== "schedule" || !!w.task?.trim(), { message: "a schedule watcher needs a task", path: ["task"] })
-  .refine((w) => !w.timezone || validTimeZone(w.timezone), { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] })
+  .refine(scheduleNeedsTask, { message: "a schedule watcher needs a task", path: ["task"] })
+  .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] });
+
+const WatcherSchema = z
+  .object(watcherShape)
+  .strict()
+  .refine(scheduleNeedsTask, { message: "a schedule watcher needs a task", path: ["task"] })
+  .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] })
   .superRefine((w, ctx) => {
     if (w.source !== "monitor") {
       if (!/^[\w.-]+\/[\w.-]+$/.test(w.github_repo)) ctx.addIssue({ code: "custom", message: "owner/repo", path: ["github_repo"] });
@@ -327,14 +343,16 @@ export const ConfigSchema = z
     if (m && c.watchers.some((w) => w !== m && w.id === m.id)) ctx.addIssue({ code: "custom", message: `the id "${m.id}" of the monitor is used by another watcher`, path: ["watchers"] });
   });
 
-export type Config = z.infer<typeof ConfigSchema>;
+/** A watcher as the server runs it: from config.yaml, or from the repository store (then with `repoId` and the owner's account id). */
+export type WatcherConfig = z.infer<typeof WatcherSchema> & { repoId?: string; ownerId?: string };
+export type Config = Omit<z.infer<typeof ConfigSchema>, "watchers"> & { watchers: WatcherConfig[] };
 export type ServerConfig = z.infer<typeof ServerSchema>;
 export type SelfUpdateConfig = z.infer<typeof SelfUpdateSchema>;
 export type MonitorConfig = z.infer<typeof MonitorSchema>;
-export type WatcherConfig = z.infer<typeof WatcherSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;
 export type RouterConfig = z.infer<typeof RouterSchema>;
-export { WatcherSchema };
+export { WatcherSchema, RepoWatcherSchema };
+export type RepoWatcherOptions = z.infer<typeof RepoWatcherSchema>;
 
 export const CONFIG_PATH = () => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "config.yaml");
 

@@ -108,6 +108,7 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "PUT") {
     const body = await readJson(req);
     const u = await guardedUsersAsync(ctx, () => updateUser(id, { name: body.name as string, email: body.email as string, role: body.role as "admin" }, { by }));
+    ctx.watchers.sync(); // a new role or e-mail changes who may own a watcher
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
   }
 
@@ -116,12 +117,14 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     if (body.stopWork !== undefined && typeof body.stopWork !== "boolean") throw new HttpError(400, "stopWork must be true or false");
     const stopWork = body.stopWork === true;
     const u = await guardedUsersAsync(ctx, () => setStatus(id, "blocked", { by, stopWork }));
+    ctx.watchers.sync();
     const cancelled = cancelNow(ctx, id, "blocked", stopWork);
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)), cancelled }), true;
   }
 
   if (seg.length === 3 && seg[2] === "unblock" && method === "POST") {
     const u = await guardedUsersAsync(ctx, () => setStatus(id, "active", { by }));
+    ctx.watchers.sync();
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
   }
 
@@ -149,7 +152,12 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "DELETE") {
     // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
     const reads = guardedUsers(ctx, () => architectRunsOf(id));
-    const r = guardedUsers(ctx, () => deleteUser(id, { by }));
+    let r;
+    try {
+      r = guardedUsers(ctx, () => deleteUser(id, { by }));
+    } finally {
+      ctx.watchers.sync(); // also after a half-finished delete: the repositories and their watchers may be gone
+    }
     cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {

@@ -107,7 +107,7 @@ steps:
   - id: plan
     type: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: high
     permission_mode: dontAsk
     allowed_tools:
       - Read
@@ -128,6 +128,9 @@ steps:
       The issue text above already includes all of its comments — do not try to fetch them (gh and web
       access are not available here). They may contain a previous plan and feedback on it — the feedback wins.
       If earlier questions were asked and the owner replied /defaults, take the recommendations as the answers.
+
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
 
       Investigate before you write (this is the most important part):
       - Read CLAUDE.md, the design docs it points to, and the parts of the code this issue touches.
@@ -208,6 +211,9 @@ steps:
 
       {{steps.pull_ticket.output}}
 
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
+
       === PLAN ===
       {{steps.plan.output}}
 
@@ -255,6 +261,9 @@ steps:
 
       {{steps.pull_ticket.output}}
 
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
+
       === YOUR DRAFT PLAN ===
       {{steps.plan.output}}
 
@@ -292,7 +301,8 @@ steps:
         printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
         echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1
+      printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
     on_success: stop
   - id: split_gate
     type: shell
@@ -587,11 +597,13 @@ steps:
     on_success: run_tests_2
   - id: docs
     type: claude
-    resume: implement
     prompt: |-
-      Now document the change you made for this issue, following the repository's documentation rules
-      (CLAUDE.md). If there are none: update README/docs where behaviour changed, and add doc comments
-      to new public APIs. Required files that must be updated: {{vars.docs_required}}
+      Now document the change that was made for the GitHub issue below. The code is finished, tested and
+      reviewed; you only write documentation. Look at what changed with `git status` and `git diff`
+      (the change is not committed yet) and read the files you need. Do not change code or tests.
+      Follow the repository's documentation rules (CLAUDE.md). If there are none: update README/docs
+      where behaviour changed, and add doc comments to new public APIs.
+      Required files that must be updated: {{vars.docs_required}}
 
       {{steps.pull_ticket.output}}
 

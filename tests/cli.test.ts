@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fakeGithub } from "./helpers/fake-github.js";
 import { WatcherSchema } from "../src/config.js";
 import { flowDir } from "../src/flow/load.js";
 import { BOT_MARKER } from "../src/github.js";
@@ -260,5 +261,82 @@ describe("data folder", () => {
     expect(r.stderr).toContain("SCF_HOME");
     expect(existsSync(join(moved.oldDir, "locks"))).toBe(false);
     expect(existsSync(moved.newDir)).toBe(false);
+  });
+});
+
+describe("scf resume, approve and reject of a closed issue", { timeout: 120_000 }, () => {
+  const cli = resolve("dist/cli.js");
+  const MESSAGE = "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.";
+  const HINT = " Use --force to resume it anyway.";
+  let gh: ReturnType<typeof fakeGithub>;
+  let home: string;
+  let runs: string;
+  const scf = (args: string[]) => run(cli, [...args, "--runs-dir", runs], { SCF_HOME: home, FACTORY_HOME: home });
+  const setIssue = (state: string) => (process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 7, state }]));
+  const graphql = () => (gh.ghLog().match(/api graphql/g) ?? []).length;
+  const made = (name: string, yaml: string) => {
+    mkdirSync(join(home, "flows"), { recursive: true });
+    writeFileSync(join(home, "flows", `${name}.yaml`), yaml);
+    const r = scf(["run", name, "--repo", home, "--var", "github_repo=acme/app", "--var", "issue=7"]);
+    return /run:\s+(\S+)/.exec(r.stdout)![1]!;
+  };
+  const failing = () => made("flaky", `name: flaky\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'test -f ${join(home, "ok")}'}\n`);
+  const waiting = () => made("gated", `name: gated\nworkspace: inplace\nsteps:\n  - {id: gate, type: approval, message: "ok?"}\n  - {id: after, type: shell, run: 'true'}\n`);
+
+  beforeEach(() => {
+    gh = fakeGithub();
+    home = mkdtempSync(join(tmpdir(), "scf-gate-"));
+    runs = join(home, "runs");
+  });
+  afterEach(() => {
+    delete process.env.FAKE_GH_ISSUES;
+    delete process.env.FAKE_GH_FAIL;
+    gh.restore();
+  });
+
+  it("refuses resume with the sentence and the force hint; --force runs without asking GitHub", () => {
+    const id = failing();
+    setIssue("CLOSED");
+    const r = scf(["resume", id]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(MESSAGE + HINT);
+    const before = graphql();
+    writeFileSync(join(home, "ok"), "");
+    const f = scf(["resume", id, "--force"]);
+    expect(f.status).toBe(0);
+    expect(f.stdout).toContain("run:");
+    expect(graphql()).toBe(before);
+  });
+
+  it("prints one line and continues when the check cannot be made", () => {
+    const id = failing();
+    writeFileSync(join(home, "ok"), "");
+    process.env.FAKE_GH_FAIL = "api graphql";
+    const r = scf(["resume", id]);
+    expect(r.stdout.split("could not check on GitHub whether the issue is closed — continuing").length - 1).toBe(1);
+    expect(r.status).toBe(0);
+  });
+
+  it("lets a reopened issue through", () => {
+    const id = failing();
+    setIssue("CLOSED");
+    expect(scf(["resume", id]).status).toBe(1);
+    setIssue("OPEN");
+    writeFileSync(join(home, "ok"), "");
+    expect(scf(["resume", id]).status).toBe(0);
+  });
+
+  it.each([["approve"], ["reject"]])("refuses %s on a closed issue, and --force runs it", (cmd) => {
+    const id = waiting();
+    setIssue("CLOSED");
+    const r = scf([cmd, id]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(MESSAGE + HINT);
+    expect(scf([cmd, id, "--force"]).stdout).toContain("run:");
+  });
+
+  it("shows --force in the usage", () => {
+    const out = run(cli, ["--help"]).stdout;
+    for (const c of ["resume <run-id> [--from <step>] [--force]", 'approve <run-id> [--note "..."] [--force]', 'reject <run-id> [--note "..."] [--force]']) expect(out).toContain(c);
   });
 });

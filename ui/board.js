@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
 import { whereLink } from "./next.js";
+import { ownerLabel } from "./runs.js";
 
 // The board page: where every story is, from GET /api/board. No wording or rules of its own
 // except labels; the sentence on each card comes from its next-step record.
@@ -37,6 +38,7 @@ export function cardView(card, repo, { lit, onChain, onLeave }) {
     h("div", {}, link(card.issue), " ", h("b", {}, card.title), card.goesFirst ? " " : null, card.goesFirst ? h("span", { class: "pill first" }, "goes first") : null),
     h("div", { class: "muted" }, n.text),
     card.step ? h("div", { class: "board-step" }, card.step) : null,
+    ownerLabel(card.ownerName) ? h("div", { class: "muted board-owner" }, `Owner: ${ownerLabel(card.ownerName)}`) : null,
     card.after.length
       ? h("div", { class: "board-deps muted" }, "after ", ...card.after.flatMap((i, k) => [k ? ", " : null, link(i)]))
       : null,
@@ -46,18 +48,34 @@ export function cardView(card, repo, { lit, onChain, onLeave }) {
       : null);
 }
 
-/** The page for one answer of the server: returns nodes. */
-export function boardView(data, wanted, { highlight, onChain, onClear, onLeave }) {
+/** The accounts that own cards: `{ id, name, cards }`, sorted by name. */
+export function boardOwners(cards) {
+  const found = new Map();
+  for (const c of cards) {
+    if (!c.owner) continue;
+    const o = found.get(c.owner) ?? { id: c.owner, name: ownerLabel(c.ownerName) || c.owner, cards: 0 };
+    o.cards++;
+    found.set(c.owner, o);
+  }
+  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The page for one answer of the server: returns nodes. `owner` hides the cards of other accounts (and cards without an owner). */
+export function boardView(data, wanted, { highlight, owner = "", onOwner, onChain, onClear, onLeave }) {
   const picked = pickRepo(data, wanted);
   const repos = data?.repos ?? [];
+  const all = picked ? picked.columns.flatMap((c) => c.cards) : [];
+  const filter = h("select", { class: "small-select", title: "Show the cards of one account", onChange: (e) => onOwner?.(e.target.value) },
+    h("option", { value: "" }, "All owners"),
+    boardOwners(all).map((o) => h("option", { value: o.id, selected: o.id === owner }, `${o.name} (${o.cards})`)));
   const toolbar = h("div", { class: "toolbar" },
     h("h1", {}, "Board"),
     repos.length > 1
       ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: boardHash(r.repo) }, r.repo))
-      : picked ? h("span", { class: "muted" }, picked.repo) : null);
+      : picked ? h("span", { class: "muted" }, picked.repo) : null,
+    filter);
   if (!picked) return [toolbar, data?.empty ? h("div", { class: "empty" }, data.empty) : null];
 
-  const all = picked.columns.flatMap((c) => c.cards);
   const target = highlight == null ? undefined : all.find((c) => c.issue === highlight);
   const lit = target ? new Set([target.issue, ...target.chain]) : null;
   const handlers = { lit, onChain, onLeave };
@@ -71,13 +89,14 @@ export function boardView(data, wanted, { highlight, onChain, onClear, onLeave }
   const cols = picked.columns.map((col) => {
     let group;
     const body = [];
-    for (const card of col.cards) {
+    const shown = owner ? col.cards.filter((c) => c.owner === owner) : col.cards;
+    for (const card of shown) {
       if (card.group && card.group !== group) body.push(h("div", { class: "board-sub muted" }, card.group));
       group = card.group;
       body.push(cardView(card, picked.repo, handlers));
     }
     return h("div", { class: `board-col ${col.id}` },
-      h("h3", {}, col.title, " ", h("span", { class: "muted" }, String(col.cards.length))),
+      h("h3", {}, col.title, " ", h("span", { class: "muted" }, String(shown.length))),
       ...body);
   });
   return [toolbar, chainLine, h("div", { class: "board" }, ...cols)];
@@ -89,11 +108,13 @@ export function renderBoard(main, wanted) {
   let data;
   let last;
   let highlight;
+  let owner = "";
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Board"));
 
   const draw = () => mount(main, boardView(data, wanted, {
-    highlight,
+    highlight, owner,
+    onOwner: (id) => { owner = id; draw(); },
     onChain: (issue) => { highlight = issue; draw(); },
     onClear: () => { highlight = undefined; draw(); },
     onLeave: (card) => { if (card.watcher) left = card.watcher; },
@@ -113,6 +134,7 @@ export function renderBoard(main, wanted) {
     last = text;
     data = next;
     if (highlight != null && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.issue === highlight))) highlight = undefined;
+    if (owner && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.owner === owner))) owner = "";
     draw();
   };
 

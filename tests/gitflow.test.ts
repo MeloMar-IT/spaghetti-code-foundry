@@ -38,9 +38,9 @@ describe("gitflow pipeline", () => {
   });
   afterEach(() => gh.restore());
 
-  const watcher = () => new Watcher(WatcherSchema.parse({
+  const watcher = (vars: Record<string, string> = {}) => new Watcher(WatcherSchema.parse({
     id: "go", github_repo: REPO, label: "Factory_go", flow: "issue-gitflow", max_per_tick: 2,
-    status_labels: LABELS, remove_on_done: ["Factory_go"], dependency_done_labels: ["Factory_done"], vars: VARS,
+    status_labels: LABELS, remove_on_done: ["Factory_go"], dependency_done_labels: ["Factory_done"], vars: { ...VARS, ...vars },
   }), { scheduler, runsDir: runsDir(), repo: gh.tmp, log: () => {} });
   const issues = (...nums: number[]) => {
     process.env.FAKE_GH_ISSUES = JSON.stringify(nums.map((number) => ({ number, title: `issue ${number}`, labels: [{ name: "Factory_go" }] })));
@@ -138,17 +138,36 @@ describe("gitflow pipeline", () => {
     expect(low.history.find((h) => h.id === "risk_gate")!.output).toContain("Use the existing helper."); // handed to the coder
     expect(gh.ghLog()).toContain("low risk, so the coder works in Codex's notes below");
 
-    process.env.FAKE_RISK = "60"; // above 50, below the 75 approval gate
+    process.env.FAKE_RISK = "60"; // riskier, but not above 75: still no revision
     issues(6);
     await w.tick();
     await settle();
-    expect(runOf("6")!.history.map((h) => h.id)).toContain("revise_plan");
+    expect(runOf("6")!.history.map((h) => h.id)).not.toContain("revise_plan");
+
+    process.env.FAKE_RISK = "80"; // a plan a person approves anyway: Opus revises it first
+    issues(7);
+    await w.tick();
+    await settle();
+    expect(runOf("7")!.history.map((h) => h.id)).toContain("revise_plan");
   });
 
-  it("second review round only after a [high] finding (or for riskier stories)", async () => {
+  it("one review per code change, also after a [high] finding", async () => {
+    process.env.FAKE_CODEX_CODE_VERDICT = "[high] crashes on empty input\nSEVERITY: high\nVERDICT: CHANGES";
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("succeeded");
+    const ids = run.history.map((h) => h.id);
+    expect(ids).toContain("address_review_1"); // the finding is worked in
+    expect(ids).not.toContain("review_2");
+    expect(run.history.find((h) => h.id === "review_gate")!.output).toContain("one review per change");
+  });
+
+  it("with review_twice_above_risk set: a second review round only after a [high] finding (or for riskier stories)", async () => {
     process.env.FAKE_CODEX_CODE_VERDICT = "[low] a name could be clearer\nSEVERITY: low\nVERDICT: CHANGES";
     issues(5);
-    const w = watcher();
+    const w = watcher({ review_twice_above_risk: "50" });
     await w.tick();
     await settle();
     const ids = runOf("5")!.history.map((h) => h.id);
@@ -212,6 +231,33 @@ describe("gitflow pipeline", () => {
     await w.tick();
     await settle();
     expect(runOf("5")!.status).toBe("succeeded");
+  });
+
+  it("stops at once, with the reason, when a branch rule on GitHub refuses the push to develop", async () => {
+    // The remote refuses every direct push to develop, like a GitHub branch rule does.
+    const hook = join(gh.remote, "hooks", "pre-receive");
+    writeFileSync(hook, [
+      "#!/bin/sh",
+      "while read old new ref; do",
+      '  if [ "$ref" = refs/heads/develop ] && [ "$old" != 0000000000000000000000000000000000000000 ]; then',
+      '    echo "error: GH013: Repository rule violations found for refs/heads/develop." >&2',
+      '    echo "- Changes must be made through a pull request." >&2',
+      "    exit 1",
+      "  fi",
+      "done",
+    ].join("\n"), { mode: 0o755 });
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("failed");
+    const ids = run.history.map((h) => h.id);
+    // Not read as "develop moved": one merge, one push, no merging again.
+    expect(ids.filter((id) => id === "merge_develop")).toHaveLength(1);
+    expect(ids.at(-1)).toBe("push_develop");
+    const out = run.history.at(-1)!.output;
+    expect(out).toContain("a branch rule of the repository does not let this account push to develop directly");
+    expect(out).not.toContain("MOVED");
   });
 
   it("does not lock docs or whole test folders", () => {

@@ -241,12 +241,13 @@ export function userPage(hash) {
 /**
  * Where an account must go when it opened the display of the other role, or "" when it is in the right place.
  * `display` is "admin" (the page at /) or "user" (the page at /user/). A hash is kept only when the user display has that page.
+ * An admin on the user display stays there when `viewAs` (the id of the user to preview) is set.
  */
-export function otherDisplay(user, display, hash) {
+export function otherDisplay(user, display, hash, viewAs) {
   const admin = isAdmin(user);
   if (admin === (display === "admin")) return "";
-  // the admin display has no Start work page
-  return (admin ? "/" : "/user/") + (isUserHash(hash) && !(admin && hash === "#/start") ? hash : "");
+  if (admin && display === "user" && viewAs) return "";
+  return (admin ? "/" : "/user/") + (isUserHash(hash) ? hash : "");
 }
 
 /**
@@ -254,9 +255,9 @@ export function otherDisplay(user, display, hash) {
  * An account of the other role is sent to its own display and this never resolves, so no page is drawn here.
  * `signIn`, `go` and `hash` are arguments so tests can run this without a browser.
  */
-export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash } = {}) {
+export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash, viewAs = "" } = {}) {
   const user = await signIn();
-  const to = otherDisplay(user, display, hash());
+  const to = otherDisplay(user, display, hash(), viewAs);
   if (to) {
     go(to);
     return new Promise(() => {});

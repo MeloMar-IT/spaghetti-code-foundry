@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { userCommand, type UserIo } from "../src/auth/cli.js";
 import { createUser } from "../src/auth/users.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -200,7 +200,8 @@ describe("runs of other accounts", () => {
   });
 
   it("lets the owner and the admin through", async () => {
-    for (const rule of own) {
+    // The answer route has its own tests (tests/run-answer.test.ts): it needs a run that stopped with questions.
+    for (const rule of own.filter((r) => !r.path.endsWith("/answer"))) {
       const mine = await waitingRun(ann);
       const r = await ask(ann, rule, mine);
       expect(r.status, ruleKey(rule)).toBeLessThan(300);
@@ -325,6 +326,59 @@ describe("runs of other accounts", () => {
     expect(mine.every((r: { ownerName?: string }) => !("ownerName" in r))).toBe(true);
     await s.ctx.scheduler.idle();
   });
+
+  const GHOST = "11111111-1111-4111-8111-111111111111";
+  const recent = () => new Date().toISOString();
+
+  it("names the owner of each queued job for an admin, and for nobody else", async () => {
+    await startRun(ann, "slow");
+    const b1 = await startRun(bob, "slow");
+    const a2 = await startRun(ann, "slow");
+    const pending = (await call(s, admin, "GET", "/api/queue")).json().pending as { runId: string; ownerName?: string }[];
+    expect(Object.fromEntries(pending.map((p) => [p.runId, p.ownerName]))).toEqual({ [b1]: "Bob", [a2]: "Ann" });
+
+    const annQ = await call(s, ann, "GET", "/api/queue");
+    expect(annQ.json().pending.every((p: object) => !("ownerName" in p))).toBe(true);
+    expect(annQ.text).not.toContain("Bob");
+    expect(annQ.text).not.toContain("ownerName");
+    expect(annQ.text).not.toContain("costUsd");
+  });
+
+  it("names the owner on Your turn and on the board for an admin", async () => {
+    const id = await waitingRun(ann);
+    const turn = (await call(s, admin, "GET", "/api/your-turn")).json();
+    const item = turn.groups.flatMap((g: { items: { next: { runId?: string } }[] }) => g.items).find((i: { next: { runId?: string } }) => i.next.runId === id);
+    expect(item).toMatchObject({ owner: ann.user.id, ownerName: "Ann" });
+
+    const story = (runId: string, issue: string, owner: string) =>
+      writeRun(s, runId, { vars: { github_repo: "acme/app", issue }, status: "failed", startedAt: recent(), finishedAt: recent(), source: "ui", owner });
+    story("20300101-000000-board-ann", "7", ann.user.id);
+    story("20300101-000000-board-ghost", "8", GHOST);
+    const board = (await call(s, admin, "GET", "/api/board")).json();
+    const cards = board.repos.flatMap((r: { columns: { cards: { issue: number; ownerName?: string }[] }[] }) => r.columns.flatMap((c) => c.cards));
+    expect(cards.find((c: { issue: number }) => c.issue === 7)).toMatchObject({ owner: ann.user.id, ownerName: "Ann" });
+    expect(cards.find((c: { issue: number }) => c.issue === 8)).toMatchObject({ owner: GHOST, ownerName: "deleted account" });
+    await s.ctx.scheduler.idle();
+  });
+
+  it("gives an admin the cost per user, adding up to the total", async () => {
+    writeRun(s, "20300101-000000-stat-ann", { owner: ann.user.id, startedAt: recent(), totalCostUsd: 0.25 });
+    writeRun(s, "20300101-000000-stat-ghost", { owner: GHOST, startedAt: recent(), totalCostUsd: 0.5 });
+    writeRun(s, "20300101-000000-stat-none", { source: "refinement x", startedAt: recent(), totalCostUsd: 0.125 });
+    const st = (await call(s, admin, "GET", "/api/stats")).json();
+    const names = st.byUser.map((u: { name: string }) => u.name);
+    expect(names).toEqual(expect.arrayContaining(["Ann", "deleted account", "no owner"]));
+    expect(st.byUser.find((u: { name: string }) => u.name === "no owner").owner).toBe("");
+    const costs = st.byUser.map((u: { costUsd: number }) => u.costUsd);
+    expect(costs).toEqual([...costs].sort((a: number, b: number) => b - a));
+    expect(Math.round(costs.reduce((a: number, b: number) => a + b, 0) * 1e4) / 1e4).toBe(st.totals.costUsd);
+  });
+
+  it("shows a user no owner, no cost and no board, turn or stats", async () => {
+    for (const path of ["/api/board", "/api/your-turn", "/api/stats"]) expect((await call(s, ann, "GET", path)).status, path).toBe(403);
+    const rows = (await call(s, ann, "GET", "/api/runs")).json();
+    expect(rows.every((r: object) => !("ownerName" in r) && !("totalCostUsd" in r))).toBe(true);
+  });
 });
 
 describe("the owner options", () => {
@@ -354,27 +408,23 @@ describe("the owner options", () => {
 });
 
 describe("the owner of a watcher in the config", () => {
-  it("must be an account when new or changed; an old unknown one can stay", async () => {
+  it("is refused for a new or changed watcher: watchers other than the monitor live on the Watchers page", async () => {
     const p = prepare();
     mkdirSync(p.home, { recursive: true });
     writeFileSync(join(p.home, "config.yaml"), "watchers:\n  - id: old\n    github_repo: a/b\n    owner: gone@example.com\n");
     const s = await boot(p);
     const admin = await signInAs(s.base);
-    await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
     const file = join(p.home, "config.yaml");
     const text = readFileSync(file, "utf8");
     const watcher = (id: string, owner: string) => ({ id, github_repo: "a/b", owner });
 
-    const bad = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("new", "nobody@example.com")] });
+    const bad = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("new", "ann@example.com")] });
     expect(bad.status).toBe(400);
-    expect(bad.text).toContain("new");
+    expect(bad.text).toContain("Watchers page");
     expect(readFileSync(file, "utf8")).toBe(text);
     const changed = await call(s, admin, "PUT", "/api/config", { watchers: [watcher("old", "other@example.com")] });
     expect(changed.status).toBe(400);
-
-    expect((await call(s, admin, "PUT", "/api/config", { watchers: [watcher("w", "ann@example.com")] })).status).toBe(200);
-    // the saved one stays valid when another setting changes
-    expect((await call(s, admin, "PUT", "/api/config", { concurrency: 3, watchers: [watcher("w", "ann@example.com")] })).status).toBe(200);
+    expect(changed.text).toContain("Watchers page");
   });
 
   it("keeps a watcher whose unknown owner was saved before, when another setting changes", async () => {
@@ -448,5 +498,84 @@ describe("runs of older versions", () => {
     const done = runJson(s, "20260101-000000-live");
     expect(done.status).toBe("succeeded");
     expect(done.history.map((h: { id: string }) => h.id)).toEqual(["a"]);
+  });
+});
+
+describe("an admin starts like a user", () => {
+  let s: Srv;
+  let admin: TestSession;
+  let ann: TestSession;
+  const PICK = `name: pick
+workspace: empty
+vars:
+  github_repo: ""
+  x: flow
+publish:
+  enabled: true
+  vars:
+    github_repo: {mode: input}
+steps:
+  - {id: a, type: shell, run: "true"}
+`;
+  const start = (who: TestSession, body: unknown) => call(s, who, "POST", "/api/runs", body);
+
+  beforeAll(async () => {
+    s = await boot(prepare());
+    admin = await signInAs(s.base);
+    ann = await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
+    expect((await call(s, admin, "POST", "/api/repos", { name: "adm/app" })).status).toBe(201);
+    expect((await call(s, ann, "POST", "/api/repos", { name: "acme/app" })).status).toBe(201);
+    await saveFlow(s, admin, "pick", PICK);
+  });
+
+  it("starts on an own repository, owned by the admin", async () => {
+    const r = await start(admin, { flow: "pick", task: "t", vars: { github_repo: "adm/app" }, likeUser: true });
+    expect(r.status, r.text).toBe(201);
+    const id = r.json().runId as string;
+    await s.ctx.scheduler.wait(id);
+    expect(runJson(s, id)).toMatchObject({ owner: admin.user.id, source: "ui", repo: s.repo, vars: { github_repo: "adm/app" } });
+    const list = (await call(s, admin, "GET", "/api/runs")).json() as { runId: string; ownerName?: string }[];
+    expect(ownerRows(list)[id]).toBe("Test Admin");
+  });
+
+  it("freezes the variables", async () => {
+    const spy = vi.spyOn(s.ctx.scheduler, "submit");
+    try {
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "adm/app" }, likeUser: true })).status).toBe(201);
+      expect(spy.mock.calls.at(-1)![0]).toMatchObject({ kind: "run", frozenVars: true });
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "adm/app" } })).status).toBe(201);
+      expect(spy.mock.calls.at(-1)![0]).not.toHaveProperty("frozenVars");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses a foreign repository, but only when asked to start like a user", async () => {
+    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" }, likeUser: true })).status).toBe(403);
+    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" } })).status).toBe(201);
+  });
+
+  it("refuses an unknown or architect flow, even a published copy", async () => {
+    expect((await start(admin, { flow: "no-such-flow", likeUser: true })).status).toBe(404);
+    await saveFlow(s, admin, "refine-brief", PICK.replace("name: pick", "name: refine-brief"));
+    expect((await start(admin, { flow: "refine-brief", vars: { github_repo: "adm/app" }, likeUser: true })).status).toBe(404);
+  });
+
+  it("refuses a likeUser that is not true or false", async () => {
+    for (const likeUser of ["yes", 1, null]) {
+      const r = await start(admin, { flow: "pick", likeUser });
+      expect([r.status, r.json().error]).toEqual([400, "likeUser must be true or false"]);
+    }
+    expect((await start(ann, { yaml: PICK, likeUser: "yes" })).status).toBe(400);
+  });
+
+  it("writes the run-start audit line", async () => {
+    const r = await start(admin, { flow: "pick", vars: { github_repo: "adm/app" }, likeUser: true });
+    const id = r.json().runId as string;
+    const audit = (await call(s, admin, "GET", "/api/audit?action=run-start")).json() as { entries: { actor: unknown; target: unknown }[] };
+    expect(audit.entries).toContainEqual(expect.objectContaining({
+      actor: { type: "account", id: admin.user.id, name: "Test Admin" },
+      target: { type: "text", text: id },
+    }));
   });
 });

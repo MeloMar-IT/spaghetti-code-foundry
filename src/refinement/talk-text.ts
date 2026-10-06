@@ -1,4 +1,6 @@
-import type { Talk, Question } from "./talk.js";
+import { SUGGEST_FIELDS, oneLine, type Draft, type SuggestField, type SuggestRefs } from "./draft.js";
+import type { ReviewRefs } from "./draft-review.js";
+import { cut, type Talk, type Question } from "./talk.js";
 
 /** The talk goes into a run as its task, and the shell steps get it in FACTORY_TASK: it is capped in bytes. */
 export const TALK_MAX_BYTES = 90_000;
@@ -7,8 +9,11 @@ export const TALK_MAX_BYTES = 90_000;
 export const TALK_FIRST_LINE = {
   round: "This is the talk of a refinement session. What is asked: a round of questions.",
   question: "This is the talk of a refinement session. What is asked: an answer to a question of the person.",
+  suggest: "This is the talk of a refinement session. What is asked: a suggestion for one field of a story draft.",
+  review: "This is the talk of a refinement session. What is asked: a review of a story draft.",
+  impact: "This is the talk of a refinement session. What is asked: the architect's view of a story draft.",
 } as const;
-export type TalkKind = keyof typeof TALK_FIRST_LINE;
+export type TalkKind = "round" | "question";
 
 export const QUESTION_HEADING = "## The question of the person";
 const charCount = (s: string): number => [...s].length;
@@ -44,7 +49,7 @@ export function cutBytes(s: string, max: number): string {
   return out;
 }
 
-const LIST_TITLE = { rule: "Rules", example: "Examples", open: "Open questions" } as const;
+export const LIST_TITLE = { rule: "Rules", example: "Examples", open: "Open questions" } as const;
 
 function answerOf(q: Question): string {
   const a = q.answer;
@@ -67,7 +72,7 @@ function roundPart(talk: Talk, index: number): string {
   return lines.join("\n");
 }
 
-const list = (items: string[]) => (items.length ? items.map((t) => `- ${t}`).join("\n") : "(none)");
+export const list = (items: string[]) => (items.length ? items.map((t) => `- ${t}`).join("\n") : "(none)");
 
 function mapPart(talk: Talk): string {
   return [
@@ -146,4 +151,291 @@ export function questionOf(text: string): string | undefined {
     if (charCount(question) === Number(m[1])) return question;
   }
   return undefined;
+}
+
+// ---- the task of a suggestion run ------------------------------------------------------------------
+
+/** The rejected suggestions in the task take at most this many bytes. */
+export const SUGGEST_REJECTED_BYTES = 20_000;
+const REJECTED_LINE_MAX = 500;
+
+export interface SuggestInput {
+  idea: string;
+  brief?: string;
+  talk: Talk;
+  /** The draft the suggestion is for, the field, and all drafts of the session (in their order). */
+  draft: Draft;
+  field: SuggestField;
+  drafts: Draft[];
+  /** The suggestions rejected earlier in this session; `own` is true for the draft and field that are asked for now. */
+  rejected: { field: string; text: string; reason?: string; own: boolean }[];
+}
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const HEAD_DRAFT = new RegExp(`^Draft: (${UUID}); field: (\\w+)$`);
+const HEAD_IDS = new RegExp(`^Ids:((?: [RED]\\d+=${UUID})*)$`);
+
+/** The draft, the field and the ids behind the numbers, read back from the three head lines of a suggestion task. */
+export function suggestOf(task: string): { draft: string; field: SuggestField; refs: SuggestRefs } | undefined {
+  const [first, second, third] = task.split("\n", 3);
+  if (first !== TALK_FIRST_LINE.suggest) return undefined;
+  const d = HEAD_DRAFT.exec(second ?? "");
+  const ids = HEAD_IDS.exec(third ?? "");
+  if (!d || !ids || !(SUGGEST_FIELDS as readonly string[]).includes(d[2]!)) return undefined;
+  const refs: SuggestRefs = {};
+  for (const pair of ids[1]!.trim().split(" ").filter(Boolean)) {
+    const [key, id] = pair.split("=");
+    refs[key!] = id!;
+  }
+  return { draft: d[1]!, field: d[2] as SuggestField, refs };
+}
+
+export function draftPart(d: Draft, drafts: Draft[]): string {
+  const part = (label: string, f?: { text: string }) => `${label}: ${f ? oneLine(f.text) : "(empty)"}`;
+  const deps = d.dependsOn.map((x) => (x.issue !== undefined ? `#${x.issue}` : `draft ${drafts.find((o) => o.id === x.draft)?.title?.text ?? "(no title)"}`));
+  return [
+    "## The draft as it is now",
+    part("Title", d.title),
+    part("Who", d.who),
+    part("What", d.what),
+    part("Why", d.why),
+    "### Acceptance criteria",
+    list(d.criteria.map((c) => oneLine(c.text))),
+    "### Out of scope",
+    d.outOfScope?.text ?? "(empty)",
+    "### Depends on",
+    list(deps),
+    "### Notes for the builder",
+    d.notes?.text ?? "(empty)",
+  ].join("\n");
+}
+
+/** One line: no line breaks, cut at REJECTED_LINE_MAX characters. */
+const flat = (t: string): string => cut(oneLine(t), REJECTED_LINE_MAX);
+
+/**
+ * The task of a suggestion run. Pure. Three head lines (what is asked; the draft and the field; the ids behind the numbers R1, E1,
+ * D1 of the text), then the idea, the brief, the map, the draft, the other drafts and the rejected suggestions. Over TALK_MAX_BYTES,
+ * the brief is cut first, then entries of the map and other drafts, last the end of the draft; a notice says what is missing. The
+ * ids line names only entries that are in the text.
+ */
+export function suggestText(input: SuggestInput): string {
+  const { talk, draft } = input;
+  const brief = input.brief ?? "";
+  const others = input.drafts.flatMap((d, i) => (d.id === draft.id ? [] : [{ n: i + 1, d }]));
+  const rejected: string[] = [];
+  let used = 0;
+  // This draft and field first, the newest first in each group (the input is oldest first).
+  const ranked = [...input.rejected.filter((x) => x.own).reverse(), ...input.rejected.filter((x) => !x.own).reverse()];
+  const NOTE_RESERVE = 100;
+  for (const r of ranked) {
+    const line = `${r.field}: ${flat(r.text)}${r.reason ? ` — reason: ${flat(r.reason)}` : ""}`;
+    if (used + byteLength(line) + 3 > SUGGEST_REJECTED_BYTES - NOTE_RESERVE) break;
+    rejected.push(line);
+    used += byteLength(line) + 3;
+  }
+  if (rejected.length < ranked.length) rejected.push(`(${ranked.length - rejected.length} older rejected suggestions left out)`);
+  const rules = talk.map.rules.map((e, i) => ({ key: `R${i + 1}`, text: oneLine(e.text), id: e.id }));
+  const examples = talk.map.examples.map((e, i) => ({ key: `E${i + 1}`, text: oneLine(e.text), id: e.id }));
+  const open = talk.map.open.map((e) => oneLine(e.text));
+  const full = { rules: rules.length, examples: examples.length, open: open.length, others: others.length };
+
+  const build = (n: typeof full, briefText: string, briefCut: boolean, draftText: string, draftCut: boolean): string => {
+    const r = rules.slice(0, n.rules);
+    const e = examples.slice(0, n.examples);
+    const o = others.slice(0, n.others);
+    const ids = [...r, ...e].map((x) => `${x.key}=${x.id}`).concat(o.map((x) => `D${x.n}=${x.d.id}`));
+    const left: string[] = [];
+    if (briefCut) left.push(brief && !briefText ? "The context brief was left out." : "The context brief was cut: only its first part is here.");
+    const missing = [
+      [full.rules - n.rules, "rules"],
+      [full.examples - n.examples, "examples"],
+      [full.open - n.open, "open questions"],
+      [full.others - n.others, "other drafts"],
+    ].filter(([k]) => (k as number) > 0);
+    if (missing.length) left.push(`These were left out because they did not fit: ${missing.map(([k, w]) => `${k} ${w}`).join(", ")}.`);
+    if (draftCut) left.push("The draft was cut: the end did not fit.");
+    const parts = [
+      `${TALK_FIRST_LINE.suggest}\nDraft: ${draft.id}; field: ${input.field}\nIds:${ids.map((x) => ` ${x}`).join("")}`,
+      `## The idea\n${input.idea}`,
+      `## The context brief\n${briefText || "(none)"}`,
+      [
+        "## The map of the story so far",
+        `### ${LIST_TITLE.rule}\n${list(r.map((x) => `${x.key}: ${x.text}`))}`,
+        `### ${LIST_TITLE.example}\n${list(e.map((x) => `${x.key}: ${x.text}`))}`,
+        `### ${LIST_TITLE.open}\n${list(open.slice(0, n.open))}`,
+      ].join("\n"),
+      draftText,
+      `## The other drafts of this session\n${list(o.map((x) => `D${x.n}: ${oneLine(x.d.title?.text ?? "(no title)")}`))}`,
+      `## The suggestions the person rejected\n${list(rejected)}`,
+      ...(left.length ? [`## Left out\n${left.join("\n")}`] : []),
+    ];
+    return parts.join("\n\n");
+  };
+
+  const fits = (t: string) => byteLength(t) <= TALK_MAX_BYTES;
+  const drafted = draftPart(draft, input.drafts);
+  const n = { ...full };
+  const whole = build(n, brief, false, drafted, false);
+  if (fits(whole)) return whole;
+  // The brief first.
+  if (brief) {
+    const probe = build(n, "x", true, drafted, false);
+    const room = TALK_MAX_BYTES - byteLength(probe) + 1;
+    if (room > 0) {
+      const t = build(n, cutBytes(brief, room), true, drafted, false);
+      if (fits(t)) return t;
+    }
+  }
+  // Then other drafts and the map, from the end, a whole line at a time.
+  let text = build(n, "", brief !== "", drafted, false);
+  for (const key of ["others", "open", "examples", "rules"] as const) {
+    while (!fits(text) && n[key] > 0) {
+      n[key]--;
+      text = build(n, "", brief !== "", drafted, false);
+    }
+  }
+  if (fits(text)) return text;
+  // Last, the end of the draft.
+  const bare = build(n, "", brief !== "", "", true);
+  return build(n, "", brief !== "", cutBytes(drafted, Math.max(0, TALK_MAX_BYTES - byteLength(bare))), true);
+}
+
+// ---- the task of a review run ----------------------------------------------------------------------
+
+export interface ReviewInput {
+  idea: string;
+  brief?: string;
+  talk: Talk;
+  /** The draft to review. */
+  draft: Draft;
+}
+
+const HEAD_REVIEW_DRAFT = new RegExp(`^Draft: (${UUID})$`);
+const HEAD_REVIEW_IDS = new RegExp(`^Ids:((?: C\\d+=${UUID})*)$`);
+const REVIEW_TEXT_KEYS = ["title", "who", "what", "why", "outOfScope"];
+
+/**
+ * The draft and the texts as the architect saw them, read back from the head lines of a review task: line 2 names the draft, line 3
+ * the ids of the criteria behind the numbers C1, C2, …, line 4 holds the texts (one JSON object, keyed by field or criterion number).
+ * Undefined for any other text.
+ */
+export function reviewOf(task: string): { draft: string; refs: ReviewRefs } | undefined {
+  const [first, second, third, fourth] = task.split("\n", 4);
+  if (first !== TALK_FIRST_LINE.review) return undefined;
+  const d = HEAD_REVIEW_DRAFT.exec(second ?? "");
+  const ids = HEAD_REVIEW_IDS.exec(third ?? "");
+  if (!d || !ids || !fourth?.startsWith("Texts: ")) return undefined;
+  let texts: unknown;
+  try {
+    texts = JSON.parse(fourth.slice("Texts: ".length));
+  } catch {
+    return undefined;
+  }
+  if (texts === null || typeof texts !== "object" || Array.isArray(texts)) return undefined;
+  const idOf: Record<string, string> = {};
+  for (const pair of ids[1]!.trim().split(" ").filter(Boolean)) {
+    const [key, id] = pair.split("=");
+    idOf[key!] = id!;
+  }
+  const refs: ReviewRefs = {};
+  for (const [key, text] of Object.entries(texts)) {
+    if (typeof text !== "string") return undefined;
+    if (REVIEW_TEXT_KEYS.includes(key)) refs[key] = { text };
+    else if (/^C\d+$/.test(key) && idOf[key] !== undefined) refs[key] = { id: idOf[key], text };
+    else return undefined;
+  }
+  return { draft: d[1]!, refs };
+}
+
+/**
+ * The task of a review run. Pure. Four head lines (what is asked; the draft; the ids of its criteria; the texts as they are now, as
+ * JSON), then the idea, the brief, the map and the draft. Over TALK_MAX_BYTES, the brief is cut first, then entries of the map from
+ * the end, last parts of the draft from the end (notes, out of scope, criteria); a notice says what is missing. The head lines name
+ * only texts that are in the task.
+ */
+export function reviewText(input: ReviewInput): string {
+  const { talk, draft: d } = input;
+  const brief = input.brief ?? "";
+  const rules = talk.map.rules.map((e) => oneLine(e.text));
+  const examples = talk.map.examples.map((e) => oneLine(e.text));
+  const open = talk.map.open.map((e) => oneLine(e.text));
+  const full = { rules: rules.length, examples: examples.length, open: open.length, criteria: d.criteria.length, outOfScope: d.outOfScope !== undefined, notes: d.notes !== undefined };
+  type Keep = typeof full;
+
+  const build = (n: Keep, briefText: string, briefCut: boolean): string => {
+    const crit = d.criteria.slice(0, n.criteria);
+    const texts: Record<string, string> = {};
+    for (const key of ["title", "who", "what", "why"] as const) if (d[key]) texts[key] = d[key]!.text;
+    if (n.outOfScope && d.outOfScope) texts.outOfScope = d.outOfScope.text;
+    crit.forEach((c, i) => (texts[`C${i + 1}`] = c.text));
+    const part = (label: string, f?: { text: string }) => `${label}: ${f ? oneLine(f.text) : "(empty)"}`;
+    const left: string[] = [];
+    if (briefCut) left.push(brief && !briefText ? "The context brief was left out." : "The context brief was cut: only its first part is here.");
+    const missing = [
+      [full.rules - n.rules, "rules"],
+      [full.examples - n.examples, "examples"],
+      [full.open - n.open, "open questions"],
+    ].filter(([k]) => (k as number) > 0);
+    if (missing.length) left.push(`These were left out because they did not fit: ${missing.map(([k, w]) => `${k} ${w}`).join(", ")}.`);
+    const gone = [
+      ...(full.criteria - n.criteria > 0 ? [`${full.criteria - n.criteria} acceptance criteria`] : []),
+      ...(full.outOfScope && !n.outOfScope ? ["out of scope"] : []),
+      ...(full.notes && !n.notes ? ["the notes for the builder"] : []),
+    ];
+    if (gone.length) left.push(`These parts of the draft were left out because they did not fit: ${gone.join(", ")}.`);
+    const parts = [
+      `${TALK_FIRST_LINE.review}\nDraft: ${d.id}\nIds:${crit.map((c, i) => ` C${i + 1}=${c.id}`).join("")}\nTexts: ${JSON.stringify(texts)}`,
+      `## The idea\n${input.idea}`,
+      `## The context brief\n${briefText || "(none)"}`,
+      [
+        "## The map of the story so far",
+        `### ${LIST_TITLE.rule}\n${list(rules.slice(0, n.rules))}`,
+        `### ${LIST_TITLE.example}\n${list(examples.slice(0, n.examples))}`,
+        `### ${LIST_TITLE.open}\n${list(open.slice(0, n.open))}`,
+      ].join("\n"),
+      [
+        "## The draft to review",
+        part("Title", d.title),
+        part("Who", d.who),
+        part("What", d.what),
+        part("Why", d.why),
+        "### Acceptance criteria",
+        list(crit.map((c, i) => `C${i + 1}: ${oneLine(c.text)}`)),
+        ...(n.outOfScope ? ["### Out of scope", d.outOfScope?.text ?? "(empty)"] : []),
+        ...(n.notes ? ["### Notes for the builder (not reviewed)", d.notes?.text ?? "(empty)"] : []),
+      ].join("\n"),
+      ...(left.length ? [`## Left out\n${left.join("\n")}`] : []),
+    ];
+    return parts.join("\n\n");
+  };
+
+  const fits = (t: string) => byteLength(t) <= TALK_MAX_BYTES;
+  const n = { ...full };
+  const whole = build(n, brief, false);
+  if (fits(whole)) return whole;
+  // The brief first.
+  if (brief) {
+    const probe = build(n, "x", true);
+    const room = TALK_MAX_BYTES - byteLength(probe) + 1;
+    if (room > 0) {
+      const t = build(n, cutBytes(brief, room), true);
+      if (fits(t)) return t;
+    }
+  }
+  // Then the map, from the end, a whole entry at a time; last the draft from its end.
+  let text = build(n, "", brief !== "");
+  for (const key of ["open", "examples", "rules"] as const) {
+    while (!fits(text) && n[key] > 0) {
+      n[key]--;
+      text = build(n, "", brief !== "");
+    }
+  }
+  while (!fits(text) && (n.notes || n.outOfScope || n.criteria > 0)) {
+    if (n.notes) n.notes = false;
+    else if (n.outOfScope) n.outOfScope = false;
+    else n.criteria--;
+    text = build(n, "", brief !== "");
+  }
+  return text;
 }

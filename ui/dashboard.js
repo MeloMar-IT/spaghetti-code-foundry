@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount, svg } from "./dom.js";
 import { needsYou, nextList, waitingGroups } from "./next.js";
+import { ownerLabel } from "./runs.js";
 
 const usd = (n, d = 2) => `$${(n ?? 0).toFixed(d)}`;
 const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "—");
@@ -81,6 +82,14 @@ export function clarityCard(c) {
     c.misses?.length ? h("ul", { class: "muted" }, c.misses.map((m) => h("li", {}, `${m.id} — ${m.status}`))) : null);
 }
 
+/** "By user": runs and cost per account, as the server sorted them (highest cost first). */
+export function byUserCard(list) {
+  return h("div", { class: "card" }, h("h3", {}, "By user"),
+    list.length ? h("table", { class: "table compact" },
+      h("thead", {}, h("tr", {}, ["Name", "Runs", "Cost"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, list.map((u) => h("tr", {}, h("td", {}, ownerLabel(u.name)), h("td", {}, u.runs), h("td", { class: "mono" }, usd(u.costUsd)))))) : h("p", { class: "muted" }, "No runs yet."));
+}
+
 export async function renderDashboard(main) {
   mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
   const [s, info, evals, watchers, runs, clarity] = await Promise.all([api.stats(), api.info(), api.evals().catch(() => []), api.watchers().catch(() => []),
@@ -118,6 +127,7 @@ export async function renderDashboard(main) {
         s.byRepo.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Repository", "Runs", "Cost"].map((x) => h("th", {}, x)))),
           h("tbody", {}, s.byRepo.map((r) => h("tr", {}, h("td", { class: "mono" }, r.repo), h("td", {}, r.runs), h("td", { class: "mono" }, usd(r.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")),
+      byUserCard(s.byUser ?? []),
       h("div", { class: "card" }, h("h3", {}, "Where runs fail"),
         s.failingSteps.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Failures", "Runs"].map((x) => h("th", {}, x)))),

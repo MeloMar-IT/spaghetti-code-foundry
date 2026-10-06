@@ -7,6 +7,7 @@ import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { explainError } from "../src/errors.js";
 import { commentFirst, commentText, firstLine, nextStep, reportFirst } from "../src/next-step.js";
+import { userRun } from "../src/server/user-view.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { minutesNow, Watcher } from "../src/queue/watcher.js";
 import { claudeBin, closing, fakeGithub, first } from "./helpers/fake-github.js";
@@ -149,6 +150,28 @@ describe("label-driven issue pipeline", () => {
     expect(first(sent.body)).toBe(commentFirst("planner_questions"));
     expect(closing(sent.body)).toEqual([`_${commentText("planner_questions")}_`, expect.stringMatching(/^<!-- claude-factory run=\S+ [\w-]+ -->$|^<!-- claude-factory run=\S+ -->$/)]);
     expect(gh.ghLog()).toMatch(/issue edit 1 .*--add-label Factory_needs_info/);
+    const run = runOf("issue-plan", "1")!;
+    const out = run.history.find((h) => h.id === "send_back")!.output;
+    expect(out.trim()).toBe("This is the reason.");
+    expect(out).not.toContain("issuecomment");
+    expect(userRun(run).questions).toBe("This is the reason.");
+  });
+
+  const direct = (task: string, issue: string) =>
+    runFlow(loadFlow("issue-plan", gh.tmp).flow, { task, repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { ...VARS, github_repo: REPO, issue } });
+
+  it("fails instead of stopping when the comment cannot be posted", async () => {
+    process.env.FAKE_ISSUE_PLAN = "This is the reason.\nPLAN_STATUS: NEEDS_INFO";
+    process.env.FAKE_GH_FAIL = "issue comment";
+    const s = await direct("", "1");
+    expect(s.status).toBe("failed");
+    expect(s.history.at(-1)).toMatchObject({ id: "send_back", ok: false });
+  });
+
+  it("gives the planner what was typed at the start", async () => {
+    const s = await direct("WRITE task-seen.txt reached", "5");
+    expect(s.status).toBe("succeeded");
+    expect(readFileSync(join(s.workdir!, "task-seen.txt"), "utf8")).toBe("reached");
   });
 
   it("codes on today's branch: tests, two Codex reviews, docs, commit, push, report", async () => {
@@ -165,9 +188,10 @@ describe("label-driven issue pipeline", () => {
       "run_tests_1", "review_2", "address_review_2", "run_tests_2", "docs", "final_guard", "commit", "push", "report"]);
     expect(run.history.find((h) => h.id === "review_1")!.agent).toBe("codex:openai");
     expect(run.history.find((h) => h.id === "implement")!.agent).toBe("claude:anthropic:claude-sonnet-5-5");
-    // Review fixes and docs continue the coding session instead of re-reading the code.
+    // Review fixes continue the coding session instead of re-reading the code; docs is a fresh, small session.
     const sess = run.history.find((h) => h.id === "implement")!.sessionId;
-    expect(["address_review_1", "address_review_2", "docs"].map((id) => run.history.find((h) => h.id === id)!.sessionId)).toEqual([sess, sess, sess]);
+    expect(["address_review_1", "address_review_2"].map((id) => run.history.find((h) => h.id === id)!.sessionId)).toEqual([sess, sess]);
+    expect(run.history.find((h) => h.id === "docs")!.sessionId).not.toBe(sess);
 
     const branch = `factory/daily-${today}`;
     expect(gh.remoteGit("log", "--format=%s", "-1", branch).trim()).toBe("Resolve #5: Add a feature");

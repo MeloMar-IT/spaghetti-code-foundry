@@ -1,6 +1,6 @@
 import { h } from "./dom.js";
 
-// Shows the next-step record from the server. No wording of its own: only fields of the record, plus the label of the "?" button.
+// Shows the next-step record from the server. No wording of its own: only fields of the record, plus the label of the "?" button and the note of an unchecked issue.
 
 const rank = (n) => (n.who === "You" ? 0 : n.who === "Something is wrong" ? 1 : 2);
 export const whoClass = (n) => "who-" + String(n.who).toLowerCase().replace(/[^a-z]+/g, "-");
@@ -87,6 +87,9 @@ export function timingParts(n) {
 /** When it continues and how long it takes, for one-line lists. */
 export const whenParts = (n) => [untilPart(n), ...timingParts(n)].filter(Boolean);
 
+/** The note on a record whose issue could not be checked on GitHub. */
+export const ISSUE_UNCHECKED = "The state of the issue on GitHub could not be checked";
+
 /** The one renderer of a record: who, status, issue, title, action, why, until, timing, link. `ref: false` leaves out issue and title, `status: false` the status. */
 export function nextParts(n, { ref = true, status = true } = {}) {
   const issueOk = ref && n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
@@ -97,6 +100,7 @@ export function nextParts(n, { ref = true, status = true } = {}) {
     ref && n.title ? h("span", { class: "hold-title" }, n.title) : null,
     h("span", { class: "hold-action" }, n.action),
     h("span", { class: "muted" }, n.why),
+    n.issueUnchecked ? h("span", { class: "muted issue-unchecked" }, ISSUE_UNCHECKED) : null,
     untilPart(n),
     ...timingParts(n),
     whereLink(n.where),

@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
-import { cancelWaitingRun, newRunId, resumeRun, runFlow } from "../engine/runner.js";
+import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
 import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
+import { withGhEnv } from "../github.js";
 
 const MAX_LOG_LINES = 5000;
 
@@ -32,6 +33,8 @@ export interface QueuedJob {
   /** When the story's issue was created: among priority jobs, the oldest goes first. */
   storyAt?: string;
 }
+
+export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -128,7 +131,34 @@ export class Scheduler {
     return typeof q?.owner === "string" ? q.owner : undefined;
   }
 
-  submit(job: Job, meta: { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string } = {}): string {
+  /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
+  answer(runId: string, text: string, by: string, meta: JobMeta = {}): void {
+    if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
+    const { undo } = saveAnswer(this.o.runsDir, runId, text, by);
+    try {
+      this.put({ kind: "resume", runId }, meta);
+    } catch (e) {
+      // the job is not in the queue file and nothing started: take the answer back
+      const i = this.pending.findIndex((p) => p.runId === runId);
+      if (i >= 0) this.pending.splice(i, 1);
+      undo(); // if this write fails too, the answer stays without a job; a later resume reads it
+      throw e;
+    }
+    try {
+      this.pump();
+    } catch {
+      // The answer and its job are saved: a queue write that fails now does not fail the call. The next queue change writes the file again.
+    }
+  }
+
+  submit(job: Job, meta: JobMeta = {}): string {
+    const runId = this.put(job, meta);
+    this.pump();
+    return runId;
+  }
+
+  /** Checks a job, puts it into the queue and writes the queue file. Starts nothing. */
+  private put(job: Job, meta: JobMeta): string {
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);
@@ -136,7 +166,6 @@ export class Scheduler {
     const q: QueuedJob = { runId, job, ...rest, ...(repoLock ? { repoLock } : {}), enqueuedAt: new Date().toISOString(), ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}) };
     this.enqueue(q);
     this.persist();
-    this.pump();
     return runId;
   }
 
@@ -377,7 +406,15 @@ export class Scheduler {
   private persist() {
     if (!this.o.queueFile) return;
     mkdirSync(dirname(this.o.queueFile), { recursive: true });
-    writeFileSync(this.o.queueFile, JSON.stringify(this.pending, null, 2));
+    // write beside the file and rename, so a failed write leaves the old queue file whole
+    const tmp = `${this.o.queueFile}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(this.pending, null, 2));
+      renameSync(tmp, this.o.queueFile);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
   }
 
   /** Set while the server waits to restart: queued jobs stay saved and start in the new server. */
@@ -429,7 +466,15 @@ export class Scheduler {
     return this.lastStartAt;
   }
 
+  /**
+   * A job never inherits the gh identity of the code that called submit(), setPriority(), answer() or pump():
+   * it starts in a host scope (a repository's watcher may be the caller).
+   */
   private start(q: QueuedJob) {
+    withGhEnv(undefined, () => this.startJob(q));
+  }
+
+  private startJob(q: QueuedJob) {
     this.lastStartAt = new Date().toISOString();
     const a: Active = {
       queued: q,

@@ -20,7 +20,8 @@ these choices, [LESSONS_LEARNED.md](LESSONS_LEARNED.md).
 - [14. The server and its restarts](#14-the-server-and-its-restarts)
 - [15. The web interface](#15-the-web-interface)
 - [16. Tests](#16-tests)
-- [17. Where it is going](#17-where-it-is-going)
+- [17. Self-repair](#17-self-repair)
+- [18. Where it is going](#18-where-it-is-going)
 
 ---
 
@@ -232,6 +233,13 @@ What a watcher takes care of:
 - **A status comment** on the issue that is edited in place, not a new comment each time.
 - **Tidying:** closed issues lose their status labels; runs that wait for a person end when
   their issue is closed.
+- **Issue states.** At every check an issues watcher stores whether each issue with an
+  unfinished run (failed, stopped, waiting or cancelled, any flow, any age) is open or closed
+  (`src/issue-states.ts`). Issues in the open list of the check are stored as open without
+  asking GitHub; the rest go in one batched `gh api graphql` call (more than 500 are sent in
+  sequential chunks). If the call fails, nothing changes, `failedAt` is set and the watcher
+  shows the error `checking closed issues: …`. `knownIssueState(repo, issue)` answers `open`,
+  `closed`, `unknown` or `undefined` (no enabled issues watcher). Nothing a user sees uses it yet.
 
 ![Watchers and what each story is waiting for](images/watchers.png)
 
@@ -299,8 +307,8 @@ gitGraph
   finished. The tests run on the merge result; conflicts are resolved by an agent and judged by
   the tests.
 - Once a day: one pull request from `develop` to `main`, merged by a person.
-- Urgent fixes: on `main`, then `main` is merged into `develop`. (Today by hand; an automatic
-  hotfix path for bug stories is planned.)
+- Urgent fixes: on `main`, then `main` is merged into `develop`. The hotfix path of `issue-gitflow`
+  does this for bug stories; it is off until an admin switches on Hotfixes.
 - `main` is protected: runs and agents cannot push to it.
 
 ---
@@ -363,6 +371,20 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   which keeps a folder only while its holder's pid runs with the recorded start time. Removal
   fails closed: a folder that stays fails the step or the resume (`SIGN_IN_NOT_REMOVED`).
   Limits: the `gh` stand-in catches `gh` by name only, and a process that leaves its group is not stopped.
+- **Runs that never use the machine's login.** `stepIsolated()` (`src/engine/isolation.ts`) is true for
+  every run with a user owner and for an admin's run on a repository with a stored sign-in
+  (`hasStoredSignIn()`), and fails closed (unknown owner, unreadable file). It is asked per step from the
+  scope's `github_repo`. For such a step `isolationEnv()` removes every token variable (`tokenVarNames()`,
+  the bot's own included), gives `gh` an empty folder of its own, `GIT_CONFIG_GLOBAL=/dev/null`, no system
+  config, no ssh agent or `GIT_SSH`, https and file only, no prompts, `user.useConfigOnly` and a credential
+  helper reset (appended after the engine's own `GIT_CONFIG_*` entries, so `core.hooksPath` stays), and sets
+  the commit name from `commitIdentity()` (bot name and e-mail from Settings, field by field, else
+  `getUser(owner)`). With no identity the step is refused (`NO_COMMIT_IDENTITY`). `engine.botEnv()` gives the
+  bot's token and name once per run, only to steps that keep the machine's login. In agent steps
+  `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
+  (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Limits: the
+  environment only, not an OS sandbox (a step can read the account's files and Keychain or call `ssh`);
+  Codex still reads `~/.codex/config.toml`; the push hook does not run in a Docker step.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
@@ -382,6 +404,8 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Commands with text from an issue | Issue text and step output travel as environment variables only |
 | A reviewer changes code | Reviewers get read-only tools |
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
+| A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
+| An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -399,6 +423,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 
@@ -461,16 +486,54 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 
 ---
 
-## 17. Where it is going
+## 17. Self-repair
 
-- **Refinement:** (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
+The Foundry watches itself and repairs what it can, in one loop:
+
+```text
+detectors → findings file → Reporter → bug story → goes first → hotfix → fix commit → 24-hour watch
+```
+
+- **Detectors** (`src/monitor/detectors.ts`, `work-detectors.ts`) read runs, queue, watchers and the
+  server log. Findings are kept in `monitor-findings.json`.
+- **The `Reporter`** (`src/monitor/report.ts`) turns a finding that lasts into one GitHub issue with
+  the labels `bug` and the build label, from a fixed template, after cleaning (`clean.ts`).
+- **Goes first.** The issue watcher builds a `bug` story before any other work, as a hotfix on `main`
+  when Hotfixes are on. Only the unchanged built-in `issue-gitflow` may push `main`, in its step
+  `push_main`.
+- **The fix commit** is read from the finished run (`COMMIT:` of `push_develop`, `MAIN:` of
+  `hotfix_done`). The 24-hour clock starts when the running Foundry has it; after 24 hours of normal
+  work without the problem the finding is *fixed* (`src/monitor/fix.ts`).
+- **Guard rails** (`guard.ts`, `breaker.ts`, `mutes.ts`): off by default, cleaning, one story per
+  problem, 3 a day and 1 per check, quiet time, circuit breaker, never a story about a story, two
+  tries, mutes.
+- **Proof.** `tests/self-repair-incidents.test.ts` replays four real incidents with the real
+  Monitor, Reporter, Watcher and flows; only the edges are fake (`gh`, `claude`, the git remote and
+  the clock). `tests/self-repair-rules.test.ts` proves the five rules. See the
+  [user guide](USER_GUIDE.md#13-self-repair-for-admins).
+
+---
+
+## 18. Where it is going
+
+- **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`
+  has the schema and the pure `saveTyped` and `preview`, and each text and list item records `typed`,
+  `accepted` or `accepted-edited`. The stored `dependsOn` list is the truth; the preview is text for
+  reading, not for parsing back.) (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
   queues the shipped flow `refine-brief` with source `refinement <session id>`, the only way in;
   the scheduler's `onFinished` hook and every session read settle the end of the run into the
   session, which keeps the latest brief and the current run. The question round is the shipped flow
   `refine-round`, whose `check_round` step is `tools/refine-round-check`; the token grant of
   `src/engine/guards.ts` is per flow, and `isRefinementFlow()` guards user starts, publishing and
   deletion. A round and an own question start the same way: `askArchitect(deps, actor, id, { kind })`
-  with kind `brief`, `round` or `question` queues `refine-brief` or `refine-round` (`ask=round` or
+  with kind `brief`, `round`, `question`, `suggest` or `review` (a review needs only the draft: `ask=review`, stored beside the
+  draft by `setReview` in `src/refinement/draft-review.ts` with the text each remark was about, so `reviewView` marks it `stale`;
+  `moveToNotes` there moves a text with a plan or how remark to the notes; the code checks are the pure
+  `src/refinement/draft-check.ts`, computed in `view()` and never stored) (a draft and a field; `ask=suggest`, the field as flow
+  variable, a cost limit of $1; suggestions are stored beside the draft by `addSuggested` in
+  `src/refinement/draft.ts`; the task is built by `suggestText()`, whose third line holds the ids behind
+  R1/E1/D1 so an orphan run can be adopted; a criterion's `tie` must name a rule or example, checked on load)
+  queues `refine-brief` or `refine-round` (`ask=round` or
   `ask=question`); the talk goes in as `task` only, built by the pure `talkText()` in
   `src/refinement/talk-text.ts` (at most 90,000 bytes: oldest rounds, then the brief, then the end are
   left out, with a notice). The end is read from the step `check_round`, checked again with zod, and
@@ -479,8 +542,6 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
-- **Self-repair:** a monitor that finds problems of the Foundry itself, writes a bug story, has
-  it built first, and merged to `main` as a gitflow hotfix — with limits and an off switch.
 - **Multi-user completion:** separate watchers per repository, runs with the repository's own
   credentials, fair-use limits.
 - **Later:** e-mail, per-user agent accounts, more than one machine.

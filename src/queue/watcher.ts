@@ -3,11 +3,13 @@ import type { WatcherConfig } from "../config.js";
 import { loadRun, saveRun, spentToday, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
-import { canWrite, commentsAfter, ensureLabel, gh, ghJson, isBot, isStatusComment, issueComments, setLabels, type Comment, type Issue } from "../github.js";
+import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
+import { markIssueCheckFailed, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
+import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 
@@ -100,6 +102,8 @@ export interface WatcherDeps {
   peers?: () => { watcher: WatcherConfig; status: WatcherStatus; issues: TrackedIssue[] }[];
   /** Called after every check, good or failed (the monitor's request-limit reading). A rejection is ignored. */
   afterCheck?: () => Promise<void> | void;
+  /** The sign-in of the watcher's repository (stored watchers); without it the watcher uses the host's `gh` login. */
+  gh?: RepoGhIdentity;
 }
 
 export interface WatcherStatus {
@@ -234,6 +238,8 @@ export class Watcher {
   private kickAgain = false;
   private setupDone = false;
   private stopped = false;
+  /** Stopped for good (changed or removed): a check that is still running starts nothing more. */
+  private retired = false;
   /** Runs whose end will set the label (so a run is waited for once). */
   private waitingFor = new Set<string>();
 
@@ -245,7 +251,7 @@ export class Watcher {
     this.status = { id: cfg.id, lastActions: [] };
     this.L = labelNames(cfg);
     this.allStatus = Object.values(this.L);
-    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`));
+    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`), { gh: d.gh });
     if (cfg.source === "issues" && cfg.status_comment) this.statusComments.expect(cfg.id);
   }
 
@@ -279,9 +285,13 @@ export class Watcher {
     void loop();
   }
 
-  /** Stop polling. Runs keep going; their labels are reconciled on the next start. */
-  stop() {
+  /**
+   * Stop polling. Runs keep going; their labels are reconciled on the next start. With `retire` a check that is
+   * running now also starts nothing more (the watcher was changed or removed).
+   */
+  stop(retire = false) {
     this.stopped = true;
+    if (retire) this.retired = true;
     clearTimeout(this.timer);
     this.status.nextTick = undefined;
   }
@@ -325,9 +335,12 @@ export class Watcher {
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        this.check(),
+        this.asRepo(() => this.check()),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`the check took longer than ${Math.round(this.checkTimeoutMs / 1000)}s and was given up`)), this.checkTimeoutMs);
+          timer = setTimeout(() => {
+            this.tickToken++; // the check that was given up must not write anything more
+            reject(new Error(`the check took longer than ${Math.round(this.checkTimeoutMs / 1000)}s and was given up`));
+          }, this.checkTimeoutMs);
         }),
       ]);
       if (token === this.tickToken) {
@@ -345,7 +358,7 @@ export class Watcher {
       clearTimeout(timer);
       this.status.lastTick = new Date().toISOString();
       try {
-        await this.d.afterCheck?.();
+        await withGhEnv(undefined, () => this.d.afterCheck?.());
       } catch {
         // the hook must not change the outcome of a check
       }
@@ -355,6 +368,12 @@ export class Watcher {
         setTimeout(() => void this.tick(), 0);
       }
     }
+  }
+
+  /** Runs `fn` as the watcher's repository (its token or app); rejects with a plain sentence when there is no sign-in. The host login without one. */
+  private async asRepo<T>(fn: () => Promise<T>): Promise<T> {
+    const s = await this.d.gh?.prepare();
+    return withGhEnv(s, fn);
   }
 
   /** One check; throws when it fails. */
@@ -457,7 +476,13 @@ export class Watcher {
 
   /** Every run a watcher starts goes through here: a new run belongs to the watcher's owner; a resume keeps the run's own. */
   private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string }): string {
-    return this.d.scheduler.submit(job, { ...meta, ...(job.kind === "run" ? { owner: watcherOwner(this.cfg.owner) } : {}) });
+    if (this.retired) throw new Error("this watcher was stopped");
+    // A watcher of a repository passes the repository owner's id; it never falls back to the first admin.
+    if (this.cfg.repoId !== undefined && !this.cfg.ownerId) throw new Error("this watcher has no owner (the repository's owner is not an account)");
+    const owner = this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
+    // the owner's account also counts as the one that queued it, so a block or delete drops the job and holds it while blocked
+    const queuedBy = this.cfg.repoId !== undefined ? { queuedBy: this.cfg.ownerId } : {};
+    return this.d.scheduler.submit(job, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
   }
 
   private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
@@ -481,21 +506,23 @@ export class Watcher {
     void this.d.scheduler.wait(runId).then(async (s) => {
       this.waitingFor.delete(runId);
       if (!s || this.stopped) return;
-      // Cancelled while the issue is closed: clear the labels, no failure comment.
-      if (s.status === "cancelled" && (await this.issueClosed(issue))) {
-        await setLabels(this.repo, issue, undefined, this.allStatus).catch(() => {});
-        this.act(`#${issue} (closed) → cancelled · label → none`);
-        return;
-      }
-      // A split original was closed in favour of its parts: clear its labels, don't mark it done.
-      const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
-      const label = split ? undefined : labelFor(s, this.L);
-      const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
-      await setLabels(this.repo, issue, label, remove).catch(() => {});
-      if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
-      const why = s.reason ? explainError(s.reason) : undefined;
-      this.act(`#${issue} → ${s.status}${why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
-    });
+      await this.asRepo(async () => {
+        // Cancelled while the issue is closed: clear the labels, no failure comment.
+        if (s.status === "cancelled" && (await this.issueClosed(issue))) {
+          await setLabels(this.repo, issue, undefined, this.allStatus).catch(() => {});
+          this.act(`#${issue} (closed) → cancelled · label → none`);
+          return;
+        }
+        // A split original was closed in favour of its parts: clear its labels, don't mark it done.
+        const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
+        const label = split ? undefined : labelFor(s, this.L);
+        const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
+        await setLabels(this.repo, issue, label, remove).catch(() => {});
+        if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
+        const why = s.reason ? explainError(s.reason) : undefined;
+        this.act(`#${issue} → ${s.status}${why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
+      });
+    }).catch(() => {}); // prepare() can reject (no sign-in); the next check reconciles the labels
   }
 
   private async issueClosed(issue: number): Promise<boolean> {
@@ -566,8 +593,9 @@ export class Watcher {
   private async tickIssues() {
     // A check that was given up (timeout) must not start runs or store holds next to a newer check.
     const mine = this.tickToken;
-    const alive = () => { if (mine !== this.tickToken) throw new Error("this check was given up"); };
+    const alive = () => { if (mine !== this.tickToken || this.retired) throw new Error("this check was given up"); };
     const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt"]);
+    alive();
     const whole = issues.length < 100;
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
@@ -654,7 +682,7 @@ export class Watcher {
         track.labelOff = { checks, ...off };
       }
       // A job of this watcher that is queued follows the label: it goes first, or goes back when the label is gone.
-      const own = pending.find((p) => p.runId === (queuedId ?? run?.runId) && (p.source === `watcher ${this.cfg.id} issue #${n}` || /^ui (resume|approve|reject)$/.test(p.source ?? "")));
+      const own = pending.find((p) => p.runId === (queuedId ?? run?.runId) && (p.source === `watcher ${this.cfg.id} issue #${n}` || /^ui (resume|approve|reject|answer)$/.test(p.source ?? "")));
       if (own) this.d.scheduler.setPriority(own.runId, isFirst, issue.createdAt);
 
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.
@@ -682,8 +710,35 @@ export class Watcher {
         continue;
       }
       if (this.d.scheduler.isLocked(this.lockFor(n))) {
-        if (this.cfg.one_at_a_time && (!status || answeredEarly)) {
-          const blockingRun = this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId;
+        const blockingRun = this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
+        const askedRun = this.cfg.one_at_a_time && run?.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo && (status === this.L.needsInfo || status === this.L.working);
+        const decidingRun = this.cfg.one_at_a_time && run?.status === "waiting" && (status === this.L.waiting || status === this.L.working);
+        if (run && (askedRun || decidingRun)) {
+          // A run that waits for the person, behind another story: when it is answered, nothing is needed from the
+          // person any more. The label says working; the run resumes when the lock is free.
+          const comments = await issueComments(this.repo, n);
+          const answered = askedRun ? commentsAfter(comments, asked).length > 0 : !!(await this.findDecision(run.runId, comments));
+          if (answered) {
+            if (status !== this.L.working) {
+              await setLabels(this.repo, n, this.L.working, this.allStatus);
+              this.act(`#${n} label → ${this.L.working} (answered, waits for its turn)`);
+            }
+            offNow.delete(n); delete track.labelOff;
+            holds.push(this.held("one_at_a_time", issue, { blockingRun, runId: run.runId }));
+          } else if (askedRun) {
+            if (status !== this.L.needsInfo) {
+              await setLabels(this.repo, n, this.L.needsInfo, this.allStatus);
+              this.act(`#${n} label → ${this.L.needsInfo}`);
+            }
+            holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
+          } else {
+            if (status !== this.L.waiting) {
+              await setLabels(this.repo, n, this.L.waiting, this.allStatus);
+              this.act(`#${n} label → ${this.L.waiting}`);
+            }
+            holds.push(this.heldRun(issue, run));
+          }
+        } else if (this.cfg.one_at_a_time && (!status || answeredEarly)) {
           holds.push(this.held("one_at_a_time", issue, { blockingRun }));
         }
         continue;
@@ -722,6 +777,9 @@ export class Watcher {
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
           (run.status === "stopped" && isPaused(run) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+        const lateAnswers = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo
+          ? commentsAfter(await issueComments(this.repo, n), asked) : [];
+        const lateDecision = !resumable && run.status === "waiting" ? await this.findDecision(run.runId, await issueComments(this.repo, n)) : undefined;
         const holder = steppedAsideFor(run);
         if (isFirst && holder && !paused) { firstWaits.add(holder); track.claims = holder; }
         if (resumable && !isFirst && holder && firstWaits.has(holder)) {
@@ -732,6 +790,27 @@ export class Watcher {
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
+        } else if (lateDecision) {
+          // Approved while the label already said working: it waits for its turn (or resumes now).
+          offNow.delete(n); delete track.labelOff;
+          if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
+          else {
+            this.resume(n, run.runId, `${lateDecision.approved ? "approved" : "rejected"} by @${lateDecision.by}`, lateDecision, false, first);
+            this.labelWhenDone(n, run.runId);
+            started++;
+            if (isFirst) firstStarted++;
+          }
+        } else if (lateAnswers.length) {
+          // Answered while the label already said working: it waits for its turn (or resumes now).
+          const answers = lateAnswers;
+          offNow.delete(n); delete track.labelOff;
+          if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
+          else {
+            this.resume(n, run.runId, `answered by @${answers[0]!.author.login}`, undefined, false, first);
+            this.labelWhenDone(n, run.runId);
+            started++;
+            if (isFirst) firstStarted++;
+          }
         } else if (!resumable && labelFor(run, this.L) !== this.L.working) {
           await setLabels(this.repo, n, labelFor(run, this.L), this.allStatus);
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
@@ -761,7 +840,11 @@ export class Watcher {
         } else if (!answers.length) {
           holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
         } else {
-          holds.push(limited(issue, run.runId)); // answered; waits for the per-check limit
+          // Answered; waits for the per-check limit. Nothing is needed from the person: the label says working.
+          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its turn)`);
+          offNow.delete(n); delete track.labelOff;
+          holds.push(limited(issue, run.runId));
         }
       } else if (status === this.L.waiting && run?.status === "waiting") {
         const decision = await this.findDecision(run.runId, await issueComments(this.repo, n));
@@ -785,11 +868,17 @@ export class Watcher {
         for (const i of toCheck) if (!prio(i)) holds.push(this.held("bug_first", i));
       } else await this.precheck(toCheck, holds, budgetLeft);
     }
+    // An issue that was answered but cannot start (dependency, release, budget, limit, busy watcher) needs nothing
+    // from the person: the needs-info label goes, as the status comment says. Without a run nothing is lost.
+    let labelError: Error | undefined;
+    await this.dropAnsweredLabels(issues, runs, holds, alive).catch((e: Error) => { labelError = e; });
     let tidyError: Error | undefined;
     const closed: { issue: number; title: string }[] = [];
     let closedWhole = false;
     await this.tidyClosed(runs, holds, closed).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
     await this.endWaitsOfClosedIssues(new Set(issues.map((i) => i.number))).catch((e: Error) => { tidyError ??= e; });
+    let statesError: Error | undefined;
+    await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
     alive();
     const before = new Map((this.status.holds ?? []).map((h) => [holdKey(h), h.seen]));
@@ -804,7 +893,55 @@ export class Watcher {
     this.labelOff = offNow;
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped);
     // The closed-issue scan is part of the check: its failure is the check's error.
+    if (statesError) throw new Error(`checking closed issues: ${errorLine(statesError.message)}`); // first: this prefix is the contract
     if (tidyError) throw new Error(`tidying closed issues: ${errorLine(tidyError.message)}`);
+    if (labelError) throw new Error(`correcting labels: ${errorLine(labelError.message)}`);
+  }
+
+  /** Stores which issues with an unfinished run are open or closed: one batched call for those not in the open list. */
+  private async checkIssueStates(open: Issue[], alive: () => void) {
+    const UNFINISHED = ["failed", "stopped", "waiting", "cancelled"];
+    const candidates = new Set<number>();
+    for (const b of this.d.scheduler.briefs()) {
+      if (b.githubRepo !== this.repo || !b.issue || !/^\d+$/.test(b.issue) || !UNFINISHED.includes(b.status)) continue;
+      const n = Number(b.issue); // "004" is issue 4
+      if (n >= 1 && n <= 2147483647) candidates.add(n);
+    }
+    const listed = new Set(open.map((i) => i.number));
+    const states = new Map<number, "open" | "closed">();
+    const ask: number[] = [];
+    for (const n of candidates) if (listed.has(n)) states.set(n, "open"); else ask.push(n);
+    try {
+      // alive() runs before every chunk, so a check that was given up asks and writes nothing more.
+      for (const [n, s] of await issueStates(this.repo, ask, 60_000, alive)) states.set(n, s);
+      alive();
+    } catch (e) {
+      try {
+        alive(); // a retired or given-up watcher writes nothing (its entry may just have been dropped)
+        markIssueCheckFailed(this.repo);
+      } catch {
+        // nothing to record
+      }
+      throw e;
+    }
+    saveIssueStates(this.repo, states);
+  }
+
+  /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
+  private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void) {
+    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "starting", "bug_first", "one_at_a_time"];
+    const pending = this.d.scheduler.queue().pending;
+    for (const issue of issues) {
+      const n = issue.number;
+      const names = issue.labels.map((l) => l.name);
+      if (!names.includes(this.L.needsInfo) || runs.has(String(n))) continue;
+      if (pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) continue;
+      const hold = holds.find((h) => h.issue === n);
+      if (!hold || !notYours.includes(hold.next.kind)) continue;
+      alive();
+      await setLabels(this.repo, n, undefined, [this.L.needsInfo]);
+      this.act(`#${n} label ${this.L.needsInfo} removed (it no longer waits for you)`);
+    }
   }
 
   /** Tells the shared writer what this check saw. Never throws, and does not touch Recent activity. */
@@ -921,7 +1058,8 @@ export class Watcher {
     for (const c of after) {
       const m = APPROVE_RE.exec(c.body);
       if (!m) continue;
-      if (!(await canWrite(this.repo, c.author.login))) {
+      // An app has no user: its own comment (gh says so) counts as written with write access.
+      if (!(c.viewerDidAuthor === true && ghActsAsApp()) && !(await canWrite(this.repo, c.author.login))) {
         this.act(`ignored /${m[1]} from @${c.author.login} (no write access)`);
         continue;
       }

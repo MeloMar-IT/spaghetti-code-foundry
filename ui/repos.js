@@ -85,7 +85,8 @@ const installLink = (options) => {
 export function methodLabel(repo, admin) {
   const m = METHODS.find((x) => x.id === repo.method);
   if (!m) return String(repo.method);
-  if (m.id === "none") return admin ? m.label : "Needs authentication";
+  // "legacy" is the word for the method none: repositories of watchers that moved out of config.yaml have it
+  if (m.id === "none") return admin ? `${m.label} (legacy)` : "Needs authentication";
   return m.id === "https-token" && repo.username ? `${m.label} (${repo.username})` : m.label;
 }
 
@@ -282,11 +283,11 @@ const onPage = () => {
 };
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice } = {}) {
+export async function renderRepos(main, { admin = false, notice, readOnly = false } = {}) {
   const mine = ++generation;
   const [repos, options] = await Promise.all([api.repos(), api.repoMethods().catch(() => undefined)]);
   if (mine !== generation || !onPage()) return () => {};
-  const reload = (next) => renderRepos(main, { admin, notice: next }).catch((e) => toast(plainError(e), "error"));
+  const reload = (next) => renderRepos(main, { admin, notice: next, readOnly }).catch((e) => toast(plainError(e), "error"));
   const remove = async (id, again = false) => {
     try {
       await api.removeRepo(id);
@@ -351,7 +352,7 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
       repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
       repo.method === "github-app" ? appBlock() : null),
     connectionCell(repo),
-    h("td", {},
+    readOnly ? h("td", {}) : h("td", {},
       h("button", { class: "small", onClick: (e) => test(e, repo) }, "Test connection"), " ",
       h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
         await repoDialog({ admin, options, repo });
@@ -366,7 +367,7 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
       h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
-      h("span", { class: "spacer" }), h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
+      h("span", { class: "spacer" }), readOnly ? null : h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
     notice ? h("p", { class: "status bad" }, notice.text,
       notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
         const btn = e.currentTarget;
@@ -376,7 +377,7 @@ export async function renderRepos(main, { admin = false, notice } = {}) {
       ? h("div", { class: "table-box" }, h("table", { class: "table" },
         h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", ""].map((t) => h("th", {}, t)))),
         h("tbody", {}, repos.map(row))))
-      : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
+      : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", readOnly ? null : h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
   return () => {
     generation++;
   };

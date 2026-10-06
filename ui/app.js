@@ -11,9 +11,11 @@ import { renderDashboard } from "./dashboard.js";
 import { renderProblems } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
+import { renderCredentials } from "./admin-credentials.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
+import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
 import { loadHealth, startHealth } from "./health.js";
@@ -368,7 +370,10 @@ function welcome() {
       h("button", { onClick: () => openNew() }, "+ Blank flow"))));
 }
 
+let routeGen = 0;
+
 async function route() {
+  const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
   const hash = location.hash || "#/flows";
@@ -393,16 +398,30 @@ async function route() {
     else if (section === "settings") await renderSettings(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
+    else if (section === "credentials") {
+      const off = await renderCredentials(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
     else if (section === "repos") S.cleanup = await renderRepos(main, { admin: true });
     else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
     else if (section === "audit") S.cleanup = await renderAudit(main);
+    else if (section === "start") {
+      // The page draws into its own box, so a slow load that ends after a hash change cannot touch the page that took over.
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderStart(box, { admin: true });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
     else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
     else if (section === "runs") S.cleanup = await renderRunsList(main, { admin: true });
     else if (section === "new") S.cur && !S.cur.name ? renderFlowView() : openNew();
     else if (section === "flows" && arg) await openFlow(arg);
     else welcome();
   } catch (e) {
+    if (mine !== routeGen) return; // a late error must not replace the page that is shown now
     mount(main, h("div", { class: "errors" }, e.message));
   }
   renderSidebar();

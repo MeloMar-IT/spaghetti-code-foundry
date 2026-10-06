@@ -4,13 +4,43 @@ export const setCsrf = (t) => {
   csrf = t || "";
 };
 
-async function req(method, url, body) {
+export const PREVIEW_TEXT = "This is a preview. Nothing can be changed here.";
+export const VIEW_ENDED_TEXT = "The view has ended.";
+
+let viewAs = "";
+let viewEnded = false;
+let onViewEnded = null;
+/** Starts (or, with "", stops) the read-only preview of one user's display. `onEnded` runs once, when the server refuses the view. */
+export const setViewAs = (id, onEnded) => {
+  viewAs = id || "";
+  viewEnded = false;
+  onViewEnded = onEnded || null;
+};
+
+/** The URL with `as=<id>` while a preview runs; `?` or `&` as the URL needs. */
+export const withAs = (url) => (viewAs ? `${url}${url.includes("?") ? "&" : "?"}as=${encodeURIComponent(viewAs)}` : url);
+
+/**
+ * `stay`: a 401 does not reload the page (a typing save must not throw the typed text away).
+ * `plain`: a call about the admin's own session or the view itself: no `as=`, allowed in a preview.
+ * In a preview every other call is a GET with `as=`, and anything else throws before `fetch`.
+ * A 403 there means the view has ended: the user display only makes calls the server allows a user, so no other 403 can happen.
+ */
+async function req(method, url, body, stay = false, plain = false) {
+  const preview = Boolean(viewAs) && !plain;
+  if (preview && method !== "GET") throw Object.assign(new Error(PREVIEW_TEXT), { preview: true });
+  if (preview && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
+  if (preview) url = withAs(url);
   const headers = body ? { "content-type": "application/json" } : {};
   if (method !== "GET" && csrf) headers["x-csrf-token"] = csrf;
   const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   // the session ended (expired, revoked, password changed): start again at the sign-in page
-  if (r.status === 401 && !url.startsWith("/api/session")) location.reload();
+  if (r.status === 401 && !stay && !url.startsWith("/api/session")) location.reload();
+  if (preview && r.status === 403 && !viewEnded) {
+    viewEnded = true;
+    onViewEnded?.();
+  }
   if (!r.ok) throw Object.assign(new Error(data.error || `${r.status} ${r.statusText}`), { status: r.status });
   return data;
 }
@@ -24,14 +54,16 @@ const auditQuery = (f = {}) => {
 };
 
 export const api = {
-  session: () => req("GET", "/api/session"),
+  session: () => req("GET", "/api/session", undefined, false, true),
   signIn: (email, password) => req("POST", "/api/session", { email, password }),
   setPassword: (token, password) => req("POST", "/api/set-password", { token, password }),
   changePassword: (current, password) => req("POST", "/api/password", { current, password }),
-  signOut: () => req("DELETE", "/api/session"),
+  signOut: () => req("DELETE", "/api/session", undefined, false, true),
+  startViewAs: (userId) => req("POST", "/api/admin/view-as", { userId }, false, true),
+  stopViewAs: () => req("DELETE", "/api/admin/view-as", undefined, false, true),
   setup: (name, email, password) => req("POST", "/api/setup", { name, email, password }),
   info: () => req("GET", "/api/info"),
-  flows: () => req("GET", "/api/flows"),
+  flows: (published) => req("GET", published ? "/api/flows?published=1" : "/api/flows"),
   flow: (name) => req("GET", `/api/flows/${enc(name)}`),
   saveFlow: (name, yaml, scope) => req("PUT", `/api/flows/${enc(name)}`, { yaml, scope }),
   deleteFlow: (name) => req("DELETE", `/api/flows/${enc(name)}`),
@@ -48,6 +80,7 @@ export const api = {
   resumeRun: (id, from) => req("POST", `/api/runs/${enc(id)}/resume`, { from }),
   approveRun: (id, note) => req("POST", `/api/runs/${enc(id)}/approve`, { note }),
   rejectRun: (id, note) => req("POST", `/api/runs/${enc(id)}/reject`, { note }),
+  answerRun: (id, text) => req("POST", `/api/runs/${enc(id)}/answer`, { text }),
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
   repos: () => req("GET", "/api/repos"),
@@ -70,6 +103,10 @@ export const api = {
   allRepos: () => req("GET", "/api/admin/repos"),
   setRepoSettings: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/settings`, body),
   transferRepo: (id, email) => req("POST", `/api/admin/repos/${enc(id)}/transfer`, { email }),
+  addRepoWatcher: (repoId, body) => req("POST", `/api/admin/repos/${enc(repoId)}/watchers`, body),
+  saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
+  removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
+  allCredentials: () => req("GET", "/api/admin/credentials"),
   refinement: () => req("GET", "/api/refinement"),
   createRefinement: (body) => req("POST", "/api/refinement", body),
   refinementSession: (id) => req("GET", `/api/refinement/${enc(id)}`),
@@ -84,6 +121,16 @@ export const api = {
   rejectProposal: (id, pid) => req("POST", `/api/refinement/${enc(id)}/proposals/${enc(pid)}/reject`, {}),
   changeMapEntry: (id, eid, text) => req("PUT", `/api/refinement/${enc(id)}/map/${enc(eid)}`, { text }),
   removeMapEntry: (id, eid) => req("DELETE", `/api/refinement/${enc(id)}/map/${enc(eid)}`),
+  addDraft: (id) => req("POST", `/api/refinement/${enc(id)}/drafts`, {}),
+  saveDraft: (id, did, body) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}`, body, true),
+  removeDraft: (id, did) => req("DELETE", `/api/refinement/${enc(id)}/drafts/${enc(did)}`),
+  // `stay`: a 401 must not reload the page while another field holds text that is not saved
+  suggestField: (id, did, field) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggest`, { field }, true),
+  acceptSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/accept`, body, true),
+  reviewDraft: (id, did) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review`, {}, true),
+  moveToNotes: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/move-to-notes`, body, true),
+  rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),
+  setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
   saveConfig: (config) => req("PUT", "/api/config", config),
@@ -112,5 +159,8 @@ export const api = {
   stats: () => req("GET", "/api/stats"),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
-  events: (id) => new EventSource(`/api/runs/${enc(id)}/events`),
+  events: (id) => {
+    if (viewAs && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
+    return new EventSource(withAs(`/api/runs/${enc(id)}/events`));
+  },
 };

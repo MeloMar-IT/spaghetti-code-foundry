@@ -172,7 +172,7 @@ describe("pure functions", () => {
     expect(https).toContain("HTTPS user name + token");
     expect(https).toContain("ann");
     expect(ui.methodLabel({ method: "none" }, false)).toBe("Needs authentication");
-    expect(ui.methodLabel({ method: "none" }, true)).toBe("The server's own access");
+    expect(ui.methodLabel({ method: "none" }, true)).toBe("The server's own access (legacy)");
     expect(ui.methodLabel({ method: "ssh-key" }, false)).toBe("ssh-key");
     expect(ui.connectionStatus({})).toBe("Not tested yet");
     expect(ui.connectionStatus({ connection: connection(true) })).toBe("Connected");

@@ -5,7 +5,11 @@
 // permission_denials (command for Bash, file_path otherwise); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
+// answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
+// For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
+// For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 let prompt = "";
@@ -17,6 +21,7 @@ const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const ghSeen = !process.env.GH_TOKEN ? "none" : process.env.GH_TOKEN === process.env.FAKE_GH_EXPECT_TOKEN ? "stored" : "other";
 let result = `ok args=${args.join(" ")}`;
 const denials = [];
+const shown = [];
 for (const line of prompt.split("\n")) {
   // With `--tools ""` the real CLI has no tools: nothing is written or refused.
   const noTools = args.includes("--tools") && args[args.indexOf("--tools") + 1] === "";
@@ -30,6 +35,14 @@ for (const line of prompt.split("\n")) {
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];
   if (line === "SHOWGH") result = `gh_token=${ghSeen}`;
+  // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
+  const sv = line.match(/^SHOWVARS (.*)$/);
+  if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  if (line === "SHOWGHDIR") {
+    const d = process.env.GH_CONFIG_DIR;
+    shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
+  }
+  if (shown.length) result = shown.join("\n");
   if (line === "SHOWENV") result = `base=${process.env.ANTHROPIC_BASE_URL ?? ""} token=${process.env.ANTHROPIC_AUTH_TOKEN ?? ""} haiku=${process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? ""} args=${args.join(" ")}`;
 }
 if (prompt.includes("CLAUDE_SIGNED_OUT")) {
@@ -53,7 +66,7 @@ let canned;
 let cost = 0.01;
 if (prompt.includes("Explain why this run of a coding flow failed")) {
   const e = process.env.FAKE_EXPLAIN;
-  canned = e === "ARGS" ? `KIND: code\nWHY: args ${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} gh=${process.env.GH_TOKEN ?? ""}` : e ?? "KIND: code\nWHY: the tests still fail after the fixes";
+  canned = e === "ARGS" ? `KIND: code\nWHY: args ${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} gh=${["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", ...(process.env.FAKE_EXPLAIN_VARS ?? "").split(",")].filter((n) => n && process.env[n]).join(",")}` : e ?? "KIND: code\nWHY: the tests still fail after the fixes";
   cost = 0.002;
 } else if (prompt.includes("Write a context brief for the idea below")) {
   // The architect's brief (refine-brief). FAKE_BRIEF replaces it; FAKE_BRIEF=ECHO adds the CLI arguments, the working folder and the prompt.
@@ -70,7 +83,29 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
 } else if (prompt.includes("This is a question round of a refinement session.")) {
   // The architect's question round (refine-round). FAKE_ROUND replaces the answer; FAKE_ROUND=ECHO adds the CLI arguments, the working folder and the prompt.
   const found = `The README is ${existsSync("repo/README.md") ? "found" : "missing"} (README.md).`;
-  const round = prompt.includes("What is asked of you now: question")
+  const field = /^The field, when it is `suggest`: (\w*)$/m.exec(prompt)?.[1] ?? "";
+  const suggestions =
+    field === "criteria"
+      ? [{ text: "The export downloads a CSV file.", from: "R1" }, { text: "An empty report downloads a file with only the header.", from: "E1" }]
+      : field === "dependsOn"
+        ? [{ issue: 12 }, { draft: "D1" }]
+        : [{ text: `A suggested ${field}` }];
+  const firstIssue = existsSync("issues.md") ? /^=== ISSUE #(\d+) ===$/m.exec(readFileSync("issues.md", "utf8"))?.[1] : undefined;
+  const round = prompt.includes("What is asked of you now: impact")
+    ? {
+        areas: [{ area: "README.md", files: ["README.md"], basis: "found", why: found }],
+        dependsOn: [],
+        dependents: [],
+        risks: [{ kind: "users", basis: "estimate", text: "People see a new button." }],
+        size: { size: "small", files: 2, lines: 40, why: "One page and its test." },
+        overlaps: firstIssue ? [{ issue: Number(firstIssue), areas: ["README.md"], basis: "found", why: "It changes the same file." }] : [],
+        sensitive: [],
+      }
+    : prompt.includes("What is asked of you now: review")
+    ? { remarks: [{ field: "criteria", item: "C1", kind: "uncheckable", text: "Nobody can tell when this is met." }, { field: "what", kind: "how", text: "This says how to build it." }] }
+    : prompt.includes("What is asked of you now: suggest")
+    ? { field, suggestions }
+    : prompt.includes("What is asked of you now: question")
     ? { answer: found }
     : {
         questions: [
@@ -105,7 +140,7 @@ else if (prompt.includes("CI failed on this branch")) {
     ask.includes(n) ? `### #${n}\n**Q1. Which package format?**\ndmg or pkg\n**Recommendation:** dmg — no admin prompt` : `### #${n}\nNO_QUESTIONS`).join("\n");
 } else if (prompt.includes("Your plan is over the size limit")) {
   canned = process.env.FAKE_FORCED_SPLIT ?? "## Split\n### ISSUE 1: Small part one\nDEPENDS_ON: none\nDo one.\n### ISSUE 2: Small part two\nDEPENDS_ON: 1\nDo two.\nSPLIT_RISK: 20\nPLAN_STATUS: TOO_BIG";
-} else if (prompt.includes("Your finished change is being merged into the develop branch")) {
+} else if (prompt.includes("is being merged into the develop branch")) {
   // Resolve by keeping both sides: drop the conflict markers from every conflicted file.
   const files = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], { encoding: "utf8" }).split("\n").filter(Boolean);
   for (const f of process.env.FAKE_RESOLVE_NOOP ? [] : files) { // FAKE_RESOLVE_NOOP: the resolver changes nothing
@@ -162,4 +197,5 @@ emit({
   num_turns: 1,
   ...(denials.length ? { permission_denials: denials } : {}),
 });
-process.exit(isError ? 1 : 0);
+// Not process.exit(): a large answer written to a pipe must drain first.
+process.exitCode = isError ? 1 : 0;

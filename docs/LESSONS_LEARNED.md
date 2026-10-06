@@ -245,7 +245,8 @@ Since October the Foundry builds its own features from its own backlog (accounts
 
 - The same gitflow as any repository: stories land on `develop`, a daily release goes to `main`.
 - The server restarts itself on a new build, but only when no run is active.
-- Changes made by hand go in as **hotfixes**: commit on `main`, merge `main` into `develop`.
+- Bug stories go in as **hotfixes** built by the Foundry itself: tested on `main`, merged, then
+  `main` is merged into `develop`. A change made by hand still works the same way.
 
 **What to watch**
 
@@ -288,16 +289,19 @@ Since October the Foundry builds its own features from its own backlog (accounts
 | All watchers failed for an hour | Runs that stepped aside were restarted every 25 seconds (600+ times) and used up GitHub's request limit | Resume only when the blocking run has stopped; no immediate check after a step-aside | Every "retry right away" needs a condition |
 
 The last incident is the reason for the self-repair work: nothing reported the loop until
-everything stopped, and the message on screen pointed at the wrong cause.
+everything stopped, and the message on screen pointed at the wrong cause. Today that loop, the
+GitHub request limit, a step that fails for every story and an issue whose label and run disagree
+are replayed in tests, from the first symptom to a fix that is seen as working.
 
 ---
 
 ## 13. Still open
 
-- **Self-monitoring.** A monitor that finds such problems, writes a bug story, and gets it fixed
-  first, with hotfixes to `main` the gitflow way.
+- **Self-repair is built, but off by default.** Hotfixes and Self-update stay off until an admin
+  switches them on, and the stories for the work detectors use the general text, not their own.
 - **Refinement.** Helping people write good stories before they reach the backlog — as an
   architect who asks and checks, not as an author.
 - **More than one machine.** Today agents and logins are those of one Mac.
 - **E-mail** for password resets and notifications, and **per-user agent accounts**.
-- **The running install does not yet take a hotfix by itself.**
+- **A running install takes a hotfix through Self-update.** Without it, the monitor waits for the
+  next server start (or `fix_wait_days`) before it counts the 24 hours.

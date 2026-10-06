@@ -96,7 +96,7 @@ describe("a marked step with the GitHub App", { timeout: 60_000 }, () => {
     process.env.BOT_TOKEN_FOR_TEST = BOT;
     const s = await go(mini(one("marked", 'echo "$GH_TOKEN"'), plain("plain", 'echo "$GH_TOKEN"')), { owner: admin.id, config: cfg({}, { bot: { gh_token_env: "BOT_TOKEN_FOR_TEST" } }) });
     expect(out(s, "marked")).toBe("[redacted]");
-    expect(out(s, "plain")).toBe(BOT);
+    expect(out(s, "plain")).toBe("");
     expect(fake.tokens).toHaveLength(1);
   });
 

@@ -1,7 +1,9 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { monitorLists } from "./monitor.js";
+import { ownerText, sortRepos } from "./admin-repos.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
+import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
@@ -87,31 +89,10 @@ async function saveConfig(mutate, okMsg) {
 
 // ── watchers ──
 
-/** The watcher as config.yaml has it: without what GET /api/watchers adds (the config rejects unknown keys). */
-/** The watcher's `owner` from the form field: left out of the saved config when empty. */
-export const ownerSetting = (text) => String(text ?? "").trim() || undefined;
-export const watcherConfig =({ status: _status, state: _state, ...cfg } = {}) => cfg;
 /** The watcher's own state with its "?". */
 export const watcherStateMark = (w) => (w.state ? statusMark(w.state, `state-${w.state.name}`) : null);
 
-const SOURCES = {
-  issues: "Issues with a label → run a flow (default issue-gitflow)",
-  schedule: "On a schedule → run a flow (default release-daily)",
-  monitor: "The Foundry itself → find its own problems",
-};
-// No shipped flow for these any more; still shown for a watcher that already uses them.
-const OLD_SOURCES = {
-  "pr-feedback": "Review comments on Foundry PRs → your flow",
-  "ci-failures": "CI red on the default branch → your flow",
-};
 const DEFAULT_FLOWS = { issues: "issue-gitflow", schedule: "release-daily" };
-const CHORES = [
-  ["Dependencies", "Update dependencies that have known security vulnerabilities (npm audit / pip-audit / cargo audit etc.) to the smallest fixed version. Do not do major upgrades."],
-  ["Flaky tests", "Run the test suite 3 times. If any test fails only sometimes, find why it is flaky and make it deterministic. Do not delete or skip tests."],
-  ["Test coverage", "Find the most important untested code path (business logic, not trivial getters) and add focused tests for it."],
-  ["Docs", "Check that README and docs match the code (commands, options, examples). Fix anything outdated."],
-  ["Lint / TODOs", "Run the linter and fix the warnings that are safe to fix. Resolve TODO/FIXME comments that are quick and clearly specified."],
-];
 /** A monitor has no repository, flow, labels or owner: only these fields are saved (a changed source drops the rest). */
 export const monitorEntry = ({ id, every, enabled }) => ({ id, source: "monitor", every, enabled });
 
@@ -126,135 +107,110 @@ export const describeWatcher = (w) => {
   }[w.source];
 };
 
-async function editWatcher(existing, flows) {
-  const w = existing ?? { id: "", source: "issues", flow: "issue-gitflow", github_repo: "", label: "claude-factory", every: "5m", max_per_tick: 1, enabled: true, vars: {} };
-  return modal(existing ? `Edit watcher ${w.id}` : "Add a watcher", (close) => {
-    const id = input(w.id, { class: "mono", placeholder: "my-repo", disabled: !!existing });
-    const repo = input(w.github_repo, { class: "mono", placeholder: "owner/repo" });
-    const flow = input(w.flow, { class: "mono", list: "watcher-flows" });
-    const source = h("select", { onChange: () => {
-      if (DEFAULT_FLOWS[source.value] && Object.values(DEFAULT_FLOWS).includes(flow.value)) flow.value = DEFAULT_FLOWS[source.value];
-      if (source.value === "schedule" && /^\d+(s|m)$/.test(every.value)) every.value = "7d";
-      showFor();
-    } }, Object.entries({ ...SOURCES, ...(OLD_SOURCES[w.source] ? { [w.source]: OLD_SOURCES[w.source] } : {}) }).map(([v, label]) => h("option", { value: v, selected: w.source === v }, label)));
-    const task = h("textarea", { rows: 3, placeholder: "What the chore should do each time", value: w.task ?? "" });
-    const branch = input(w.branch ?? "", { class: "mono", placeholder: "default branch" });
-    const exclude = input((w.exclude_labels ?? []).join(", "), { class: "mono", placeholder: "e.g. geni, wontfix" });
-    const at = input(w.at ?? "", { class: "mono", placeholder: "HH:MM (optional)" });
-    const tz = input(w.timezone ?? "", { class: "mono", placeholder: Intl.DateTimeFormat().resolvedOptions().timeZone });
-    const label = input(w.label, { class: "mono" });
-    const every = input(w.every, { class: "mono", placeholder: "5m" });
-    const max = input(String(w.max_per_tick), { type: "number", min: 1 });
-    const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes", value: Object.entries(w.vars ?? {}).map(([k, v]) => `${k}=${v}`).join("\n") });
-    const owner = input(w.owner ?? "", { placeholder: "name@example.com" });
-    const enabled = check(w.enabled, "Enabled");
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
-    const save = h("button", { class: "primary", onClick: async () => {
-      const parsedVars = {};
-      for (const line of vars.value.split("\n").map((l) => l.trim()).filter(Boolean)) {
-        const i = line.indexOf("=");
-        if (i < 1) return (err.textContent = `vars: "${line}" should be name=value`);
-        parsedVars[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-      }
-      const list = (el) => el.value.split(",").map((x) => x.trim()).filter(Boolean);
-      // Keep settings this form doesn't show (status label names, pauses, …).
-      const kept = watcherConfig(existing ?? {});
-      const next = source.value === "monitor" ? monitorEntry({ id: id.value.trim(), every: every.value.trim(), enabled: enabled.el.checked }) : { ...kept, id: id.value.trim(), source: source.value, flow: flow.value.trim(), github_repo: repo.value.trim(), label: label.value.trim(),
-        every: every.value.trim(), max_per_tick: Number(max.value) || 1, enabled: enabled.el.checked, vars: parsedVars,
-        task: source.value === "schedule" ? task.value.trim() : undefined,
-        branch: source.value === "ci-failures" ? branch.value.trim() || undefined : undefined,
-        exclude_labels: list(exclude),
-        owner: ownerSetting(owner.value),
-        at: source.value === "schedule" ? at.value.trim() || undefined : undefined,
-        timezone: source.value === "schedule" ? tz.value.trim() || undefined : undefined };
-      try {
-        await saveConfig((c) => {
-          if (!existing && c.watchers.some((x) => x.id === next.id)) throw new Error(`a watcher "${next.id}" already exists`);
-          c.watchers = existing ? c.watchers.map((x) => (x.id === existing.id ? next : x)) : [...c.watchers, next];
-        }, `Watcher ${next.id} saved`);
-        close(true);
-      } catch (e) {
-        err.textContent = e.message;
-      }
-    } }, "Save watcher");
-    const labelField = h("div", { class: "grid" }, f("Trigger label", label), f("Skip issues with these labels", exclude));
-    const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
-    const taskField = h("div", {}, f("Chore", task, "Becomes the run's task. The flow opens a PR only if something changed."),
-      h("div", { class: "chips", style: { marginTop: "6px" } }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));
-    const branchField = f("Branch to watch", branch);
-    const repoField = f("GitHub repo", repo);
-    const flowField = f("Flow", flow);
-    const maxField = f("Max new runs per check", max);
-    const varsField = f("Variables for each run", vars, "One name=value per line. github_repo and issue/pr are set automatically.");
-    const ownerField = f("Owner of the runs", owner, "E-mail of an account. Empty: the first admin.");
-    const showFor = () => {
-      const mon = source.value === "monitor";
-      for (const el of [repoField, flowField, maxField, varsField, ownerField]) el.style.display = mon ? "none" : "";
-      labelField.style.display = source.value === "issues" ? "" : "none";
-      // a monitor needs only an id and an interval
-      taskField.style.display = source.value === "schedule" ? "" : "none";
-      atField.style.display = source.value === "schedule" ? "" : "none";
-      branchField.style.display = source.value === "ci-failures" ? "" : "none";
-    };
-    showFor();
-    return h("div", { style: { display: "grid", gap: "12px" } },
-      h("datalist", { id: "watcher-flows" }, flows.map((x) => h("option", { value: x.name }))),
-      h("div", { class: "grid" }, f("Id", id), repoField),
-      f("Source", source),
-      h("div", { class: "grid" }, flowField, labelField, branchField),
-      taskField,
-      atField,
-      h("div", { class: "grid" }, f("Check every", every, "e.g. 5m, 1h — for chores: how often it runs, e.g. 1d, 7d"), maxField),
-      varsField,
-      ownerField,
-      enabled.row, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
-  });
-}
-
 /** " · last successful check 5m ago", or a short text when there is none yet. */
 export const lastOkText = (st) => (!st ? "" : st.lastOk ? ` · last successful check ${timeAgo(st.lastOk)}` : " · no successful check yet");
 
+/** The page's sections: { groups: [{ repo, watchers }], gone: [...], monitor: [...], file: [...] }. */
+export function watcherGroups(watchers, repos) {
+  const known = new Set(repos.map((r) => r.id));
+  const stored = watchers.filter((w) => w.source !== "monitor" && w.repoId);
+  return {
+    groups: sortRepos(repos).map((repo) => ({ repo, watchers: stored.filter((w) => w.repoId === repo.id) })).filter((g) => g.watchers.length),
+    gone: stored.filter((w) => !known.has(w.repoId)),
+    monitor: watchers.filter((w) => w.source === "monitor"),
+    file: watchers.filter((w) => w.source !== "monitor" && !w.repoId),
+  };
+}
+
 export async function renderWatchers(main) {
-  const [watchers, flows] = await Promise.all([api.watchers(), api.flows()]);
+  const [watchers, flows, repos] = await Promise.all([api.watchers(), api.flows(), api.allRepos()]);
   const reload = () => renderWatchers(main);
   const mon = watchers.some((w) => w.source === "monitor") ? await api.monitor().catch(() => undefined) : undefined;
+  const { groups, gone, monitor, file } = watcherGroups(watchers, repos);
+  // a failed call shows the server's sentence as it is; the page is drawn again either way
+  const act = async (fn) => {
+    try {
+      await fn();
+    } catch (e) {
+      toast(e.message, "error");
+    }
+    reload();
+  };
+
+  const saveMonitor = (existing) => (entry) =>
+    saveConfig((c) => {
+      if (!existing && c.watchers.some((x) => x.id === entry.id)) throw new Error(`a watcher "${entry.id}" already exists`);
+      const next = monitorEntry(entry);
+      c.watchers = existing ? c.watchers.map((x) => (x.id === existing.id ? next : x)) : [...c.watchers, next];
+    }, `Watcher ${entry.id} saved`);
+  const checkNow = (w) => h("button", { class: "small", onClick: () => act(async () => { toast("Checking…"); await api.tickWatcher(w.id); }) }, "Check now");
+
+  const buttons = (w, kind) => {
+    if (kind === "file") return [w.enabled ? checkNow(w) : null];
+    if (kind === "monitor") {
+      return [w.enabled ? checkNow(w) : null,
+        h("button", { class: "small", onClick: async () => (await monitorDialog(w, saveMonitor(w))) && reload() }, "Edit"),
+        h("button", { class: "small danger", onClick: () => {
+          if (!confirm(`Delete watcher ${w.id}?`)) return;
+          act(() => saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted"));
+        } }, "Delete")];
+    }
+    const del = h("button", { class: "small danger", onClick: () => {
+      if (!confirm(`Delete watcher ${w.id}?`)) return;
+      act(async () => { await api.removeRepoWatcher(w.repoId, w.id); toast("Deleted"); });
+    } }, "Delete");
+    // a watcher whose repository is gone can only be deleted: the API refuses to change it
+    if (kind === "gone") return [del];
+    return [w.enabled && !w.problem ? checkNow(w) : null,
+      h("button", { class: "small", onClick: async () => (await repoWatcherDialog({ repos, flows, existing: w })) && reload() }, "Edit"),
+      h("button", { class: "small", onClick: () => act(() => api.saveRepoWatcher(w.repoId, w.id, { enabled: !w.enabled })) }, w.enabled ? "Disable" : "Enable"),
+      del];
+  };
+
+  const card = (w, kind) => {
+    const st = w.status;
+    return h("div", { class: "card" },
+      h("div", { class: "row" },
+        h("b", { class: "mono" }, w.id),
+        watcherStateMark(w),
+        kind === "file" && w.github_repo ? h("span", { class: "mono" }, w.github_repo) : null,
+        h("span", { class: "muted" }, describeWatcher(w)),
+        h("span", { class: "spacer" }),
+        buttons(w, kind)),
+      w.problem ? h("p", { class: "status bad", style: { margin: "4px 0" } }, w.problem) : null,
+      kind === "file" ? h("div", { class: "muted", style: { fontSize: "12.5px" } }, "still in config.yaml: it moves to its repository when the server starts; the server log says why if it stays") : null,
+      h("div", { class: "muted", style: { fontSize: "12.5px" } },
+        w.source === "monitor" ? `every ${w.every}` : w.source === "schedule" ? (w.at ? `checks every ${w.every}` : `max 1 run per ${w.every}`) : `every ${w.every} · max ${w.max_per_tick} per check`,
+        w.exclude_labels?.length ? ` · skips ${w.exclude_labels.join(", ")}` : "",
+        w.pause_while_pr_open ? ` · pauses while a ${w.pause_while_pr_open}* PR is open` : "",
+        w.enabled ? lastOkText(st) : "",
+        st?.nextTick ? ` · next ${new Date(st.nextTick).toLocaleTimeString()}` : ""),
+      w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "6px" } }, "What happens next:"), nextList(watcherNext(w))) : null,
+      w.source === "monitor" ? storiesRow(mon, reload) : null,
+      w.source === "monitor" ? monitorLists(mon, reload) : null,
+      watcherNotes(st),
+      st?.lastError ? h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "mono" }, st.lastError)) : null,
+      st?.lastActions?.length ? h("details", {}, h("summary", {}, `Recent activity (${st.lastActions.length})`), h("pre", { class: "mono" }, st.lastActions.join("\n"))) : null);
+  };
+  const section = (title, list, kind, sub) => (list.length ? h("div", {}, h("h3", {}, title), sub ?? null, h("div", { class: "watcher-list" }, list.map((w) => card(w, kind)))) : null);
+  const add = () => h("button", { class: "primary", onClick: async () => (await repoWatcherDialog({ repos, flows, existing: null })) && reload() }, "+ Add watcher");
+
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Watchers"),
       h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
       h("span", { class: "spacer" }),
       h("button", { onClick: reload }, "↻"),
-      h("button", { class: "primary", onClick: async () => (await editWatcher(null, flows)) && reload() }, "+ Add watcher")),
-    watchers.length ? h("div", { class: "watcher-list" }, watchers.map((w) => {
-      const st = w.status;
-      return h("div", { class: "card" },
-        h("div", { class: "row" },
-          h("b", { class: "mono" }, w.id),
-          watcherStateMark(w),
-          w.github_repo ? h("span", { class: "mono" }, w.github_repo) : null,
-          h("span", { class: "muted" }, describeWatcher(w)),
-          h("span", { class: "spacer" }),
-          w.enabled ? h("button", { class: "small", onClick: async () => { toast("Checking…"); await api.tickWatcher(w.id).catch((e) => toast(e.message, "error")); reload(); } }, "Check now") : null,
-          h("button", { class: "small", onClick: async () => (await editWatcher(w, flows)) && reload() }, "Edit"),
-          h("button", { class: "small danger", onClick: async () => {
-            if (!confirm(`Delete watcher ${w.id}?`)) return;
-            await saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted");
-            reload();
-          } }, "Delete")),
-        h("div", { class: "muted", style: { fontSize: "12.5px" } },
-          w.source === "monitor" ? `every ${w.every}` : w.source === "schedule" ? (w.at ? `checks every ${w.every}` : `max 1 run per ${w.every}`) : `every ${w.every} · max ${w.max_per_tick} per check`,
-          w.exclude_labels?.length ? ` · skips ${w.exclude_labels.join(", ")}` : "",
-          w.pause_while_pr_open ? ` · pauses while a ${w.pause_while_pr_open}* PR is open` : "",
-          w.enabled ? lastOkText(st) : "",
-          st?.nextTick ? ` · next ${new Date(st.nextTick).toLocaleTimeString()}` : ""),
-        w.enabled && watcherNext(w).length ? h("div", {}, h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "6px" } }, "What happens next:"), nextList(watcherNext(w))) : null,
-        w.source === "monitor" ? storiesRow(mon, reload) : null,
-        w.source === "monitor" ? monitorLists(mon, reload) : null,
-        watcherNotes(st),
-        st?.lastError ? h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "mono" }, st.lastError)) : null,
-        st?.lastActions?.length ? h("details", {}, h("summary", {}, `Recent activity (${st.lastActions.length})`), h("pre", { class: "mono" }, st.lastActions.join("\n"))) : null);
-    })) : h("div", { class: "empty" },
+      monitor.length ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor(null))) && reload() }, "+ Add the monitor"),
+      add()),
+    watchers.length ? [
+      ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
+        h("p", { class: "muted", style: { margin: "0 0 6px" } }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null))),
+      section("Repository not connected any more", gone, "gone"),
+      section("The Foundry itself", monitor, "monitor"),
+      section("From config.yaml", file, "file"),
+    ] : h("div", { class: "empty" },
       h("p", {}, "No watchers yet. A watcher checks a GitHub repo on a schedule and runs a flow: for labelled issues, review comments, red CI on the default branch, or a recurring chore."),
-      h("button", { class: "primary", onClick: async () => (await editWatcher(null, flows)) && reload() }, "+ Add watcher")),
+      add()),
     h("p", { class: "muted", style: { marginTop: "16px" } },
       "Watchers run inside this server. To keep them running after you close the terminal or restart your Mac: ",
       h("code", {}, "scf service install")));

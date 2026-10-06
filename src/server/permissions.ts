@@ -7,6 +7,7 @@ import type { ApiContext } from "./server.js";
 /**
  * Who may make which API call. An admin may make every call in the table; a user only the calls marked `yes`,
  * and the calls marked `own` on runs the user started (any other run answers 404, like an unknown one). A call that is not in the table is answered with 404.
+ * A GET call with `?as=<id>` from an admin with a running view is answered with the rules of that user (see view-as.ts); `GET /api/session` ignores it.
  * The routes /api/session, /api/setup and /api/set-password need no session and are not in the table.
  */
 export type UserAccess = "yes" | "no" | "own";
@@ -41,7 +42,7 @@ export const RULES: Rule[] = [
   r("POST", "providers/test", "no", "test a provider"),
   r("GET", "evals", "no", "eval reports"),
   r("GET", "stats", "no", "statistics"),
-  r("GET", "flows", "yes", "list flows (a user sees the published flows only)"),
+  r("GET", "flows", "yes", "list flows (a user sees the published flows only; an admin gets that list with `?published=1`)"),
   r("GET", "flows/:name", "no", "read a flow"),
   r("PUT", "flows/:name", "no", "save a flow"),
   r("DELETE", "flows/:name", "no", "delete a flow"),
@@ -53,12 +54,13 @@ export const RULES: Rule[] = [
   r("GET", "queue", "yes", "the queue (a user sees their own queued runs and how many are ahead)"),
   r("GET", "runs", "yes", "list runs (a user sees their own)"),
   r("GET", "run-owners", "no", "the accounts that have runs, for the owner filter"),
-  r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories)"),
+  r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run"),
-  r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session)"),
-  r("POST", "runs/:id/approve", "own", "approve a run, with a note"),
-  r("POST", "runs/:id/reject", "own", "reject a run, with a note"),
+  r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see \"A run of a closed issue\" in chapter 3)"),
+  r("POST", "runs/:id/answer", "own", "answer the questions a run stopped with; the run continues with the answer"),
+  r("POST", "runs/:id/approve", "own", "approve a run, with a note; 409 for a closed issue, as for resume"),
+  r("POST", "runs/:id/reject", "own", "reject a run, with a note; 409 for a closed issue, as for resume"),
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),
   r("GET", "runs/:id/diff", "own", "the changes of a run"),
   r("GET", "runs/:id/transcript/:n", "no", "the transcript of a step"),
@@ -70,7 +72,7 @@ export const RULES: Rule[] = [
   r("POST", "your-turn/dismiss", "no", "dismiss an item"),
   r("POST", "your-turn/restore", "no", "restore dismissed items"),
   r("GET", "your-turn/detail", "no", "the questions, plan or split of an item"),
-  r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue"),
+  r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume"),
   r("GET", "clarity", "no", "how long items waited for you, and what Your turn missed"),
   r("POST", "password", "yes", "change your own password (the other sessions of the account end)"),
   r("GET", "credentials", "yes", "your stored credentials"),
@@ -97,6 +99,13 @@ export const RULES: Rule[] = [
   r("GET", "admin/repos", "no", "the repositories of all accounts, with their settings"),
   r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches and branch names of a repository"),
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
+  r("GET", "admin/repos/:id/watchers", "no", "the watchers of a repository, with status and holds"),
+  r("POST", "admin/repos/:id/watchers", "no", "add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API)"),
+  r("PUT", "admin/repos/:id/watchers/:wid", "no", "change a watcher of a repository, or enable or disable it"),
+  r("DELETE", "admin/repos/:id/watchers/:wid", "no", "delete a watcher of a repository"),
+  r("POST", "admin/view-as", "no", "start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line"),
+  r("DELETE", "admin/view-as", "no", "end the view of a user's display"),
+  r("GET", "admin/credentials", "no", "the stored credentials of all accounts, without any secret"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
   r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
@@ -111,6 +120,16 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/proposals/:pid/reject", "yes", "reject a proposed entry of your refinement session; it is removed"),
   r("PUT", "refinement/:id/map/:eid", "yes", "change the text of a rule, example or open question of your refinement session"),
   r("DELETE", "refinement/:id/map/:eid", "yes", "remove a rule, example or open question from your refinement session"),
+  r("POST", "refinement/:id/drafts", "yes", "add an empty story draft to your refinement session (at most 20)"),
+  r("PUT", "refinement/:id/drafts/:did", "yes", "save what you typed in a story draft of your refinement session; only the fields in the body change"),
+  r("DELETE", "refinement/:id/drafts/:did", "yes", "remove a story draft from your refinement session"),
+  r("POST", "refinement/:id/drafts/:did/suggest", "yes", "ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time)"),
+  r("POST", "refinement/:id/drafts/:did/review", "yes", "ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes"),
+  r("POST", "refinement/:id/drafts/:did/impact", "yes", "ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes"),
+  r("POST", "refinement/:id/drafts/:did/move-to-notes", "yes", "move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish"),
+  r("POST", "refinement/:id/drafts/:did/suggestions/:sid/accept", "yes", "accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft"),
+  r("POST", "refinement/:id/drafts/:did/suggestions/:sid/reject", "yes", "reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed"),
+  r("PUT", "refinement/:id/epic", "yes", "set or clear the Epic of your refinement session"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */

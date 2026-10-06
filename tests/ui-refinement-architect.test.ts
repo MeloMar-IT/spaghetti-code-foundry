@@ -69,6 +69,8 @@ afterEach(() => {
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const main = () => (document as any).getElementById("main") as FakeElement;
+/** The part of the page above the drafts: the part a poll must not draw again when nothing changed. */
+const upper = () => main().children[0] as FakeElement;
 const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
 /** True for an element inside a part of the talk (ui/refinement-talk.js). */
 const inTalk = (el: FakeElement): boolean => {
@@ -104,6 +106,41 @@ describe("pure functions", () => {
     expect(ui.architectStatus({ state: "running", doing: "Reading the open issues." })).toMatchObject({ busy: true, detail: "Reading the open issues." });
     expect(ui.architectStatus({ state: "paused", reason: "The usage limit is reached; ask again later" })).toMatchObject({ busy: false, text: "The architect paused.", detail: "The usage limit is reached; ask again later." });
     expect(ui.architectStatus({ state: "failed", reason: "It broke." })).toMatchObject({ bad: true, detail: "It broke." });
+  });
+  it("architectStatus for a suggestion", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "suggest" })).toMatchObject({ busy: true, text: "The architect is waiting for its turn.", detail: "Then it writes a suggestion." });
+    expect(ui.architectStatus({ state: "running", kind: "suggest", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is writing a suggestion.", detail: "Checking the suggestion." });
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "suggest")).toBe("Checking the suggestion.");
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "question")).toBe("Checking the answer.");
+  });
+  it("askLabel for a suggestion", () => {
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "suggest", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe("Refresh");
+    expect(ui.askLabel(session({ architect: { state: "failed", kind: "suggest", reason: "x" } }))).toBe(ASK_LABEL);
+  });
+  it("architectStatus and askLabel for a review", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "review" })).toMatchObject({ busy: true, text: "The architect is waiting for its turn.", detail: "Then it reviews your draft." });
+    expect(ui.architectStatus({ state: "running", kind: "review", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is reviewing your draft.", detail: "Checking the review." });
+    expect(ui.activityText("Check the form of the architect's answer and pass it on", "review")).toBe("Checking the review.");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "review", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "review", reason: "x" } }))).toBe("Refresh");
+  });
+  it("the brief part draws no line for a review run", async () => {
+    page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
+    await show();
+    const upperPart = main().children[0] as FakeElement;
+    expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
+    expect(upperPart.textContent).not.toContain("reviewing your draft");
+  });
+  it("the brief part draws no line for a suggestion run", async () => {
+    page = session({ brief: BRIEF, architect: { state: "running", kind: "suggest", draft: "d", field: "title", doing: "x" } });
+    await show();
+    // the line of a suggestion run is on the draft page (here: at the top of Story drafts, as its draft is not there)
+    const upperPart = main().children[0] as FakeElement;
+    expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
+    expect(upperPart.textContent).not.toContain("writing a suggestion");
   });
   it("activityText never shows a folder or file name of the run", () => {
     for (const d of [running.doing, "Read the open issues with their comments into issues.md", "The architect reads the code and the issues and writes the context brief", "Check that the brief says so when the backlog was larger than what was read; pass the brief on", "Copy into out/x.json"]) {
@@ -218,22 +255,22 @@ describe("busy", () => {
   it("does not redraw an equal answer", async () => {
     page = session({ architect: running });
     await show();
-    const before = main().children;
+    const before = upper().children;
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
   });
   it("stops with the cleanup; a held answer is not drawn and starts no timer", async () => {
     page = session({ architect: running });
     await show();
     getMode = "hold";
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    const before = main().children;
+    const before = upper().children;
     page = session({ architect: running, title: "Changed" });
     cleanup();
     getHold!(1);
     getMode = "ok";
     await flush();
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
     gets = [];
     await vi.advanceTimersByTimeAsync(3 * ui.POLL_MS);
     expect(gets).toEqual([]);
@@ -259,13 +296,13 @@ describe("busy", () => {
     expect(gets.length).toBe(1); // the replacement render polls
     getMode = "hold";
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    const before = main().children;
+    const before = upper().children;
     first();
     page = session({ architect: running, title: "Changed" });
     getHold!(1);
     getMode = "ok";
     await flush();
-    expect(main().children).toBe(before);
+    expect(upper().children).toBe(before);
     gets = [];
     await vi.advanceTimersByTimeAsync(3 * ui.POLL_MS);
     expect(gets).toEqual([]);

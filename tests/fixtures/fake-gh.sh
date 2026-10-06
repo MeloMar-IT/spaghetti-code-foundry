@@ -1,7 +1,24 @@
 #!/bin/sh
 # Stand-in for the GitHub CLI. Logs every call to $FAKE_GH_LOG; "repo clone <url> <folder> -- <git flags>" clones $FAKE_GH_REMOTE into the folder.
 # State lives next to the log: $FAKE_GH_LOG.pr (PR url once created), $FAKE_GH_LOG.checks (CI call count).
+# $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
+# "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
+if [ -n "$FAKE_GH_AUTH_LOG" ]; then
+  if [ -z "${GH_CONFIG_DIR+x}" ]; then cfg=host; else cfg=$(ls -A "$GH_CONFIG_DIR" 2>/dev/null | wc -l | tr -d ' '); fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "${GH_TOKEN:--}" "${GITHUB_TOKEN:--}" "${GH_ENTERPRISE_TOKEN:--}" "$cfg" "$*" >> "$FAKE_GH_AUTH_LOG"
+fi
 echo "gh $*" >> "$FAKE_GH_LOG"
+# $FAKE_GH_TOKEN_BY_REPO (JSON {"owner/name": "token"} or {"owner/name": ["token", …]}): a call for a listed repository whose GH_TOKEN is not
+# accepted fails with 401. The repository is the --repo value, "api repos/<o>/<n>/…" or "repo view <o/n>".
+if [ -n "$FAKE_GH_TOKEN_BY_REPO" ]; then
+  tr_repo=""; tr_prev=""; for a in "$@"; do [ "$tr_prev" = "--repo" ] && tr_repo="$a"; tr_prev="$a"; done
+  case "$1 $2" in "api repos/"*) tr_repo=${2#repos/}; tr_repo=$(echo "$tr_repo" | cut -d/ -f1-2) ;; "repo view") tr_repo=$3 ;; esac
+  if [ -n "$tr_repo" ] && ! node -e 'const m=JSON.parse(process.env.FAKE_GH_TOKEN_BY_REPO)[process.argv[1]];if(m===undefined)process.exit(0);process.exit([].concat(m).includes(process.env.GH_TOKEN||"")?0:1)' "$tr_repo"; then
+    echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1
+  fi
+fi
+# $FAKE_GH_NO_USER=1: "api user" fails like it does for an app installation token.
+if [ -n "$FAKE_GH_NO_USER" ] && [ "$1 $2" = "api user" ]; then echo "HTTP 403: Resource not accessible by integration (https://api.github.com/user)" >&2; exit 1; fi
 # $FAKE_GH_EXPECT_TOKEN (set, also when empty): a call whose GH_TOKEN differs fails like GitHub does for a bad token.
 if [ -n "${FAKE_GH_EXPECT_TOKEN+x}" ] && [ "$GH_TOKEN" != "$FAKE_GH_EXPECT_TOKEN" ]; then echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1; fi
 if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi
@@ -9,6 +26,12 @@ if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi
 if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$FAKE_GH_HOLD" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
+# $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
+fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
+if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
+  FAKE_GH_ISSUES=$(node -e 'const m=JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO);console.log(JSON.stringify(m[process.argv[1]]||[]))' "$fake_repo"); export FAKE_GH_ISSUES; unset FAKE_GH_FRESH
+fi
 # Edit or delete of a comment (gh api repos/…/issues/comments/<id> [-X DELETE]): logged, the edit with the body field of the JSON on stdin.
 all="$*"
 case "$all" in "api repos/"*"/issues/comments/"*)
@@ -39,6 +62,58 @@ case "$all" in
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$FAKE_GH_LOG.issues.json" "${all##*/issues/}"
     exit $? ;;
 esac
+# $FAKE_GH_STORIES=1: the issues made by the REST POST (bug stories) are real to "issue list/view/close" too. Without it, nothing here runs.
+# list: $FAKE_GH_ISSUES plus the open stories with the --label; view/close: for a number found in $FAKE_GH_LOG.issues.json.
+STORY_JS='const fs=require("fs"),f=process.argv[1],[mode,...a]=process.argv.slice(2);const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(a[0]));
+if(mode==="has")process.exit(i?0:1);
+if(mode==="list"){const base=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const extra=l.filter(x=>x.state==="open"&&x.labels.some(y=>y.name===a[0])).map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels,createdAt:x.created_at,state:"OPEN"}));console.log(JSON.stringify([...base,...extra]))}
+if(mode==="labels")console.log(i.labels.map(y=>y.name).join("\n"));
+if(mode==="title")console.log(i.title);
+if(mode==="text")console.log("# #"+i.number+": "+i.title+"\n"+i.html_url+"\nLabels: "+i.labels.map(y=>y.name).join(", ")+"\n\n"+i.body);
+if(mode==="close"){i.state="closed";i.state_reason=a[1]||"completed";i.closed_at=new Date().toISOString();fs.writeFileSync(f,JSON.stringify(l))}'
+story() { node -e "$STORY_JS" "$FAKE_GH_LOG.issues.json" "$@"; }
+if [ -n "$FAKE_GH_STORIES" ]; then
+  case "$1 $2" in
+    "issue list") case "$*" in *"--state closed"*|*"--search"*) ;;
+      *) lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done
+         story list "$lab"; exit 0 ;; esac ;;
+    "issue view") if story has "$3" 2>/dev/null; then
+      case "$*" in *"--json labels --jq"*) story labels "$3"; exit 0 ;; *"-q .title"*) story title "$3"; exit 0 ;;
+        *"--json number,title,body"*) story text "$3"; exit 0 ;; # pull_ticket (its jq would build this text)
+        *"--json"*) ;; *) story text "$3"; exit 0 ;; esac; fi ;;
+    "issue close") if story has "$3" 2>/dev/null; then
+      reason=completed; prev=""; for a in "$@"; do [ "$prev" = "--reason" ] && reason="$a"; prev="$a"; done
+      story close "$3" "$reason"; exit 0; fi ;;
+  esac
+fi
+# "api graphql --input -": issue states. Answers every alias i<N> from $FAKE_GH_FRESH, else $FAKE_GH_ISSUES_BY_REPO[owner/name], else $FAKE_GH_ISSUES; default OPEN.
+# $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
+# $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail.
+case "$all" in "api graphql"*)
+  gn=$(($(cat "$FAKE_GH_LOG.graphql" 2>/dev/null || echo 0) + 1)); echo "$gn" > "$FAKE_GH_LOG.graphql"
+  if [ -n "$FAKE_GH_GRAPHQL_FAIL_AFTER" ] && [ "$gn" -gt "$FAKE_GH_GRAPHQL_FAIL_AFTER" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    const e = process.env, q = input.query || "", v = input.variables || {};
+    const aliases = [...q.matchAll(/i(\d+): issue\(number: (\d+)\)/g)];
+    if (e.FAKE_GH_GRAPHQL_MAX && aliases.length > Number(e.FAKE_GH_GRAPHQL_MAX)) { console.error("gh: query too large"); process.exit(1); }
+    let list;
+    if (e.FAKE_GH_ISSUES_BY_REPO) list = JSON.parse(e.FAKE_GH_ISSUES_BY_REPO)[v.owner + "/" + v.name] || [];
+    else list = JSON.parse(e.FAKE_GH_FRESH || e.FAKE_GH_ISSUES || "[]");
+    const missing = (e.FAKE_GH_GRAPHQL_MISSING || "").split(/\s+/).filter(Boolean);
+    const repository = {}, errors = [];
+    for (const m of aliases) {
+      const n = Number(m[2]);
+      if (missing.includes(String(n))) { repository["i" + n] = null; errors.push({ type: "NOT_FOUND", path: ["repository", "i" + n], message: "Could not resolve to an Issue with the number of " + n + "." }); continue; }
+      const found = list.find((x) => x.number === n);
+      repository["i" + n] = { state: String((found && found.state) || "OPEN").toUpperCase() };
+    }
+    const body = { data: { repository } };
+    if (errors.length) { body.errors = errors; console.log(JSON.stringify(body)); console.error("gh: Could not resolve to an Issue"); process.exit(1); }
+    console.log(JSON.stringify(body));
+  '
+  exit $? ;;
+esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")
@@ -52,7 +127,9 @@ case "$1 $2" in
       *"--json state") node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN"};console.log(JSON.stringify({state:i.state||"OPEN"}))' "$3" ;;
       *"--json state,labels"*) node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN",labels:[]};console.log(JSON.stringify({state:i.state||"OPEN",labels:i.labels||[]}))' "$3" ;;
       *"--json title,body,labels,comments"*) c=${FAKE_GH_PARENT:-}; [ -n "$c" ] || c='{"title":"Add a feature","body":"**Epic:** Updates\n\nPlease add feature.txt","labels":[{"name":"enhancement"},{"name":"Factory_go"},{"name":"Factory_working"}],"comments":[]}'; printf '%s' "$c" ;;
-      *"--json comments,labels"*) c=${FAKE_GH_COMMENTS:-}; [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
+      *"--json comments,labels"*) c=""
+         if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
+         [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}; [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       *) printf '# #%s: Add a feature\nhttps://github.com/owner/repo/issues/%s\n\nPlease add feature.txt\n' "$3" "$3"
          if [ -n "$FAKE_GH_ISSUE_EXTRA" ]; then printf '%s\n' "$FAKE_GH_ISSUE_EXTRA"; fi ;;

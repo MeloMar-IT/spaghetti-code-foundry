@@ -1,16 +1,17 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditAction, changedKeys } from "../auth/audit.js";
-import { watcherOwnerProblem } from "../auth/run-owner.js";
 import { hasAdmin } from "../auth/users.js";
 import { CONFIG_PATH, ConfigSchema, saveConfig } from "../config.js";
 import { spentToday } from "../engine/state.js";
 import { cleanRuns } from "../clean.js";
 import { listEvalReports } from "../evals.js";
 import { clickThrough } from "../notify.js";
+import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { computeStats } from "../stats.js";
 import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
-import { watchersWithNext } from "./next.js";
+import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
+import { watcherRows } from "./api-repos.js";
 import type { Route } from "./server.js";
 
 export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
@@ -31,11 +32,11 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
 
   if (seg[0] === "config") {
-    if (method === "GET") return send(res, 200, ctx.config()), true;
+    if (method === "GET") return send(res, 200, ctx.fileConfig()), true;
     if (method === "PUT") {
       const body = await readJson(req);
       let saved;
-      const before = ctx.config();
+      const before = ctx.fileConfig();
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
         const parsed = ConfigSchema.parse(body);
@@ -48,7 +49,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         }
         const problem = listenProblem(next.listen, hasAdmin);
         if (problem) throw new Error(problem);
-        const bad = watcherOwnerProblem(parsed.watchers, ctx.config().watchers);
+        const inFile = before.watchers;
+        // ids are unique on the whole install: only new duplicates and new collisions with the store are refused
+        const stored = [...ctx.config().watchers.filter((w) => w.repoId !== undefined), ...ctx.blockedWatchers()];
+        const bad = fileWatcherProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
         if (bad) throw new Error(bad);
         saved = saveConfig(body);
       } catch (e) {
@@ -63,7 +67,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
 
   if (seg[0] === "watchers") {
-    if (!seg[1] && method === "GET") return send(res, 200, watchersWithNext(ctx)), true;
+    if (!seg[1] && method === "GET") return send(res, 200, watcherRows(ctx)), true;
     if (seg[1] && seg[2] === "tick" && method === "POST") return send(res, 200, await watchers.runNow(seg[1])), true;
   }
 
@@ -99,7 +103,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] === "evals" && method === "GET") return send(res, 200, listEvalReports()), true;
 
   if (seg[0] === "stats" && method === "GET") {
-    return send(res, 200, computeStats(scheduler.list(2000))), true;
+    const stats = computeStats(scheduler.list(2000));
+    const names = ownerNames();
+    const byUser = stats.byUser.map((u) => ({ owner: u.owner, name: u.owner ? names.get(u.owner) ?? DELETED_OWNER : "no owner", runs: u.runs, costUsd: u.costUsd }));
+    return send(res, 200, { ...stats, byUser }), true;
   }
   return false;
 };

@@ -83,6 +83,7 @@ const GLOSSARY: Record<NextKind, Words> = {
   monitor_needs_you: { status: "waiting for you — two fixes did not work", help: "The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page." },
   watcher_stale: { status: "watcher silent", help: "The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page." },
   closed_elsewhere: { status: "closed on GitHub, run still busy", help: "The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted." },
+  issue_closed: { status: "issue closed", help: "The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work." },
   restart: { status: "restarting soon", help: "The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done." },
   superseded: { status: "replaced by a newer run", help: "A newer run took over the same work. Nothing to do with this run." },
   done: { status: "done", help: "The work is finished. Nothing to do." },
@@ -102,7 +103,7 @@ export function statusHelp(kind: NextKind, facts: WordFacts = {}): string {
   return pick(GLOSSARY[kind].help, facts);
 }
 
-export type WatcherStateName = "active" | "error" | "disabled";
+export type WatcherStateName = "active" | "error" | "disabled" | "paused";
 
 /** A watcher's own state, in the same words as a record: `name`, plain `status` and two-sentence `help`. */
 export interface WatcherState { name: WatcherStateName; status: string; help: string }
@@ -110,6 +111,7 @@ export interface WatcherState { name: WatcherStateName; status: string; help: st
 const WATCHER_STATES = {
   active: { status: "active", help: "The watcher checks GitHub on its schedule and starts runs. Nothing to do — it works by itself." },
   disabled: { status: "disabled", help: "The watcher is switched off, so it checks nothing and starts nothing. Enable it on the Watchers page when you want it to work again." },
+  paused: { status: "paused: the owner is blocked", help: "The owner of this repository is blocked, so the watcher checks nothing and starts nothing. It starts again when the account is unblocked; until then another problem of the watcher is not shown." },
 } as const;
 
 /** The words for a watcher's state (active, error or disabled). An error uses the "watcher error" words. */

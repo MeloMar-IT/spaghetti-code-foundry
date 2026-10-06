@@ -257,7 +257,7 @@ In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
 
 | Placeholder | Value |
 |---|---|
-| `{{task}}` | The task text the user typed when starting the run |
+| `{{task}}` | The task text the user typed when starting the run, followed (after a resume) by the answers given on the run page, oldest first, under the heading `## Answers to the questions of this run (oldest first)` |
 | `{{vars.NAME}}` | A flow variable |
 | `{{workdir}}` | The workspace path |
 | `{{run.id}}`, `{{run.dir}}`, `{{run.branch}}` | Run id, the run's own folder (for logs/files), the run's branch |
@@ -267,7 +267,8 @@ In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
 
 A flow variable named **`agent_env`** is special: its `KEY=value` pairs (separated by `;` or new
 lines) are added to the environment of every agent step — e.g. `agent_env: JAVA_HOME=/opt/jdk21`
-so the agent can run `./gradlew`. (`PATH`, tokens, `FACTORY_*` and `SCF_*` can't be set this way.)
+so the agent can run `./gradlew`. (`PATH`, tokens, `FACTORY_*` and `SCF_*` can't be set this way; in a
+run that never uses the machine's login, `GH_*`, `GITHUB_*`, `GIT_*`, `SSH_*`, `XDG_*` and `LC_ALL` are ignored too.)
 
 **Shell `run` may only use `{{vars.*}}`, `{{workdir}}` and `{{run.*}}`** — never `{{task}}` or
 `{{steps.*}}` (that text is untrusted and would be a shell-injection risk). In shell steps, use
@@ -275,7 +276,7 @@ these environment variables instead (always quote them: `"$FACTORY_TASK"`):
 
 | Variable | Value |
 |---|---|
-| `$FACTORY_TASK` | The task text |
+| `$FACTORY_TASK` | The task text, followed by the answers given on the run page under the heading `## Answers to the questions of this run (oldest first)` (also `$SCF_TASK`) |
 | `$FACTORY_OUT_<STEP_ID>` | Output of a step; id upper-cased, `-` → `_` (step `run-tests` → `$FACTORY_OUT_RUN_TESTS`) |
 | `$FACTORY_VAR_<NAME>` | A flow variable (`github_repo` → `$FACTORY_VAR_GITHUB_REPO`) |
 | `$FACTORY_RUN_ID`, `$FACTORY_WORKDIR`, `$FACTORY_BRANCH` | Run id, workspace, branch |
@@ -319,6 +320,11 @@ hotfix (an issue with a hotfix label, default `bug`):
    │         before the change)
 feature (everything else):  develop ──► feature/42-… ──► develop      (main: with the daily release)
 ```
+
+The monitor finds the commit of a fix in the output of the run. A succeeded step `push_develop`
+prints a line `COMMIT: <40 characters>`; on the hotfix path the succeeded step `hotfix_done` prints
+`MAIN: <40 characters>`. Keep these lines if you copy the flow. Without one, the monitor does not
+know the commit and waits for the next server start or `fix_wait_days`.
 
 ## Patterns
 

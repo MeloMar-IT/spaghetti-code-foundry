@@ -5,6 +5,10 @@ import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
+import { draftRemarks } from "../refinement/draft-check.js";
+import { impactView } from "../refinement/draft-impact.js";
+import { reviewView } from "../refinement/draft-review.js";
+import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
   DROP_KEEP_MS,
@@ -12,7 +16,14 @@ import {
   type RefinementErrorCode,
   type Session,
   acceptProposal,
+  acceptSuggestionOf,
+  addDraft,
   answerQuestion,
+  moveToNotesOf,
+  rejectSuggestionOf,
+  removeDraft,
+  saveDraft,
+  setEpic,
   changeEntry,
   rejectProposal,
   removeEntry,
@@ -36,6 +47,8 @@ const STATUS: Record<RefinementErrorCode, number> = {
   "bad-answer": 400,
   "bad-text": 400,
   "bad-round": 400,
+  "bad-draft": 400,
+  "bad-epic": 400,
   "no-owner": 404,
   "not-yours": 403,
   limit: 400,
@@ -75,11 +88,20 @@ function githubNames(userId: string): string[] {
   return out;
 }
 
+/** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
+const draftView = (s: Session) => (d: Draft) => {
+  const { review: _stored, impact: _impact, ...rest } = d;
+  const review = reviewView(d);
+  const impact = impactView(d, s.drafts);
+  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
+};
+
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
 function view(ctx: ApiContext, s: Session, viewer: User) {
   const repoAvailable = ownsRepo(s.owner, s.repo);
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
+  const draftsHidden = !repoAvailable && s.drafts.length > 0;
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -94,7 +116,9 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     title: s.title,
     idea: s.idea,
     state: s.state,
-    drafts: s.drafts,
+    // Like the talk, the drafts are not shown while the repository is not theirs.
+    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s)) }),
+    ...(s.epic !== undefined ? { epic: s.epic } : {}),
     architect: architectView(deps(ctx), s),
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
     ...(s.brief && repoAvailable ? { brief: s.brief } : {}),
@@ -104,7 +128,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
       at: l.at,
       what: l.what,
       who: who(l.by),
-      ...(l.detail !== undefined && !(talkHidden && isTalkKind(l.what)) ? { detail: l.detail } : {}),
+      ...(l.detail !== undefined && !(talkHidden && isTalkKind(l.what)) && !(!repoAvailable && isDraftKind(l.what)) ? { detail: l.detail } : {}),
       ...(l.list !== undefined ? { list: l.list } : {}),
     })),
     created: s.created,
@@ -224,6 +248,35 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 4 && seg[2] === "map" && method === "DELETE") {
     return send(res, 200, guarded(ctx, () => view(ctx, settled(removeEntry(actor, seg[1]!, seg[3]!).id), user))), true;
+  }
+  if (seg.length === 3 && seg[2] === "drafts" && method === "POST") {
+    return send(res, 201, guarded(ctx, () => view(ctx, settled(addDraft(actor, seg[1]!).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "drafts" && method === "PUT") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(saveDraft(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "drafts" && method === "DELETE") {
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(removeDraft(actor, seg[1]!, seg[3]!).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "suggest" && method === "POST") {
+    const body = await readJson(req);
+    return startRun({ kind: "suggest", draft: seg[3]!, field: body.field });
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "suggestions" && (seg[6] === "accept" || seg[6] === "reject") && method === "POST") {
+    const body = await readJson(req);
+    const decide = seg[6] === "accept" ? acceptSuggestionOf : rejectSuggestionOf;
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(decide(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
+  }
+  if (seg.length === 3 && seg[2] === "epic" && method === "PUT") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(setEpic(actor, seg[1]!, body).id), user))), true;
   }
   return false;
 };

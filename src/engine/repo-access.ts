@@ -33,6 +33,8 @@ export function stepRepoAccess(
   vars: Record<string, string>,
 ): RepoAccess | undefined {
   if (!wantsRepoAccess(step, depth, flowName, summary.source)) return undefined;
+  // The open issues are read only for ask=impact: for every other ask the step gets no sign-in (and no app token is made).
+  if (flowName === "refine-round" && step.id === "list_issues" && depth === 0 && vars.ask !== "impact") return undefined;
   const refinement = isRefinementRun(summary.source);
   if (!summary.owner && !refinement) return undefined;
   return repoAccess(summary.owner, vars.github_repo ?? "", { unlisted: refinement ? "refuse" : "admin-server" });
@@ -42,6 +44,18 @@ export function stepRepoAccess(
 export const ghConfigDir = (): string => mkdtempSync(join(tmpdir(), "scf-gh-"));
 
 export const removeGhConfigDir = (dir: string): void => rmSync(dir, { recursive: true, force: true });
+
+/** What makes `gh` use only this token: it replaces the host's variables, gh gets an empty settings folder. `undefined` removes a variable. */
+export function ghTokenEnv(token: string, ghDir = ""): Record<string, string | undefined> {
+  return {
+    GH_TOKEN: token,
+    GH_ENTERPRISE_TOKEN: undefined,
+    GITHUB_TOKEN: undefined,
+    GH_HOST: "github.com",
+    ...(ghDir ? { GH_CONFIG_DIR: ghDir } : {}),
+    GH_PROMPT_DISABLED: "1",
+  };
+}
 
 /**
  * The env that makes a step use only the stored token: it replaces the bot's GH_TOKEN, gh gets an empty settings folder,
@@ -65,12 +79,7 @@ export function repoTokenEnv(access: RepoAccess, env: Record<string, string>, gh
     GIT_TRACE_CURL_NO_DATA: undefined,
     GIT_CURL_VERBOSE: undefined,
     GIT_TRACE_REDACT: "1",
-    GH_TOKEN: access.token,
-    GH_ENTERPRISE_TOKEN: undefined,
-    GITHUB_TOKEN: undefined,
-    GH_HOST: "github.com",
-    ...(ghDir ? { GH_CONFIG_DIR: ghDir } : {}),
-    GH_PROMPT_DISABLED: "1",
+    ...ghTokenEnv(access.token, ghDir),
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_PARAMETERS: "",

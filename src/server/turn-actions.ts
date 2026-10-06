@@ -1,7 +1,8 @@
 import { auditAction, type EventAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
-import { canWrite, commentOnIssue, commentsAfter, ghLogin, isBot, issueComments, mayWrite, repoPermission, setLabels } from "../github.js";
+import { canWrite, commentOnIssue, commentsAfter, ghActsAsApp, ghLogin, isBot, issueComments, mayWrite, repoPermission, setLabels, withGhEnv } from "../github.js";
 import { labelNames } from "../queue/watcher.js";
+import { gateRun } from "../run-gate.js";
 import { commentDigest, composeComment, findComment, parseProposal, parseQuestions, visibleText, type ComposeAction, type Proposal, type Question } from "../turn-actions.js";
 import type { TurnAct, YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
@@ -66,16 +67,39 @@ function target(item: { next: { repo: string; issue?: number } }) {
 
 const unreachable = (what: string, e: unknown) => new HttpError(502, `${what}: ${(e as Error).message.split("\n")[0]}`);
 
+/**
+ * Runs `fn` with the GitHub sign-in of the item's watcher (its repository's token or app; the host login for a watcher of
+ * config.yaml). Without the watcher there is no sign-in to use, and the host login is never a fallback.
+ */
+async function asRepo<T>(ctx: ApiContext, watcherId: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const cfg = ctx.watchers.tracked().find((t) => t.watcher.id === watcherId)?.watcher;
+  if (!cfg) throw new HttpError(409, "the watcher no longer waits for this — look again in a moment");
+  let session;
+  try {
+    session = await ctx.watchers.identityOf(cfg)?.prepare();
+  } catch (e) {
+    throw new HttpError(409, (e as Error).message);
+  }
+  return withGhEnv(session, fn);
+}
+
 /** Reads the issue and finds the Foundry's comment. Only comments by the account the Foundry posts as count: the marker alone can be copied by anyone. */
 async function foundryComment(repo: string, issue: number, kind: string, runId?: string) {
   let comments;
   try {
-    const login = await ghLogin(GH_TIMEOUT_MS);
-    comments = { login, list: await issueComments(repo, issue, GH_TIMEOUT_MS) };
+    if (ghActsAsApp()) {
+      // An app has no user to ask for: gh says which comments the app wrote itself.
+      const list = await issueComments(repo, issue, GH_TIMEOUT_MS);
+      comments = { login: undefined, list, own: list.filter((c) => c.viewerDidAuthor === true) };
+    } else {
+      const login = await ghLogin(GH_TIMEOUT_MS);
+      const list = await issueComments(repo, issue, GH_TIMEOUT_MS);
+      comments = { login, list, own: list };
+    }
   } catch (e) {
     throw unreachable("could not read the issue on GitHub", e);
   }
-  const c = findComment(comments.list, kind, runId, comments.login);
+  const c = findComment(comments.own, kind, runId, comments.login);
   if (!c) throw new HttpError(409, "the Foundry's comment was not found on the issue; use the link to GitHub");
   return { c, list: comments.list };
 }
@@ -87,7 +111,7 @@ export async function turnDetail(ctx: ApiContext, key: string, now = new Date())
   const base = { stamp: item.stamp, acts: item.acts, kind: item.next.kind };
   if (item.next.kind === "failed") return { ...base, text: item.next.text };
   const { repo, issue } = target(item);
-  const { c } = await foundryComment(repo, issue, item.next.kind, item.next.runId);
+  const { c } = await asRepo(ctx, item.watcher, () => foundryComment(repo, issue, item.next.kind, item.next.runId));
   if (item.next.kind === "questions" || item.next.kind === "planner_questions") {
     const questions = parseQuestions(c.body);
     return { ...base, digest: commentDigest(c), text: visibleText(c.body), questions };
@@ -144,57 +168,70 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
   if (g.busy.has(item.key)) throw new HttpError(409, "this is already being done — look again in a moment");
   g.busy.add(item.key);
   try {
-    // Someone may have answered or decided on GitHub since the watcher's last check: then the watcher takes that, not this.
-    if (req.action !== "retry" && req.action !== "retry_hint") {
-      const { c, list } = await foundryComment(repo, issue, item.next.kind, item.next.runId);
-      const approval = item.next.kind === "approve_plan" || item.next.kind === "approve_split" || item.next.kind === "approval";
-      if (req.digest !== commentDigest(c)) throw new HttpError(409, "the comment on the issue changed since you opened it — look at it again");
-      let later = commentsAfter(list, (x) => x === c);
-      if (approval) {
-        // Like the watcher: a /approve or /reject only counts from someone with write access.
-        later = later.filter((x) => /^\s*\/(approve|reject)\b/im.test(x.body));
-        const ok: typeof later = [];
-        for (const x of later) if (await canWrite(repo, x.author.login)) ok.push(x);
-        later = ok;
-      }
-      if (later.length) throw new HttpError(409, `${approval ? "this was decided" : "this was answered"} on GitHub already — look again in a moment`);
-    }
-    if (req.action === "approve" || req.action === "reject") {
-      let login: string;
-      try {
-        login = await ghLogin(GH_TIMEOUT_MS);
-      } catch (e) {
-        throw unreachable("could not find out which GitHub account the Foundry uses", e);
-      }
-      try {
-        if (!mayWrite(await repoPermission(repo, login, GH_TIMEOUT_MS))) throw new Error("no write access");
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (msg === "no write access" || /\(HTTP 40[34]\)/.test(msg)) {
-          throw new HttpError(409, `the GitHub account "${login}" the Foundry uses has no write access to ${repo}, so its /approve or /reject would be ignored`);
-        }
-        throw unreachable("could not check the write access on GitHub", e);
-      }
-    }
-    const hintedBefore = g.hinted.get(item.key)?.since === item.stamp;
-    if (body && !(req.action === "retry_hint" && hintedBefore)) {
-      try {
-        await commentOnIssue(repo, issue, body, GH_TIMEOUT_MS);
-      } catch (e) {
-        throw unreachable("could not post on the issue", e);
-      }
-      if (req.action === "retry_hint") g.hinted.set(item.key, { since: item.stamp, at: now.toISOString() });
-    }
+    // A closed issue is not retried: nothing is posted or labelled (see run-gate.ts).
     if (req.action === "retry" || req.action === "retry_hint") {
-      try {
-        await setLabels(repo, issue, undefined, [labelNames(tracked.watcher).failed], GH_TIMEOUT_MS);
-      } catch (e) {
-        const first = (e as Error).message.split("\n")[0];
-        throw g.hinted.get(item.key)?.since === item.stamp
-          ? new HttpError(502, `the hint was posted, but the label could not be removed: ${first} — press Retry again; the hint is not posted twice`)
-          : unreachable("could not remove the failed label", e);
-      }
+      const runId = item.next.runId ?? tracked.issues.find((i) => i.issue === issue)?.runId;
+      const found = runId ? ctx.scheduler.get(runId) : undefined;
+      const vars = { ...found?.vars, github_repo: repo, issue: String(issue) };
+      const run = { flow: "", source: undefined, owner: undefined, ...found, vars };
+      const gate = await gateRun(run, ctx.config(), { timeoutMs: GH_TIMEOUT_MS });
+      if (!gate.ok) throw new HttpError(409, gate.message);
     }
+    // Everything that talks to GitHub runs as the watcher's repository (its token or app), like the watcher's own check.
+    await asRepo(ctx, item.watcher, async () => {
+      const app = ghActsAsApp();
+      // Someone may have answered or decided on GitHub since the watcher's last check: then the watcher takes that, not this.
+      if (req.action !== "retry" && req.action !== "retry_hint") {
+        const { c, list } = await foundryComment(repo, issue, item.next.kind, item.next.runId);
+        const approval = item.next.kind === "approve_plan" || item.next.kind === "approve_split" || item.next.kind === "approval";
+        if (req.digest !== commentDigest(c)) throw new HttpError(409, "the comment on the issue changed since you opened it — look at it again");
+        let later = commentsAfter(list, (x) => x === c);
+        if (approval) {
+          // Like the watcher: a /approve or /reject only counts from someone with write access (the app's own comment: gh says it is its own).
+          later = later.filter((x) => /^\s*\/(approve|reject)\b/im.test(x.body));
+          const ok: typeof later = [];
+          for (const x of later) if ((app && x.viewerDidAuthor === true) || (await canWrite(repo, x.author.login))) ok.push(x);
+          later = ok;
+        }
+        if (later.length) throw new HttpError(409, `${approval ? "this was decided" : "this was answered"} on GitHub already — look again in a moment`);
+      }
+      if ((req.action === "approve" || req.action === "reject") && !app) {
+        let login: string;
+        try {
+          login = await ghLogin(GH_TIMEOUT_MS);
+        } catch (e) {
+          throw unreachable("could not find out which GitHub account the Foundry uses", e);
+        }
+        try {
+          if (!mayWrite(await repoPermission(repo, login, GH_TIMEOUT_MS))) throw new Error("no write access");
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (msg === "no write access" || /\(HTTP 40[34]\)/.test(msg)) {
+            throw new HttpError(409, `the GitHub account "${login}" the Foundry uses has no write access to ${repo}, so its /approve or /reject would be ignored`);
+          }
+          throw unreachable("could not check the write access on GitHub", e);
+        }
+      }
+      const hintedBefore = g.hinted.get(item.key)?.since === item.stamp;
+      if (body && !(req.action === "retry_hint" && hintedBefore)) {
+        try {
+          await commentOnIssue(repo, issue, body, GH_TIMEOUT_MS);
+        } catch (e) {
+          throw unreachable("could not post on the issue", e);
+        }
+        if (req.action === "retry_hint") g.hinted.set(item.key, { since: item.stamp, at: now.toISOString() });
+      }
+      if (req.action === "retry" || req.action === "retry_hint") {
+        try {
+          await setLabels(repo, issue, undefined, [labelNames(tracked.watcher).failed], GH_TIMEOUT_MS);
+        } catch (e) {
+          const first = (e as Error).message.split("\n")[0];
+          throw g.hinted.get(item.key)?.since === item.stamp
+            ? new HttpError(502, `the hint was posted, but the label could not be removed: ${first} — press Retry again; the hint is not posted twice`)
+            : unreachable("could not remove the failed label", e);
+        }
+      }
+    });
     markActed(ctx, item.key, item.stamp, now);
     g.hinted.delete(item.key);
     ctx.opts.log?.(`your turn: ${req.action} ${repo}#${issue} by account ${user.id}`);

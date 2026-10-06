@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { claimRunStart } from "../home.js";
-import { redactText, requireRedaction } from "../credentials/redact.js";
+import { CANNOT_READ, redactText, requireRedaction } from "../credentials/redact.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
@@ -24,8 +24,9 @@ import {
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { stepIsolated } from "./isolation.js";
 import { removeSignInDir } from "./repo-access.js";
-import { appendLiveLog, loadRun, saveRun, spentToday, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { prepareWorkspace } from "./workspace.js";
 
@@ -188,10 +189,14 @@ async function drive(
   };
   const lf = learningsFile(summary.vars, summary.repo);
 
+  // The bot's name and token, asked once per run; only steps that keep the machine's login get them.
+  let botOnce: Promise<Record<string, string>> | undefined;
+  const botEnv = () => (botOnce ??= identityEnv(config).catch((e) => ((botOnce = undefined), Promise.reject(e))));
+  const task = taskWithAnswers(summary);
   let baseEnv: Record<string, string>;
   try {
     baseEnv = {
-      FACTORY_TASK: summary.task,
+      FACTORY_TASK: task,
       FACTORY_RUN_ID: summary.runId,
       FACTORY_WORKDIR: summary.workdir!,
       FACTORY_BRANCH: summary.branch ?? "",
@@ -201,8 +206,9 @@ async function drive(
       ...nextStepEnv(),
       ...protectedBranchEnv(config.protected_branches, config.secret_scan),
       ...selfEnv(),
-      ...(await identityEnv(config)),
     };
+    // fails before any step, as before, when the run starts with the machine's login
+    if (!stepIsolated(summary.owner, summary.vars.github_repo)) await botEnv();
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: summary.state.next, lastOutput: "" });
   }
@@ -213,6 +219,7 @@ async function drive(
     summary,
     config,
     baseEnv,
+    botEnv,
     hotfix: hotfixState(summary.flowDef, config),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,
@@ -234,7 +241,7 @@ async function drive(
   const scope: Scope = {
     flow: summary.flowDef,
     ctx: {
-      task: summary.task,
+      task,
       vars: summary.vars,
       workdir: summary.workdir!,
       run: { id: summary.runId, dir: summary.runDir, branch: summary.branch ?? "", history: "" },
@@ -273,6 +280,29 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
+}
+
+export class AnswerRefused extends Error {
+  constructor(public kind: "state" | "size" | "secrets", message: string) {
+    super(message);
+  }
+}
+
+/** Saves an answer with a stopped run that no engine runs. Throws AnswerRefused and writes nothing when it cannot. `undo` puts the old bytes of run.json back. */
+export function saveAnswer(runsDir: string, runId: string, text: string, by: string): { run: RunSummary; undo: () => void } {
+  const s = loadRun(runsDir, runId);
+  if (!s || s.status !== "stopped" || !s.flowDef || !s.state?.next) throw new AnswerRefused("state", "this run did not stop with questions");
+  let clean: string;
+  try {
+    clean = requireRedaction().redact(text);
+  } catch {
+    throw new AnswerRefused("secrets", CANNOT_READ);
+  }
+  if (Buffer.byteLength(clean) > answerRoom(s)) throw new AnswerRefused("size", `the task and all answers together can be at most ${TASK_MAX_BYTES} bytes`);
+  const before = readFileSync(runFile(s.runDir));
+  s.answers = [...(Array.isArray(s.answers) ? s.answers : []), { at: new Date().toISOString(), text: clean, by }];
+  saveRun(s);
+  return { run: s, undo: () => writeFileSync(runFile(s.runDir), before) };
 }
 
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {

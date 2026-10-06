@@ -152,6 +152,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET runs/:id": { path: "runs/nope", user: 404, admin: 404 },
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },
   "POST runs/:id/resume": { path: "runs/nope/resume", body: {}, user: 404, admin: 404 },
+  "POST runs/:id/answer": { path: "runs/nope/answer", body: {}, user: 404, admin: 404 },
   "POST runs/:id/approve": { path: "runs/nope/approve", body: {}, user: 404, admin: 404 },
   "POST runs/:id/reject": { path: "runs/nope/reject", body: {}, user: 404, admin: 404 },
   "GET runs/:id/events": { path: "runs/nope/events", user: 404, admin: 200 },
@@ -203,10 +204,27 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/proposals/:pid/reject": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "DELETE refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, user: 404, admin: 404 },
+  "POST refinement/:id/drafts": { path: `refinement/${UNKNOWN}/drafts`, body: {}, user: 404, admin: 404 },
+  "PUT refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
+  "DELETE refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/suggest": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggest`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/impact": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/impact`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/suggestions/:sid/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/suggestions/:sid/reject": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
+  "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
+  "GET admin/credentials": no("admin/credentials", 200),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
+  "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
+  "POST admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404, {}),
+  "PUT admin/repos/:id/watchers/:wid": no(`admin/repos/${UNKNOWN}/watchers/x`, 404, {}),
+  "DELETE admin/repos/:id/watchers/:wid": no(`admin/repos/${UNKNOWN}/watchers/x`, 404),
+  "POST admin/view-as": no("admin/view-as", 400, {}),
+  "DELETE admin/view-as": no("admin/view-as", 200),
 };
 
 describe("the table", () => {
@@ -218,11 +236,19 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("POST", ["admin", "repos", UNKNOWN, "watchers"])?.path).toBe("admin/repos/:id/watchers");
+    expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");
+    expect(findRule("GET", ["admin", "credentials"])?.path).toBe("admin/credentials");
+    expect(findRule("POST", ["admin", "credentials"])).toBeUndefined();
     expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
     expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");
     expect(findRule("GET", ["monitor", "findings", "0000000000000000"])?.path).toBe("monitor/findings/:id");
     expect(findRule("POST", ["monitor", "story"])?.path).toBe("monitor/story");
+    expect(findRule("POST", ["runs", "abc", "answer"])?.path).toBe("runs/:id/answer");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "impact"])?.path).toBe("refinement/:id/drafts/:did/impact");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();
@@ -244,6 +270,10 @@ describe("the table", () => {
     expect(findRule("POST", ["refinement", "a", "round"])?.path).toBe("refinement/:id/round");
     expect(findRule("POST", ["refinement", "a", "ask"])?.path).toBe("refinement/:id/ask");
     expect(findRule("PUT", ["refinement", "a", "map", "b"])?.path).toBe("refinement/:id/map/:eid");
+    expect(findRule("POST", ["refinement", "a", "drafts"])?.path).toBe("refinement/:id/drafts");
+    expect(findRule("PUT", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
+    expect(findRule("DELETE", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
+    expect(findRule("PUT", ["refinement", "a", "epic"])?.path).toBe("refinement/:id/epic");
     expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
 
@@ -337,6 +367,7 @@ describe("own runs", () => {
     "GET runs/:id": 200,
     "POST runs/:id/cancel": 200,
     "POST runs/:id/resume": 202,
+    "POST runs/:id/answer": 400,
     "POST runs/:id/approve": 202,
     "POST runs/:id/reject": 202,
     "GET runs/:id/events": 200,
@@ -487,6 +518,66 @@ describe("starting a run as a user", () => {
     const { runId } = r.json() as { runId: string };
     await ctx.scheduler.wait(runId);
     expect(runJson(runId)).toMatchObject({ owner: admin.user.id, repo: tmp, source: "ui" });
+  });
+});
+
+describe("starting a run like a user, as an admin", () => {
+  const start = (who: TestSession, body: unknown) => call(who, "POST", "/api/runs", body);
+  const saveFlow = async (name: string, yaml: string) => expect((await call(admin, "PUT", `/api/flows/${name}`, { yaml, scope: "repo" })).status).toBe(200);
+
+  beforeAll(async () => {
+    await saveFlow("lu-plain", QUICK("lu-plain"));
+    await saveFlow("lu-withrepo", QUICK("lu-withrepo", "vars:\n  github_repo: owner/repo\n", "empty", ["github_repo"]));
+    await saveFlow("lu-private", PRIVATE("lu-private"));
+  });
+
+  it("gives an admin the user's list with published=1", async () => {
+    const mine = await call(admin, "GET", "/api/flows?published=1");
+    expect(mine.status).toBe(200);
+    const list = mine.json() as { name: string }[];
+    for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "usesTask", "version"]);
+    expect(list.map((f) => f.name)).toContain("walk");
+    expect(list).toEqual((await call(ann, "GET", "/api/flows")).json());
+    expect((await call(ann, "GET", "/api/flows?published=1")).json()).toEqual((await call(ann, "GET", "/api/flows")).json());
+    for (const v of ["0", "true"]) {
+      const all = (await call(admin, "GET", `/api/flows?published=${v}`)).json() as { path?: string; scope?: string }[];
+      expect(all.length).toBeGreaterThan(0);
+      for (const f of all) expect(f).toHaveProperty("path");
+    }
+  });
+
+  it("refuses yaml and a folder", async () => {
+    const y = await start(admin, { yaml: QUICK("x"), likeUser: true });
+    expect([y.status, y.error()]).toEqual([403, "only an admin can run a flow that is not saved"]);
+    const r = await start(admin, { flow: "lu-plain", repo: tmp, likeUser: true });
+    expect([r.status, r.error()]).toEqual([403, "only an admin can choose the folder"]);
+  });
+
+  it("finds published flows only", async () => {
+    const r = await start(admin, { flow: "lu-private", likeUser: true });
+    expect([r.status, r.error()]).toEqual([404, "flow not found"]);
+    expect((await start(admin, { flow: "lu-private" })).status).toBe(201);
+  });
+
+  it("keeps to the inputs and to own repositories", async () => {
+    const foreign = await start(admin, { flow: "lu-withrepo", vars: { github_repo: "acme/app" }, likeUser: true });
+    expect([foreign.status, foreign.error()]).toEqual([403, '"acme/app" is not one of your repositories']);
+    const set = await start(admin, { flow: "lu-plain", vars: { github_repo: "x/y" }, likeUser: true });
+    expect([set.status, set.error()]).toEqual([403, 'you cannot set the var "github_repo"']);
+  });
+
+  it("wants likeUser to be true or false", async () => {
+    for (const likeUser of ["yes", 1, null]) {
+      const r = await start(admin, { flow: "lu-plain", likeUser });
+      expect([r.status, r.error()]).toEqual([400, "likeUser must be true or false"]);
+    }
+    expect((await start(ann, { yaml: QUICK("x"), likeUser: "yes" })).status).toBe(400);
+  });
+
+  it("changes nothing for a user, and nothing for likeUser: false", async () => {
+    expect((await start(ann, { yaml: QUICK("x"), likeUser: true })).status).toBe(403);
+    expect((await start(ann, { flow: "lu-plain", likeUser: true })).status).toBe(201);
+    expect((await start(admin, { yaml: QUICK("inline2", "", "inplace"), repo: tmp, likeUser: false })).status).toBe(201);
   });
 });
 

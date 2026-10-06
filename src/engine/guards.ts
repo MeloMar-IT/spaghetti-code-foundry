@@ -127,7 +127,7 @@ export function grantPush(branch: string): { env: Record<string, string>; revoke
 /** The shell steps that get the stored token, per flow (literals: src/flow/usage.ts would make an import cycle; a test pins them). */
 export const REPO_READ_STEPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["refine-brief", ["clone", "list_issues"]],
-  ["refine-round", ["clone"]],
+  ["refine-round", ["clone", "list_issues"]],
 ]);
 export const TOKEN_REFUSED_REASON = "GitHub refused the token of this repository; check its access to Contents and Issues, or set a new token under My repositories";
 
@@ -169,12 +169,13 @@ export const APP_UNREACHABLE_RUN = "GitHub could not be reached for the app's to
 export const APP_RATE_LIMIT_RUN = "GitHub's request limit is used up, so no app token could be made; wait a while, then resume the run";
 export const APP_FAILED_RUN = "the app's token could not be made; resume the run to try the step again";
 export const APP_TOKEN_EXPIRED = "the app's token ran out during the step (a token lives one hour); resume the run to get a new one";
+export const NO_COMMIT_IDENTITY = "the account that owns this run could not be found, so its commits have no name; set the bot name and e-mail in Settings, then resume the run";
 export const SIGN_IN_NOT_REMOVED = "the sign-in folder of this run could not be removed; ask an admin to delete the folder \"sign-in\" in the run folder, then resume the run";
 
 /** Every sentence above that failure.ts, errors.ts and the architect must recognise as it is. */
 export const SIGN_IN_SENTENCES: readonly string[] = [
   KEY_REFUSED_RUN, APP_REFUSED_RUN, DEPLOY_KEY_NO_GH, APP_NOT_SET_UP_RUN, APP_NOT_INSTALLED_RUN, APP_BROKEN_RUN,
-  KEY_NOT_READY, APP_UNREACHABLE_RUN, APP_RATE_LIMIT_RUN, APP_FAILED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED,
+  KEY_NOT_READY, APP_UNREACHABLE_RUN, APP_RATE_LIMIT_RUN, APP_FAILED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, NO_COMMIT_IDENTITY,
 ];
 
 /** What git and ssh say when a host does not accept a deploy key (or the key has no access). Narrower than classifyGit: test output must not match. */
@@ -187,10 +188,10 @@ export const keyRefused = (output: string): boolean => KEY_REFUSED.test(output);
 export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(output) && !/rate limit|abuse detection/i.test(output);
 
 /**
- * Output kept for the last step of the question round (tools/refine-round-check): a full checked answer is about 30,000
- * characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
+ * Output kept for the last step of the question round (tools/refine-round-check): a full checked `impact` answer is about
+ * 60,000 characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
  */
-export const ROUND_CHECK_MAX_OUTPUT = 100_000;
+export const ROUND_CHECK_MAX_OUTPUT = 150_000;
 export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined =>
   flowName === "refine-round" && step.id === "check_round" && depth === 0 ? ROUND_CHECK_MAX_OUTPUT : undefined;
 

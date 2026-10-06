@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -8,18 +9,72 @@ export const BOT_MARKER = "<!-- claude-factory";
 /** Markers that identify our own comments: the one we write, and the new product name's. */
 export const BOT_MARKERS = [BOT_MARKER, "<!-- spaghetti-code-foundry"] as const;
 
+/**
+ * The identity `gh` acts as for the code that runs inside `withGhEnv`: the env that makes it use one repository's credential
+ * (and nothing from the host), whether it is the GitHub App, and a stamp that changes when the account changes.
+ * A session is frozen: a check that started with it keeps it until it ends.
+ */
+export interface GhSession {
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  /** gh acts as a GitHub App installation: there is no user, so `api user` and collaborator checks do not work. */
+  readonly app?: boolean;
+  readonly stamp: string;
+}
+
+const sessions = new AsyncLocalStorage<GhSession | undefined>();
+
+/** Runs `fn` (and everything it starts: timers, promises) with this identity for every `gh` call. `undefined` is the host login. */
+export const withGhEnv = <T>(session: GhSession | undefined, fn: () => T): T => sessions.run(session, fn);
+
+/** The identity of the running code, if a repository's. */
+export const currentGhSession = (): GhSession | undefined => sessions.getStore();
+
+/** Does `gh` act as a GitHub App here? */
+export const ghActsAsApp = (): boolean => sessions.getStore()?.app === true;
+
+/** The host's variables that would make `gh` act as someone else. */
+const GH_AUTH_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"] as const;
+
+function childEnv(env: NodeJS.ProcessEnv | undefined, session: GhSession | undefined): NodeJS.ProcessEnv {
+  if (env) return { ...process.env, ...env };
+  if (!session?.env) return process.env;
+  const out: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of GH_AUTH_VARS) delete out[k];
+  for (const [k, v] of Object.entries(session.env)) {
+    if (v === undefined) delete out[k];
+    else out[k] = v;
+  }
+  return out;
+}
+
+/** An error of a call made with a token: the token is replaced wherever the error holds it. */
+function scrub(e: unknown, token: string): unknown {
+  if (!e || typeof e !== "object") return e;
+  const err = e as Record<string, unknown>;
+  for (const k of ["message", "stderr", "stdout", "cmd"]) {
+    if (typeof err[k] === "string" && (err[k] as string).includes(token)) err[k] = (err[k] as string).split(token).join("[redacted]");
+  }
+  return e;
+}
+
 /** `timeoutMs` kills the process and rejects; without it gh may take as long as it likes. */
 export async function gh(args: string[], env?: NodeJS.ProcessEnv, timeoutMs?: number, input?: string): Promise<string> {
+  const session = sessions.getStore();
   const p = exec(process.env.FACTORY_GH_BIN ?? "gh", args, {
     maxBuffer: 20_000_000,
-    env: env ? { ...process.env, ...env } : process.env,
+    env: childEnv(env, session),
     timeout: timeoutMs,
   });
   if (input !== undefined) {
     p.child.stdin?.on("error", () => {}); // gh may exit before it reads everything; its exit code tells
     p.child.stdin?.end(input);
   }
-  return (await p).stdout;
+  const token = !env ? session?.env?.GH_TOKEN : undefined;
+  try {
+    return (await p).stdout;
+  } catch (e) {
+    throw token ? scrub(e, token) : e;
+  }
 }
 
 /** One resource of GitHub's request limit (`gh api rate_limit`). */
@@ -158,6 +213,7 @@ export interface UpsertResult {
 }
 
 const MAX_REMOVE = 5;
+export const APP_NO_AUTHOR = "this gh does not tell who wrote a comment, so the app cannot tell its own status comment; update gh";
 
 /**
  * Keeps one status comment of ours on an issue: edits it, or creates it. Ours means: marker on the last line and
@@ -180,8 +236,11 @@ export async function upsertStatusComment(repo: string, issue: number, body: str
   }
   const comments = await issueComments(repo, issue, limit());
   const ours: Comment[] = [];
+  const app = ghActsAsApp();
   for (const c of comments) {
     if (!isStatusComment(c)) continue;
+    // An app has no user to compare with: only what gh itself says is ours counts.
+    if (app && c.viewerDidAuthor === undefined) throw new Error(APP_NO_AUTHOR);
     if (c.viewerDidAuthor === undefined) login ??= await ghLogin(limit());
     if (c.viewerDidAuthor === true || (c.viewerDidAuthor === undefined && c.author.login === login)) ours.push(c);
   }
@@ -280,4 +339,56 @@ export async function createLabelIfMissing(repo: string, name: string, color: st
     if (/already exists/i.test(errorText(e))) return;
     throw e;
   }
+}
+
+/** At most this many issue numbers go in one GraphQL call; more go in sequential calls. */
+export const ISSUE_STATE_BATCH = 500;
+
+/**
+ * The state of each issue, in one GraphQL call per 500 numbers. Rejects when a call fails, GitHub reports any
+ * error (also for a deleted issue or a pull request), an issue is missing or has an unknown state.
+ * `before` runs ahead of every call; when it throws, nothing more is asked.
+ */
+export async function issueStates(repo: string, numbers: number[], timeoutMs?: number, before?: () => void, env?: NodeJS.ProcessEnv): Promise<Map<number, "open" | "closed">> {
+  const slash = repo.indexOf("/");
+  const owner = repo.slice(0, Math.max(slash, 0));
+  const name = repo.slice(slash + 1);
+  if (slash < 0 || !owner || !name) throw new Error(`not a repository: ${repo}`);
+  const wanted = [...new Set(numbers.filter((n) => Number.isInteger(n) && n > 0 && n <= 2147483647))];
+  const out = new Map<number, "open" | "closed">();
+  for (let i = 0; i < wanted.length; i += ISSUE_STATE_BATCH) {
+    before?.();
+    const chunk = wanted.slice(i, i + ISSUE_STATE_BATCH);
+    // Only integers are written into the query text; the repository goes in as variables.
+    const fields = chunk.map((n) => `i${n}: issue(number: ${n}) { state }`).join(" ");
+    const query = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${fields}}}`;
+    const text = await gh(["api", "graphql", "--input", "-"], env, timeoutMs, JSON.stringify({ query, variables: { owner, name } }));
+    let body: { data?: { repository?: Record<string, { state?: unknown } | null> | null }; errors?: unknown[] };
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error("GitHub gave an answer that is not JSON");
+    }
+    if (Array.isArray(body.errors) && body.errors.length) {
+      const first = body.errors[0] as { message?: unknown };
+      throw new Error(`GitHub reported an error: ${typeof first?.message === "string" ? first.message : "unknown"}`);
+    }
+    const repoData = body.data?.repository;
+    if (!repoData || typeof repoData !== "object") throw new Error(`GitHub gave no repository for ${repo}`);
+    for (const n of chunk) {
+      const s = repoData[`i${n}`]?.state;
+      const state = typeof s === "string" ? s.toLowerCase() : "";
+      if (state !== "open" && state !== "closed") throw new Error(`GitHub did not report issue #${n}`);
+      out.set(n, state);
+    }
+  }
+  return out;
+}
+
+/** The state of one issue. Rejects when it cannot be read. */
+export async function issueState(repo: string, issue: number, timeoutMs?: number, env?: NodeJS.ProcessEnv): Promise<"open" | "closed"> {
+  if (!Number.isInteger(issue) || issue <= 0 || issue > 2147483647) throw new Error("not an issue number");
+  const s = (await issueStates(repo, [issue], timeoutMs, undefined, env)).get(issue);
+  if (!s) throw new Error(`GitHub did not report issue #${issue}`);
+  return s;
 }

@@ -151,6 +151,7 @@ describe("next-step records, one per kind", () => {
     ["cancelled", data, "Foundry", "Nothing — it continues by itself", ISSUE],
     ["stopped", {}, "You", "Look at the run and resume it", "#/runs/r1"],
     ["superseded", {}, "Foundry", "Nothing — a newer run took over", "#/runs/r1"],
+    ["issue_closed", data, "Foundry", "Nothing — the issue is closed", ISSUE],
     ["done", data, "Foundry", "Nothing — it is done", ISSUE],
   ];
   it.each(cases)("%s", (kind, d, who, action, url) => {
@@ -246,7 +247,7 @@ describe("next-step records, one per kind", () => {
   });
 
   it("has a kind in the table for every kind", () => {
-    expect(new Set(cases.map((c) => c[0])).size).toBe(28);
+    expect(new Set(cases.map((c) => c[0])).size).toBe(29);
   });
 
   it("says why a closed issue and a silent watcher need attention", () => {
@@ -571,6 +572,37 @@ describe("runNextStep", () => {
     expect(a.action.startsWith("Nothing")).toBe(true);
     expect(runNextStep(run(), { superseded: true }).kind).toBe("done");
   });
+  describe("issue_closed", () => {
+    const closed = { issueClosed: true };
+    it("has its text and names the blocker", () => {
+      expect(nextStep("issue_closed", { repo: "acme/app", issue: 7 }, {}).text).toBe("#7 is closed on GitHub — nothing to do.");
+      const n = nextStep("dependency", { repo: "acme/app", issue: 9, title: "T" }, { watched: true, blockers: [{ issue: 3, next: nextStep("issue_closed", { repo: "acme/app", issue: 3 }) }] });
+      expect(n.text).toContain("#3, which is closed");
+    });
+    it("is the record of a failed, stopped, cancelled or waiting run, linked to the issue", () => {
+      for (const over of [{ status: "failed" }, { status: "stopped", reason: "stopped at step \"x\"" }, { status: "cancelled" }, { status: "stopped", reason: "usage limit reached" }, { status: "waiting", waiting: { stepId: "approve_plan", since: "x" } }] as Partial<RunSummary>[]) {
+        const n = runNextStep(run(over), closed);
+        expect(n.kind, JSON.stringify(over)).toBe("issue_closed");
+        expect(n.who).toBe("Foundry");
+        expect(n.where.url).toBe(ISSUE);
+      }
+    });
+    it("leaves running, succeeded, queued and superseded runs alone", () => {
+      expect(runNextStep(run({ status: "running" }), closed).kind).toBe("running");
+      expect(runNextStep(run(), closed).kind).toBe("done");
+      expect(runNextStep(run({ status: "failed" }), { ...closed, queued: {} }).kind).toBe("queued");
+      expect(runNextStep(run({ status: "failed" }), { ...closed, superseded: true }).kind).toBe("superseded");
+    });
+    it("needs a numeric issue, and a run that closed its issue itself keeps its record", () => {
+      expect(runNextStep(run({ status: "failed", vars: { github_repo: "acme/app" } }), closed).kind).toBe("failed");
+      const own = run({ status: "failed", history: [{ id: "push_main", ok: true, output: "PUSHED: main abc" }] as never });
+      expect(runNextStep(own, closed).kind).toBe("failed");
+    });
+    it("changes nothing when the issue is open or unknown", () => {
+      expect(runNextStep(run({ status: "failed" }), { issueClosed: false }).kind).toBe("failed");
+      expect(runNextStep(run({ status: "failed" })).kind).toBe("failed");
+    });
+  });
   const resumable = { state: { next: "p", steps: {}, visits: {} } };
   it("says the Foundry failed, not the code, and suggests the fix", () => {
     const n = runNextStep(run({ ...resumable, status: "failed", reason: "internal error: boom" }));
@@ -703,6 +735,32 @@ describe("releaseAtFor and trackingWatcher", () => {
     expect(trackingWatcher([w({ id: "o", flow: "issue-plan" })], r)).toBeUndefined();
     expect(trackingWatcher([w({ id: "s", source: "schedule" })], r)).toBeUndefined();
     expect(trackingWatcher([issues], run({ vars: { github_repo: "acme/app" } }))).toBeUndefined();
+  });
+});
+
+describe("answerHere", () => {
+  it("sends the user to the run page for the planner's questions", () => {
+    const n = nextStep("planner_questions", { runId: "r1" }, { answerHere: true, forUser: true });
+    expect(n.text).toBe("The planner has questions — answer the questions on the run page and it continues.");
+    expect(n.where).toEqual({ label: "Run page", url: "#/runs/r1" });
+    expect(n.who).toBe("You");
+    expect(n.action).toBe("Answer the questions");
+    expect(nextStep("planner_questions", { runId: "r1" }, { answerHere: true, questions: 2 }).text).toContain("answer 2 questions on the run page and it continues");
+    const hand = nextStep("planner_questions", { runId: "r1" }, { answerHere: true, watched: true, issueUrl: "https://github.com/o/r/issues/7" });
+    expect(hand.text).toContain("on the run page");
+    expect(hand.where.url).toBe("#/runs/r1");
+  });
+  it("keeps the issue without the option, without a run, and for the questions before a start", () => {
+    expect(nextStep("planner_questions", { runId: "r1" }, { watched: true }).text).toContain("on the issue");
+    expect(nextStep("planner_questions", { runId: "r1" }, {}).text).toContain("on the issue");
+    expect(nextStep("planner_questions", {}, { answerHere: true }).text).toContain("on the issue");
+    expect(nextStep("questions", { runId: "r1" }, { answerHere: true }).text).toContain("on the issue");
+    expect(commentText("planner_questions")).toBe("The planner has questions — answer the questions on the issue and it continues.");
+  });
+  it("is read by runNextStep, also for a run that a newer one replaced", () => {
+    const r = run({ status: "stopped", reason: 'stopped at step "ask_for_info"' });
+    expect(runNextStep(r, { answerHere: true, forUser: true }).text).toContain("on the run page");
+    expect(runNextStep(r, { forUser: true }).text).toContain("on the issue");
   });
 });
 

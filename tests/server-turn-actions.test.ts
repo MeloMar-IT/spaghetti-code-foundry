@@ -8,6 +8,8 @@ import { nextStep, type NextStep } from "../src/next-step.js";
 import { readAct, turnAct, turnDetail } from "../src/server/turn-actions.js";
 import { turnFor } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
+import { saveIssueStates } from "../src/issue-states.js";
+import { CLOSED_MESSAGE } from "../src/run-gate.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 
 // The answer, approve and retry actions against a stub context and the fake gh.
@@ -31,8 +33,8 @@ function stub(holds: ReturnType<typeof hold>[], labels?: Record<string, string>)
   return {
     opts: { log },
     config: () => config,
-    scheduler: { list: () => [], get: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
-    watchers: { statuses: () => [], tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
+    scheduler: { list: () => [], get: () => undefined, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
+    watchers: { statuses: () => [], identityOf: () => undefined, tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
   } as unknown as ApiContext;
 }
 
@@ -90,6 +92,33 @@ describe("turnDetail", () => {
     expect(await status(turnDetail(rel, `release|${pr.url}`, NOW))).toBe(409);
     process.env.FAKE_GH_FAIL = "issue view";
     expect(await status(turnDetail(ctx, QKEY, NOW))).toBe(502);
+  });
+});
+
+describe("a repository's sign-in", () => {
+  const withIdentity = (prepare: () => Promise<unknown>) => {
+    const ctx = ctxAll() as unknown as { watchers: { identityOf: () => unknown } };
+    ctx.watchers.identityOf = () => ({ prepare });
+    return ctx as unknown as ApiContext;
+  };
+
+  it("detail and act call GitHub with the token of the watcher's repository only", async () => {
+    const auth = gh.authLog();
+    process.env.GH_TOKEN = "host-token";
+    const session = { env: { GH_TOKEN: "repo-token", GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined }, stamp: "s" };
+    const ctx = withIdentity(async () => session);
+    await act(ctx, { key: QKEY, action: "answer", stamp: SINCE, answers: [{ n: 1, text: "a" }] });
+    const rows = auth.rows();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.token === "repo-token")).toBe(true);
+  });
+
+  it("answers 409 with the sentence and makes no call when there is no sign-in", async () => {
+    const auth = gh.authLog();
+    const ctx = withIdentity(async () => { throw new Error("the sign-in is missing"); });
+    expect(await status(turnDetail(ctx, QKEY, NOW))).toBe(409);
+    expect(await status(turnAct(ctx, user, readAct({ key: QKEY, action: "answer", stamp: SINCE, digest: "x", answers: [{ n: 1, text: "a" }] }), NOW))).toBe(409);
+    expect(auth.rows()).toEqual([]);
   });
 });
 
@@ -239,6 +268,54 @@ describe("retry", () => {
     const log = gh.ghLog();
     expect(log.indexOf("issue comment 8")).toBeLessThan(log.indexOf("issue edit 8"));
     expect(turnFor(ctx, NOW).data.continuing!.map((i) => i.key)).toEqual([FKEY]);
+  });
+});
+
+describe("retry of a closed issue", () => {
+  const closedIssue = (state = "CLOSED") => (process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 8, state }]));
+  const untouched = (ctx: ApiContext) => {
+    expect(comments()).toBe(0);
+    expect(gh.ghLog()).not.toContain("issue edit");
+    expect(kick).not.toHaveBeenCalled();
+    expect(turnFor(ctx, NOW).data.continuing).toBeUndefined();
+  };
+
+  it("refuses retry with the closed sentence and makes no label or comment call", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    const err = await act(ctx, { key: FKEY, action: "retry" }).catch((e: Error & { status: number }) => e);
+    expect(err).toMatchObject({ status: 409, message: CLOSED_MESSAGE });
+    untouched(ctx);
+  });
+
+  it("refuses retry_hint too", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry_hint", stamp: SINCE, text: "try again" }))).toBe(409);
+    untouched(ctx);
+  });
+
+  it("goes through after a reopen", async () => {
+    closedIssue();
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
+    closedIssue("OPEN");
+    await act(ctx, { key: FKEY, action: "retry" });
+    expect(gh.ghLog()).toContain("issue edit 8 --repo acme/app");
+  });
+
+  it("lets retry through when GitHub cannot be reached", async () => {
+    process.env.FAKE_GH_FAIL = "api graphql";
+    await act(ctxAll(), { key: FKEY, action: "retry" });
+    expect(gh.ghLog()).toContain("issue edit 8 --repo acme/app");
+  });
+
+  it("refuses retry on a stored closed state when GitHub cannot be reached", async () => {
+    process.env.FAKE_GH_FAIL = "api graphql";
+    saveIssueStates("acme/app", new Map([[8, "closed"]]));
+    const ctx = ctxAll();
+    expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
+    untouched(ctx);
   });
 });
 

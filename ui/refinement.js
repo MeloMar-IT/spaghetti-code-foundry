@@ -1,8 +1,11 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { draftSection, unsaved } from "./refinement-draft.js";
+import { reviewLogText } from "./refinement-remarks.js";
+import { suggestLogText } from "./refinement-suggest.js";
 import { kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
-/** The states of a refinement session, in words. Later steps move a session along; for now only Drop and Restore change it. */
+/** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. Later steps add the others. */
 export const STATE_LABELS = {
   exploring: "Exploring",
   drafting: "Drafting",
@@ -38,7 +41,11 @@ export function logText(entry) {
   if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
   if (entry.what === "architect-brief") return "The architect wrote the context brief";
   if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
-  return talkLogText(entry) || `${who}: ${entry.what}`;
+  if (entry.what === "draft-added") return `${who} added a story draft`;
+  if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
+  if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
+  if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
+  return talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || `${who}: ${entry.what}`;
 }
 
 const ASK = "Ask the architect to look at the code";
@@ -56,10 +63,10 @@ export function activityText(doing, kind = "brief") {
   const t = text(doing);
   if (!t) return "";
   if (kind !== "brief") {
-    // A round or an answer: fixed sentences only, never the words of the step.
+    // A round, an answer, a suggestion or a review: fixed sentences only, never the words of the step.
     if (/clone|check out/i.test(t)) return "Getting the code.";
     if (/reads the code/i.test(t)) return "Reading the code.";
-    if (/^check/i.test(t)) return "Checking the answer.";
+    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : "Checking the answer.";
     if (/^getting ready/i.test(t)) return "Getting ready.";
     return "";
   }
@@ -71,8 +78,8 @@ export function activityText(doing, kind = "brief") {
   return t;
 }
 
-const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question." };
-const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question." };
+const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft." };
+const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft." };
 
 /** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
 export function architectStatus(a) {
@@ -90,7 +97,7 @@ export function askLabel(s) {
   if (!s?.mine || s.state === "dropped" || s.repoAvailable === false) return "";
   const state = s.architect?.state;
   if (state === "queued" || state === "running") return "";
-  const own = kindOf(s.architect) === "brief"; // a round or a question is asked again in the talk
+  const own = kindOf(s.architect) === "brief"; // a round, a question, a suggestion or a review is asked again where it shows
   if (state === "paused") return own ? "Ask again" : "";
   if (state === "failed" && own) return "Try again";
   return s.brief ? "Refresh" : ASK;
@@ -124,7 +131,7 @@ function statusLine(st) {
 
 /** The "Context brief" part: status line, button, brief. Returns nodes. */
 function briefSection(s, onAsk) {
-  // Only a run for the brief draws its line here; a round or a question is shown in the talk.
+  // Only a run for the brief draws its line here; a round or a question is shown in the talk, a suggestion or a review on the draft page.
   const st = architectStatus(kindOf(s.architect) === "brief" ? s.architect : undefined);
   const label = askLabel(s);
   const b = s.brief;
@@ -252,11 +259,17 @@ function renameDialog(session, onRenamed) {
 }
 
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
-export async function renderRefinement(main, { admin = false, id } = {}) {
+export async function renderRefinement(main, { admin = false, id, readOnly = false } = {}) {
+  // In a preview the server answers as the viewed user (`mine: true`); every button hangs on `mine`, so it is turned off here.
+  const seen = (s) => (readOnly ? { ...s, mine: false } : s);
   const mine = ++generation;
   stopPoll();
   const current = () => mine === generation && onPage();
-  const reload = () => renderRefinement(main, { admin, id }).catch((e) => toast(errorText(e), "error"));
+  // A reload draws a new page; the cleanup the app holds must reach that page, so navigation always ends the current one.
+  let reloaded;
+  const reload = () => renderRefinement(main, { admin, id, readOnly }).then((c) => {
+    reloaded = c;
+  }, (e) => toast(errorText(e), "error"));
   const restore = (btn, sid) =>
     whileBusy(btn, async () => {
       try {
@@ -267,7 +280,10 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
       }
       await reload();
     });
+  let leaveDrafts = () => {};
   const cleanup = () => {
+    if (reloaded) return reloaded();
+    leaveDrafts(); // text that waits for its timer is sent now
     generation++;
     stopPoll();
   };
@@ -276,13 +292,17 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     const gone = (e) => mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
     let s;
     try {
-      s = await api.refinementSession(id);
+      s = seen(await api.refinementSession(id));
     } catch (e) {
       if (!current()) return () => {};
       gone(e);
       return cleanup;
     }
     if (!current()) return () => {};
+    const upper = h("div");
+    const lower = h("div");
+    let shownUpper = null;
+    let shownLower = null;
     let shown = "";
     let draws = 0; // counts the pages drawn: a poll that began before one is out of date
     const show = (next) => {
@@ -301,27 +321,45 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
       const before = draws;
       let next;
       try {
-        next = await api.refinementSession(id);
+        next = seen(await api.refinementSession(id));
       } catch (e) {
         if (!current()) return;
         if (e?.status === 404) return gone(e);
         if (before === draws) poll = setTimeout(tick, POLL_MS); // the page stays; the next round asks again
         return;
       }
-      if (current() && before === draws) show(next);
+      if (!current() || before !== draws) return;
+      // A change is on its way: this answer may show its state before its own answer does. Ask again later.
+      if (active) poll = setTimeout(tick, POLL_MS);
+      else show(next);
     };
-    let sending = false; // one change at a time
+    let sending = false; // one button change at a time
+    // Changes go to the server one after the other: a change waits for the one in flight; with none in flight it starts at once.
+    let active = 0;
+    let tail = Promise.resolve();
+    const inTurn = (call) => {
+      const run = active ? tail.then(call) : call();
+      active++;
+      tail = Promise.resolve(run).catch(() => {}).finally(() => active--);
+      return run;
+    };
+    // The answer is shown inside the turn, so the next change sees it.
+    const save = (call) => inTurn(async () => {
+      const next = await call();
+      if (next && current()) show(next);
+      return next;
+    });
     const send = async (btn, call) => {
       if (sending || btn.disabled) return false;
       sending = true;
       btn.disabled = true;
       try {
-        const next = await call();
-        if (current()) show(next);
+        await save(call);
         return true;
       } catch (e) {
         toast(errorText(e), "error");
-        if (current()) await reload();
+        // A session that ended with typed text waiting: loading the page again would reload the browser and lose it.
+        if (current() && !(e?.status === 401 && unsaved.size)) await reload();
         return false;
       } finally {
         sending = false;
@@ -355,7 +393,12 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         } }, "Drop"));
       }
       if (!open && s.mine) buttons.push(h("button", { class: "small", onClick: (e) => restore(e.currentTarget, s.id) }, "Restore"));
-      mount(main,
+      // The page has three parts: what is above the drafts, the drafts, the log. A part is drawn again only when it changed.
+      const { drafts: _drafts, epic: _epic, log: _log, updated: _updated, ...rest } = s;
+      const upperKey = JSON.stringify(rest);
+      if (upperKey !== shownUpper) {
+        shownUpper = upperKey;
+        mount(upper,
         h("a", { href: "#/refinement" }, "← All sessions"),
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
@@ -365,13 +408,20 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         h("h2", {}, "Idea"),
         h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
         ...briefSection(s, ask),
-        ...talkSection(s, { send, errorText, line: kindOf(s.architect) === "brief" ? null : statusLine(architectStatus(s.architect)) }),
-        h("h2", {}, "Story drafts"),
-        s.drafts.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.title ?? "Draft")))) : h("p", { class: "muted" }, "No story drafts yet."),
-        h("h2", {}, "Log"),
-        h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+        ...talkSection(s, { send, errorText, line: ["round", "question"].includes(kindOf(s.architect)) ? statusLine(architectStatus(s.architect)) : null }),
+        );
+      }
+      sections.update(s);
+      const lowerKey = JSON.stringify(s.log);
+      if (lowerKey !== shownLower) {
+        shownLower = lowerKey;
+        mount(lower, h("h2", {}, "Log"), h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+      }
     };
+    const sections = draftSection({ id, save, send, errorText, statusLine: (a) => statusLine(architectStatus(a)) });
+    leaveDrafts = sections.leave;
     show(s);
+    mount(main, upper, sections.node, lower); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 
@@ -383,7 +433,8 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     throw err;
   }
   if (!current()) return () => {};
-  const { sessions, repos } = listed;
+  const { repos } = listed;
+  const sessions = listed.sessions.map(seen);
   const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
@@ -404,7 +455,7 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
     h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
       h("span", { class: "muted" }, "Where a rough idea grows into a story"),
       h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
-      h("button", { class: "primary", onClick: async () => {
+      readOnly ? null : h("button", { class: "primary", onClick: async () => {
         await newSessionDialog(repos, (made) => {
           if (!made?.id) return;
           if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);

@@ -77,6 +77,14 @@ describe("small helpers", () => {
   });
 });
 
+describe("turnView unchecked issue", () => {
+  it("shows the note only for an item whose issue could not be checked", () => {
+    const n = nextStep("failed", { repo: "o/a", issue: 5, title: "Five" }, { watched: true });
+    expect(view(data([item({}, { ...n, issueUnchecked: true } as never)])).textContent).toContain("The state of the issue on GitHub could not be checked");
+    expect(view(data([item({}, n)])).textContent).not.toContain("could not be checked");
+  });
+});
+
 describe("turnView", () => {
   it("shows the repository, what, action, why, what waits for it and since", () => {
     const root = view(data([item({ unblocks: 3 }), item({ key: "k6", unblocks: 1, what: "Six" }, nextStep("approval", { repo: "o/a", issue: 6 }))]));
@@ -139,6 +147,16 @@ describe("turnView", () => {
     const root = view(data([item({ acts: [] }), item({ key: "k7" })]), { ...handlers(), onAct: vi.fn() });
     expect(root.all("button").map((b) => b.textContent)).toEqual(["Dismiss", "Dismiss"]);
     expect(link(root)!.attrs.class).toBe("btn primary");
+  });
+
+  it("shows the owner of an item and of a continuing item: the name, 'deleted user', or nothing", () => {
+    const text = (extra: Record<string, unknown>, where: "items" | "continuing") =>
+      view(where === "items" ? data([item(extra)]) : data([], { continuing: [item(extra)], empty: "Nothing needs you." })).textContent;
+    for (const where of ["items", "continuing"] as const) {
+      expect(text({ ownerName: "Ann" }, where)).toContain("Owner: Ann");
+      expect(text({ ownerName: "deleted account" }, where)).toContain("Owner: deleted user");
+      expect(text({}, where)).not.toContain("Owner");
+    }
   });
 
   it("lists items under Done — continuing, without buttons", () => {

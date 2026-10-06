@@ -4,12 +4,12 @@ import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
-const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos"];
+const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "admin-credentials"];
 
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
-    for (const id of ["main", "user", "modal-root", "toast"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["main", "user", "modal-root", "toast", "view-as"]) expect(html).toContain(`id="${id}"`);
   });
   it("has exactly four links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
@@ -58,12 +58,17 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "dom.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
-    const enter = app.indexOf('await enterDisplay("user");');
+    const enter = app.indexOf('await enterDisplay("user", { viewAs: as });');
     expect(enter).toBeGreaterThan(0);
+    expect(app.indexOf('new URLSearchParams(location.search).get("as")')).toBeGreaterThan(0);
+    expect(app.indexOf('new URLSearchParams(location.search).get("as")')).toBeLessThan(enter);
+    // the preview is set up before the first page is drawn
+    expect(app.indexOf("beginView(as, me")).toBeGreaterThan(enter);
+    expect(app.indexOf("beginView(as, me")).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
     expect(enter).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
     const body = app.slice(app.indexOf("async function route() {") + "async function route() {".length);
     const first = body.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"))[0];
@@ -77,7 +82,7 @@ describe("ui/user/app.js", () => {
   });
 
   it("routes Start work and decides the empty address behind the generation guard", () => {
-    expect(app).toContain('if (page.section === "start") done = await renderStart(box);');
+    expect(app).toContain('if (page.section === "start") done = await renderStart(box, { readOnly });');
     expect(app).toContain("isNoHash(");
     expect(app.indexOf("const mine = ++generation;")).toBeLessThan(app.indexOf("await homeHash()"));
     expect(app.match(/\+\+generation/g)).toHaveLength(1);
@@ -86,8 +91,9 @@ describe("ui/user/app.js", () => {
   it("gives every renderer admin: false", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
-    expect(app).toContain("renderMyRun(box, page.id)");
-    expect(app).toContain("await renderMyRuns(box)");
+    expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
+    expect(app).toContain("await renderMyRuns(box, { readOnly })");
+    for (const c of calls) expect(c, c).toContain("readOnly");
     expect(app).not.toContain('"/runs.js"');
     for (const c of calls) expect(c, c).toContain("{ admin: false");
   });
@@ -99,5 +105,6 @@ describe("ui/style.css", () => {
     expect(css).toMatch(/\.user-display \.top \{[^}]*flex-wrap: wrap/);
     expect(css).toContain(".table-box { overflow-x: auto; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
+    expect(css).toContain(".view-bar {");
   });
 });

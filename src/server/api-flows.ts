@@ -23,7 +23,8 @@ export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg
     const name = seg[1];
     if (name !== undefined && !NAME_RE.test(name)) throw new HttpError(400, "invalid flow name");
     if (!name && method === "GET") {
-      if (user.role !== "admin") {
+      const published = new URL(req.url ?? "/", "http://x").searchParams.get("published") === "1";
+      if (user.role !== "admin" || published) {
         const out: UserFlow[] = [];
         for (const f of publishedFlows(opts.repo)) {
           try {

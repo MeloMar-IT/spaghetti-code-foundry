@@ -4,6 +4,7 @@ import type { Config, WatcherConfig } from "../config.js";
 import { selfBuild, selfContains } from "../engine/guards.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { readRateLimit, type RateReading } from "../github.js";
+import { dropIssueStates, storedIssueRepos } from "../issue-states.js";
 import { collectNames } from "../monitor/clean.js";
 import type { DetectorInput, LogLine } from "../monitor/detectors.js";
 import { describeEntry, loadGuard, storiesVerdict, writeLog } from "../monitor/guard.js";
@@ -12,6 +13,7 @@ import { Monitor, type MonitorStoryResult } from "../monitor/monitor.js";
 import { buildLabelFor, Reporter } from "../monitor/report.js";
 import type { BuiltinSteps } from "../monitor/story.js";
 import type { RunSummary } from "../engine/state.js";
+import { type RepoGhIdentity, repoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments, statusFile } from "./status-comment.js";
 import { Watcher, type WatcherStatus } from "./watcher.js";
@@ -29,6 +31,10 @@ export interface WatcherManagerOptions {
   restart?: () => DetectorInput["restart"];
   /** When the server started (the monitor's quiet time counts from here; the Monitor object is made again when its config changes). */
   startedAt?: Date;
+  /** Called at the start of every sync(): the server reads the stored watchers again here. */
+  beforeSync?: () => void;
+  /** The GitHub sign-in of a stored repository (tests replace it). */
+  ghIdentity?: (repoId: string) => RepoGhIdentity;
 }
 
 /** What a watcher tracks right now, for the next-step records. */
@@ -40,7 +46,9 @@ export interface TrackedWatcher {
 
 /** Keeps running watchers in line with config.watchers (start, stop, restart on change). */
 export class WatcherManager {
-  private running = new Map<string, { watcher: Watcher; key: string }>();
+  private running = new Map<string, { watcher: Watcher; key: string; board: string }>();
+  /** The GitHub sign-in of each stored repository that has a running watcher. */
+  private identities = new Map<string, RepoGhIdentity>();
   /** Watchers stopped by stopAll() (a drain); read live so a tick still in flight shows up. */
   private drained: Watcher[] = [];
 
@@ -62,29 +70,49 @@ export class WatcherManager {
 
   constructor(private o: WatcherManagerOptions) {}
 
-  private board(repo: string): StatusComments {
-    let b = this.boards.get(repo);
+  /** The sign-in of a stored watcher's repository (made once, kept while a watcher uses it); undefined for a watcher of config.yaml. */
+  identityOf(cfg: Pick<WatcherConfig, "repoId">): RepoGhIdentity | undefined {
+    if (!cfg.repoId) return undefined;
+    let id = this.identities.get(cfg.repoId);
+    if (!id) {
+      id = this.o.ghIdentity ? this.o.ghIdentity(cfg.repoId) : repoGhIdentity(cfg.repoId, { config: this.o.config, log: this.o.log });
+      this.identities.set(cfg.repoId, id);
+    }
+    return id;
+  }
+
+  /** Watchers with the host login share one board per repository; the others (own token or app) have a board of their own. */
+  private boardKey(cfg: Pick<WatcherConfig, "github_repo" | "repoId">): string {
+    const id = this.identityOf(cfg);
+    return !id || id.usesHostLogin() ? cfg.github_repo : `${cfg.github_repo}#${cfg.repoId}`;
+  }
+
+  private board(cfg: Pick<WatcherConfig, "github_repo" | "repoId">, key = this.boardKey(cfg)): StatusComments {
+    const repo = cfg.github_repo;
+    let b = this.boards.get(key);
     if (!b) {
-      b = new StatusComments(repo, (m) => this.o.log(`[${repo}] ${m}`), { file: statusFile() });
-      this.boards.set(repo, b);
+      b = new StatusComments(repo, (m) => this.o.log(`[${repo}] ${m}`), key === repo ? { file: statusFile() } : { file: statusFile(), key, gh: this.identityOf(cfg) });
+      this.boards.set(key, b);
     }
     return b;
   }
 
   sync() {
+    this.o.beforeSync?.();
     this.drained = [];
     const wanted = new Map(this.o.config().watchers.filter((w) => w.enabled && w.source !== "monitor").map((w) => [w.id, w]));
     for (const [id, r] of this.running) {
       const cfg = wanted.get(id);
-      if (!cfg || JSON.stringify(cfg) !== r.key) {
-        r.watcher.stop();
-        this.board(r.watcher.cfg.github_repo).forget(id);
+      if (!cfg || JSON.stringify(cfg) !== r.key || this.boardKey(cfg) !== r.board) {
+        r.watcher.stop(true);
+        this.board(r.watcher.cfg, r.board).forget(id);
         this.running.delete(id);
         this.o.log(`[${id}] watcher stopped`);
       }
     }
     for (const [id, cfg] of wanted) {
       if (this.running.has(id)) continue;
+      const board = this.boardKey(cfg);
       const watcher = new Watcher(cfg, {
         scheduler: this.o.scheduler,
         runsDir: this.o.runsDir,
@@ -92,14 +120,29 @@ export class WatcherManager {
         dailyBudget: () => (this.o.config().cost_limits ? this.o.config().daily_budget_usd : undefined),
         areaWait: this.o.areaWait,
         log: this.o.log,
-        statusComments: this.board(cfg.github_repo),
+        statusComments: this.board(cfg, board),
         watchers: () => this.o.config().watchers,
         peers: () => this.tracked(),
         afterCheck: () => this.noteRateLimit(),
+        gh: this.identityOf(cfg),
       });
-      this.running.set(id, { watcher, key: JSON.stringify(cfg) });
+      this.running.set(id, { watcher, key: JSON.stringify(cfg), board });
       watcher.start();
       this.o.log(`[${id}] watching ${cfg.github_repo} (${cfg.source}) every ${cfg.every}`);
+    }
+    // Issue states count only while an enabled issues watcher checks the repository (duplicate ids do not matter here).
+    try {
+      const watched = new Set(this.o.config().watchers.filter((w) => w.enabled && w.source === "issues").map((w) => w.github_repo));
+      for (const repo of storedIssueRepos()) if (!watched.has(repo)) dropIssueStates(repo);
+    } catch (e) {
+      this.o.log(`! issue states: ${(e as Error).message}`);
+    }
+    // The sign-in of a repository without a running watcher goes (its settings folder too).
+    const used = new Set([...this.running.values()].map((r) => r.watcher.cfg.repoId));
+    for (const [repoId, identity] of this.identities) {
+      if (used.has(repoId)) continue;
+      identity.dispose();
+      this.identities.delete(repoId);
     }
     this.syncMonitor(this.o.config().watchers.find((w) => w.source === "monitor" && w.enabled));
   }
@@ -269,6 +312,8 @@ export class WatcherManager {
     this.drained = [...this.running.values()].map((r) => r.watcher);
     for (const r of this.running.values()) r.watcher.stop();
     this.running.clear();
+    for (const identity of this.identities.values()) identity.dispose();
+    this.identities.clear();
     if (keepMonitor) return;
     if (this.monitor) {
       this.monitor.monitor.stop();

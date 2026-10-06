@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
+import { usesTask } from "../src/flow/publish.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { buildStamp, RESTART_CODE, supervise } from "../src/supervise.js";
@@ -444,6 +445,18 @@ describe("generated issue flows", () => {
   const FLOWS = ["pr-feedback", "issue-plan", "issue-code-daily", "issue-deliver", "issue-gitflow", "release-daily", "daily-pr"];
   const text = (f: string) => readFileSync(flowPath(f), "utf8");
   const step = (f: string, id: string) => JSON.stringify(parseFlow(text(f), f).steps.find((s) => s.id === id));
+
+  it.each(["issue-plan", "issue-deliver", "issue-gitflow"])("%s gives the task to the three planning prompts", (f) => {
+    const flow = parseFlow(text(f), f);
+    for (const id of ["plan", "plan_review", "revise_plan"]) {
+      const s = flow.steps.find((x) => x.id === id);
+      const prompt = s?.type === "claude" ? s.prompt : "";
+      expect(prompt, id).toContain("\n\nWhat the person who started this run wrote (it may be empty; it comes on top of the issue):\n{{task}}\n\n");
+      expect(prompt.split("{{task}}"), id).toHaveLength(2);
+      expect(prompt.indexOf("{{task}}"), id).toBeGreaterThan(prompt.indexOf("{{steps.pull_ticket.output}}"));
+    }
+    expect(usesTask(flow)).toBe(true);
+  });
 
   it("names both plan headings in the implement prompt", () => {
     const p = step("issue-code-daily", "implement");

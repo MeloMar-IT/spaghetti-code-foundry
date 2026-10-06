@@ -61,7 +61,9 @@ describe("ui server", () => {
     }
     const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
     const watcher = { id: "off", enabled: false, github_repo: "acme/app", label: "x", flow: "used-by-watcher" };
-    expect((await json("PUT", "/api/config", { ...cfg, watchers: [watcher] })).status).toBe(200);
+    const { saveConfig } = await import("../src/config.js");
+    saveConfig({ ...cfg, watchers: [watcher] }); // a file watcher: the API no longer saves one
+    ctx.reloadConfig();
 
     const refused = await json("DELETE", "/api/flows/used-by-watcher");
     expect(refused.status).toBe(409);
@@ -70,7 +72,8 @@ describe("ui server", () => {
     expect(step.status).toBe(409);
     expect(((await step.json()) as { error: string }).error).toContain("flow parent (runs it as a step)");
 
-    expect((await json("PUT", "/api/config", { ...cfg, watchers: [] })).status).toBe(200);
+    saveConfig({ ...cfg, watchers: [] });
+    ctx.reloadConfig();
     expect((await json("DELETE", "/api/flows/used-by-watcher")).status).toBe(200);
     expect((await json("DELETE", "/api/flows/parent")).status).toBe(200);
     expect((await json("DELETE", "/api/flows/used-by-step")).status).toBe(200);
@@ -185,8 +188,9 @@ describe("ui server", () => {
     expect(app).toContain("Welcome to Spaghetti Code Foundry");
     expect(app).toContain("Build your own coding flows: pick a flow on the left,");
     const admin = await text("/admin.js");
-    expect(admin).toContain("Review comments on Foundry PRs");
-    expect(admin).toContain('label: "claude-factory"');
+    const form = await text("/watcher-form.js");
+    expect(form).toContain("Review comments on Foundry PRs");
+    expect(form).toContain('label: "claude-factory"');
     expect(admin).toContain('placeholder: "claude-factory[bot]"');
   });
 
@@ -288,6 +292,63 @@ steps:
     const stats = (await (await json("GET", "/api/stats")).json()) as { totals: { runs: number }; byFlow: { flow: string }[] };
     expect(stats.totals.runs).toBeGreaterThanOrEqual(2);
     expect(stats.byFlow.map((f) => f.flow)).toContain("gated");
+  });
+
+  it("refuses resume, approve and reject of a closed issue, and lets them through after a reopen", async () => {
+    const { fakeGithub } = await import("./helpers/fake-github.js");
+    const gh = fakeGithub();
+    const vars = { github_repo: "acme/gate", issue: "77" };
+    const setIssue = (state: string) => (process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 77, state }]));
+    const graphql = () => (gh.ghLog().match(/api graphql/g) ?? []).length;
+    const MESSAGE = "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.";
+    try {
+      // the fake gh and the home folder belong to this test; the server keeps the home it started with
+      const gated = `name: gated3
+workspace: inplace
+steps:
+  - {id: gate, type: approval, message: "ok?"}
+  - {id: after, type: shell, run: echo after}
+`;
+      const bad = "name: boom2\nworkspace: inplace\nsteps:\n  - {id: boom, type: shell, run: exit 1}\n";
+      const start = async (yaml: string) => (await (await json("POST", "/api/runs", { yaml, task: "t", vars })).json() as { runId: string }).runId;
+      const failed = await start(bad);
+      await waitFor(failed, "failed");
+      const waiting = await start(gated);
+      await waitFor(waiting, "waiting");
+
+      setIssue("CLOSED");
+      for (const [id, action] of [[failed, "resume"], [waiting, "approve"], [waiting, "reject"]] as const) {
+        const r = await json("POST", `/api/runs/${id}/${action}`, {});
+        expect(r.status).toBe(409);
+        expect(((await r.json()) as { error: string }).error).toBe(MESSAGE);
+      }
+      expect((await waitFor(waiting, "waiting")).status).toBe("waiting");
+      const queue = (await (await json("GET", "/api/queue")).json()) as { pending: { runId?: string }[] };
+      expect(queue.pending.map((p) => p.runId)).not.toContain(failed);
+
+      setIssue("OPEN");
+      expect((await json("POST", `/api/runs/${failed}/resume`, {})).status).toBe(202);
+      expect((await json("POST", `/api/runs/${waiting}/approve`, {})).status).toBe(202);
+      await waitFor(waiting, "succeeded");
+
+      // GitHub cannot be reached and nothing is stored: the resume goes through
+      process.env.FAKE_GH_FAIL = "api graphql";
+      const again = await start(bad);
+      await waitFor(again, "failed");
+      expect((await json("POST", `/api/runs/${again}/resume`, {})).status).toBe(202);
+      delete process.env.FAKE_GH_FAIL;
+
+      // a run without an issue makes no GitHub call
+      const before = graphql();
+      const plain = (await (await json("POST", "/api/runs", { yaml: bad, task: "t", vars: { github_repo: "acme/gate" } })).json() as { runId: string }).runId;
+      await waitFor(plain, "failed");
+      expect((await json("POST", `/api/runs/${plain}/resume`, {})).status).toBe(202);
+      expect(graphql()).toBe(before);
+    } finally {
+      delete process.env.FAKE_GH_ISSUES;
+      delete process.env.FAKE_GH_FAIL;
+      gh.restore();
+    }
   });
 
   it("gives every run its next step, the same on the list and the run endpoint", async () => {

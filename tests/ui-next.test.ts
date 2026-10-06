@@ -75,6 +75,21 @@ describe("ui/next.js helpers", () => {
   });
 });
 
+describe("note of an unchecked issue", () => {
+  it("nextParts shows it only when issueUnchecked is set", () => {
+    const text = (n: unknown) => (ui.nextParts(n) as (FakeElement | null)[]).filter(Boolean).map((p) => p!.textContent).join(" ");
+    expect(text({ ...dep(), issueUnchecked: true })).toContain("The state of the issue on GitHub could not be checked");
+    expect(text(dep())).not.toContain("could not be checked");
+  });
+  it("the run page actions hide Approve, Resume and Retry for a closed issue", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const base = { runId: "r1", state: { next: "a", steps: {}, visits: {} }, flowDef: { steps: [{ id: "a" }] } };
+    expect(runs.actions({ ...base, status: "failed", next: { kind: "issue_closed" } })).toHaveLength(0);
+    expect(runs.actions({ ...base, status: "failed", next: { kind: "failed" } })).toHaveLength(2);
+    expect(runs.actions({ ...base, status: "waiting", next: { kind: "issue_closed" } })).toHaveLength(1);
+  });
+});
+
 describe("ui/next.js renderer", () => {
   const render = (els: unknown[]) => els.filter(Boolean) as FakeElement[];
 
@@ -372,6 +387,15 @@ describe("the \"?\" and the status names", () => {
     expect(calls).toEqual([1]);
   });
 
+  it("queueRow shows the owner's name, 'deleted user' for an account that is gone, and nothing without one", () => {
+    const next = nextStep("queued", { repo: "o/r", runId: "q1" });
+    const text = (extra: Record<string, unknown>) => (runs.queueRow({ runId: "q1", kind: "run", next, ...extra }, () => {}) as FakeElement).textContent;
+    expect(text({ ownerName: "Ann" })).toContain("Ann");
+    expect(text({ ownerName: "deleted account" })).toContain("deleted user");
+    expect(text({ ownerName: "deleted account" })).not.toContain("deleted account");
+    expect(text({ ownerName: "Ann" }).replace("Ann", "")).toBe(text({}));
+  });
+
   it("queueRow marks a bug story as going first", () => {
     const next = nextStep("queued", { repo: "o/r", runId: "q1" });
     expect((runs.queueRow({ runId: "q1", kind: "run", next, priority: true }, () => {}) as FakeElement).textContent).toContain("goes first");
@@ -420,15 +444,6 @@ describe("the \"?\" and the status names", () => {
     expect(pill!.attrs.class).toBe("pill state-disabled");
     expect(help!.textContent).toContain("A. B.");
     expect(admin.watcherStateMark({})).toBeNull();
-  });
-
-  it("watcherConfig drops what the API adds, so the config accepts it again", async () => {
-    const { WatcherSchema } = await import("../src/config.js");
-    const base = WatcherSchema.parse({ id: "w", github_repo: "o/r" });
-    const item = { ...base, state: { name: "active", status: "active", help: "A. B." }, status: { id: "w", lastActions: [] } };
-    expect(WatcherSchema.parse(admin.watcherConfig(item))).toEqual(base);
-    expect(() => WatcherSchema.parse(item)).toThrow();
-    expect(admin.watcherConfig()).toEqual({});
   });
 
   it("describes a monitor, and a monitor entry keeps only id, source, every and enabled", async () => {
@@ -575,12 +590,6 @@ describe("the Runs pages for a user", () => {
     } finally {
       g.location = saved;
     }
-  });
-
-  it("the watcher form leaves 'owner' out of the config when the field is empty", async () => {
-    const { ownerSetting } = (await import("../ui/admin.js" as string)) as any;
-    expect({ id: "w", owner: ownerSetting(" ann@example.com ") }).toEqual({ id: "w", owner: "ann@example.com" });
-    expect(JSON.parse(JSON.stringify({ id: "w", owner: ownerSetting("  ") }))).toEqual({ id: "w" });
   });
 
   it("says 'No runs yet.' to a user without runs", async () => {

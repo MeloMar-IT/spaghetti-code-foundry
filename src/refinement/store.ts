@@ -7,12 +7,15 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
+import { END_NO_IMPACT_DRAFT, setImpact, type ImpactRefs } from "./draft-impact.js";
+import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
-export const ARCHITECT_KINDS = ["brief", "round", "question"] as const;
+export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
@@ -38,7 +41,7 @@ const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
 const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round"] as const;
 const LogEntry = z
-  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
+  .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
   .superRefine((l, ctx) => {
     if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > TITLE_MAX) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
@@ -47,8 +50,11 @@ const LogEntry = z
 const RUN_ID = z.string().regex(/^[\w-]+$/).max(100);
 const BriefSchema = z.object({ text: z.string().min(1).max(BRIEF_MAX), at: z.iso.datetime(), branch: z.string().max(255).optional(), runId: RUN_ID, cut: z.boolean().optional() }).strict();
 const ArchitectSchema = z
-  .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional() })
-  .strict();
+  .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional(), draft: z.uuid().optional(), field: z.enum(SUGGEST_FIELDS).optional() })
+  .strict()
+  .refine((a) =>
+    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
+  );
 
 const SessionSchema = z
   .object({
@@ -60,7 +66,8 @@ const SessionSchema = z
     state: z.enum(STATES),
     stateBefore: z.enum(OPEN_STATES as [string, ...string[]]).optional(),
     droppedAt: z.iso.datetime().optional(),
-    drafts: z.array(z.never()).max(0),
+    drafts: DraftsSchema,
+    epic: EpicSchema.optional(),
     brief: BriefSchema.optional(),
     architect: ArchitectSchema.optional(),
     talk: TalkSchema.optional(),
@@ -78,6 +85,8 @@ const SessionSchema = z
       if (s.droppedAt !== undefined) issue("droppedAt");
       if (s.stateBefore !== undefined) issue("stateBefore");
     }
+    // A criterion or a suggestion is tied to a rule or an example that is in the map.
+    if (!tiesOk(s.drafts, s.talk)) issue("drafts");
   });
 
 const FileSchema = z
@@ -329,24 +338,45 @@ export const architectLogRoom = (kind: ArchitectKind = "brief"): number => (kind
 export const END_BAD_FORM = "The architect's answer did not have the agreed form";
 export const END_NO_ROOM = "The talk or the log of this session has no room for the answer";
 export const END_NO_QUESTION = "The question of the person could not be found";
+export const END_NO_DRAFT = "The story draft for the suggestion could not be found";
+export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
 
 export interface ArchitectAsk {
   kind?: ArchitectKind;
   /** For kind `question`: the checked question. */
   question?: string;
+  /** For kind `suggest`: the draft and the field the suggestion is for. For kind `review`: the draft. */
+  draft?: string;
+  field?: SuggestField;
 }
 
 /** The owner starts a run of the architect: records it. Refused for a dropped session, and when the log has no room for the start and its end. */
 export function setArchitectRun(actor: Actor, id: string, runId: string, ask: ArchitectAsk = {}, opts: StoreOptions = {}): Session {
   const kind = ask.kind ?? "brief";
+  if (kind === "suggest" && (!ask.draft || !ask.field)) throw new Error("a suggestion run needs a draft and a field");
+  if (kind === "review" && !ask.draft) throw new Error("a review run needs a draft");
+  if (kind === "impact" && !ask.draft) throw new Error("an impact run needs a draft");
   return change(actor, id, opts, false, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
     if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
-    const architect = { runId, at, ...(kind !== "brief" ? { kind } : {}), ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}) };
+    const architect = {
+      runId,
+      at,
+      ...(kind !== "brief" ? { kind } : {}),
+      ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}),
+      ...(kind === "suggest" ? { draft: ask.draft, field: ask.field } : {}),
+      ...(kind === "review" || kind === "impact" ? { draft: ask.draft } : {}),
+    };
     const entry: LogItem =
       kind === "question"
         ? { at, by: actor.id, what: "asked", detail: cut(ask.question ?? "", DETAIL_MAX) }
-        : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
+        : kind === "suggest"
+          ? { at, by: actor.id, what: "suggestion-asked", detail: ask.field }
+          : kind === "review"
+            ? { at, by: actor.id, what: "review-asked" }
+            : kind === "impact"
+              ? { at, by: actor.id, what: "impact-asked" }
+              : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
     return { ...s, architect, updated: at, log: [...s.log, entry] };
   });
 }
@@ -364,7 +394,7 @@ export function noteArchitectResumed(id: string, runId: string, opts: StoreOptio
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { failed: string };
 
 /**
  * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
@@ -386,6 +416,39 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
       const tooLong = end.brief.text.length > BRIEF_MAX;
       const brief: Brief = { text: end.brief.text.slice(0, BRIEF_MAX), at: end.brief.at, ...(end.brief.branch ? { branch: end.brief.branch } : {}), runId, ...(tooLong ? { cut: true } : {}) };
       return { ...rest, brief, updated: at, log: logged(s, at, "architect-brief", runId) };
+    }
+    if ("suggested" in end) {
+      if (a.kind !== "suggest" || !a.draft || !a.field) return fail(END_NO_DRAFT);
+      try {
+        const c = addSuggested({ drafts: s.drafts, epic: s.epic }, s.talk, a.draft, a.field, end.suggested, end.refs ?? {});
+        if (!c) return fail(END_NO_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-suggested", a.field) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
+    if ("reviewed" in end) {
+      if (a.kind !== "review" || !a.draft) return fail(END_NO_REVIEW_DRAFT);
+      try {
+        const c = setReview({ drafts: s.drafts, epic: s.epic }, a.draft, end.reviewed, end.refs ?? {}, at);
+        if (!c) return fail(END_NO_REVIEW_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-reviewed", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
+    if ("impact" in end) {
+      if (a.kind !== "impact" || !a.draft) return fail(END_NO_IMPACT_DRAFT);
+      try {
+        const c = setImpact({ drafts: s.drafts, epic: s.epic }, a.draft, end.impact, end.refs, at);
+        if (!c) return fail(END_NO_IMPACT_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-impact", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
     }
     const talk = s.talk ?? emptyTalk();
     try {
@@ -431,10 +494,15 @@ function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, b
   return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
 }
 
+/** The talk and the drafts change only in a session that is not dropped and whose repository is in My repositories. */
+function mustBeOpen(s: Session, opts: TalkOptions): void {
+  if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
+  if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+}
+
 function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk, at: string) => TalkChange | undefined): Session {
   return change(actor, id, opts, false, (s, at) => {
-    if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
-    if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+    mustBeOpen(s, opts);
     const c = fn(s.talk ?? emptyTalk(), at);
     return c ? withTalk(s, c, at, actor.id) : undefined;
   });
@@ -444,7 +512,13 @@ export const answerQuestion = (actor: Actor, id: string, questionId: string, inp
 export const acceptProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t, at) => accept(t, proposalId, at));
 export const rejectProposal = (actor: Actor, id: string, proposalId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => reject(t, proposalId));
 export const changeEntry = (actor: Actor, id: string, entryId: string, text: unknown, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => changeText(t, entryId, text));
-export const removeEntry = (actor: Actor, id: string, entryId: string, opts: TalkOptions = {}): Session => changeTalk(actor, id, opts, (t) => remove(t, entryId));
+/** Removes an entry of the map; criteria tied to it lose the tie and waiting suggestions from it go, in the same write. */
+export const removeEntry = (actor: Actor, id: string, entryId: string, opts: TalkOptions = {}): Session =>
+  change(actor, id, opts, false, (s, at) => {
+    mustBeOpen(s, opts);
+    const next = withTalk(s, remove(s.talk ?? emptyTalk(), entryId), at, actor.id);
+    return { ...next, drafts: untie(next.drafts, entryId) };
+  });
 
 /**
  * For part 3c, no actor: stores a round of questions and its proposals. Undefined for an unknown session or a run id that is stored
@@ -464,3 +538,30 @@ export function recordAsked(id: string, runId: string, asked: { question: string
     return c ? withTalk(s, c, at, s.owner, false) : undefined;
   });
 }
+
+// ---- the story drafts ------------------------------------------------------------------------------
+
+function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState) => DraftChange | undefined): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    mustBeOpen(s, opts);
+    const c = fn({ drafts: s.drafts, epic: s.epic });
+    if (!c) return undefined;
+    if (c.line) room(s, LOG_LIMIT - 1);
+    const { epic: _epic, ...rest } = s;
+    // The first draft starts the drafting; with none left the session is exploring again.
+    const state = s.state === "exploring" && !s.drafts.length && c.drafts.length ? "drafting" : s.state === "drafting" && s.drafts.length && !c.drafts.length ? "exploring" : s.state;
+    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
+    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts: c.drafts, state, updated: at, log: [...s.log, ...line] };
+  });
+}
+
+export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft);
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input));
+export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId));
+export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input));
+export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input));
+/** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
+export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));

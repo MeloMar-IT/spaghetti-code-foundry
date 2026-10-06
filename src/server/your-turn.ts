@@ -11,7 +11,7 @@ import { markerHash } from "../monitor/story.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
-import { collectNext, knownRuns, runSince, type Entry } from "./next.js";
+import { collectNext, knownRuns, ownerInfo, runSince, type Entry } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 
 const DAY = 86_400_000;
@@ -173,8 +173,9 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
     const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
     if (!run) continue;
-    if (origin !== "hand" && trackingWatcher(cfg.watchers, run)) continue; // its watcher shows it
     const next = c.next(run);
+    // Its watcher shows it, unless the watcher cannot: the state of the issue is unknown.
+    if (origin !== "hand" && trackingWatcher(cfg.watchers, run) && !next.issueUnchecked) continue;
     const since = runSince(run);
     sources.push({ key: keyOf(next), next, since, stamp: since, dismissable: true });
   }
@@ -189,6 +190,8 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
   }
 
   const release = soonest(times, now);
+  const who = ownerInfo(ctx, list);
+  for (const s of sources) Object.assign(s, who(s.next.runId));
   return { ...buildTurn(sources, { dismissed: readStore(), acted: actedNow(ctx, now), building: stories.size, releaseAt: release?.at }), building: stories.size, release };
 }
 

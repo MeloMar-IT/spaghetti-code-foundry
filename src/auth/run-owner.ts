@@ -26,27 +26,8 @@ export function watcherOwner(email?: string): string | undefined {
   }
 }
 
-const same = (a?: string, b?: string) => (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
-
-/**
- * A sentence when a watcher names an owner that is no account, and that owner is new or changed (a setting that was
- * saved before stays valid). Undefined when all is well.
- */
-export function watcherOwnerProblem(next: { id: string; owner?: string }[], current: { id: string; owner?: string }[]): string | undefined {
-  for (const w of next) {
-    const owner = w.owner?.trim();
-    if (!owner) continue;
-    if (current.some((c) => c.id === w.id && same(c.owner, owner))) continue;
-    let known = false;
-    try {
-      known = findUserByEmail(owner) !== undefined;
-    } catch {
-      known = false;
-    }
-    if (!known) return `watcher "${w.id}": the owner "${owner}" is not the e-mail of an account`;
-  }
-  return undefined;
-}
+/** What the server calls an account that is gone (the UI shows it as "deleted user"). */
+export const DELETED_OWNER = "deleted account";
 
 /** Account names by id (empty when users.json cannot be read). */
 export function ownerNames(): Map<string, string> {

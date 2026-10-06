@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { addCredential } from "../src/credentials/store.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
-import { resumeRun, runFlow } from "../src/engine/runner.js";
+import { AnswerRefused, resumeRun, runFlow, saveAnswer } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
@@ -117,5 +117,24 @@ steps:
     const s = await start(`name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: "echo plain"}\n`);
     expect(s.history[0]!.output).toBe("plain\n");
     expect(kc.calls()).toEqual([]);
+  });
+
+  it("saves [redacted] for a stored token in an answer, and refuses when the secrets cannot be read", async () => {
+    const s = await start(`name: t\nworkspace: empty\nsteps:\n  - {id: ask_for_info, type: shell, run: "echo Q?", on_success: stop, resume_from: ask_for_info}\n`);
+    expect(s.status).toBe("stopped");
+    saveAnswer(runsDir, s.runId, `my token is ${token}`, owner);
+    const text = readFileSync(join(s.runDir, "run.json"), "utf8");
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain(token);
+    const before = readFileSync(join(s.runDir, "run.json"));
+    resetRedactCache();
+    kc.fail("find");
+    try {
+      saveAnswer(runsDir, s.runId, "x", owner);
+      expect.unreachable();
+    } catch (e) {
+      expect((e as AnswerRefused).kind).toBe("secrets");
+    }
+    expect(readFileSync(join(s.runDir, "run.json")).equals(before)).toBe(true);
   });
 });

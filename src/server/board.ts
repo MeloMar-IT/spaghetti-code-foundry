@@ -3,7 +3,7 @@ import type { RunSummary } from "../engine/state.js";
 import { trackingWatcher } from "../next-step.js";
 import { runOrigin } from "../your-turn.js";
 import { send } from "./http.js";
-import { collectNext, jobNext, knownRuns, runSince } from "./next.js";
+import { collectNext, jobNext, knownRuns, ownerInfo, runSince } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 import { evalRunIds } from "./your-turn.js";
 
@@ -90,6 +90,8 @@ export function boardFor(ctx: ApiContext, now = new Date()): Board {
   }
 
   const repos = cfg.watchers.filter((w) => w.enabled && w.source === "issues").map((w) => w.github_repo);
+  const who = ownerInfo(ctx, list);
+  for (const s of sources) Object.assign(s, who(s.next.runId ?? s.runId));
   return buildBoard(sources, { now, repos });
 }
 

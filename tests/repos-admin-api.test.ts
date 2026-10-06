@@ -162,6 +162,24 @@ describe("admin repositories API", () => {
     expect((await call(admin, "POST", `/api/admin/repos/${repo.id}/transfer`, { email: "ann@example.com" })).status).toBe(200);
   });
 
+  it("says in watcherProblem why a repository cannot have a watcher", async () => {
+    const withProblem = async (id: string) => (await all()).find((r) => r.id === id) as Row & { watcherProblem?: string };
+    // a GitHub repository with a token can
+    const token = addRepo(ann.user.id, { url: "acme/watched", method: "github-token", token: TOKEN });
+    expect((await withProblem(token.id)).watcherProblem).toBeUndefined();
+    // a deploy key cannot call the GitHub API
+    const key = addRepo(admin.user.id, { url: "git@github.com:acme/deploy-only.git", method: "ssh-deploy-key" });
+    expect((await withProblem(key.id)).watcherProblem).toBe("this repository's sign-in cannot call the GitHub API; use a GitHub token, the GitHub App, or the server's own access");
+    // not on GitHub
+    const other = addRepo(admin.user.id, { url: "https://git.example.com/acme/app.git" });
+    expect((await withProblem(other.id)).watcherProblem).toBe("a watcher needs a GitHub repository");
+    // "none" of a user needs an owner who is an admin
+    expect((await withProblem(bobRepo.id)).watcherProblem).toBe('a watcher on a repository with the server\'s own access ("none") needs an owner who is an admin');
+    // "none" of an admin can
+    const own = addRepo(admin.user.id, { url: "acme/own2" });
+    expect((await withProblem(own.id)).watcherProblem).toBeUndefined();
+  });
+
   it("never holds a token in an answer or in the log", () => {
     for (const t of [...seen, ...logs]) {
       expect(t).not.toContain(TOKEN);
