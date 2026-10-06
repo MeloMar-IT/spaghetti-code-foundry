@@ -2510,6 +2510,15 @@ You can ask the architect for a proposal for one field of a draft. It is only a 
 
 **Log.** The log tells that a suggestion was asked for (with the field), that the architect suggested, and that a suggestion was accepted or rejected.
 
+**On the page.** Every field of an open draft has **Suggest**. Without a brief the page says to ask the architect to look at the code first; for acceptance criteria with no rule or example in the map it says to accept one first. While the architect works, a line next to the field says "The architect is writing a suggestion." and the Suggest button is gone. A paused run shows its reason with **Ask again**, a failed one with **Try again**. Text you typed and have not saved is saved first; if that save fails, nothing is asked.
+
+A suggestion shows next to its field, marked "Suggested", with three buttons:
+- **Accept** puts it in. On a text field that already has text, the page asks before it replaces it.
+- **Edit and accept** opens a dialog with the text to change (not for Depends on).
+- **Reject** opens a dialog with an optional short reason.
+
+A suggested criterion shows the rule or example it comes from. Criteria are decided one by one. After a decision the field shows the new text and the suggestion is gone; text you typed in other fields and have not saved is kept. Every field and every list item with text shows where it came from: "typed", "accepted" or "accepted, then edited". A dropped session, another account's session and a session whose repository is gone show the waiting suggestions and these marks without buttons. If a suggestion run belongs to a draft that is not open, its line shows at the top of Story drafts. The Context brief part does not show the line of a suggestion run. All texts are shown as text. No new route is used.
+
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
 **The preview.** Every draft in the session has `preview`: `{ title, body }`, the story as Markdown. It is only your text and fixed words; show it as text. For example:

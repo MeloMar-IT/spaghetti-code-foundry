@@ -121,6 +121,10 @@ describe("pure functions", () => {
     expect(ui.logText({ what: "renamed", who: "Ann", detail: "New" })).toBe('Ann renamed it to "New"');
     expect(ui.logText({ what: "dropped", who: "an administrator" })).toBe("an administrator dropped the session");
     expect(ui.logText({ what: "restored", who: "Ann" })).toBe("Ann restored the session");
+    expect(ui.logText({ what: "suggestion-asked", who: "Ann", detail: "title" })).toBe("Ann asked the architect for a suggestion for the title");
+    expect(ui.logText({ what: "architect-suggested", detail: "notes" })).toBe("The architect made a suggestion for the notes");
+    expect(ui.logText({ what: "suggestion-accepted", who: "Ann" })).toBe("Ann accepted a suggestion");
+    expect(ui.logText({ what: "suggestion-rejected", who: "Ann", detail: "why" })).toBe("Ann rejected a suggestion for “so that …”");
     expect(ui.errorText(new TypeError("x"))).toBe("Could not reach the server.");
     expect(ui.errorText(new Error("sentence"))).toBe("sentence");
     expect(ui.errorText({})).toBe("Something went wrong.");

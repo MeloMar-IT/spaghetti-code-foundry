@@ -421,6 +421,9 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .drafts .said, .drafts pre { white-space: pre-wrap; }
 .drafts ul { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
 .drafts textarea { font-family: var(--sans); font-size: inherit; }
+.drafts .suggest { display: grid; gap: 6px; justify-items: start; }
+.drafts .suggest:empty { display: none; }
+.drafts .suggest .entry > button, .drafts .entry > small { margin-left: 6px; }
 .drafts .entry { display: flex; gap: 6px; align-items: flex-start; }
 .drafts .entry > textarea { flex: 1; }
 .drafts .row input, .drafts .row select { width: auto; flex: 1 1 160px; }
