@@ -188,9 +188,10 @@ describe("label-driven issue pipeline", () => {
       "run_tests_1", "review_2", "address_review_2", "run_tests_2", "docs", "final_guard", "commit", "push", "report"]);
     expect(run.history.find((h) => h.id === "review_1")!.agent).toBe("codex:openai");
     expect(run.history.find((h) => h.id === "implement")!.agent).toBe("claude:anthropic:claude-sonnet-5-5");
-    // Review fixes and docs continue the coding session instead of re-reading the code.
+    // Review fixes continue the coding session instead of re-reading the code; docs is a fresh, small session.
     const sess = run.history.find((h) => h.id === "implement")!.sessionId;
-    expect(["address_review_1", "address_review_2", "docs"].map((id) => run.history.find((h) => h.id === id)!.sessionId)).toEqual([sess, sess, sess]);
+    expect(["address_review_1", "address_review_2"].map((id) => run.history.find((h) => h.id === id)!.sessionId)).toEqual([sess, sess]);
+    expect(run.history.find((h) => h.id === "docs")!.sessionId).not.toBe(sess);
 
     const branch = `factory/daily-${today}`;
     expect(gh.remoteGit("log", "--format=%s", "-1", branch).trim()).toBe("Resolve #5: Add a feature");

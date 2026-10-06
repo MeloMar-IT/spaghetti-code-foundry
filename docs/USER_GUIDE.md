@@ -1257,9 +1257,15 @@ flowchart LR
   in a **Depends on** chain are still built one after the other.
 - **No waiting when nobody needs to act:** when a run ends, the Foundry checks that repository
   at once, so the next story, a resume or a retry starts right away instead of at the next interval.
-- **Fewer rounds for low-risk work** (risk score 50 or lower): Codex's notes on the plan go straight
-  to the coder instead of Opus rewriting the plan first (`revise_above_risk`), and the second Codex
-  code review runs only when the first found a `[high]` problem (`review_twice_above_risk`).
+- **No more rounds than the work needs.** Opus plans at high effort. Only a plan with a risk score
+  above 75 — one a person approves anyway — is rewritten by Opus (at its highest effort) after
+  Codex's review (`revise_above_risk`); for every other plan Codex's notes go straight to the coder.
+  Each code change gets **one** Codex review. Set `review_twice_above_risk` to a number (for
+  example `50`) to get a second review after a `[high]` finding or for stories riskier than that;
+  the default is `off`.
+- **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
+  fresh session with only what they need, instead of continuing the whole coding conversation. If
+  the tests fail after a resolved conflict, the coding session takes over.
 - Every day at **17:00** (`release-daily`) the Foundry runs the full tests and build on `develop`
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
   issues — a draft while the checks fail. **You merge it once a day.**

@@ -107,7 +107,7 @@ steps:
   - id: plan
     type: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: high
     permission_mode: dontAsk
     allowed_tools:
       - Read
@@ -597,11 +597,13 @@ steps:
     on_success: run_tests_2
   - id: docs
     type: claude
-    resume: implement
     prompt: |-
-      Now document the change you made for this issue, following the repository's documentation rules
-      (CLAUDE.md). If there are none: update README/docs where behaviour changed, and add doc comments
-      to new public APIs. Required files that must be updated: {{vars.docs_required}}
+      Now document the change that was made for the GitHub issue below. The code is finished, tested and
+      reviewed; you only write documentation. Look at what changed with `git status` and `git diff`
+      (the change is not committed yet) and read the files you need. Do not change code or tests.
+      Follow the repository's documentation rules (CLAUDE.md). If there are none: update README/docs
+      where behaviour changed, and add doc comments to new public APIs.
+      Required files that must be updated: {{vars.docs_required}}
 
       {{steps.pull_ticket.output}}
 

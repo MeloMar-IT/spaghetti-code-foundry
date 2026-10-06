@@ -388,7 +388,8 @@ const SIZE_LINES = [
   "  files such as Main.kt or a settings screen by their path; list test FILES, never a whole tests folder;",
   "  leave out docs, the changelog and the user guide>",
 ];
-// With `reviseAbove`, Opus revises the plan only when the plan's or Codex's risk score is above it;
+// With `reviseAbove`, Opus revises the plan only when the plan's or Codex's risk score is above it
+// (default 75: the plans a person approves anyway; Codex scores risk higher than the planner does);
 // otherwise Codex's notes go straight to the coder (with the plan) — about 5 minutes saved.
 const reviseGate = (post) => ({
   id: "revise_gate",
@@ -398,7 +399,7 @@ const reviseGate = (post) => ({
   run: [
     'score() { printf \'%s\\n\' "$1" | sed -n \'s/^RISK_SCORE: *\\([0-9][0-9]*\\).*/\\1/p\' | tail -1; }',
     'p=$(score "$FACTORY_OUT_PLAN"); c=$(score "$FACTORY_OUT_PLAN_REVIEW"); r=${p:-100}; [ -n "$c" ] && [ "$c" -gt "$r" ] && r=$c',
-    'if [ "$r" -gt "${FACTORY_VAR_REVISE_ABOVE_RISK:-50}" ]; then echo "risk $r: revise the plan"; echo "REVISE"; else echo "risk $r (≤ ${FACTORY_VAR_REVISE_ABOVE_RISK:-50}): Codex\'s notes go straight to the coder"; echo "SKIPPED"; fi',
+    'if [ "$r" -gt "${FACTORY_VAR_REVISE_ABOVE_RISK:-75}" ]; then echo "risk $r: revise the plan"; echo "REVISE"; else echo "risk $r (≤ ${FACTORY_VAR_REVISE_ABOVE_RISK:-75}): Codex\'s notes go straight to the coder"; echo "SKIPPED"; fi',
   ].join("\n"),
   routes: [{ if: "^REVISE\\s*$", goto: "revise_plan" }],
   on_success: post,
@@ -413,7 +414,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
       id: "plan",
       type: "claude",
       model: "claude-opus-5-5",
-      effort: "xhigh",
+      // high for every plan; a plan that turns out risky is revised at xhigh (revise_plan)
+      effort: "high",
       permission_mode: "dontAsk",
       allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(ls*)"],
       prompt: [
@@ -783,11 +785,15 @@ write("issue-plan", {
     {
       id: "docs",
       type: "claude",
-      resume: "implement",
+      // A fresh session: writing the changelog and the guide does not need the whole coding conversation
+      // (continuing it made this easy step one of the most expensive ones).
       prompt: [
-        "Now document the change you made for this issue, following the repository's documentation rules",
-        "(CLAUDE.md). If there are none: update README/docs where behaviour changed, and add doc comments",
-        "to new public APIs. Required files that must be updated: {{vars.docs_required}}",
+        "Now document the change that was made for the GitHub issue below. The code is finished, tested and",
+        "reviewed; you only write documentation. Look at what changed with `git status` and `git diff`",
+        "(the change is not committed yet) and read the files you need. Do not change code or tests.",
+        "Follow the repository's documentation rules (CLAUDE.md). If there are none: update README/docs",
+        "where behaviour changed, and add doc comments to new public APIs.",
+        "Required files that must be updated: {{vars.docs_required}}",
         "",
         "{{steps.pull_ticket.output}}",
         "",
@@ -1471,14 +1477,18 @@ write("issue-plan", {
     type: "claude",
     jump_only: true,
     max_visits: 3,
-    resume: "implement",
+    // A fresh session: most conflicts are small (two stories touched the same list or file), and the tests
+    // judge the result. If they fail, fix_develop continues the coding session, which knows the change.
     prompt: [
-      "Your finished change is being merged into the develop branch, and other work landed there meanwhile.",
-      "The merge has conflicts (run `git status` and `git diff`):",
+      "A finished change for the GitHub issue below is being merged into the develop branch, and other work",
+      "landed there meanwhile. The merge has conflicts (run `git status` and `git diff`):",
       "",
       "{{steps.merge_develop.output}}",
       "",
-      "Resolve every conflict so that BOTH changes keep working: keep the other work and fit yours in.",
+      "The issue of the change being merged (`git log -3 MERGE_HEAD` shows its commits):",
+      "{{steps.pull_ticket.output}}",
+      "",
+      "Resolve every conflict so that BOTH changes keep working: keep the other work and fit this change in.",
       "Remove all conflict markers, then `git add` the resolved files. Do not commit and do not run",
       "git merge, rebase or reset. Finish with one line per file saying how you resolved it.",
     ].join("\n"),
@@ -1634,12 +1644,15 @@ write("issue-plan", {
     ].join("\n"),
     on_success: "end",
   };
-  // A second Codex round only when round 1 found something serious, or the story is riskier.
+  // One Codex round per change by default. With review_twice_above_risk set to a number: a second round
+  // when round 1 found something serious, or the story is riskier than that.
   const reviewGate = {
     id: "review_gate",
     type: "shell",
-    description: "Second review round only after a [high] finding or for riskier stories",
+    description: "One review per change; a second round only when review_twice_above_risk is set (then after a [high] finding or for riskier stories)",
     run: [
+      '# One review per code change by default; a number in review_twice_above_risk switches the second round on.',
+      'case "${FACTORY_VAR_REVIEW_TWICE_ABOVE_RISK:-off}" in ""|off|no|never) echo "one review per change (review_twice_above_risk is off)"; echo "DONE"; exit 0 ;; esac',
       'sev=$(printf \'%s\\n\' "$FACTORY_OUT_REVIEW_1" | sed -n \'s/^SEVERITY: *\\([a-z]*\\).*/\\1/p\' | tail -1)',
       'risk=$(printf \'%s\\n\' "$FACTORY_OUT_RISK_GATE" | sed -n \'s/^RISK: *\\([0-9][0-9]*\\).*/\\1/p\' | tail -1)',
       'if [ "${sev:-high}" = high ] || [ "${risk:-100}" -gt "${FACTORY_VAR_REVIEW_TWICE_ABOVE_RISK:-50}" ]; then echo "round 2: severity ${sev:-unknown}, risk ${risk:-unknown}"; echo "REVIEW_AGAIN"',
@@ -1724,7 +1737,7 @@ write("issue-plan", {
       forbidden_paths: "", docs_required: "", union_merge_files: "", agent_env: "",
       risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", trigger_label: "",
       max_files: "15", max_code_lines: "800", delete_merged_branches: "yes", close_when_merged: "yes",
-      revise_above_risk: "50", review_twice_above_risk: "50",
+      revise_above_risk: "75", review_twice_above_risk: "off",
       hotfix_labels: "bug", hotfix_prefix: "hotfix/",
     },
     steps: gitflowSteps,

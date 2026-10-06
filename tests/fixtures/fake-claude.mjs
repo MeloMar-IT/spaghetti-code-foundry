@@ -105,7 +105,7 @@ else if (prompt.includes("CI failed on this branch")) {
     ask.includes(n) ? `### #${n}\n**Q1. Which package format?**\ndmg or pkg\n**Recommendation:** dmg — no admin prompt` : `### #${n}\nNO_QUESTIONS`).join("\n");
 } else if (prompt.includes("Your plan is over the size limit")) {
   canned = process.env.FAKE_FORCED_SPLIT ?? "## Split\n### ISSUE 1: Small part one\nDEPENDS_ON: none\nDo one.\n### ISSUE 2: Small part two\nDEPENDS_ON: 1\nDo two.\nSPLIT_RISK: 20\nPLAN_STATUS: TOO_BIG";
-} else if (prompt.includes("Your finished change is being merged into the develop branch")) {
+} else if (prompt.includes("is being merged into the develop branch")) {
   // Resolve by keeping both sides: drop the conflict markers from every conflicted file.
   const files = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], { encoding: "utf8" }).split("\n").filter(Boolean);
   for (const f of process.env.FAKE_RESOLVE_NOOP ? [] : files) { // FAKE_RESOLVE_NOOP: the resolver changes nothing

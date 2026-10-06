@@ -44,7 +44,7 @@ steps:
   - id: plan
     type: claude
     model: claude-opus-5-5
-    effort: xhigh
+    effort: high
     permission_mode: dontAsk
     allowed_tools:
       - Read
