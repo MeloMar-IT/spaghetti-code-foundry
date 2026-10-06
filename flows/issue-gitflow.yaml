@@ -1002,7 +1002,9 @@ steps:
         exit 0
       fi
       out=$(git push origin "$dev" 2>&1); printf '%s\n' "$out"
-      if printf '%s\n' "$out" | grep -qE "rejected|fetch first|non-fast-forward"; then echo "develop moved meanwhile — merging again"; echo "MOVED"; exit 0; fi
+      # GitHub refused the push because of a branch rule: that is not "the branch moved", and merging again cannot help.
+      if printf '%s\n' "$out" | grep -qE "GH013|GH006|rule violations|through a pull request|protected branch"; then echo "GitHub refused the push: a branch rule of the repository does not let this account push to $dev directly. Let it bypass the rule (Settings → Rules), then retry this step."; exit 1; fi
+      if printf '%s\n' "$out" | grep -qE "\[rejected\]|fetch first|non-fast-forward"; then echo "develop moved meanwhile — merging again"; echo "MOVED"; exit 0; fi
       echo "pushing $dev failed (see above)"; exit 1
     routes:
       - if: ^MOVED\s*$
@@ -1226,7 +1228,9 @@ steps:
       behind() { echo "$1" > "{{run.dir}}/develop-behind"; echo "DEVELOP_BEHIND: $1"; exit 0; }
       out=$(git push origin "$dev" 2>&1); code=$?; printf '%s\n' "$out"
       if [ "$code" -eq 0 ]; then echo "PUSHED: $dev $(git rev-parse --short HEAD)"; exit 0; fi
-      if printf '%s\n' "$out" | grep -qE "rejected|fetch first|non-fast-forward|Invalid revision range"; then echo "$dev moved meanwhile — merging again"; echo "MOVED"; exit 0; fi
+      # GitHub refused the push because of a branch rule: that is not "the branch moved", and merging again cannot help.
+      if printf '%s\n' "$out" | grep -qE "GH013|GH006|rule violations|through a pull request|protected branch"; then echo "GitHub refused the push: a branch rule of the repository does not let this account push to $dev directly. Let it bypass the rule (Settings → Rules), then retry this step."; exit 1; fi
+      if printf '%s\n' "$out" | grep -qE "\[rejected\]|fetch first|non-fast-forward|Invalid revision range"; then echo "$dev moved meanwhile — merging again"; echo "MOVED"; exit 0; fi
       behind "pushing $dev failed (see above)"
     routes:
       - if: ^MOVED\s*$
