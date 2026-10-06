@@ -26,6 +26,8 @@ export interface ProcessOptions {
   pinnedSecrets?: string[];
   /** Run in a process group of its own and kill the whole group when the process ends (steps that hold a credential). */
   ownGroup?: boolean;
+  /** Start from nothing instead of the server's environment: only `env` is passed (a user's run, see short-env.ts). */
+  cleanEnv?: boolean;
 }
 
 /**
@@ -42,8 +44,8 @@ export function inheritedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Proc
 }
 
 /** process.env (without a Claude host session's variables) + overrides; an override of `undefined` removes the variable. */
-function mergeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env = { ...inheritedEnv(), ...overrides };
+function mergeEnv(overrides: NodeJS.ProcessEnv = {}, clean = false): NodeJS.ProcessEnv {
+  const env = { ...(clean ? {} : inheritedEnv()), ...overrides };
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
   return env;
 }
@@ -69,7 +71,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     let logError: NodeJS.ErrnoException | undefined;
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
-      env: mergeEnv(opts.env),
+      env: mergeEnv(opts.env, opts.cleanEnv),
       stdio: ["pipe", "pipe", "pipe"],
       ...(opts.ownGroup ? { detached: true } : {}),
     });

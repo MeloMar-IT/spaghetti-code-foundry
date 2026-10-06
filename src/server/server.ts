@@ -3,7 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
-import { redactText } from "../credentials/redact.js";
+import { hideKeyVars, redactText } from "../credentials/redact.js";
+import { providerKeyVars } from "../agents/targets.js";
+import { TOKEN_MIN } from "../credentials/store.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
@@ -115,7 +117,18 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     sink(text);
   };
   const opts: ServerOptions = { ...given, log };
-  let config = loadConfig();
+  // loadConfig(), then the values of the provider key variables are hidden; a key too short to hide is named once
+  const shortKeys = new Set<string>();
+  const readConfig = (): Config => {
+    const c = loadConfig();
+    for (const name of hideKeyVars(providerKeyVars(c))) {
+      if (shortKeys.has(name)) continue;
+      shortKeys.add(name);
+      log(`! the key in ${name} is shorter than ${TOKEN_MIN} characters, so it is not hidden in output`);
+    }
+    return c;
+  };
+  let config = readConfig();
   // The effective config: config.yaml plus the runnable stored watchers (refreshed in every sync()).
   let effective: Config = config;
   let blocked: BlockedWatcher[] = [];
@@ -195,7 +208,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     fileConfig: () => config,
     blockedWatchers: () => blocked,
     reloadConfig: () => {
-      config = loadConfig();
+      config = readConfig();
       rebuild();
     },
     listen,
@@ -209,7 +222,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     log(`! repo-watchers: leftover watchers could not be removed: ${e instanceof StoreError ? `${basename(e.file)} ${e.kind}` : "unexpected error"}`);
   }
   // Existing watchers of config.yaml move to their repositories (the store first, the file second) before they are read.
-  if (moveConfigWatchers({ log }).changed) config = loadConfig();
+  if (moveConfigWatchers({ log }).changed) config = readConfig();
   refreshStored();
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while

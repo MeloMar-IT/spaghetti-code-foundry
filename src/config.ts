@@ -246,6 +246,12 @@ const SelfUpdateSchema = z
   .refine((u) => !u.enabled || u.repo, { message: "name the repository the Foundry may update from (owner/name)", path: ["repo"] })
   .prefault({});
 
+/** A name, or a prefix ending in `_*`, that an admin may list in `step_env`. */
+export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
+/** Names that never go on that list: the engine's own, the login and git and ssh settings. */
+export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
+const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -327,6 +333,16 @@ export const ConfigSchema = z
       })
       .strict()
       .optional(),
+    /** Variables of the server that steps of a user's run may also see (a name, or a prefix ending in _*). */
+    step_env: z
+      .object({
+        /** All steps. */
+        pass: z.array(stepEnvName).max(100).default([]),
+        /** Agent steps only. */
+        agent_pass: z.array(stepEnvName).max(100).default([]),
+      })
+      .strict()
+      .prefault({}),
     /** Defaults for flows that don't set their own sandbox. */
     sandbox: z.object({ claude: z.boolean().optional(), docker_image: z.string().optional() }).strict().default({}),
     watchers: z.array(WatcherSchema).default([]),

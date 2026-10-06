@@ -4,6 +4,7 @@ import { runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
+import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, resolveTarget, type Target } from "./targets.js";
 
@@ -26,16 +27,19 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
   try {
-    const env = iso
+    let env: Record<string, string | undefined> = iso
       ? { ...base, ...agentEnv(scope.ctx.vars.agent_env, true), ...isolationEnv(base, engine.config, ghDir!, iso.who) }
       : { ...base, ...(await engine.botEnv()), ...agentEnv(scope.ctx.vars.agent_env) };
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, Boolean(iso));
+    // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
+    const short = shortEnvRun(engine.summary.owner);
+    if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, Boolean(iso), short);
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
 }
 
-async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, isolated: boolean): Promise<StepResult> {
+async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, isolated: boolean, short = false): Promise<StepResult> {
   const { ctx, flow } = scope;
   const d = flow.defaults;
   const local = LOCAL_KINDS.includes(t.provider.kind);
@@ -62,6 +66,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     const r = await runCodex({
       ...common,
       env,
+      cleanEnv: short,
       codexBin: engine.codexBin,
       model: t.model,
       localProvider: local ? t.provider.kind : undefined,
@@ -79,6 +84,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const r = await runClaude({
     ...common,
     env: { ...env, ...claudeProviderEnv(t, isolated ? tokenVarNames(engine.config) : []) },
+    cleanEnv: short,
     claudeBin: engine.claudeBin,
     model: t.model,
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,

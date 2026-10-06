@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { KeyError } from "../src/credentials/keychain.js";
-import { REDACTED, CANNOT_READ, emptyRedactor, liveRedactor, makeRedactor, redactStream, redactText, requireRedaction, secretRedactor } from "../src/credentials/redact.js";
+import { REDACTED, CANNOT_READ, emptyRedactor, hideKeyVars, liveRedactor, makeRedactor, redactStream, redactText, redactedJson, requireRedaction, resetRedactCache, secretRedactor } from "../src/credentials/redact.js";
 import { StoreError } from "../src/auth/store.js";
 import { addCredential, credentialsPath, removeCredential, rotateKey } from "../src/credentials/store.js";
 import { runProcess } from "../src/steps/process.js";
@@ -206,6 +206,56 @@ describe("live set", () => {
       expect(redactText("x")).toBe(CANNOT_READ);
       expect(() => requireRedaction()).toThrow(/^the stored credentials cannot be read/);
     });
+  });
+});
+
+describe("key variables", () => {
+  const NAME = "KEY_VAR_FOR_TEST";
+  afterEach(() => {
+    delete process.env[NAME];
+    resetRedactCache();
+  });
+
+  it("hides the value of a named variable, as stored credentials are hidden", () => {
+    const value = "kv-0123456789abcdef-xyz";
+    process.env[NAME] = value;
+    resetRedactCache();
+    expect(redactText(`key ${value}`)).toBe(`key ${value}`);
+    expect(hideKeyVars([NAME])).toEqual([]);
+    expect(redactText(`key ${value}`)).toBe(`key ${REDACTED}`);
+    expect(redactedJson({ k: value })).toBe(JSON.stringify({ k: REDACTED }));
+  });
+
+  it("does not hide a value shorter than a stored token may be, and names it", () => {
+    process.env[NAME] = "short";
+    expect(hideKeyVars([NAME])).toEqual([NAME]);
+    expect(redactText("a short value")).toBe("a short value");
+    expect(hideKeyVars(["KEY_VAR_UNSET_FOR_TEST"])).toEqual([]);
+  });
+
+  it("follows a change of the value", () => {
+    process.env[NAME] = "first-value-0123456789";
+    hideKeyVars([NAME]);
+    expect(redactText("first-value-0123456789")).toBe(REDACTED);
+    process.env[NAME] = "second-value-0123456789";
+    expect(redactText("first-value-0123456789 second-value-0123456789")).toBe(`first-value-0123456789 ${REDACTED}`);
+  });
+
+  it("is forgotten by resetRedactCache", () => {
+    process.env[NAME] = "forgotten-0123456789";
+    hideKeyVars([NAME]);
+    resetRedactCache();
+    expect(redactText("forgotten-0123456789")).toBe("forgotten-0123456789");
+  });
+
+  it("still blocks everything when the store cannot be read", () => {
+    store("one", fakeToken());
+    process.env[NAME] = "blocked-0123456789";
+    hideKeyVars([NAME]);
+    secretRedactor();
+    store("two", fakeToken("Bb2"));
+    kc.fail("find");
+    expect(liveRedactor().redact("harmless")).toBe(CANNOT_READ);
   });
 });
 

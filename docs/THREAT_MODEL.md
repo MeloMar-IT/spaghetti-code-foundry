@@ -42,6 +42,9 @@ account that runs the server. Give a user account only to people you would give 
 - Secrets never appear in API responses, and are not put into shell commands.
 - A shell `run` renders only `vars`, `workdir` and `run`; `{{vars.<input>}}` is refused (`src/flow/schema.ts`).
 
+**Fixed in #300.**
+- SR-O2: the steps of a user's run start with a short environment (`src/engine/short-env.ts`), not a copy of the server's. A shell step gets a fixed short list, the `FACTORY_…` variables, the isolation variables and the names an admin lists in `step_env.pass`. An agent step also gets the exact variables its own agent and provider need, and `step_env.agent_pass`. Keys of other providers are not passed. The values of the keys named in the config (`api_key_env`) and of five well-known key variables are hidden in logs, live output and API answers (`src/credentials/redact.ts`).
+
 **Fixed in #299.**
 - SR-1: the diff reads changes without the server's environment and without any git setting of the workspace or the machine.
 - SR-2: bare `{{vars}}` in a shell `run` is refused in a flow with a user input.
@@ -51,6 +54,11 @@ account that runs the server. Give a user account only to people you would give 
 - The run works as the Mac account and can read its files and Keychain (SR-O1).
 - Global redaction uses every account's secrets on every answer. It is not only protection: a short token such as a common word is replaced in everyone's answers and confirms a guess of another account's secret (SR-O10).
 - The Slack webhook is shown to admins, and `GET /api/since` uses the server's login (SR-O9).
+- The agent's own provider key is still visible to the agent's shell tool unless the agent CLI hides it (left open from SR-O2).
+- A name an admin lists in `step_env.pass` is readable by the shell steps of every user's run; `agent_pass` limits a name to agent steps.
+- A value shorter than 8 characters is not hidden in output. The server logs a line for such a key variable.
+- Only the exact variable names above are known to be enough for the agents; the fake agents cannot show what the real Claude Code and Codex CLIs need. Setups the built-in provider list does not know (such as Bedrock with `AWS_…` keys) need `agent_pass`.
+- Runs that keep the machine's login (an admin's run, or a run without an owner) still get the server's whole environment.
 
 ## Prompt injection from repositories and issues
 
@@ -124,7 +132,7 @@ nothing twice.
 | Id | Severity | Finding | Issue |
 |---|---|---|---|
 | SR-O1 | High | A run is not held by the operating system (issue "Platform 2d") | not filed yet |
-| SR-O2 | — | Issue "Platform 2b" | not filed yet |
+| SR-O2 | Fixed | The steps of a user's run saw the server's whole environment. Fixed in #300; what stays open is listed under "Credential leakage" | #300 |
 | SR-O3 | — | Issue "Platform 2c" | not filed yet |
 | SR-O4 | Medium | Any commenter's answer resumes a needs-info run (`src/github.ts:273-279`), and all comments reach the agent | not filed yet |
 | SR-O5 | Low | The connection test connects to any host and port, and git follows the first redirect | not filed yet |
