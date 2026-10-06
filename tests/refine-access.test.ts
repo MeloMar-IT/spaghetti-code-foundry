@@ -234,8 +234,8 @@ describe("a refinement run", { timeout: 60_000 }, () => {
     const s = await go(probe(), { source: REFINE, owner: user.id, config });
     expect(out(s, "clone")).toBe("stored host=github.com");
     expect(out(s, "list_issues")).toBe("stored host=github.com");
-    expect(out(s, "other")).toBe(BOT);
-    expect(out(s, "brief")).toContain("gh_token=other");
+    expect(out(s, "other")).toBe("none");
+    expect(out(s, "brief")).toContain("gh_token=none");
   });
 
   it.each([["ui"], ["cli"], ["watcher w issue #1"], [undefined]])("a run with the source %s gets no token", async (source) => {
@@ -344,7 +344,7 @@ describe("git isolation", { timeout: 60_000 }, () => {
       expect(o).toMatch(/allow=https prompt=0 askpass=\s*\n/);
       expect(o).toContain("transport 'ssh' not allowed");
     }
-    expect(out(s, "other")).toMatch(/credential\.helper evil/);
+    expect(out(s, "other")).not.toMatch(/helper evil/); // a user run: no step keeps the machine's git settings
   });
 });
 
@@ -358,7 +358,7 @@ describe("a token in the process", { timeout: 60_000 }, () => {
     const s = await go(flow, { source: REFINE, owner: user.id });
     expect(out(s, "clone")).toBe("t=unset p=unset c=unset v=unset r=1");
     expect(out(s, "list_issues")).toBe("t=unset p=unset c=unset v=unset r=1");
-    expect(out(s, "other")).toBe("t=1 p=1 c=1 v=1 r=0");
+    expect(out(s, "other")).toBe("t=unset p=unset c=unset v=unset r=0"); // tracing is off in every step of a user run
   });
 
   it("hides the token of a step even when the stored one was never known to the live set", async () => {
@@ -391,6 +391,7 @@ describe("a token in the process", { timeout: 60_000 }, () => {
     const s = await go(flow, { source: REFINE, owner: user.id, config: ConfigSchema.parse({ protected_branches: [], sandbox: { docker_image: "img" } }) });
     const o = out(s, "clone");
     for (const name of ["GH_TOKEN", "GIT_CONFIG_GLOBAL", "GIT_ALLOW_PROTOCOL", "GIT_TERMINAL_PROMPT"]) expect(o).toContain(`arg:${name}\n`);
+    for (let i = 0; i < 6; i++) for (const name of [`GIT_CONFIG_KEY_${i}`, `GIT_CONFIG_VALUE_${i}`]) expect(o).toContain(`arg:${name}\n`); // every entry below the count
     expect(o).not.toContain(TOKEN);
   });
 

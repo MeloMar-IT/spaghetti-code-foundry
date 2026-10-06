@@ -2,6 +2,8 @@ import type { ClaudeStep } from "../flow/schema.js";
 import { runClaude } from "../steps/claude.js";
 import { runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { render } from "../engine/template.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, resolveTarget, type Target } from "./targets.js";
 
@@ -17,7 +19,23 @@ export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean)
   return "workspace-write";
 }
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs?: number): Promise<StepResult> {
+type Iso = { who: CommitIdentity };
+
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined): Promise<StepResult> {
+  // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
+  const base = stepEnv(scope, engine);
+  const ghDir = iso ? ghConfigDir() : undefined;
+  try {
+    const env = iso
+      ? { ...base, ...agentEnv(scope.ctx.vars.agent_env, true), ...isolationEnv(base, engine.config, ghDir!, iso.who) }
+      : { ...base, ...(await engine.botEnv()), ...agentEnv(scope.ctx.vars.agent_env) };
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, Boolean(iso));
+  } finally {
+    if (ghDir) removeGhConfigDir(ghDir);
+  }
+}
+
+async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, isolated: boolean): Promise<StepResult> {
   const { ctx, flow } = scope;
   const d = flow.defaults;
   const local = LOCAL_KINDS.includes(t.provider.kind);
@@ -43,7 +61,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
     const r = await runCodex({
       ...common,
-      env: { ...stepEnv(scope, engine), ...agentEnv(scope.ctx.vars.agent_env) },
+      env,
       codexBin: engine.codexBin,
       model: t.model,
       localProvider: local ? t.provider.kind : undefined,
@@ -60,7 +78,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
   const caps = t.free || !engine.config.cost_limits ? [] : [step.max_budget_usd ?? d.max_budget_usd, engine.remainingBudget()].filter((n): n is number => n !== undefined);
   const r = await runClaude({
     ...common,
-    env: { ...stepEnv(scope, engine), ...agentEnv(scope.ctx.vars.agent_env), ...claudeProviderEnv(t) },
+    env: { ...env, ...claudeProviderEnv(t, isolated ? tokenVarNames(engine.config) : []) },
     claudeBin: engine.claudeBin,
     model: t.model,
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
@@ -68,7 +86,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
     noMcp: local,
-    isolated: engine.config.isolate_agents,
+    isolated: engine.config.isolate_agents || isolated,
     effort,
   });
   for (const d of r.denied ?? []) engine.log(`    ⚠ blocked: ${d}`);
@@ -92,6 +110,11 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
  */
 export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs?: number): Promise<StepResult> {
   const { config } = engine;
+  const iso = stepIsolation(engine, scope.ctx.vars);
+  if (iso && "refused" in iso) {
+    engine.accessFailed = true;
+    return { ok: false, output: iso.refused, error: iso.refused };
+  }
   let target: Target;
   try {
     target = engine.budgetFallback ?? resolveTarget(step, scope.flow, config, scope.visits[step.id] ?? 1);
@@ -105,7 +128,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   for (;;) {
     tried.add(target.label);
-    const r = await runOn(target, step, scope, engine, logFile, timeoutMs);
+    const r = await runOn(target, step, scope, engine, logFile, timeoutMs, iso);
     if (r.ok || engine.signal?.aborted) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
@@ -138,11 +161,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
  * line or separated by `;` (e.g. `JAVA_HOME=/path/to/jdk`), so agents can run the project's build.
  * Names with the FACTORY_ or SCF_ prefix and a few sensitive ones are ignored.
  */
-export function agentEnv(spec: string | undefined): Record<string, string> {
+export function agentEnv(spec: string | undefined, isolated = false): Record<string, string> {
   const env: Record<string, string> = {};
   for (const part of (spec ?? "").split(/[\n;]/)) {
     const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$/.exec(part);
-    if (m && !/^(PATH|HOME|FACTORY_.*|SCF_.*|ANTHROPIC_.*|OPENAI_.*|GH_TOKEN|GITHUB_TOKEN)$/.test(m[1]!)) env[m[1]!] = m[2]!;
+    if (m && !/^(PATH|HOME|FACTORY_.*|SCF_.*|ANTHROPIC_.*|OPENAI_.*|GH_TOKEN|GITHUB_TOKEN)$/.test(m[1]!) && !(isolated && ISOLATED_AGENT_ENV.test(m[1]!))) env[m[1]!] = m[2]!;
   }
   return env;
 }

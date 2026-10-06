@@ -49,6 +49,7 @@ const SETUP_ERRORS: { re: RegExp; what: string; fix: string }[] = [
   { re: /^codex CLI not found/, what: "the Codex tool is not installed", fix: "install Codex on the computer that runs the Foundry" },
   { re: SIGN_IN_USED, what: "the repository's sign-in could not be used", fix: "reconnect the repository under My repositories, or ask an admin" },
   { re: SIGN_IN_LATER, what: "the repository's sign-in was not available for the step", fix: "resume the run" },
+  { re: /^the account that owns this run could not be found/, what: "the account that owns the run is gone", fix: "set the bot name and e-mail in Settings, then resume the run" },
   { re: /^the sign-in folder of this run could not be removed/, what: "the sign-in folder of the run could not be removed", fix: "ask an admin to delete the folder \"sign-in\" in the run folder, then resume the run" },
   { re: /^(?:set a token for this repository|the (?:stored )?token of this repository|GitHub refused the token of this repository|"[^"]+" is not one of your repositories|this run has no owner)/, what: "the repository could not be read with its stored token", fix: "set the token of the repository again under My repositories, or ask an admin when it cannot be read" },
 ];

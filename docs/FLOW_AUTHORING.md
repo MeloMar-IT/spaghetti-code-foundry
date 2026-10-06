@@ -267,7 +267,8 @@ In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
 
 A flow variable named **`agent_env`** is special: its `KEY=value` pairs (separated by `;` or new
 lines) are added to the environment of every agent step — e.g. `agent_env: JAVA_HOME=/opt/jdk21`
-so the agent can run `./gradlew`. (`PATH`, tokens, `FACTORY_*` and `SCF_*` can't be set this way.)
+so the agent can run `./gradlew`. (`PATH`, tokens, `FACTORY_*` and `SCF_*` can't be set this way; in a
+run that never uses the machine's login, `GH_*`, `GITHUB_*`, `GIT_*`, `SSH_*`, `XDG_*` and `LC_ALL` are ignored too.)
 
 **Shell `run` may only use `{{vars.*}}`, `{{workdir}}` and `{{run.*}}`** — never `{{task}}` or
 `{{steps.*}}` (that text is untrusted and would be a shell-injection risk). In shell steps, use

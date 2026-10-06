@@ -8,6 +8,7 @@ import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
+import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
@@ -47,6 +48,8 @@ export interface Engine {
   summary: RunSummary;
   config: Config;
   baseEnv: Record<string, string>;
+  /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. */
+  botEnv: () => Promise<Record<string, string>>;
   /** Whether this run may take the hotfix path (see hotfixState); "off" when unset. */
   hotfix?: "on" | "off" | "other";
   logsDir: string;
@@ -156,6 +159,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         if (access.detail) engine.log(`    ! ${step.id}: the stored ${access.reason === KEY_UNREADABLE ? "deploy key" : "token"} could not be read: ${access.detail}`);
         return refuse(access.reason);
       }
+      // A step of an isolated run never sees the machine's login or the bot's token (see isolation.ts).
+      const holds = access?.kind === "token" || access?.kind === "app" || access?.kind === "key";
+      const iso = stepIsolation(engine, ctx.vars, holds);
+      if (iso && "refused" in iso) return refuse(iso.refused);
+      if (!iso) Object.assign(env, await engine.botEnv()); // nothing is made yet, so a throw leaves nothing behind
       // The GitHub App: a new token limited to this repository, for this step only (never stored).
       let tokenAccess = access?.kind === "token" ? access : undefined;
       let appExpires: number | undefined;
@@ -167,10 +175,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       }
       const keyAccess = access?.kind === "key" ? access : undefined;
       const refinement = isRefinementRun(engine.summary.source);
-      const ghDir = tokenAccess || keyAccess ? ghConfigDir() : undefined;
+      const ghDir = iso ? ghConfigDir() : undefined;
       const runDir = engine.summary.runDir;
       let readEnv: Record<string, string | undefined> = {};
       let marker = "";
+      if (iso) Object.assign(env, isolationEnv(env, engine.config, ghDir!, iso.who));
       if (tokenAccess) readEnv = repoTokenEnv(tokenAccess, env, ghDir);
       if (keyAccess) {
         try {
@@ -183,6 +192,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       }
       Object.assign(env, readEnv);
       const readNames = Object.keys(readEnv).filter((k) => readEnv[k] !== undefined);
+      // the git config entries stay whole in a container, and an isolated step keeps its commit name there
+      const count = readNames.includes("GIT_CONFIG_COUNT") ? Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0 : 0;
+      const dockerEnv = [...readNames];
+      for (let i = 0; i < count; i++) for (const k of ["GIT_CONFIG_KEY_" + i, "GIT_CONFIG_VALUE_" + i]) if (env[k] !== undefined && !dockerEnv.includes(k)) dockerEnv.push(k);
+      if (iso) for (const k of IDENTITY_VARS) if (!dockerEnv.includes(k)) dockerEnv.push(k);
       // The push exception is a one-time token that only this step gets (see grantPush), not a plain name.
       const grant = env.FACTORY_PUSH_ALLOW ? grantPush(env.FACTORY_PUSH_ALLOW) : undefined;
       if (grant) Object.assign(env, grant.env);
@@ -199,7 +213,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           timeoutMs,
           signal: engine.signal,
           dockerImage: step.sandbox ? image : undefined,
-          dockerEnv: readNames,
+          dockerEnv,
           // the token or key of this step stays hidden even if the stored one is changed or removed while it runs
           pinnedSecrets: tokenAccess ? [tokenAccess.token] : keyAccess ? [keyAccess.key] : undefined,
           scan: tokenAccess ? tokenRefused : keyAccess ? keyRefused : undefined,

@@ -1017,7 +1017,9 @@ project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test
 `make`) and read-only git commands — so it can check its own work and, for example, regenerate
 test fixtures. Pushing is never allowed. If the build needs environment settings (such as
 `JAVA_HOME`), put them in the `agent_env` variable: `KEY=value` pairs separated by `;` or new
-lines. `PATH`, tokens and the Foundry's own variables can't be set this way.
+lines. `PATH`, tokens and the Foundry's own variables can't be set this way. In a run that never
+uses the machine's login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`,
+`GIT_`, `SSH_` or `XDG_`, and `LC_ALL`, are ignored too.
 
 ### Bug stories go first
 
@@ -1437,7 +1439,9 @@ not told).
   runs started with `scf run`. Without a running server only the command runs.
 
 **Bot identity** — by default commits and comments are made as you. Set a bot name/email and a
-token (or a GitHub App) to make them as a bot instead.
+token (or a GitHub App) to make them as a bot instead. In a run that never uses the machine's login
+(every user's run, and an admin's run on a repository with a stored sign-in) the bot's token is never
+used; the bot name and e-mail are, else the name and e-mail of the run's owner.
 
 **GitHub App** — one app for the whole Foundry. It lets users connect a repository without a personal
 token (the method "GitHub App" on My repositories). Set it up once:
@@ -1682,6 +1686,11 @@ show as "n runs ahead of you", without ids.
 ![My repositories](images/repos.png)
 
 **What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the sign-in you chose for it, and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it.
+
+**Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: the machine's login and the bot's token work as before.
+- **Commit name.** Commits in these runs use the bot name and e-mail from Settings when they are set (each on its own), else the name and e-mail of the account that owns the run. If the account was deleted and the bot name and e-mail are not both set, the step ends with "the account that owns this run could not be found, so its commits have no name": set the bot name and e-mail in Settings, then resume the run.
+- **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; set `HTTPS_PROXY` or `GIT_SSL_CAINFO` in the server's environment if you need them.
+- **The limit.** This is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. A Codex agent still loads the account's Codex settings (`~/.codex/config.toml`); on a server with users, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
 - **A token** ("GitHub token" or "HTTPS token"): `gh` and git use it. Give it Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment.
 - **A deploy key:** git uses it over ssh, and nothing else (no ssh agent, no key or ssh settings of the server's account; host keys are kept in `known_hosts` in the data folder). The key is a file in the folder `sign-in` of the run folder, outside the workspace. It exists only while the marked step runs and is deleted when the step ends. **A deploy key gives git access only:** a step that calls `gh` fails with "a deploy key gives git access only; choose a token or the GitHub App under My repositories". Call `gh` by name; the check does not see `gh` called by its full path.
 - **The GitHub App:** each marked step gets a new token from the app, limited to this repository, for `gh` and git. It is never stored and is hidden in the output. **A token lives one hour,** so a marked step with the app must finish within one hour. A step that runs longer and is then refused fails with "the app's token ran out during the step"; resume the run to get a new token. If the app is not set up, not installed on the repository or GitHub cannot be reached, the run fails with a sentence that says so.
@@ -2249,6 +2258,7 @@ you can do first. Find yours in the table:
 | The step … failed: the repository's sign-in was not available for the step | Resume the run to try the step again |
 | The step … failed: the repository's sign-in was not available for the step | Wait a while, then resume the run |
 | The step … failed: a folder with the repository's sign-in was left in the run folder | Ask the administrator to delete the sign-in folder in the run folder, then resume the run |
+| The step … failed: the account that owns the run is gone, so its commits have no name | Ask the administrator to set the bot name and e-mail in Settings, then resume the run |
 | The step … failed: the agent hit an error while it worked | Look at the log of the step on the run page |
 | The step … failed: the agent used up the budget of the step | Give the step a larger budget in the flow |
 | The step … failed: the agent ended with an error | Look at the log of the step on the run page |
