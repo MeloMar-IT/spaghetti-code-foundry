@@ -963,6 +963,15 @@ watcher says so (see [Why is nothing happening?](#why-is-nothing-happening)) and
 whether to cancel the run. Every label change is in the card's **Recent activity**. Next to the
 repository the card shows **last successful check …**, also when the newest check failed.
 
+The needs-info and waiting labels stay only while the Foundry really waits for you. Once you have
+answered the questions and the issue waits for something else (another story, the release pull
+request, the budget, the limit of new stories per check or a story that is running), the label is
+removed at the next check, so the issue looks like every other story that waits. When the release
+pull request holds it, the thing to do (merge it) is on that pull request. A run that asked, was
+answered and cannot continue yet shows `factory:working`. The label comes back only for new,
+unanswered questions. A waiting label on an issue that has no run is left alone: remove the label
+to start the issue.
+
 More options are set in `~/.spaghetti-code-foundry/config.yaml` (the form keeps them when you edit the
 watcher). This is the watcher for the [one-label pipeline](#the-label-pipeline-one-label--plan--code--one-pull-request):
 
