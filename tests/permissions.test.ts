@@ -217,6 +217,8 @@ const EXAMPLES: Record<string, Example> = {
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
+  "POST admin/view-as": no("admin/view-as", 400, {}),
+  "DELETE admin/view-as": no("admin/view-as", 200),
 };
 
 describe("the table", () => {

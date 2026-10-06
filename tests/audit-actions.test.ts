@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditEntrySchema, auditPath } from "../src/auth/audit.js";
 import { startServer } from "../src/server/server.js";
+import { viewsOf } from "../src/server/view-as.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -282,6 +283,17 @@ describe("audit log: actions in the web interface", () => {
     expect((await call(s, admin, "GET", "/api/config")).json().concurrency).toBe(4);
     for (const a of ["run-start", "credential-add", "repo-add", "flow-publish", "settings-change"]) expect(s.logs).toContain(`audit: audit.jsonl cannot-write (${a})`);
     expect(s.logs.join("\n")).not.toContain(s.tmp);
+  });
+
+  it("a view-as that cannot be written does not start", async () => {
+    const { s, admin, ann } = await world();
+    rmSync(auditPath(), { force: true });
+    mkdirSync(auditPath());
+    const r = await call(s, admin, "POST", "/api/admin/view-as", { userId: ann.user.id });
+    expect(r.status).toBe(500);
+    expect(viewsOf(s.ctx).size).toBe(0);
+    expect((await call(s, admin, "GET", `/api/runs?as=${ann.user.id}`)).status).toBe(403);
+    expect(s.logs).toContain("audit: audit.jsonl cannot-write (view-as)");
   });
 
   it("no line holds a token, password, note, task, command or setting value", async () => {

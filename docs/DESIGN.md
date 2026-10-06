@@ -398,6 +398,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | A reviewer changes code | Reviewers get read-only tools |
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
+| An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 

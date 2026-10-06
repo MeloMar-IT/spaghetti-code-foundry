@@ -11,7 +11,6 @@ import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
-import { sessionUser } from "./api-auth.js";
 
 const INTERNAL = "the repository list is not working; see the server log";
 const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409 } as const;
@@ -169,7 +168,7 @@ async function testRepo(ctx: ApiContext, user: User, id: string): Promise<{ at: 
 export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] === "admin") return adminRepos(ctx, req, res, seg, method, caller.id);
   if (seg[0] !== "repos") return false;
-  const user = sessionUser(ctx, req);
+  const user = caller;
   const noServerAccess = (m: unknown) => {
     if (m === "none" && user.role !== "admin") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
   };

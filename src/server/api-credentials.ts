@@ -4,7 +4,6 @@ import { StoreError } from "../auth/store.js";
 import { KeyError } from "../credentials/keychain.js";
 import { removeUserCredential } from "../auth/repos.js";
 import { CredentialError, addCredential, listCredentials } from "../credentials/store.js";
-import { sessionUser } from "./api-auth.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { Route } from "./server.js";
 
@@ -28,10 +27,9 @@ function guarded<T>(log: ((m: string) => void) | undefined, fn: () => T): T {
 }
 
 /** The caller's own stored credentials: list, add, delete. A secret is only ever accepted, never returned. */
-export const credentialRoutes: Route = async (ctx, req, res, seg, method) => {
+export const credentialRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "credentials" || seg.length > 2) return false;
   const log = ctx.diagLog; // fixed-word diagnostics only (see ApiContext.diagLog)
-  const user = sessionUser(ctx, req);
 
   if (seg.length === 1) {
     if (method === "GET") {

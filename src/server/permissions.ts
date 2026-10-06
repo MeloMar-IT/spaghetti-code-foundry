@@ -7,6 +7,7 @@ import type { ApiContext } from "./server.js";
 /**
  * Who may make which API call. An admin may make every call in the table; a user only the calls marked `yes`,
  * and the calls marked `own` on runs the user started (any other run answers 404, like an unknown one). A call that is not in the table is answered with 404.
+ * A GET call with `?as=<id>` from an admin with a running view is answered with the rules of that user (see view-as.ts); `GET /api/session` ignores it.
  * The routes /api/session, /api/setup and /api/set-password need no session and are not in the table.
  */
 export type UserAccess = "yes" | "no" | "own";
@@ -98,6 +99,8 @@ export const RULES: Rule[] = [
   r("GET", "admin/repos", "no", "the repositories of all accounts, with their settings"),
   r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches and branch names of a repository"),
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
+  r("POST", "admin/view-as", "no", "start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line"),
+  r("DELETE", "admin/view-as", "no", "end the view of a user's display"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
   r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
   r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
