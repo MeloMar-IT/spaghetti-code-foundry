@@ -682,8 +682,35 @@ export class Watcher {
         continue;
       }
       if (this.d.scheduler.isLocked(this.lockFor(n))) {
-        if (this.cfg.one_at_a_time && (!status || answeredEarly)) {
-          const blockingRun = this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId;
+        const blockingRun = this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
+        const askedRun = this.cfg.one_at_a_time && run?.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo && (status === this.L.needsInfo || status === this.L.working);
+        const decidingRun = this.cfg.one_at_a_time && run?.status === "waiting" && (status === this.L.waiting || status === this.L.working);
+        if (run && (askedRun || decidingRun)) {
+          // A run that waits for the person, behind another story: when it is answered, nothing is needed from the
+          // person any more. The label says working; the run resumes when the lock is free.
+          const comments = await issueComments(this.repo, n);
+          const answered = askedRun ? commentsAfter(comments, asked).length > 0 : !!(await this.findDecision(run.runId, comments));
+          if (answered) {
+            if (status !== this.L.working) {
+              await setLabels(this.repo, n, this.L.working, this.allStatus);
+              this.act(`#${n} label → ${this.L.working} (answered, waits for its turn)`);
+            }
+            offNow.delete(n); delete track.labelOff;
+            holds.push(this.held("one_at_a_time", issue, { blockingRun, runId: run.runId }));
+          } else if (askedRun) {
+            if (status !== this.L.needsInfo) {
+              await setLabels(this.repo, n, this.L.needsInfo, this.allStatus);
+              this.act(`#${n} label → ${this.L.needsInfo}`);
+            }
+            holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
+          } else {
+            if (status !== this.L.waiting) {
+              await setLabels(this.repo, n, this.L.waiting, this.allStatus);
+              this.act(`#${n} label → ${this.L.waiting}`);
+            }
+            holds.push(this.heldRun(issue, run));
+          }
+        } else if (this.cfg.one_at_a_time && (!status || answeredEarly)) {
           holds.push(this.held("one_at_a_time", issue, { blockingRun }));
         }
         continue;
@@ -722,6 +749,9 @@ export class Watcher {
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
           (run.status === "stopped" && isPaused(run) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+        const lateAnswers = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo
+          ? commentsAfter(await issueComments(this.repo, n), asked) : [];
+        const lateDecision = !resumable && run.status === "waiting" ? await this.findDecision(run.runId, await issueComments(this.repo, n)) : undefined;
         const holder = steppedAsideFor(run);
         if (isFirst && holder && !paused) { firstWaits.add(holder); track.claims = holder; }
         if (resumable && !isFirst && holder && firstWaits.has(holder)) {
@@ -732,6 +762,27 @@ export class Watcher {
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
+        } else if (lateDecision) {
+          // Approved while the label already said working: it waits for its turn (or resumes now).
+          offNow.delete(n); delete track.labelOff;
+          if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
+          else {
+            this.resume(n, run.runId, `${lateDecision.approved ? "approved" : "rejected"} by @${lateDecision.by}`, lateDecision, false, first);
+            this.labelWhenDone(n, run.runId);
+            started++;
+            if (isFirst) firstStarted++;
+          }
+        } else if (lateAnswers.length) {
+          // Answered while the label already said working: it waits for its turn (or resumes now).
+          const answers = lateAnswers;
+          offNow.delete(n); delete track.labelOff;
+          if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
+          else {
+            this.resume(n, run.runId, `answered by @${answers[0]!.author.login}`, undefined, false, first);
+            this.labelWhenDone(n, run.runId);
+            started++;
+            if (isFirst) firstStarted++;
+          }
         } else if (!resumable && labelFor(run, this.L) !== this.L.working) {
           await setLabels(this.repo, n, labelFor(run, this.L), this.allStatus);
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
@@ -761,7 +812,11 @@ export class Watcher {
         } else if (!answers.length) {
           holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
         } else {
-          holds.push(limited(issue, run.runId)); // answered; waits for the per-check limit
+          // Answered; waits for the per-check limit. Nothing is needed from the person: the label says working.
+          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its turn)`);
+          offNow.delete(n); delete track.labelOff;
+          holds.push(limited(issue, run.runId));
         }
       } else if (status === this.L.waiting && run?.status === "waiting") {
         const decision = await this.findDecision(run.runId, await issueComments(this.repo, n));
@@ -785,6 +840,10 @@ export class Watcher {
         for (const i of toCheck) if (!prio(i)) holds.push(this.held("bug_first", i));
       } else await this.precheck(toCheck, holds, budgetLeft);
     }
+    // An issue that was answered but cannot start (dependency, release, budget, limit, busy watcher) needs nothing
+    // from the person: the needs-info label goes, as the status comment says. Without a run nothing is lost.
+    let labelError: Error | undefined;
+    await this.dropAnsweredLabels(issues, runs, holds, alive).catch((e: Error) => { labelError = e; });
     let tidyError: Error | undefined;
     const closed: { issue: number; title: string }[] = [];
     let closedWhole = false;
@@ -805,6 +864,24 @@ export class Watcher {
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped);
     // The closed-issue scan is part of the check: its failure is the check's error.
     if (tidyError) throw new Error(`tidying closed issues: ${errorLine(tidyError.message)}`);
+    if (labelError) throw new Error(`correcting labels: ${errorLine(labelError.message)}`);
+  }
+
+  /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
+  private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void) {
+    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "starting", "bug_first", "one_at_a_time"];
+    const pending = this.d.scheduler.queue().pending;
+    for (const issue of issues) {
+      const n = issue.number;
+      const names = issue.labels.map((l) => l.name);
+      if (!names.includes(this.L.needsInfo) || runs.has(String(n))) continue;
+      if (pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) continue;
+      const hold = holds.find((h) => h.issue === n);
+      if (!hold || !notYours.includes(hold.next.kind)) continue;
+      alive();
+      await setLabels(this.repo, n, undefined, [this.L.needsInfo]);
+      this.act(`#${n} label ${this.L.needsInfo} removed (it no longer waits for you)`);
+    }
   }
 
   /** Tells the shared writer what this check saw. Never throws, and does not touch Recent activity. */
