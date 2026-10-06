@@ -35,6 +35,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
+      ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner,
       briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: [], active: [] }),
     },

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
 import { computeStats, supersededRuns } from "../src/stats.js";
 
-const run = (runId: string, status: string, startedAt: string, vars: Record<string, string> = {}) =>
-  ({ runId, status, startedAt, flow: "f", vars, history: [], totalCostUsd: 0 }) as unknown as RunSummary;
+const run = (runId: string, status: string, startedAt: string, vars: Record<string, string> = {}, extra: { owner?: string; totalCostUsd?: number } = {}) =>
+  ({ runId, status, startedAt, flow: "f", vars, history: [], totalCostUsd: 0, ...extra }) as unknown as RunSummary;
 
 describe("needs a human", () => {
   it("doesn't count stopped or waiting runs that a newer run on the same issue replaced", () => {
@@ -18,5 +18,51 @@ describe("needs a human", () => {
     const t = computeStats(runs, 30, new Date("2026-09-30T12:00:00Z")).totals;
     expect(t.stopped).toBe(2); // #80 and the local run, not the replaced #79 plan run
     expect(t.waiting).toBe(1);
+  });
+});
+
+describe("byUser", () => {
+  const NOW = new Date("2026-09-30T12:00:00Z");
+  const at = "2026-09-29T10:00:00Z";
+  const units = (s: ReturnType<typeof computeStats>) => Math.round(s.byUser.reduce((a, u) => a + u.costUsd * 1e4, 0));
+
+  it("groups by owner, counts runs and sorts highest cost first", () => {
+    const s = computeStats([
+      run("a1", "succeeded", at, {}, { owner: "ann", totalCostUsd: 0.5 }),
+      run("a2", "failed", at, {}, { owner: "ann", totalCostUsd: 0.5 }),
+      run("b1", "succeeded", at, {}, { owner: "bob", totalCostUsd: 3 }),
+      run("c1", "succeeded", at, {}, { owner: "cy", totalCostUsd: 0.25 }),
+    ], 30, NOW);
+    expect(s.byUser).toEqual([{ owner: "bob", runs: 1, costUsd: 3 }, { owner: "ann", runs: 2, costUsd: 1 }, { owner: "cy", runs: 1, costUsd: 0.25 }]);
+  });
+
+  it("puts runs without an owner on one line with an empty owner", () => {
+    const s = computeStats([run("x1", "succeeded", at, {}, { totalCostUsd: 1 }), run("x2", "failed", at, {}, { totalCostUsd: 1 })], 30, NOW);
+    expect(s.byUser).toEqual([{ owner: "", runs: 2, costUsd: 2 }]);
+  });
+
+  it("leaves out runs older than the days asked for", () => {
+    const s = computeStats([run("old", "succeeded", "2026-01-01T10:00:00Z", {}, { owner: "ann", totalCostUsd: 9 }), run("new", "succeeded", at, {}, { owner: "bob", totalCostUsd: 1 })], 30, NOW);
+    expect(s.byUser).toEqual([{ owner: "bob", runs: 1, costUsd: 1 }]);
+  });
+
+  it("gives an empty list without runs", () => {
+    expect(computeStats([], 30, NOW).byUser).toEqual([]);
+  });
+
+  it("adds up to the total when the lines round up", () => {
+    const s = computeStats(["a", "b", "c"].map((o) => run(o, "succeeded", at, {}, { owner: o, totalCostUsd: 0.00004 })), 30, NOW);
+    expect(s.totals.costUsd).toBe(0.0001);
+    expect(units(s)).toBe(1);
+    expect(s.byUser.every((u) => u.costUsd >= 0)).toBe(true);
+  });
+
+  it("adds up to the total when the lines round down, with no negative line, sorted by the final costs", () => {
+    const s = computeStats(["a", "b", "c", "d"].map((o) => run(o, "succeeded", at, {}, { owner: o, totalCostUsd: 0.00006 })), 30, NOW);
+    expect(s.totals.costUsd).toBe(0.0002);
+    expect(units(s)).toBe(2);
+    expect(s.byUser.every((u) => u.costUsd >= 0)).toBe(true);
+    const costs = s.byUser.map((u) => u.costUsd);
+    expect(costs).toEqual([...costs].sort((x, y) => y - x));
   });
 });

@@ -149,6 +149,7 @@ When a run finishes, its branch stays in your repository. Review it, merge it, o
 **Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 
 - **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (see "Two tries, then a person").
+- **Owner (admins):** an item that has a run shows the owner's name, `deleted user` when the account is gone, and nothing otherwise. Users see no owner name.
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. Runs of older versions have no record of who started them and are treated like watcher runs.
@@ -204,6 +205,7 @@ when the findings file cannot be read): counts only, never a name.
 - **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which the Your turn page does not list), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
 - **Which stories show:** every issue a watcher tracks, at any age. Other runs on an issue show for 7 days after they end. Done shows the last 7 days. Evaluation runs and runs without an issue never show.
 - **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its run page. A story that has no run yet is not a link; use the issue link on it.
+- **Owner (admins):** a card that has a run shows the owner's name, `deleted user` when the account is gone, and nothing for a card without a run or owner. **All owners** above the board hides the cards of other owners in the page; it makes no new call. Users see no owner name.
 - **Highlight:** "What is in the way of #89?" marks the whole chain of stories that hold it back and dims the others. The line above the board lists the chain, also stories that have no card. **Show all** clears it.
 - **Updates:** the page asks every 5 seconds, so what the Foundry knows shows within 5 seconds. Changes on GitHub show after the watcher's next check; when you come back from a GitHub link, the watcher checks at once.
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
@@ -224,6 +226,7 @@ An admin sees every run, with an **Owner** column, and can pick one account in t
 filter next to the title (the list shows "All owners" and each account with its number of runs).
 The Owner column shows the account's name, `deleted user` when the account is gone, and nothing for
 a run without an owner.
+The rows of the **Queue** card show the owner's name the same way.
 A user sees only their own runs and their own queued runs; runs of others in front of them show
 as "n runs ahead of you".
 
@@ -2210,7 +2213,7 @@ themselves still pause runs; they continue by themselves when the limit resets.
 Spend today and over 30 days, success rate, **Needs a human** (the number of runs whose next
 move is yours — the same as **Needs you** on the Runs page), the **Waiting** card (every
 labelled issue that isn't being worked on: who has the next move, what to do, why, and a link;
-lines for you come first), cost per day, results per flow and per repository,
+lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository,
 the steps where runs fail most, and eval results.
 
 **Your turn in numbers** shows how long items waited for you (last 30 days) and whether anything waited for you without being on Your turn:

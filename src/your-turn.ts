@@ -16,6 +16,9 @@ export interface TurnSource {
   watcher?: string;
   /** Title of the pull request, for a release. */
   prTitle?: string;
+  /** The account of the item's run, and its name (admin views). */
+  owner?: string;
+  ownerName?: string;
 }
 
 /** What the app can do for an item, as a comment on its issue (or a label). */
@@ -45,6 +48,8 @@ export interface TurnItem {
   watcher?: string;
   /** What the app can do here (empty: use the link). */
   acts: TurnAct[];
+  owner?: string;
+  ownerName?: string;
 }
 
 export interface YourTurn {
@@ -161,6 +166,8 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
       unblocks: s.next.issue === undefined ? 0 : unblocksOf(s.next.repo, [s.next.issue], deps),
       dismissable: s.dismissable, watcher: s.watcher, stamp: s.stamp,
       acts: actsFor(s.next.kind, s.watcher, s.next.issue),
+      ...(s.owner ? { owner: s.owner } : {}),
+      ...(s.ownerName ? { ownerName: s.ownerName } : {}),
     });
   }
   for (const [url, list] of releases) {

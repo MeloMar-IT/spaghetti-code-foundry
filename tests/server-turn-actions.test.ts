@@ -31,7 +31,7 @@ function stub(holds: ReturnType<typeof hold>[], labels?: Record<string, string>)
   return {
     opts: { log },
     config: () => config,
-    scheduler: { list: () => [], get: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
+    scheduler: { list: () => [], get: () => undefined, ownerOf: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
     watchers: { statuses: () => [], tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
   } as unknown as ApiContext;
 }

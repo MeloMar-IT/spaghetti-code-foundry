@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
 import { whereTarget } from "./next.js";
+import { ownerLabel } from "./runs.js";
 import { actButtons } from "./turn-act.js";
 
 // The "Your turn" page: only what waits for the owner, from GET /api/your-turn. No wording of
@@ -102,7 +103,8 @@ function itemView(item, { onDismiss, onLeave, onAct }) {
       n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
       n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s)])) : null,
       item.unblocks > 0 ? h("div", { class: "muted" }, `${stories(item.unblocks)} ${item.unblocks === 1 ? "waits" : "wait"} for this`) : null,
-      since ? h("div", { class: "muted", title: new Date(item.since).toLocaleString() }, since) : null),
+      since ? h("div", { class: "muted", title: new Date(item.since).toLocaleString() }, since) : null,
+      ownerLabel(item.ownerName) ? h("div", { class: "muted" }, `Owner: ${ownerLabel(item.ownerName)}`) : null),
     h("div", { class: "turn-side" },
       ...(acts ? actButtons(item, onAct) : []),
       action,
@@ -119,6 +121,7 @@ function continuingView(item) {
         issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono" }, `#${n.issue}`) : null,
         issueOk ? " " : null,
         h("b", {}, item.what)),
+      ownerLabel(item.ownerName) ? h("div", { class: "muted" }, `Owner: ${ownerLabel(item.ownerName)}`) : null,
       h("div", { class: "muted" }, "done — continuing")));
 }
 

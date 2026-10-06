@@ -5,6 +5,8 @@ export interface Stats {
   byDay: { day: string; costUsd: number; runs: number }[];
   byFlow: { flow: string; runs: number; succeeded: number; costUsd: number; avgMinutes: number }[];
   byRepo: { repo: string; runs: number; costUsd: number }[];
+  /** `owner` is "" for runs without an owner. The costs add up to `totals.costUsd`. */
+  byUser: { owner: string; runs: number; costUsd: number }[];
   failingSteps: { step: string; failures: number; runs: number }[];
   loops: { step: string; extraVisits: number }[];
 }
@@ -45,6 +47,7 @@ export function computeStats(runs: RunSummary[], days = 30, now = new Date()): S
   for (let i = 0; i < days; i++) byDay.set(dayKey(new Date(since.getTime() + i * 86_400_000)), { costUsd: 0, runs: 0 });
   const byFlow = new Map<string, { runs: number; succeeded: number; costUsd: number; minutes: number; finished: number }>();
   const byRepo = new Map<string, { runs: number; costUsd: number }>();
+  const byUser = new Map<string, { runs: number; costUsd: number }>();
   const stepFail = new Map<string, { failures: number; runs: Set<string> }>();
   const loops = new Map<string, number>();
   const totals = { runs: 0, costUsd: 0, succeeded: 0, failed: 0, stopped: 0, waiting: 0 };
@@ -75,6 +78,10 @@ export function computeStats(runs: RunSummary[], days = 30, now = new Date()): S
     rp.runs++;
     rp.costUsd += r.totalCostUsd;
     byRepo.set(repoKey, rp);
+    const u = byUser.get(r.owner ?? "") ?? { runs: 0, costUsd: 0 };
+    u.runs++;
+    u.costUsd += r.totalCostUsd;
+    byUser.set(r.owner ?? "", u);
     for (const h of r.history) {
       const key = `${r.flow} · ${h.id}`;
       if (!h.ok) {
@@ -88,6 +95,21 @@ export function computeStats(runs: RunSummary[], days = 30, now = new Date()): S
   }
 
   const round = (n: number) => Math.round(n * 10000) / 10000;
+  // Each line is rounded down to whole ten-thousandths of a dollar; the leftover units of the total go to the lines with the biggest remainders, so the lines add up to the total.
+  const lines = [...byUser].map(([owner, v]) => {
+    const exact = v.costUsd * 10000;
+    const units = Math.max(0, Math.floor(exact + 1e-9));
+    return { owner, runs: v.runs, units, rest: exact - units };
+  });
+  let left = Math.round(totals.costUsd * 10000) - lines.reduce((a, l) => a + l.units, 0);
+  for (const l of [...lines].sort((a, b) => b.rest - a.rest || a.owner.localeCompare(b.owner))) {
+    if (left <= 0) break;
+    l.units++;
+    left--;
+  }
+  const users = lines
+    .map((l) => ({ owner: l.owner, runs: l.runs, costUsd: l.units / 10000 }))
+    .sort((a, b) => b.costUsd - a.costUsd || b.runs - a.runs || a.owner.localeCompare(b.owner));
   return {
     totals: { ...totals, costUsd: round(totals.costUsd) },
     byDay: [...byDay].map(([day, v]) => ({ day, costUsd: round(v.costUsd), runs: v.runs })),
@@ -95,6 +117,7 @@ export function computeStats(runs: RunSummary[], days = 30, now = new Date()): S
       .map(([flow, v]) => ({ flow, runs: v.runs, succeeded: v.succeeded, costUsd: round(v.costUsd), avgMinutes: v.finished ? Math.round((v.minutes / v.finished) * 10) / 10 : 0 }))
       .sort((a, b) => b.runs - a.runs),
     byRepo: [...byRepo].map(([repo, v]) => ({ repo, runs: v.runs, costUsd: round(v.costUsd) })).sort((a, b) => b.costUsd - a.costUsd),
+    byUser: users,
     failingSteps: [...stepFail].map(([step, v]) => ({ step, failures: v.failures, runs: v.runs.size })).sort((a, b) => b.failures - a.failures).slice(0, 10),
     loops: [...loops].map(([step, extraVisits]) => ({ step, extraVisits })).sort((a, b) => b.extraVisits - a.extraVisits).slice(0, 10),
   };

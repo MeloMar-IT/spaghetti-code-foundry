@@ -234,6 +234,15 @@ describe("renderMyRuns", () => {
     expect(a.runs.mock.calls.length).toBe(n);
   });
 
+  it("draws no owner name, even when the data carries one", async () => {
+    data.runs = [run("o1", { ownerName: "SENTINEL_OWNER", owner: "u9", totalCostUsd: 2 })];
+    await open();
+    const text = main.textContent;
+    expect(text).not.toContain("SENTINEL_OWNER");
+    expect(text.toLowerCase()).not.toContain("owner");
+    expect(text).not.toContain("$");
+  });
+
   it("draws no cost, model or agent text", async () => {
     data.runs = [run("c1", { totalCostUsd: 1.2345, workdir: "/srv/w", history: [{ agent: "claude", model: "opus-x", costUsd: 0.5 }] })];
     await open();

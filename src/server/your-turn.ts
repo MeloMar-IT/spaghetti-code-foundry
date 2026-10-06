@@ -11,7 +11,7 @@ import { markerHash } from "../monitor/story.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
-import { collectNext, knownRuns, runSince, type Entry } from "./next.js";
+import { collectNext, knownRuns, ownerInfo, runSince, type Entry } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 
 const DAY = 86_400_000;
@@ -189,6 +189,8 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
   }
 
   const release = soonest(times, now);
+  const who = ownerInfo(ctx, list);
+  for (const s of sources) Object.assign(s, who(s.next.runId));
   return { ...buildTurn(sources, { dismissed: readStore(), acted: actedNow(ctx, now), building: stories.size, releaseAt: release?.at }), building: stories.size, release };
 }
 

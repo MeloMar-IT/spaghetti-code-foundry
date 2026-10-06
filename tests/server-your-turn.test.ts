@@ -36,6 +36,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, o.listed ?? n).slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
+      ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner,
       briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: [], active: [] }),
     },
@@ -78,6 +79,41 @@ describe("Your turn items", () => {
     const status = { pausedBy: { ...pr, title: "Daily 30 Sep" } };
     const ctx = stub({ config: c, tracked: [tracked(c, 0, [rel(), rel(1), rel(2)], [{ issue: 1, title: "a" }, { issue: 2, title: "b" }], status)] });
     expect(items(ctx)).toMatchObject([{ what: "Daily 30 Sep", unblocks: 2 }]);
+  });
+
+  it("gives a release item no owner, even when the runs of its stories have one", () => {
+    const c = cfg([issuesWatcher]);
+    const pr = { number: 9, url: "https://github.com/acme/app/pull/9" };
+    const rel = (issue: number) => hold(nextStep("release", { repo: "acme/app", issue, title: "T", runId: `r${issue}` }, { watched: true, pr }), { since: ago(1) });
+    const runs = [run("r1", { owner: "u1" }), run("r2", { owner: "u1" })];
+    const ctx = stub({ config: c, runs, tracked: [tracked(c, 0, [rel(1), rel(2)], [{ issue: 1, title: "a" }, { issue: 2, title: "b" }])] });
+    const out = items(ctx);
+    expect(out).toHaveLength(1);
+    expect("owner" in out[0]!).toBe(false);
+    expect("ownerName" in out[0]!).toBe(false);
+  });
+});
+
+describe("Your turn owners", () => {
+  const one = (runs: ReturnType<typeof run>[]) => items(stub({ config: cfg([issuesWatcher]), runs }))[0]!;
+
+  it("names the owner of a run; an account that is gone reads 'deleted account'", () => {
+    const item = one([run("r1", { source: "ui", owner: "11111111-1111-4111-8111-111111111111" })]);
+    expect(item).toMatchObject({ owner: "11111111-1111-4111-8111-111111111111", ownerName: "deleted account" });
+  });
+
+  it("has no owner keys for a run without an owner", () => {
+    const item = one([run("r1", { source: "ui" })]);
+    expect("owner" in item).toBe(false);
+    expect("ownerName" in item).toBe(false);
+  });
+
+  it("has no owner keys for an item without a run", () => {
+    const c = cfg([issuesWatcher]);
+    const out = items(stub({ config: c, tracked: [tracked(c, 0, [], [], { lastError: "gh down", errorSince: ago(0.1) })] }));
+    expect(out).toHaveLength(1);
+    expect("owner" in out[0]!).toBe(false);
+    expect("ownerName" in out[0]!).toBe(false);
   });
 });
 
