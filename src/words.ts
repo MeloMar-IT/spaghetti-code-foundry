@@ -103,7 +103,7 @@ export function statusHelp(kind: NextKind, facts: WordFacts = {}): string {
   return pick(GLOSSARY[kind].help, facts);
 }
 
-export type WatcherStateName = "active" | "error" | "disabled";
+export type WatcherStateName = "active" | "error" | "disabled" | "paused";
 
 /** A watcher's own state, in the same words as a record: `name`, plain `status` and two-sentence `help`. */
 export interface WatcherState { name: WatcherStateName; status: string; help: string }
@@ -111,6 +111,7 @@ export interface WatcherState { name: WatcherStateName; status: string; help: st
 const WATCHER_STATES = {
   active: { status: "active", help: "The watcher checks GitHub on its schedule and starts runs. Nothing to do — it works by itself." },
   disabled: { status: "disabled", help: "The watcher is switched off, so it checks nothing and starts nothing. Enable it on the Watchers page when you want it to work again." },
+  paused: { status: "paused: the owner is blocked", help: "The owner of this repository is blocked, so the watcher checks nothing and starts nothing. It starts again when the account is unblocked; until then another problem of the watcher is not shown." },
 } as const;
 
 /** The words for a watcher's state (active, error or disabled). An error uses the "watcher error" words. */

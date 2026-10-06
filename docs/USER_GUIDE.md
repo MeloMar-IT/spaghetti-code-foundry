@@ -470,6 +470,7 @@ A watcher's own state on the Watchers page has a **?** too:
 
 - **active** — The watcher checks GitHub on its schedule and starts runs. Nothing to do — it works by itself.
 - **disabled** — The watcher is switched off, so it checks nothing and starts nothing. Enable it on the Watchers page when you want it to work again.
+- **paused: the owner is blocked** — The owner of this repository is blocked, so the watcher checks nothing and starts nothing. It starts again when the account is unblocked; until then another problem of the watcher is not shown.
 - An error shows as **watcher error** (see the table).
 
 Every record from `GET /api/next` has these as `status` and `help`. Text the Foundry quotes
@@ -735,7 +736,9 @@ repository. The source `monitor` is not allowed.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
 - **Runs** belong to the repository's owner, so they show in that user's "My runs".
 - **Lists:** `GET /api/watchers` also shows stored watchers, with their `repoId`. A stored watcher that cannot run shows a `problem` sentence.
-- **Removed with their repository:** when a repository is removed, or its owner is deleted, its stored watchers are removed too.
+- **Blocked owner:** while the owner is blocked, the watchers of their repositories are paused. They check nothing and start nothing, and the list shows "paused: the owner is blocked". Unblocking starts them again, without a restart. This also works for `scf user block` and `scf user unblock`: the server sees it within its usual sweep. Runs that are already going are not touched.
+- **Removed with their repository:** when a repository is removed (by id or by name), or its owner is deleted, its stored watchers are stopped and removed in the same step. The audit log says so. A watcher found at start whose repository is gone is removed and logged.
+- **Transfer:** a transferred repository keeps its watchers. They run for the new owner, and new runs belong to the new owner.
 - **Sign-in:** a stored watcher talks to GitHub with its repository's own credential: the stored token, a GitHub App token limited to that repository, or the server's own `gh` login for the method `none`. With a token or the app, the server's login is never used, so one repository's watcher cannot see another. The same credential is used for the actions on its items under "Your turn". Watchers in `config.yaml` keep using the server's login.
 - **When the sign-in does not work** (missing, unreadable or refused, or the owner of a `none` repository is no admin), the watcher makes no GitHub call and its status says so in a plain sentence. It works again by itself at the next check once you fix the credential.
 - **Status comments:** a status comment is only edited by the account that wrote it. When a watcher's account changes (for example a new token of another account), it posts a new status comment and the old one stays as it is on open issues.

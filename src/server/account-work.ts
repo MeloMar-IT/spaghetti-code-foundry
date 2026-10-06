@@ -21,7 +21,9 @@ const errName = (e: unknown) => (e instanceof Error ? e.name : "error");
  * Returns the sweep: it drops the queued jobs of blocked and deleted accounts and handles each stop-work request once.
  * It never throws. Logs carry account ids only, never a name, e-mail or path.
  */
-export function accountSweeper(scheduler: Scheduler, log: (msg: string) => void): () => void {
+export function accountSweeper(scheduler: Scheduler, log: (msg: string) => void, watch?: { changed: () => void; stamp?: () => unknown }): () => void {
+  /** What the accounts (and the stamp, e.g. the watcher file's time) looked like at the last look. */
+  let seen: string | undefined;
   /** The stop-work request of each account this process has already acted on (until the request is removed). */
   const handled = new Map<string, string>();
   /** Problems already logged, so a problem that stays is logged once. */
@@ -42,6 +44,21 @@ export function accountSweeper(scheduler: Scheduler, log: (msg: string) => void)
       return;
     }
     told.delete("users");
+
+    // a change of the accounts (or of the stamp) that did not come through the API, e.g. `scf user block`: the watchers follow
+    if (watch) {
+      try {
+        const sig = [String(watch.stamp?.() ?? ""), ...users.map((u) => `${u.id} ${u.status} ${u.role} ${u.email}`).sort()].join("\n");
+        if (seen === undefined) seen = sig;
+        else if (sig !== seen) {
+          watch.changed();
+          seen = sig;
+          told.delete("watchers");
+        }
+      } catch (e) {
+        tell("watchers", `! could not bring the watchers in line with the accounts: ${errName(e)}`);
+      }
+    }
 
     for (const u of users) {
       if (u.status !== "blocked" || u.stopWork === undefined) continue;

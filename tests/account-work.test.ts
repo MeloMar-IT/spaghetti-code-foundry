@@ -232,6 +232,52 @@ describe("account work in the scheduler and the sweeper", () => {
       ann = (await createUser({ name: "Ann", email: "ann@example.com", password: PW })).id;
     });
 
+    it("tells the watchers once when an account changes, not on the first sweep or without a change", async () => {
+      const logs: string[] = [];
+      let calls = 0;
+      let stamp = 1;
+      const sweep = accountSweeper(new Scheduler({ runsDir, config: stopped }), (m) => logs.push(m), { changed: () => void calls++, stamp: () => stamp });
+      sweep();
+      sweep();
+      expect(calls).toBe(0);
+      await setStatus(ann, "blocked");
+      sweep();
+      sweep();
+      expect(calls).toBe(1);
+      await setStatus(ann, "active");
+      sweep();
+      expect(calls).toBe(2);
+      stamp = 2;
+      sweep();
+      sweep();
+      expect(calls).toBe(3);
+      deleteUser(ann);
+      sweep();
+      expect(calls).toBe(4);
+      expect(logs).toEqual([]);
+    });
+
+    it("logs a failing `changed` once, tries again on the next sweep, and does nothing when users.json is unreadable", async () => {
+      const logs: string[] = [];
+      let fail = true;
+      let calls = 0;
+      const sweep = accountSweeper(new Scheduler({ runsDir, config: stopped }), (m) => logs.push(m), { changed: () => { calls++; if (fail) throw new Error("no"); } });
+      sweep();
+      await setStatus(ann, "blocked");
+      expect(() => sweep()).not.toThrow();
+      sweep();
+      expect(calls).toBe(2);
+      expect(logs.filter((l) => l.startsWith("! could not bring the watchers in line"))).toEqual(["! could not bring the watchers in line with the accounts: Error"]);
+      fail = false;
+      sweep();
+      sweep();
+      expect(calls).toBe(3);
+      await setStatus(ann, "active");
+      writeFileSync(usersPath(), "not json");
+      sweep();
+      expect(calls).toBe(3);
+    });
+
     it("takeStopWork acts under the lock, then removes the request", async () => {
       await setStatus(ann, "blocked", { stopWork: true });
       const request = getUser(ann)!.stopWork;

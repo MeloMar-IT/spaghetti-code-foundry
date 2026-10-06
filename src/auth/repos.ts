@@ -4,7 +4,8 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { CredentialError, type CredentialType, type Removed, addCredentialLocked, checkSecret, listCredentials, moveCredentialLocked, oldKeysLeft as credentialKeysLeft, readSecret, removeCredentialsLocked } from "../credentials/store.js";
 import { PUBLIC_KEY_RE, generateKeyPair } from "../credentials/ssh-keygen.js";
-import { changedKeys } from "./audit.js";
+import { removeWatchersOfReposLocked } from "../repos/watchers.js";
+import { DETAIL_MAX, changedKeys } from "./audit.js";
 import { ConnectionSchema, type ConnectionResult, readRepoSecret, repoSecretName } from "./repo-connection.js";
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
@@ -511,7 +512,7 @@ export function setRepoAuth(userId: string, id: string, input: AuthChange, opts:
 }
 
 /** Removes the record picked by `pick` from the account's own records, wiping its token first. */
-function removeWhere(userId: string, pick: (mine: RepoRecord[]) => RepoRecord | undefined): { oldKeysLeft: number; removed?: PublicRepo } {
+function removeWhere(userId: string, pick: (mine: RepoRecord[]) => RepoRecord | undefined): { oldKeysLeft: number; removed?: PublicRepo; watchers?: string[] } {
   return withAuthLock(() => {
     const file = read();
     const rec = pick(file.repos.filter((r) => r.owner === userId));
@@ -521,9 +522,17 @@ function removeWhere(userId: string, pick: (mine: RepoRecord[]) => RepoRecord | 
       if (left) return { oldKeysLeft: left };
       throw new RepoError("not-found", "no such repository");
     }
-    const oldKeysLeft = wipeToken(rec);
-    save(file.repos.filter((r) => r !== rec));
-    return { oldKeysLeft, removed: strip(rec) };
+    // the watchers go first; a failed later write puts them back
+    const watchers = removeWatchersOfReposLocked([rec.id]);
+    let oldKeysLeft: number;
+    try {
+      oldKeysLeft = wipeToken(rec);
+      save(file.repos.filter((r) => r !== rec));
+    } catch (e) {
+      watchers.undo();
+      throw e;
+    }
+    return { oldKeysLeft, removed: strip(rec), watchers: watchers.gone.map((w) => w.id) };
   });
 }
 
@@ -541,13 +550,33 @@ export const removeGithubRepo = (userId: string, name: string) =>
     return same.find((r) => pathOfRecord(r).toLowerCase() === name.toLowerCase()) ?? same[0];
   });
 
-/** Removes the records of an account (their tokens go with the account's credentials). Only inside withAuthLock; writes nothing when there are none. */
-export function removeReposLocked(userId: string): number {
+/** The audit detail for removed watchers, cut to the audit limit. */
+export const watchersRemovedDetail = (ids: string[]): string => {
+  const text = `watchers removed: ${ids.join(", ")}`;
+  return (text.length > DETAIL_MAX ? `${text.slice(0, DETAIL_MAX - 1)}…` : text).trimEnd();
+};
+
+/**
+ * Removes the records of an account (their tokens go with the account's credentials) and the watchers of those records.
+ * Only inside withAuthLock; writes nothing when there are none. A failed write of the records puts the watchers back.
+ * `onWatchers` is called after the removal, once per repository that had watchers.
+ */
+export function removeReposLocked(userId: string, onWatchers?: (repoId: string, watcherIds: string[]) => void): number {
   if (!authLockHeld()) throw new Error("removeReposLocked must run inside withAuthLock");
   const file = read();
   const mine = file.repos.filter((r) => r.owner === userId);
   if (!mine.length) return 0;
-  save(file.repos.filter((r) => r.owner !== userId));
+  const watchers = removeWatchersOfReposLocked(mine.map((r) => r.id));
+  try {
+    save(file.repos.filter((r) => r.owner !== userId));
+  } catch (e) {
+    watchers.undo();
+    throw e;
+  }
+  for (const r of mine) {
+    const ids = watchers.gone.filter((w) => w.repoId === r.id).map((w) => w.id);
+    if (ids.length) onWatchers?.(r.id, ids);
+  }
   return mine.length;
 }
 

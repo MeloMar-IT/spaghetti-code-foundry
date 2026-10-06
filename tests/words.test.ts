@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { NextKind } from "../src/next-step.js";
+import { OWNER_BLOCKED } from "../src/repos/watchers.js";
 import { KINDS, LABEL_WORDS, statusHelp, statusName, watcherState, type WordFacts } from "../src/words.js";
 
 const BANNED = ["hold", "precheck", "area lock", "jump_only"];
@@ -102,8 +103,14 @@ describe("label words", () => {
 
 describe("watcher state words", () => {
   it("are two sentences without banned words", () => {
-    for (const name of ["active", "disabled"] as const) {
+    for (const name of ["active", "disabled", "paused"] as const) {
       const s = watcherState(name);
+      if (name === "paused") {
+        expect(s.status).toBe(OWNER_BLOCKED);
+        expect(s.help).toMatch(/^[^.!?]+[.!?] [^.!?]+[.!?]$/);
+        for (const w of BANNED) expect(s.help.toLowerCase()).not.toContain(w);
+        continue;
+      }
       expect(s.status).toBe(name);
       expect(s.help).toMatch(/^[^.!?]+[.!?] [^.!?]+[.!?]$/);
       for (const w of BANNED) expect(s.help.toLowerCase()).not.toContain(w);

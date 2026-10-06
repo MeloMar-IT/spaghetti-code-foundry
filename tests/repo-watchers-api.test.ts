@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { addRepo, removeRepo } from "../src/auth/repos.js";
-import { repoWatchersPath } from "../src/repos/watchers.js";
+import { randomUUID } from "node:crypto";
+import { addRepo, removeRepo, reposPath } from "../src/auth/repos.js";
+import { OWNER_BLOCKED, addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { startServer } from "../src/server/server.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -66,6 +67,10 @@ type Row = { id: string; repoId?: string; github_repo: string; owner?: string; e
 const rows = async () => (await call(admin, "GET", "/api/watchers")).json() as Row[];
 const add = async (who: TestSession, body: unknown) => (await call(who, "POST", "/api/repos", body)).json() as { id: string };
 const audit = async () => JSON.stringify((await call(admin, "GET", "/api/audit")).json());
+type AuditView = { actor: { type: string; id?: string }; action: string; target: { type: string; id?: string; text?: string } | null; detail?: string };
+/** The audit lines about one repository or account, oldest first. */
+const auditFor = async (id: string) =>
+  ((await call(admin, "GET", "/api/audit")).json().entries as AuditView[]).reverse().filter((e) => e.target?.text === id || e.target?.id === id);
 const stored = () => readFileSync(repoWatchersPath(), "utf8");
 const path = (id: string, wid?: string) => `/api/admin/repos/${id}/watchers${wid ? `/${wid}` : ""}`;
 
@@ -165,11 +170,13 @@ describe("watchers of a repository: the routes", () => {
 
   it("lists a watcher of a removed repository, and lets the admin delete it", async () => {
     const rec = addRepo(admin.user.id, { url: "acme/gone" });
-    await call(admin, "POST", path(rec.id), { id: "gone-w" });
-    removeRepo(admin.user.id, rec.id); // no cascade here
+    addRepoWatcher(randomUUID(), { id: "gone-w" }); // removing a repository removes its watchers, so make the leftover by hand
     ctx.watchers.sync();
     expect((await rows()).find((w) => w.id === "gone-w")!.problem).toMatch(/not connected any more/);
-    expect((await call(admin, "DELETE", path(rec.id, "gone-w"))).status).toBe(200);
+    removeRepo(admin.user.id, rec.id);
+    expect((await call(admin, "DELETE", path(rec.id, "gone-w"))).status).toBe(404); // another repository's id
+    const orphan = listRepoWatchers().find((w) => w.id === "gone-w")!;
+    expect((await call(admin, "DELETE", path(orphan.repoId, "gone-w"))).status).toBe(200);
     expect((await call(admin, "POST", path(adminRepo), { id: "gone-w" })).status).toBe(201);
     await call(admin, "DELETE", path(adminRepo, "gone-w"));
   });
@@ -181,7 +188,83 @@ describe("watchers of a repository: the routes", () => {
     expect((await call(ann, "DELETE", `/api/repos/${rec.id}`)).status).toBe(200);
     expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("cascade-w");
     expect(stored()).not.toContain("cascade-w");
-    expect(await audit()).toContain("watchers removed: cascade-w");
+    const log = await audit();
+    expect(log).toContain("watchers removed: cascade-w");
+    const lines = (await auditFor(rec.id)).filter((l) => l.action === "repo-remove" || l.detail?.startsWith("watchers removed"));
+    expect(lines.map((l) => [l.action, l.detail ?? ""])).toEqual([["repo-remove", expect.any(String)], ["repo-change", "watchers removed: cascade-w"]]);
+  });
+
+  it("pauses the watchers of a blocked owner and starts them again on unblock", async () => {
+    const cat = await signInAs(base, { name: "Cat", email: "cat@example.com", role: "user" });
+    const rec = await add(cat, { url: "acme/cat", method: "github-token", token: TOKEN });
+    await call(admin, "POST", path(rec.id), { id: "cat-w" });
+    const tracked = (id: string) => ctx.watchers.tracked().find((t) => t.watcher.id === id);
+    const before = tracked("admin-w")!.status;
+    expect(tracked("cat-w")).toBeDefined();
+    expect((await call(admin, "POST", `/api/users/${cat.user.id}/block`, {})).status).toBe(200);
+    expect(tracked("cat-w")).toBeUndefined();
+    const row = (await rows()).find((w) => w.id === "cat-w")!;
+    expect(row.state).toMatchObject({ name: "paused", status: OWNER_BLOCKED });
+    expect(row.problem).toBe(OWNER_BLOCKED);
+    expect(row).not.toHaveProperty("status");
+    expect(tracked("admin-w")!.status).toBe(before); // the others did not restart
+    expect((await call(admin, "PUT", path(rec.id, "cat-w"), { enabled: false })).json()).toMatchObject({ state: { name: "disabled" } });
+    await call(admin, "PUT", path(rec.id, "cat-w"), { enabled: true });
+    expect((await call(admin, "POST", `/api/users/${cat.user.id}/unblock`, {})).status).toBe(200);
+    expect(tracked("cat-w")).toBeDefined();
+    expect(tracked("admin-w")!.status).toBe(before);
+    await call(admin, "DELETE", path(rec.id, "cat-w"));
+    await call(admin, "DELETE", `/api/users/${cat.user.id}`);
+  });
+
+  it("removes the watchers when the repository is deleted by name", async () => {
+    const rec = await add(ann, { url: "acme/byname", method: "github-token", token: TOKEN });
+    await call(admin, "POST", path(rec.id), { id: "name-w" });
+    expect((await call(ann, "DELETE", "/api/repos/acme/byname")).status).toBe(200);
+    expect(stored()).not.toContain("name-w");
+    expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("name-w");
+    const lines = (await auditFor(rec.id)).filter((l) => l.action === "repo-remove" || l.detail?.startsWith("watchers removed"));
+    expect(lines.map((l) => [l.action, l.detail ?? ""])).toEqual([["repo-remove", expect.any(String)], ["repo-change", "watchers removed: name-w"]]);
+  });
+
+  it("keeps the watchers when the repository delete fails, and removes them on the retry", async () => {
+    const rec = await add(ann, { url: "acme/fails", method: "github-token", token: TOKEN });
+    await call(admin, "POST", path(rec.id), { id: "fail-w" });
+    mkdirSync(reposPath() + ".tmp");
+    expect((await call(ann, "DELETE", `/api/repos/${rec.id}`)).status).toBe(500);
+    expect(stored()).toContain("fail-w");
+    expect(ctx.watchers.tracked().map((t) => t.watcher.id)).toContain("fail-w");
+    expect(await audit()).not.toContain("watchers removed: fail-w");
+    rmSync(reposPath() + ".tmp", { recursive: true });
+    expect((await call(ann, "DELETE", `/api/repos/${rec.id}`)).status).toBe(200);
+    expect(stored()).not.toContain("fail-w");
+    expect(await audit()).toContain("watchers removed: fail-w");
+  });
+
+  it("removes the watchers of a deleted account, with the audit lines in order", async () => {
+    const dan = await signInAs(base, { name: "Dan", email: "dan@example.com", role: "user" });
+    const rec = await add(dan, { url: "acme/dan", method: "github-token", token: TOKEN });
+    await call(admin, "POST", path(rec.id), { id: "dan-w" });
+    expect((await call(admin, "DELETE", `/api/users/${dan.user.id}`)).status).toBe(200);
+    expect(stored()).not.toContain("dan-w");
+    expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("dan-w");
+    const change = (await auditFor(rec.id)).find((l) => l.detail === "watchers removed: dan-w");
+    expect(change).toMatchObject({ action: "repo-change", actor: { id: admin.user.id } });
+    const all = ((await call(admin, "GET", "/api/audit")).json().entries as AuditView[]).reverse();
+    const del = all.findIndex((l) => l.action === "delete" && l.target?.id === dan.user.id);
+    expect(del).toBeGreaterThan(all.indexOf(all.find((l) => l.detail === "watchers removed: dan-w")!));
+  });
+
+  it("stops the watchers of an account whose delete failed half way", async () => {
+    const eve = await signInAs(base, { name: "Eve", email: "eve@example.com", role: "user" });
+    const rec = await add(eve, { url: "acme/eve", method: "github-token", token: TOKEN });
+    await call(admin, "POST", path(rec.id), { id: "eve-w" });
+    expect(ctx.watchers.tracked().map((t) => t.watcher.id)).toContain("eve-w");
+    kc.fail("find");
+    expect((await call(admin, "DELETE", `/api/users/${eve.user.id}`)).status).toBe(500);
+    kc.fail();
+    expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("eve-w");
+    expect((await call(admin, "DELETE", `/api/users/${eve.user.id}`)).status).toBe(200);
   });
 
   it("answers a broken store with a fixed sentence and no path", async () => {

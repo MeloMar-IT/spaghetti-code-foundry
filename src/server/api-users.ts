@@ -3,9 +3,7 @@ import { StoreError } from "../auth/store.js";
 import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
 } from "../auth/users.js";
-import { listRepos } from "../auth/repos.js";
 import { KeyError } from "../credentials/keychain.js";
-import { dropRepoWatchers } from "./api-repos.js";
 import { architectRunsOf, cancelReads } from "../refinement/architect.js";
 import { cancelAccountNow } from "./account-work.js";
 import { throttlesOf } from "./api-auth.js";
@@ -154,10 +152,12 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "DELETE") {
     // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
     const reads = guardedUsers(ctx, () => architectRunsOf(id));
-    const repoIds = guardedUsers(ctx, () => listRepos(id).map((x) => x.id));
-    const r = guardedUsers(ctx, () => deleteUser(id, { by }));
-    dropRepoWatchers(ctx, by, repoIds);
-    ctx.watchers.sync();
+    let r;
+    try {
+      r = guardedUsers(ctx, () => deleteUser(id, { by }));
+    } finally {
+      ctx.watchers.sync(); // also after a half-finished delete: the repositories and their watchers may be gone
+    }
     cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {
