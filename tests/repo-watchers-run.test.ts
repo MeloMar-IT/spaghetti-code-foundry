@@ -146,6 +146,13 @@ describe("watchers of two repositories", () => {
     // Ann sees only her job
     const queue = await (await call(ann, "GET", "/api/queue")).json();
     expect(queue.pending.map((p: { githubRepo: string; issue: string }) => `${p.githubRepo}#${p.issue}`)).toEqual(["acme/app#7"]);
+    // ... and nothing she reads names a watcher
+    for (const path of ["/api/queue", "/api/runs"]) {
+      const r = await fetch(base + path, { headers: ann.headers("GET") });
+      const text = await r.text();
+      expect(r.status, path).toBe(200);
+      expect(text, path).not.toMatch(/app-w|web-w/);
+    }
     expect(readFileSync(process.env.FAKE_GH_LOG!, "utf8").split("\n").filter((l) => /issue (view|edit|comment) 5\b/.test(l) && !l.includes("acme/app"))).toEqual([]);
   });
 

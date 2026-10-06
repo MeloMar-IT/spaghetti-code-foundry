@@ -108,6 +108,12 @@ describe("userRun", () => {
     expect(JSON.stringify(u)).not.toMatch(/SECRET|opus|claude|cost|tokens|sessionId|logFile/i);
   });
 
+  it("does not show the source of a run, so a watcher's id stays hidden", () => {
+    const u = userRun({ ...full, source: "watcher secret-w issue #7" } as unknown as RunSummary);
+    expect(keys(u)).not.toContain("source");
+    expect(JSON.stringify(u)).not.toContain("secret-w");
+  });
+
   it("names the refinement session of an architect run, only for a valid source", () => {
     const id = "11111111-1111-4111-8111-111111111111";
     expect(refinementSessionOf(`refinement ${id}`)).toBe(id);
@@ -399,6 +405,19 @@ describe("what a user's answers hold", () => {
     const updates = lines.filter((l) => l.type === "update");
     expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) expect(keys(u)).toEqual(["summary", "type"]);
+  });
+
+  it("lists a run a watcher started for a user without the watcher's id, and refuses the watcher list", async () => {
+    const rid = "20260104-000000-watched";
+    writeRun(s, rid, { owner: ann.user.id, source: "watcher secret-w issue #7", vars: { github_repo: "acme/app", issue: "7" } });
+    const list = await call(s, ann, "GET", "/api/runs");
+    expect(list.json().map((r: { runId: string }) => r.runId)).toContain(rid);
+    const detail = await call(s, ann, "GET", `/api/runs/${rid}`);
+    expect(detail.status).toBe(200);
+    expect(list.text).not.toContain("secret-w");
+    expect(detail.text).not.toContain("secret-w");
+    expect((await call(s, ann, "GET", "/api/queue")).text).not.toContain("secret-w");
+    expect((await call(s, ann, "GET", "/api/watchers")).status).toBe(403);
   });
 
   it("shows an admin the costs, the agent, the output and the log with the cost", async () => {

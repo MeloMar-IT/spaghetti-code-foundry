@@ -703,19 +703,28 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
-### Watchers of a repository (admins, API only)
+### The Watchers page (admins)
 
-An admin can store a watcher for one connected repository, instead of in `config.yaml`. It has the
-same options as a watcher in `config.yaml`, except `github_repo` and `owner`: they come from the
+Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository in **My runs**, without the watcher's name.
+
+- **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
+- **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
+- **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
+- **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`.
+- **From config.yaml.** A watcher that is still in `config.yaml` shows read-only with the note "moves to its repository at the next update", and **Check now**. A watcher whose repository is gone can only be deleted.
+
+### Watchers of a repository (API)
+
+The page uses these routes. A watcher stored for a connected repository has the same options as one in `config.yaml`, except `github_repo` and `owner`: they come from the
 repository. The source `monitor` is not allowed.
 
-- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once.
+- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
 - **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
 - **Runs** belong to the repository's owner, so they show in that user's "My runs".
 - **Lists:** `GET /api/watchers` also shows stored watchers, with their `repoId`. A stored watcher that cannot run shows a `problem` sentence.
 - **Removed with their repository:** when a repository is removed, or its owner is deleted, its stored watchers are removed too.
-- **Not yet:** checks, labels and status comments still use the server's own `gh` sign-in. A private repository that only its own token can read shows a watcher error. The Watchers page lists stored watchers, but Edit, Disable and Delete work only on watchers from `config.yaml`.
+- **Not yet:** checks, labels and status comments still use the server's own `gh` sign-in. A private repository that only its own token can read shows a watcher error.
 
 The watchers are kept in `repo-watchers.json` in the data folder.
 
@@ -1083,7 +1092,7 @@ watchers:
 | `pause_while_pr_open` | Start nothing while a PR from a branch with this prefix is open (for the older two-label pipeline) |
 | `comment_on_failure` | On by default: post the failure reason and output on the issue |
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
-| `owner` | The e-mail of the account that owns this watcher's runs and may read and approve them. Empty: the first admin. Only an admin can set it, and it must be an account |
+| `owner` | Only for watchers in `config.yaml`: the e-mail of the account that owns the watcher's runs and may read and approve them. Empty: the first admin. It must be an account. A watcher of a repository uses the repository's owner |
 
 **Coding agents run the build themselves.** In the issue flows the coding agent may run the
 project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test`, `cargo`,
