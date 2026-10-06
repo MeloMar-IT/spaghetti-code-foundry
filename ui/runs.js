@@ -232,16 +232,17 @@ async function act(fn, ok) {
   }
 }
 
-function actions(s) {
+export function actions(s) {
   const b = [];
-  if (s.status === "waiting") {
+  const closed = s.next?.kind === "issue_closed";
+  if (s.status === "waiting" && !closed) {
     b.push(h("button", { class: "primary", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
     b.push(h("button", { class: "danger", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
   }
-  if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next) {
+  if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
     b.push(h("button", { class: "primary", onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, `↻ Resume at ${s.state.next}`));
   }
-  if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length) {
+  if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length && !closed) {
     b.push(h("select", { class: "small-select", title: "Re-run from a step", onChange: (e) => {
       const from = e.target.value;
       e.target.value = "";

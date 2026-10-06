@@ -173,8 +173,9 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
     const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
     if (!run) continue;
-    if (origin !== "hand" && trackingWatcher(cfg.watchers, run)) continue; // its watcher shows it
     const next = c.next(run);
+    // Its watcher shows it, unless the watcher cannot: the state of the issue is unknown.
+    if (origin !== "hand" && trackingWatcher(cfg.watchers, run) && !next.issueUnchecked) continue;
     const since = runSince(run);
     sources.push({ key: keyOf(next), next, since, stamp: since, dismissable: true });
   }

@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
-import { whereTarget } from "./next.js";
+import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { actButtons } from "./turn-act.js";
 
@@ -100,6 +100,7 @@ function itemView(item, { onDismiss, onLeave, onAct }) {
         h("b", {}, item.what)),
       h("div", {}, h("span", { class: "hold-action" }, n.action)),
       h("div", { class: "muted" }, n.why),
+      n.issueUnchecked ? h("div", { class: "muted" }, ISSUE_UNCHECKED) : null,
       n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
       n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s)])) : null,
       item.unblocks > 0 ? h("div", { class: "muted" }, `${stories(item.unblocks)} ${item.unblocks === 1 ? "waits" : "wait"} for this`) : null,

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefsOf } from "./helpers/briefs.js";
 import { ConfigSchema } from "../src/config.js";
+import { markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { saveFindings } from "../src/monitor/findings.js";
 import { saveGuard, switchStories } from "../src/monitor/guard.js";
 import { markerHash } from "../src/monitor/story.js";
@@ -234,6 +235,90 @@ describe("Your turn runs", () => {
 
   it("does not list a cancelled run", () => {
     expect(ids([run("c", { status: "cancelled", source: "ui" })])).toEqual([]);
+  });
+});
+
+describe("Your turn and closed issues", () => {
+  let home: string;
+  let saved: string | undefined;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "factory-closed-"));
+    saved = process.env.FACTORY_HOME;
+    process.env.FACTORY_HOME = home;
+  });
+  afterEach(() => {
+    process.env.FACTORY_HOME = saved;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const c = cfg([issuesWatcher]);
+  const mine = (id = "r1", over: Record<string, unknown> = {}) => run(id, { vars: { github_repo: "acme/app", issue: "7" }, source: "ui", ...over });
+  const store = (state: "open" | "closed") => saveIssueStates("acme/app", new Map([[7, state]]));
+  const ctxOf = (runs: ReturnType<typeof run>[], t: Tracked[] = []) => stub({ config: c, runs, tracked: t });
+
+  it("hides a failed, stopped and waiting run of a closed issue, and its count", () => {
+    store("closed");
+    const waiting = mine("r1", { status: "waiting", waiting: { stepId: "gate", message: "ok?", since: ago(1) }, finishedAt: undefined });
+    for (const r of [mine(), mine("r1", { status: "stopped" }), waiting]) {
+      const ctx = ctxOf([r]);
+      expect(items(ctx)).toEqual([]);
+      expect(turnFor(ctx, NOW).data.count).toBe(0);
+      expect(allNext(ctx).runs[0]!.kind).toBe("issue_closed");
+    }
+  });
+
+  it("lists the run again after the store says open", () => {
+    store("closed");
+    expect(items(ctxOf([mine()]))).toEqual([]);
+    store("open");
+    expect(items(ctxOf([mine()]))).toMatchObject([{ next: { kind: "failed" } }]);
+  });
+
+  it("keeps the item with a note when the state is unknown, and without one when there is no entry", () => {
+    expect(items(ctxOf([mine()]))[0]!.next.issueUnchecked).toBeUndefined();
+    markIssueCheckFailed("acme/app");
+    expect(items(ctxOf([mine()]))).toMatchObject([{ next: { kind: "failed", issueUnchecked: true } }]);
+  });
+
+  it("keeps a watcher-started run listed with the note when the state is unknown", () => {
+    markIssueCheckFailed("acme/app");
+    const r = mine("r1", { source: "watcher a issue #7" });
+    expect(items(ctxOf([r], [tracked(c, 0, [], [])]))).toMatchObject([{ next: { runId: "r1", issueUnchecked: true } }]);
+    store("open");
+    expect(items(ctxOf([r], [tracked(c, 0, [], [])]))).toEqual([]);
+  });
+
+  it("keeps a stored closed state through a later failed check", () => {
+    store("closed");
+    markIssueCheckFailed("acme/app");
+    expect(items(ctxOf([mine()]))).toEqual([]);
+  });
+
+  it("puts the note on the record of a tracked issue with a failed run", () => {
+    markIssueCheckFailed("acme/app");
+    const failed = hold(nextStep("failed", { repo: "acme/app", issue: 7, title: "T7", runId: "r1" }, { watched: true, reason: "boom" }));
+    const out = items(ctxOf([mine("r1", { source: "watcher a issue #7" })], [tracked(c, 0, [failed], [{ issue: 7, title: "T7", runId: "r1" }])]));
+    expect(out).toMatchObject([{ next: { issueUnchecked: true } }]);
+  });
+
+  it("lets closed_elsewhere win for a waiting run", () => {
+    store("closed");
+    const r = mine("r1", { status: "waiting", waiting: { stepId: "gate", message: "ok?", since: ago(1) }, finishedAt: undefined });
+    const elsewhere = hold(nextStep("closed_elsewhere", { repo: "acme/app", issue: 7, title: "T7", runId: "r1" }, { watched: true, runWaits: true }));
+    expect(items(ctxOf([r], [tracked(c, 0, [elsewhere], [{ issue: 7, title: "T7", runId: "r1" }])]))).toMatchObject([{ next: { kind: "closed_elsewhere" } }]);
+  });
+
+  it("sends no notification for a run of a closed issue, and one once it is open", async () => {
+    const config = ConfigSchema.parse({ watchers: [issuesWatcher], notify: { macos: false, slack_webhook: "http://127.0.0.1:9/hook" } });
+    const ctx = stub({ config, runs: [mine()] });
+    const sent: Notice[] = [];
+    const n = new TurnNotifier(ctx, { baseUrl: "http://localhost:4777", timeZone: "UTC", send: async (x) => void sent.push(x) });
+    store("closed");
+    await n.check(NOW);
+    expect(sent).toHaveLength(0);
+    store("open");
+    await n.check(new Date(NOW.getTime() + 60_000));
+    expect(sent).toHaveLength(1);
   });
 });
 

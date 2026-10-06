@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ISSUE_STATE_BATCH, issueState, issueStates } from "../src/github.js";
 import {
-  dropIssueStates, issueStatesDir, knownIssueState, markIssueCheckFailed, noteIssueState, readIssueStates, saveIssueStates, storedIssueRepos,
+  dropIssueStates, issueStatesDir, knownIssueState, markIssueCheckFailed, runIssueState, noteIssueState, readIssueStates, saveIssueStates, storedIssueRepos,
 } from "../src/issue-states.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 
@@ -14,6 +14,25 @@ const T1 = new Date("2026-01-02T03:04:05.000Z");
 const T2 = new Date("2026-01-03T03:04:05.000Z");
 const states = (o: Record<number, "open" | "closed">) => new Map(Object.entries(o).map(([k, v]) => [Number(k), v]));
 const fileFor = (repo: string) => join(issueStatesDir(), `${encodeURIComponent(repo)}.json`);
+
+describe("runIssueState", () => {
+  beforeEach(() => rmSync(issueStatesDir(), { recursive: true, force: true }));
+  const r = (vars: Record<string, string>) => ({ vars });
+  it("reads closed, open and unknown for the issue of a run", () => {
+    saveIssueStates("a/b", new Map([[4, "closed"], [5, "open"]]));
+    expect(runIssueState(r({ github_repo: "a/b", issue: "4" }))).toBe("closed");
+    expect(runIssueState(r({ github_repo: "a/b", issue: "5" }))).toBe("open");
+    markIssueCheckFailed("a/b");
+    expect(runIssueState(r({ github_repo: "a/b", issue: "6" }))).toBe("unknown");
+  });
+  it("is undefined without a repository, an issue or a numeric issue", () => {
+    saveIssueStates("a/b", new Map([[4, "closed"]]));
+    expect(runIssueState(r({ issue: "4" }))).toBeUndefined();
+    expect(runIssueState(r({ github_repo: "a/b" }))).toBeUndefined();
+    expect(runIssueState(r({ github_repo: "a/b", issue: "x" }))).toBeUndefined();
+    expect(runIssueState({})).toBeUndefined();
+  });
+});
 
 describe("issue state store", () => {
   beforeEach(() => rmSync(issueStatesDir(), { recursive: true, force: true }));

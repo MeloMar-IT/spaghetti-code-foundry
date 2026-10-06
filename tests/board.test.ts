@@ -143,6 +143,7 @@ describe("columnOf", () => {
     ["failed", rec("failed"), "failed"],
     ["done", rec("done"), "done"],
     ["superseded", rec("superseded"), undefined],
+    ["issue closed", rec("issue_closed"), undefined],
     ["running", rec("running"), "coding"],
   ];
   for (const [name, next, column] of cases) it(`${name} → ${column}`, () => expect(columnOf(next)).toBe(column));
@@ -164,6 +165,11 @@ describe("buildBoard", () => {
     ]);
     expect(b.empty).toBeUndefined();
     expect(buildBoard([], { now: NOW })).toEqual({ repos: [], empty: EMPTY_BOARD });
+  });
+
+  it("has no card for a run of a closed issue", () => {
+    const b = buildBoard([src(rec("issue_closed", {}, 1))], { now: NOW, repos: ["acme/app"] });
+    expect(b.repos[0]!.columns.flatMap((c) => c.cards)).toEqual([]);
   });
 
   it("copies the owner and its name to the card, and leaves the keys out without them", () => {

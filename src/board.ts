@@ -113,7 +113,7 @@ export function columnOf(next: NextStep, phase?: Phase): ColumnId | undefined {
     case "usage_limit": case "daily_budget": case "queued": case "checking": case "starting": case "restart": return "queued";
     case "running": return phase ?? "coding";
     case "done": return "done";
-    case "superseded": return undefined;
+    case "superseded": case "issue_closed": return undefined;
     case "release": return needsUser(next) ? "your_turn" : "merging";
     case "interrupted": case "cancelled": return next.who === "You" ? "your_turn" : "queued";
     default: return "your_turn";

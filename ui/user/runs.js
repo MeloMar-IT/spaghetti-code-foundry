@@ -44,7 +44,7 @@ export function myRunsEntries(runs, pending) {
 /** The buttons of a run page, in order: "approve", "reject", "retry", "cancel". A refinement run is continued from its session. */
 export function runActions(s, queued = false) {
   const out = [];
-  const own = !s.refinement;
+  const own = !s.refinement && s.next?.kind !== "issue_closed";
   // A run that is queued again can only be cancelled: the server refuses the rest.
   if (queued || s.status === "queued") return ["cancel"];
   if (s.status === "waiting" && own) out.push("approve", "reject");

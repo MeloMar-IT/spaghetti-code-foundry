@@ -9,6 +9,7 @@ import { learningsFile, resumeRun, runFlow } from "../src/engine/runner.js";
 import { dockerCommand } from "../src/engine/guards.js";
 import { liveLogFile, saveRun } from "../src/engine/state.js";
 import { mirrorEnvPrefixes, withScfAliases } from "../src/engine/template.js";
+import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { notifyRun } from "../src/notify.js";
 import { COMMENT_KINDS, REPORT_KINDS, commentFirst, commentText, firstLine, nextStep, reportFirst, runNextStep } from "../src/next-step.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -571,6 +572,33 @@ steps:
       await notifyRun(baseConfig({ notify: { macos: false, command: `printf x > ${out}` } }), s);
       expect(existsSync(out)).toBe(true);
     } finally {
+      process.env.FACTORY_NO_NOTIFY = saved;
+    }
+  });
+
+  it("notifyRun writes nothing for a run of a closed issue, but does when the state is open or unknown", async () => {
+    const s = await start("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'true'}\n");
+    const out = join(tmp, "closed");
+    const saved = process.env.FACTORY_NO_NOTIFY;
+    delete process.env.FACTORY_NO_NOTIFY;
+    const failed = { ...s, status: "failed", vars: { ...s.vars, github_repo: "acme/app", issue: "7" } } as typeof s;
+    const config = baseConfig({ notify: { macos: false, on: ["failed", "succeeded"], command: `printf x > ${out}` } });
+    const wrote = async (run: typeof s) => {
+      rmSync(out, { force: true });
+      await notifyRun(config, run);
+      return existsSync(out);
+    };
+    try {
+      saveIssueStates("acme/app", new Map([[7, "closed"]]));
+      expect(await wrote(failed)).toBe(false);
+      expect(await wrote({ ...failed, status: "succeeded" } as typeof s)).toBe(false);
+      saveIssueStates("acme/app", new Map());
+      markIssueCheckFailed("acme/app");
+      expect(await wrote(failed)).toBe(true);
+      saveIssueStates("acme/app", new Map([[7, "open"]]));
+      expect(await wrote(failed)).toBe(true);
+    } finally {
+      dropIssueStates("acme/app");
       process.env.FACTORY_NO_NOTIFY = saved;
     }
   });
