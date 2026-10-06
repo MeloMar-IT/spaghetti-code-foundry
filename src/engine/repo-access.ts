@@ -33,6 +33,8 @@ export function stepRepoAccess(
   vars: Record<string, string>,
 ): RepoAccess | undefined {
   if (!wantsRepoAccess(step, depth, flowName, summary.source)) return undefined;
+  // The open issues are read only for ask=impact: for every other ask the step gets no sign-in (and no app token is made).
+  if (flowName === "refine-round" && step.id === "list_issues" && depth === 0 && vars.ask !== "impact") return undefined;
   const refinement = isRefinementRun(summary.source);
   if (!summary.owner && !refinement) return undefined;
   return repoAccess(summary.owner, vars.github_repo ?? "", { unlisted: refinement ? "refuse" : "admin-server" });

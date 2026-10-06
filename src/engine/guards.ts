@@ -127,7 +127,7 @@ export function grantPush(branch: string): { env: Record<string, string>; revoke
 /** The shell steps that get the stored token, per flow (literals: src/flow/usage.ts would make an import cycle; a test pins them). */
 export const REPO_READ_STEPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["refine-brief", ["clone", "list_issues"]],
-  ["refine-round", ["clone"]],
+  ["refine-round", ["clone", "list_issues"]],
 ]);
 export const TOKEN_REFUSED_REASON = "GitHub refused the token of this repository; check its access to Contents and Issues, or set a new token under My repositories";
 
@@ -188,10 +188,10 @@ export const keyRefused = (output: string): boolean => KEY_REFUSED.test(output);
 export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(output) && !/rate limit|abuse detection/i.test(output);
 
 /**
- * Output kept for the last step of the question round (tools/refine-round-check): a full checked answer is about 30,000
- * characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
+ * Output kept for the last step of the question round (tools/refine-round-check): a full checked `impact` answer is about
+ * 60,000 characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
  */
-export const ROUND_CHECK_MAX_OUTPUT = 100_000;
+export const ROUND_CHECK_MAX_OUTPUT = 150_000;
 export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined =>
   flowName === "refine-round" && step.id === "check_round" && depth === 0 ? ROUND_CHECK_MAX_OUTPUT : undefined;
 

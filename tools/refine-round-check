@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
 // Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
-// (`round`, the default, `question`, `suggest` or `review`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
+// (`round`, the default, `question`, `suggest`, `review` or `impact`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
 // criteria, outOfScope, dependsOn or notes).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
@@ -9,6 +9,11 @@
 // criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
 // For `review` it prints { "remarks": [ { field, item?, kind, text } ] }: the first 20, `item` ("C1") only for criteria, the text on one
 // line, cut at 300 characters, in at most two sentences (more fails).
+// For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive }: known fields only, lists cut at their
+// limits. It reads issues.md (when there) for the numbers of the open issues. The size word is set from files and lines. Every
+// overlap is an `estimate`; an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
+import { readFileSync } from "node:fs";
+
 const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20, REMARK_MAX_COUNT = 20, REMARK_MAX = 300;
 const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
 const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
@@ -21,6 +26,9 @@ const bad = (msg) => {
 const clean = (v) => (typeof v === "string" ? v : "").replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").trim();
 const cut = (s, max) => [...s].slice(0, max).join("");
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// One paragraph: a stop, question mark or exclamation mark followed by a space starts the next sentence.
+// Closing quotes and brackets may sit between the mark and the space.
+const sentences = (t) => t.split(/(?<=[.!?]["'”’)\]]*)\s+/).filter(Boolean).length;
 // Only a missing list is empty; anything else that is not a list is wrong.
 const listOf = (v, name) => (v === undefined ? [] : Array.isArray(v) ? v : bad(`${name} is not a list`));
 
@@ -99,15 +107,120 @@ function checkReview(obj) {
     // One paragraph, one or two sentences: a stop, question mark or exclamation mark followed by a space starts the next one.
     const text = cut(clean(x.text).replace(/\s*[\n\t]\s*/g, " "), REMARK_MAX);
     if (!text) bad(`remark ${n} has no text`);
-    if (text.split(/(?<=[.!?])\s+/).filter(Boolean).length > 2) bad(`remark ${n} has more than two sentences`);
+    if (sentences(text) > 2) bad(`remark ${n} has more than two sentences`);
     return { field: x.field, ...(x.field === "criteria" ? { item: x.item } : {}), kind: x.kind, text };
   });
   return { remarks };
 }
 
+const IMPACT_MAX = { areas: 15, dependsOn: 10, dependents: 10, risks: 12, overlaps: 20, sensitive: 5 };
+const PATH_MAX = 150, AREA_FILES_MAX = 8, OVERLAP_AREAS_MAX = 5, IMPACT_TEXT_MAX = 300, SIZE_NUMBER_MAX = 100000, DRAFT_MAX = 6;
+const BASES = ["found", "estimate"], RISK_KINDS = ["data", "security", "compatibility", "users"], SIZES = ["small", "medium", "large"];
+const TOPICS = ["sign-in", "permissions", "secrets", "credentials", "user-data"];
+// A number of hours, days or weeks, in digits or words, also with a word between ("3 business days", "two calendar weeks").
+const TIME = /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozens?|half an?|a couple of|a few|several))[\s-]*(?:(?:man|person|working|work|business|calendar|elapsed|full|whole)[\s-]*)?(?:hours?|hrs?|days?|weeks?)\b/i;
+// The size word follows from the numbers (the same limits as the build flows' defaults: 5 files and 200 lines, 15 files and 800 lines).
+const sizeWord = (files, lines) => (files > 15 || lines > 800 ? "large" : files <= 5 && lines <= 200 ? "small" : "medium");
+
+const oneLine = (v, max) => cut(clean(v).replace(/\s*[\n\t]\s*/g, " "), max);
+// The whole text is checked first; only the accepted text is cut.
+function prose(v, what, name, maxSentences) {
+  const full = clean(v).replace(/\s*[\n\t]\s*/g, " ");
+  if (!full) bad(`${what} has no ${name}`);
+  if (TIME.test(full)) bad(`${what} names a number of hours, days or weeks`);
+  if (sentences(full) > maxSentences) bad(`${what} has more than ${maxSentences === 1 ? "one sentence" : "two sentences"}`);
+  return cut(full, IMPACT_TEXT_MAX);
+}
+const basisOf = (x, what) => (BASES.includes(x.basis) ? x.basis : bad(`${what} has no basis of found or estimate`));
+// A path inside the repository: not absolute, no `..`.
+const insideRepo = (p) => !/^[\/\\]|^[A-Za-z]:|(?:^|[\/\\])\.\.(?:[\/\\]|$)/.test(p);
+function paths(v, what, max, name = "files") {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) bad(`${what} has ${name} that are not a list`);
+  const out = v.filter((p) => typeof p === "string").map((p) => oneLine(p, Infinity)).filter(Boolean).slice(0, max);
+  for (const p of out) pathOk(p, what);
+  return out;
+}
+// A path is kept as it is or refused, never cut.
+function pathOk(p, what) {
+  if (p.length > PATH_MAX) bad(`${what} names a path of more than ${PATH_MAX} characters`);
+  if (!insideRepo(p)) bad(`${what} names a path outside the repository`);
+}
+const openIssues = () => {
+  try {
+    return new Set([...readFileSync("issues.md", "utf8").matchAll(/^=== ISSUE #(\d+) ===$/gm)].map((m) => Number(m[1])));
+  } catch {
+    return new Set();
+  }
+};
+
+function checkImpact(obj) {
+  if (["questions", "proposals", "suggestions", "remarks"].some((k) => listOf(obj[k], k).length)) {
+    bad("the architect's answer has questions, proposals, suggestions or remarks, but only its view of the draft was asked for");
+  }
+  const list = (name) => listOf(obj[name], name).slice(0, IMPACT_MAX[name]);
+  const areas = list("areas").map((x, i) => {
+    const what = `area ${i + 1}`;
+    if (!isObject(x)) bad(`${what} is not an object`);
+    const area = oneLine(x.area, Infinity);
+    if (!area) bad(`${what} names no directory or file`);
+    pathOk(area, what);
+    const files = paths(x.files, what, AREA_FILES_MAX);
+    const basis = basisOf(x, what);
+    return { area, files, basis: basis === "found" && !files.length ? "estimate" : basis, why: prose(x.why, what, "why", 2) };
+  });
+  const links = (name, label) =>
+    list(name).map((x, i) => {
+      const what = `${label} ${i + 1}`;
+      if (!isObject(x)) bad(`${what} is not an object`);
+      let link;
+      if (Number.isSafeInteger(x.issue) && x.issue >= 1) link = { issue: x.issue };
+      else if (typeof x.draft === "string" && new RegExp(`^D\\d{1,${DRAFT_MAX}}$`).test(x.draft)) link = { draft: x.draft };
+      else bad(`${what} names no issue and no draft`);
+      const basis = basisOf(x, what);
+      return { ...link, basis, why: prose(x.why, what, "why", 2) };
+    });
+  const dependsOn = links("dependsOn", "dependsOn");
+  const dependents = links("dependents", "dependent");
+  const risks = list("risks").map((x, i) => {
+    const what = `risk ${i + 1}`;
+    if (!isObject(x)) bad(`${what} is not an object`);
+    if (!RISK_KINDS.includes(x.kind)) bad(`${what} has no kind of data, security, compatibility or users`);
+    const basis = basisOf(x, what);
+    return { kind: x.kind, basis, text: prose(x.text, what, "text", 1) };
+  });
+  const s = obj.size;
+  if (!isObject(s)) bad("the answer has no size");
+  if (!SIZES.includes(s.size)) bad("the size is not small, medium or large");
+  const whole = (n) => Number.isSafeInteger(n) && n >= 0 && n <= SIZE_NUMBER_MAX;
+  if (!whole(s.files)) bad("the size has no whole number of files");
+  if (!whole(s.lines)) bad("the size has no whole number of lines");
+  const size = { size: sizeWord(s.files, s.lines), files: s.files, lines: s.lines, why: prose(s.why, "the size", "why", 2) };
+  const known = openIssues();
+  const overlaps = list("overlaps").map((x, i) => {
+    const what = `overlap ${i + 1}`;
+    if (!isObject(x)) bad(`${what} is not an object`);
+    if (!Number.isSafeInteger(x.issue) || x.issue < 1) bad(`${what} names no issue`);
+    if (!known.has(x.issue)) bad(`${what} names an issue that is not among the open issues that were read`);
+    basisOf(x, what); // must be there; whatever it says, the answer of this step is an estimate
+    const own = paths(x.areas, what, OVERLAP_AREAS_MAX, "areas");
+    if (!own.length) bad(`${what} names no area`);
+    if (!own.every((a) => areas.some((r) => r.area === a))) bad(`${what} names an area that is not among the areas of the answer`);
+    return { issue: x.issue, areas: own, basis: "estimate", why: prose(x.why, what, "why", 2) };
+  });
+  const sensitive = list("sensitive").map((x, i) => {
+    const what = `sensitive topic ${i + 1}`;
+    if (!isObject(x)) bad(`${what} is not an object`);
+    if (!TOPICS.includes(x.topic)) bad(`${what} has no topic of sign-in, permissions, secrets, credentials or user-data`);
+    const basis = basisOf(x, what);
+    return { topic: x.topic, basis, why: prose(x.why, what, "why", 2) };
+  });
+  return { areas, dependsOn, dependents, risks, size, overlaps, sensitive };
+}
+
 function check(raw, ask, field) {
   const kind = ask || "round";
-  if (kind !== "round" && kind !== "question" && kind !== "suggest" && kind !== "review") bad("set the variable ask to round, question, suggest or review");
+  if (!["round", "question", "suggest", "review", "impact"].includes(kind)) bad("set the variable ask to round, question, suggest, review or impact");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
@@ -119,6 +232,7 @@ function check(raw, ask, field) {
   if (!isObject(obj)) bad("the architect's answer is not a JSON object");
   if (kind === "suggest") return checkSuggestions(obj, field);
   if (kind === "review") return checkReview(obj);
+  if (kind === "impact") return checkImpact(obj);
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
     const answer = cut(clean(obj.answer), ANSWER_MAX);

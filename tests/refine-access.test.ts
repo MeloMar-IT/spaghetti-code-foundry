@@ -7,7 +7,7 @@ import { removeCredential, listCredentials } from "../src/credentials/store.js";
 import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
 import { REPO_READ_STEPS, TOKEN_REFUSED_REASON, isRepoReadStep, tokenRefused } from "../src/engine/guards.js";
-import { repoTokenEnv } from "../src/engine/repo-access.js";
+import { repoTokenEnv, stepRepoAccess } from "../src/engine/repo-access.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
 import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../src/flow/usage.js";
@@ -128,16 +128,26 @@ describe("guards", () => {
     expect(isRefinementRun("refinement x")).toBe(true);
   });
 
-  it("grants only the clone of refine-round", () => {
+  it("grants only the clone and the issue list of refine-round", () => {
     expect(isRepoReadStep({ id: "clone" }, 0, REFINE_ROUND_FLOW, src)).toBe(true);
-    for (const id of ["list_issues", "round", "check_round"]) expect(isRepoReadStep({ id }, 0, REFINE_ROUND_FLOW, src)).toBe(false);
+    expect(isRepoReadStep({ id: "list_issues" }, 0, REFINE_ROUND_FLOW, src)).toBe(true);
+    for (const id of ["round", "check_round"]) expect(isRepoReadStep({ id }, 0, REFINE_ROUND_FLOW, src)).toBe(false);
     expect(isRepoReadStep({ id: "clone" }, 1, REFINE_ROUND_FLOW, src)).toBe(false);
     for (const s of ["ui", "cli", "watcher w issue #1", "refinement", undefined]) expect(isRepoReadStep({ id: "clone" }, 0, REFINE_ROUND_FLOW, s)).toBe(false);
     for (const name of ["refine-round-2", "constructor", "__proto__"]) expect(isRepoReadStep({ id: "clone" }, 0, name, src)).toBe(false);
   });
 
   it("pins the grant to the names of the shipped flows", () =>
-    expect([...REPO_READ_STEPS]).toEqual([[REFINE_BRIEF_FLOW, ["clone", "list_issues"]], [REFINE_ROUND_FLOW, ["clone"]]]));
+    expect([...REPO_READ_STEPS]).toEqual([[REFINE_BRIEF_FLOW, ["clone", "list_issues"]], [REFINE_ROUND_FLOW, ["clone", "list_issues"]]]));
+
+  it("refine-round: list_issues gets a sign-in only for ask=impact (so no app token is made for the other asks)", () => {
+    const summary = { source: "refinement x", owner: "u1" };
+    const access = (ask: string, flow = REFINE_ROUND_FLOW) => stepRepoAccess({ id: "list_issues", type: "shell", repo_access: true }, 0, flow, summary, { github_repo: "acme/app", ask });
+    for (const ask of ["round", "question", "suggest", "review", ""]) expect(access(ask), ask).toBeUndefined();
+    expect(access("impact")).toBeDefined();
+    expect(access("round", REFINE_BRIEF_FLOW)).toBeDefined();
+    expect(stepRepoAccess({ id: "clone", type: "shell", repo_access: true }, 0, REFINE_ROUND_FLOW, summary, { github_repo: "acme/app", ask: "round" })).toBeDefined();
+  });
 
   const ACCESS = { kind: "token" as const, token: TOKEN, url: "https://github.com/acme/app", username: "x-access-token" };
 
@@ -208,8 +218,8 @@ steps:
 `;
 const probe = (name?: string) => parseFlow(PROBE(name), "probe.yaml");
 const runs = () => join(gh.tmp, "runs");
-const go = (flow: ReturnType<typeof probe>, extra: { source?: string; owner?: string; config?: Config } = {}) =>
-  runFlow(flow, { task: "idea", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: ConfigSchema.parse({ protected_branches: [] }), ...extra });
+const go = (flow: ReturnType<typeof probe>, extra: { source?: string; owner?: string; config?: Config; vars?: Record<string, string> } = {}) =>
+  runFlow(flow, { task: "idea", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app", ...extra.vars }, config: ConfigSchema.parse({ protected_branches: [] }), ...extra });
 const out = (s: { history: { id: string; output: string }[] }, id: string) => (s.history.find((h) => h.id === id)?.output ?? "").trim();
 const lastUsed = (r: { credentialId?: string }, uid: string) => listCredentials(uid).find((c) => c.id === r.credentialId)?.lastUsed;
 const REFINE = "refinement 6b1c1d52-1111-4111-8111-111111111111";
@@ -246,13 +256,16 @@ describe("a refinement run", { timeout: 60_000 }, () => {
     expect(lastUsed(r, user.id)).toBeNull();
   });
 
-  it("refine-round: the clone gets the stored token, the other steps and the agent do not", async () => {
+  it("refine-round: the clone gets the stored token, the other steps and the agent do not; list_issues only for ask=impact", async () => {
     tokenRepo(user);
     process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
-    const s = await go(probe(REFINE_ROUND_FLOW), { source: REFINE, owner: user.id });
+    const plain = await go(probe(REFINE_ROUND_FLOW), { source: REFINE, owner: user.id, vars: { ask: "round" } });
+    expect(out(plain, "clone")).toBe("stored host=github.com");
+    expect(out(plain, "list_issues")).toBe("none");
+    const s = await go(probe(REFINE_ROUND_FLOW), { source: REFINE, owner: user.id, vars: { ask: "impact" } });
     expect(s.status).toBe("succeeded");
     expect(out(s, "clone")).toBe("stored host=github.com");
-    expect(out(s, "list_issues")).toBe("none");
+    expect(out(s, "list_issues")).toBe("stored host=github.com");
     expect(out(s, "other")).toBe("none");
     expect(out(s, "brief")).toContain("gh_token=none");
   });
