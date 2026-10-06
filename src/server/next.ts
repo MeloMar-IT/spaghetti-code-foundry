@@ -8,6 +8,7 @@ import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } f
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
 import { supersededRuns } from "../stats.js";
+import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
 import { answerBlock, userRecord, userTask } from "./user-view.js";
@@ -164,14 +165,30 @@ export function watcherProblem(w: WatcherConfig, status: WatcherStatus | undefin
 }
 
 /** GET /api/queue: the queue, each pending job with its record as `next`. */
-export function queueWithNext(ctx: ApiContext, forUser = false): Omit<Queue, "pending"> & { pending: (PendingJob & { next: NextStep })[] } {
+export interface OwnerInfo { owner?: string; ownerName?: string }
+
+/** The owner of a run and its name ("deleted account" when the account is gone); {} without a run or an owner. Admin views only. */
+export function ownerInfo(ctx: ApiContext, list: RunSummary[] = []): (runId?: string) => OwnerInfo {
+  const byRun = new Map(list.map((r) => [r.runId, r]));
+  let names: Map<string, string> | undefined;
+  return (id) => {
+    if (!id) return {};
+    const owner = byRun.get(id)?.owner ?? ctx.scheduler.ownerOf(id);
+    if (!owner) return {};
+    return { owner, ownerName: (names ??= ownerNames()).get(owner) ?? DELETED_OWNER };
+  };
+}
+
+export function queueWithNext(ctx: ApiContext, forUser = false): Omit<Queue, "pending"> & { pending: (PendingJob & { next: NextStep; ownerName?: string })[] } {
   const q = ctx.scheduler.queue();
   const next = nextFor(ctx, undefined, forUser);
   const tracked = ctx.watchers.tracked();
   const waitLeft = waitLeftFor(ctx);
+  const who = forUser ? undefined : ownerInfo(ctx);
   return { ...q, pending: q.pending.map((p) => {
     const run = ctx.scheduler.get(p.runId);
-    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p)) };
+    const ownerName = who?.(p.runId).ownerName;
+    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p)), ...(ownerName ? { ownerName } : {}) };
   }) };
 }
 

@@ -37,6 +37,9 @@ export interface BoardSource {
   watcher?: string;
   /** A bug story: it goes before other stories. */
   goesFirst?: boolean;
+  /** The account of the card's run, and its name (admin views). */
+  owner?: string;
+  ownerName?: string;
 }
 
 export interface BoardCard {
@@ -57,6 +60,8 @@ export interface BoardCard {
   group?: string;
   watcher?: string;
   goesFirst?: true;
+  owner?: string;
+  ownerName?: string;
 }
 
 export interface BoardColumn { id: ColumnId; title: string; cards: BoardCard[] }
@@ -154,6 +159,8 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
       chain: [],
       since: s.since,
       ...(group ? { group } : {}),
+      ...(s.owner ? { owner: s.owner } : {}),
+      ...(s.ownerName ? { ownerName: s.ownerName } : {}),
       watcher: s.watcher,
       ...(s.goesFirst && column !== "done" ? { goesFirst: true as const } : {}),
     });

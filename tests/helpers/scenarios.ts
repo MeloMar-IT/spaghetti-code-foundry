@@ -46,6 +46,7 @@ export function scenarioCtx(w: World): ApiContext {
     scheduler: {
       list: (n = 100) => w.runs.slice(0, n),
       get: (id: string) => w.runs.find((r) => r.runId === id),
+      ownerOf: (id: string) => w.runs.find((r) => r.runId === id)?.owner,
       briefs: () => w.runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: (w.pending ?? []).map((runId) => ({ runId, kind: "run", enqueuedAt: ago(0.01) })), active: (w.active ?? []).map((runId) => ({ runId })) }),
       isActive: (id: string) => (w.active ?? []).includes(id),

@@ -8,6 +8,7 @@ import { evalsDir } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
 import { boardFor } from "../src/server/board.js";
+import { ownQueue, queueWithNext } from "../src/server/next.js";
 import type { ApiContext } from "../src/server/server.js";
 
 const NOW = new Date("2026-10-01T12:00:00Z");
@@ -164,6 +165,14 @@ describe("buildBoard", () => {
     expect(buildBoard([], { now: NOW })).toEqual({ repos: [], empty: EMPTY_BOARD });
   });
 
+  it("copies the owner and its name to the card, and leaves the keys out without them", () => {
+    const b = buildBoard([src(rec("queued", {}, 1), { owner: "u1", ownerName: "Ann" }), src(rec("queued", {}, 2))], { now: NOW });
+    const [a, none] = cardsOf(b, "queued");
+    expect(a).toMatchObject({ owner: "u1", ownerName: "Ann" });
+    expect("owner" in none!).toBe(false);
+    expect("ownerName" in none!).toBe(false);
+  });
+
   it("marks a card goes first only when asked, and never in Done", () => {
     const b = buildBoard([src(rec("bug_first", {}, 1), { goesFirst: true }), src(rec("queued", {}, 2)), src(rec("done", {}, 3), { goesFirst: true })], { now: NOW });
     expect(cardsOf(b, "waiting")[0]!.goesFirst).toBe(true);
@@ -248,7 +257,7 @@ const run = (runId: string, over: Record<string, unknown> = {}) => ({
 const issuesWatcher = { id: "a", github_repo: "acme/app", flow: "github-issue" };
 type Tracked = { watcher: unknown; status: Record<string, unknown>; issues: { issue: number; title: string; runId?: string; done?: boolean }[] };
 
-function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tracked?: (c: ReturnType<typeof ConfigSchema.parse>) => Tracked[]; active?: string[]; pending?: Record<string, unknown>[] } = {}) {
+function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tracked?: (c: ReturnType<typeof ConfigSchema.parse>) => Tracked[]; active?: string[]; pending?: Record<string, unknown>[]; owners?: Record<string, string> } = {}) {
   const runs = o.runs ?? [];
   const config = ConfigSchema.parse({ watchers: o.watchers ?? [issuesWatcher] });
   return {
@@ -256,6 +265,7 @@ function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tr
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
+      ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner ?? o.owners?.[id],
       briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
       queue: () => ({ pending: o.pending ?? [], active: (o.active ?? []).map((runId) => ({ runId })) }),
     },
@@ -338,6 +348,47 @@ describe("boardFor", () => {
     const held = cards(stub({ pending: [{ ...job, waitingFor: "r7" }] }), "waiting");
     expect(held).toMatchObject([{ issue: 8 }]);
     expect(held[0]!.runId).toBe("p1"); // the card opens the run page before the run file exists
+  });
+
+  it("gives a card the owner of its run, 'deleted account' when the account is gone, and no keys without an owner", () => {
+    const ghost = "11111111-1111-4111-8111-111111111111";
+    expect(cards(stub({ runs: [run("r1", { owner: ghost })] }), "failed")).toMatchObject([{ owner: ghost, ownerName: "deleted account" }]);
+    const bare = cards(stub({ runs: [run("r1")] }), "failed")[0]!;
+    expect("owner" in bare).toBe(false);
+    expect("ownerName" in bare).toBe(false);
+  });
+
+  it("takes the owner of a queued job without a run file from the scheduler", () => {
+    const job = { runId: "p1", kind: "run", githubRepo: "acme/app", issue: "8", task: "t", repo: "/x" };
+    const ghost = "11111111-1111-4111-8111-111111111111";
+    expect(cards(stub({ pending: [job], owners: { p1: ghost } }), "queued")).toMatchObject([{ owner: ghost, ownerName: "deleted account" }]);
+    const bare = cards(stub({ pending: [job] }), "queued")[0]!;
+    expect("owner" in bare).toBe(false);
+  });
+
+  it("gives a tracked issue without a run no owner keys", () => {
+    const ctx = stub({ tracked: trackedOf({}, [{ issue: 4, title: "Four" }]) });
+    for (const c of allCards(ctx)) {
+      expect("owner" in c).toBe(false);
+      expect("ownerName" in c).toBe(false);
+    }
+  });
+
+  it("names the owner of each queued job: 'deleted account' for a gone account, no key without an owner", () => {
+    const ghost = "11111111-1111-4111-8111-111111111111";
+    const pending = [{ runId: "p1", kind: "run", githubRepo: "acme/app", issue: "8", repo: "/x" }, { runId: "p2", kind: "run", githubRepo: "acme/app", issue: "9", repo: "/x" }];
+    const ctx = stub({ pending, owners: { p1: ghost } });
+    const [p1, p2] = queueWithNext(ctx).pending;
+    expect(p1!.ownerName).toBe("deleted account");
+    expect("ownerName" in p2!).toBe(false);
+    expect(queueWithNext(ctx, true).pending.some((p) => "ownerName" in p)).toBe(false);
+  });
+
+  it("shows a user's own queue without an owner name or a cost", () => {
+    const pending = [{ runId: "p1", kind: "run", githubRepo: "acme/app", issue: "8", repo: "/x", costUsd: 1 }, { runId: "p2", kind: "run", githubRepo: "acme/app", issue: "9", repo: "/x" }];
+    const own = ownQueue(stub({ pending, owners: { p1: "u1", p2: "u2" } }), "u1");
+    expect(own.pending.map((p) => p.runId)).toEqual(["p1"]);
+    expect(JSON.stringify(own)).not.toMatch(/ownerName|cost/i);
   });
 
   it("still shows an older waiting run beyond the newest 200", () => {

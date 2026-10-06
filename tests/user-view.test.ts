@@ -61,7 +61,7 @@ describe("userRun", () => {
   const full = {
     runId: "r1", flow: "leaky", task: "do it in /work/dir", status: "waiting", startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z",
     reason: "SECRET reason", repo: "/srv/repo", runDir: "/runs/r1", workdir: "/work/dir", baseSha: "abc", branch: "factory/r1", totalCostUsd: 1.23,
-    pid: 5, source: "ui", owner: "u1", resumes: 1, stepStartedAt: "2026-01-01T00:00:30.000Z",
+    pid: 5, source: "ui", owner: "u1", ownerName: "SENTINEL_OWNER_NAME", resumes: 1, stepStartedAt: "2026-01-01T00:00:30.000Z",
     vars: { github_repo: "acme/app", issue: "7", hidden: "SENTINEL_HIDDEN", fixed: "F", input: "I", unlisted: "U" },
     flowDef: {
       name: "leaky", description: "d", workspace: "worktree", defaults: { model: "opus", agent: "claude" }, limits: { max_cost_usd: 5 }, sandbox: {}, vars: { hidden: "h" },
@@ -106,6 +106,8 @@ describe("userRun", () => {
     expect(u.state).toEqual({ next: "sh" });
     expect(keys(u.waiting!)).toEqual(["message", "since", "stepId"]);
     expect(JSON.stringify(u)).not.toMatch(/SECRET|opus|claude|cost|tokens|sessionId|logFile/i);
+    expect(JSON.stringify(u)).not.toContain("SENTINEL_OWNER_NAME");
+    expect(keys(u)).not.toContain("ownerName");
   });
 
   it("names the refinement session of an architect run, only for a valid source", () => {

@@ -7,6 +7,7 @@ import { spentToday } from "../engine/state.js";
 import { cleanRuns } from "../clean.js";
 import { listEvalReports } from "../evals.js";
 import { clickThrough } from "../notify.js";
+import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { computeStats } from "../stats.js";
 import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
@@ -99,7 +100,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] === "evals" && method === "GET") return send(res, 200, listEvalReports()), true;
 
   if (seg[0] === "stats" && method === "GET") {
-    return send(res, 200, computeStats(scheduler.list(2000))), true;
+    const stats = computeStats(scheduler.list(2000));
+    const names = ownerNames();
+    const byUser = stats.byUser.map((u) => ({ owner: u.owner, name: u.owner ? names.get(u.owner) ?? DELETED_OWNER : "no owner", runs: u.runs, costUsd: u.costUsd }));
+    return send(res, 200, { ...stats, byUser }), true;
   }
   return false;
 };

@@ -43,6 +43,7 @@ export const aheadText = (n) => `${n} ${n === 1 ? "run" : "runs"} ahead of you`;
 export const queueRow = (p, onRemove) => h("div", { class: "row" },
   p.next ? nextStatus(p.next) : null, p.priority ? h("span", { class: "pill first" }, "goes first") : null, p.refinement ? refinementMark(p.refinement) : null, h("span", { class: "mono" }, p.runId), h("span", { class: "muted" }, [p.kind, p.source, p.next?.text].filter(Boolean).join(" · ")),
   p.ahead ? h("span", { class: "muted" }, aheadText(p.ahead)) : null,
+  ownerLabel(p.ownerName) ? h("span", { class: "muted", title: "Owner" }, ownerLabel(p.ownerName)) : null,
   ...(p.next ? whenParts(p.next) : []),
   p.next ? whereLink(p.next.where) : null,
   h("span", { class: "spacer" }),

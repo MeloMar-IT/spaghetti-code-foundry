@@ -48,6 +48,9 @@ export function watcherOwnerProblem(next: { id: string; owner?: string }[], curr
   return undefined;
 }
 
+/** What the server calls an account that is gone (the UI shows it as "deleted user"). */
+export const DELETED_OWNER = "deleted account";
+
 /** Account names by id (empty when users.json cannot be read). */
 export function ownerNames(): Map<string, string> {
   try {

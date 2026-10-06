@@ -326,6 +326,59 @@ describe("runs of other accounts", () => {
     expect(mine.every((r: { ownerName?: string }) => !("ownerName" in r))).toBe(true);
     await s.ctx.scheduler.idle();
   });
+
+  const GHOST = "11111111-1111-4111-8111-111111111111";
+  const recent = () => new Date().toISOString();
+
+  it("names the owner of each queued job for an admin, and for nobody else", async () => {
+    await startRun(ann, "slow");
+    const b1 = await startRun(bob, "slow");
+    const a2 = await startRun(ann, "slow");
+    const pending = (await call(s, admin, "GET", "/api/queue")).json().pending as { runId: string; ownerName?: string }[];
+    expect(Object.fromEntries(pending.map((p) => [p.runId, p.ownerName]))).toEqual({ [b1]: "Bob", [a2]: "Ann" });
+
+    const annQ = await call(s, ann, "GET", "/api/queue");
+    expect(annQ.json().pending.every((p: object) => !("ownerName" in p))).toBe(true);
+    expect(annQ.text).not.toContain("Bob");
+    expect(annQ.text).not.toContain("ownerName");
+    expect(annQ.text).not.toContain("costUsd");
+  });
+
+  it("names the owner on Your turn and on the board for an admin", async () => {
+    const id = await waitingRun(ann);
+    const turn = (await call(s, admin, "GET", "/api/your-turn")).json();
+    const item = turn.groups.flatMap((g: { items: { next: { runId?: string } }[] }) => g.items).find((i: { next: { runId?: string } }) => i.next.runId === id);
+    expect(item).toMatchObject({ owner: ann.user.id, ownerName: "Ann" });
+
+    const story = (runId: string, issue: string, owner: string) =>
+      writeRun(s, runId, { vars: { github_repo: "acme/app", issue }, status: "failed", startedAt: recent(), finishedAt: recent(), source: "ui", owner });
+    story("20300101-000000-board-ann", "7", ann.user.id);
+    story("20300101-000000-board-ghost", "8", GHOST);
+    const board = (await call(s, admin, "GET", "/api/board")).json();
+    const cards = board.repos.flatMap((r: { columns: { cards: { issue: number; ownerName?: string }[] }[] }) => r.columns.flatMap((c) => c.cards));
+    expect(cards.find((c: { issue: number }) => c.issue === 7)).toMatchObject({ owner: ann.user.id, ownerName: "Ann" });
+    expect(cards.find((c: { issue: number }) => c.issue === 8)).toMatchObject({ owner: GHOST, ownerName: "deleted account" });
+    await s.ctx.scheduler.idle();
+  });
+
+  it("gives an admin the cost per user, adding up to the total", async () => {
+    writeRun(s, "20300101-000000-stat-ann", { owner: ann.user.id, startedAt: recent(), totalCostUsd: 0.25 });
+    writeRun(s, "20300101-000000-stat-ghost", { owner: GHOST, startedAt: recent(), totalCostUsd: 0.5 });
+    writeRun(s, "20300101-000000-stat-none", { source: "refinement x", startedAt: recent(), totalCostUsd: 0.125 });
+    const st = (await call(s, admin, "GET", "/api/stats")).json();
+    const names = st.byUser.map((u: { name: string }) => u.name);
+    expect(names).toEqual(expect.arrayContaining(["Ann", "deleted account", "no owner"]));
+    expect(st.byUser.find((u: { name: string }) => u.name === "no owner").owner).toBe("");
+    const costs = st.byUser.map((u: { costUsd: number }) => u.costUsd);
+    expect(costs).toEqual([...costs].sort((a: number, b: number) => b - a));
+    expect(Math.round(costs.reduce((a: number, b: number) => a + b, 0) * 1e4) / 1e4).toBe(st.totals.costUsd);
+  });
+
+  it("shows a user no owner, no cost and no board, turn or stats", async () => {
+    for (const path of ["/api/board", "/api/your-turn", "/api/stats"]) expect((await call(s, ann, "GET", path)).status, path).toBe(403);
+    const rows = (await call(s, ann, "GET", "/api/runs")).json();
+    expect(rows.every((r: object) => !("ownerName" in r) && !("totalCostUsd" in r))).toBe(true);
+  });
 });
 
 describe("the owner options", () => {

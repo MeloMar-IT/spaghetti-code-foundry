@@ -6,7 +6,7 @@ import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
 import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
-import { isRefinementRun, ownerNames } from "../auth/run-owner.js";
+import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
 import { ANSWER_MAX_CHARS, answerRoom, type RunSummary } from "../engine/state.js";
@@ -54,7 +54,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const counts = new Map<string, number>();
     for (const b of scheduler.briefs()) if (b.owner) counts.set(b.owner, (counts.get(b.owner) ?? 0) + 1);
     const names = ownerNames();
-    const owners = [...counts].map(([oid, runs]) => ({ id: oid, name: names.get(oid) ?? "deleted account", runs }));
+    const owners = [...counts].map(([oid, runs]) => ({ id: oid, name: names.get(oid) ?? DELETED_OWNER, runs }));
     return send(res, 200, owners.sort((a, b) => a.name.localeCompare(b.name))), true;
   }
   if (seg[0] !== "runs") return false;
@@ -81,7 +81,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       ...r,
       ...answerable(r),
       ...(replaced.has(r.runId) ? { superseded: true } : {}),
-      ...(names && r.owner ? { ownerName: names.get(r.owner) ?? "deleted account" } : {}),
+      ...(names && r.owner ? { ownerName: names.get(r.owner) ?? DELETED_OWNER } : {}),
       next: view(next(r)),
     })))), true;
   }

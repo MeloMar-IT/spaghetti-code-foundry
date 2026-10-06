@@ -294,3 +294,54 @@ describe("renderBoard", () => {
     cleanup();
   });
 });
+
+describe("owners on the board", () => {
+  const main = () => new FakeElement("main");
+  const mine = (issue: number, owner?: string, ownerName?: string) =>
+    card({ key: `acme/app#${issue}`, issue, title: `T${issue}`, column: "coding", after: [], chain: [], next: nextStep("running", { repo: "acme/app", issue, title: `T${issue}`, runId: `r${issue}` }), ...(owner ? { owner, ownerName } : {}) });
+  const select = (root: FakeElement) => root.all("select")[0]!;
+  const options = (root: FakeElement) => select(root).all("option").map((o) => o.textContent);
+  const codingHead = (root: FakeElement) => root.all("h3").find((e) => e.textContent.startsWith("Coding"))!.textContent;
+
+  it("shows the owner's name on a card, 'deleted user' for an account that is gone, and nothing without an owner", () => {
+    expect(cardEl(view(board([mine(1, "u1", "Ann")])))[0]!.textContent).toContain("Owner: Ann");
+    expect(cardEl(view(board([mine(1, "u1", "deleted account")])))[0]!.textContent).toContain("Owner: deleted user");
+    expect(cardEl(view(board([mine(1)])))[0]!.textContent).not.toContain("Owner");
+  });
+
+  it("boardOwners gives one entry per account with its count, sorted by name", () => {
+    const list = ui.boardOwners([mine(1, "u2", "Bob"), mine(2, "u1", "Ann"), mine(3, "u2", "Bob"), mine(4), mine(5, "u3", "deleted account")]);
+    expect(list).toEqual([{ id: "u1", name: "Ann", cards: 1 }, { id: "u2", name: "Bob", cards: 2 }, { id: "u3", name: "deleted user", cards: 1 }]);
+  });
+
+  it("always has the select, with 'All owners' and one option per account", () => {
+    expect(options(view(board([mine(1)])))).toEqual(["All owners"]);
+    expect(options(view(board([mine(1, "u2", "Bob"), mine(2, "u1", "Ann"), mine(3, "u2", "Bob")])))).toEqual(["All owners", "Ann (1)", "Bob (2)"]);
+  });
+
+  it("with an owner chosen, hides the cards of others and cards without an owner, and the counts follow", () => {
+    const d = board([mine(1, "u2", "Bob"), mine(2, "u1", "Ann"), mine(3)]);
+    const root = view(d, undefined, { ...handlers(), owner: "u1" } as any);
+    expect(cardEl(root)).toHaveLength(1);
+    expect(cardEl(root)[0]!.textContent).toContain("T2");
+    expect(codingHead(root)).toBe("Coding 1");
+    expect(codingHead(view(d))).toBe("Coding 3");
+  });
+
+  it("redraws on a change of the select without a new request, and resets when the owner's cards are gone", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(m)).toHaveLength(2);
+    select(m).listeners.change![0]!({ target: { value: "u1" } });
+    expect(calls).toHaveLength(0);
+    expect(cardEl(m)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([mine(2, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(m)).toHaveLength(1);
+    expect(cardEl(m)[0]!.textContent).toContain("T2");
+    cleanup();
+  });
+});

@@ -141,6 +141,16 @@ describe("turnView", () => {
     expect(link(root)!.attrs.class).toBe("btn primary");
   });
 
+  it("shows the owner of an item and of a continuing item: the name, 'deleted user', or nothing", () => {
+    const text = (extra: Record<string, unknown>, where: "items" | "continuing") =>
+      view(where === "items" ? data([item(extra)]) : data([], { continuing: [item(extra)], empty: "Nothing needs you." })).textContent;
+    for (const where of ["items", "continuing"] as const) {
+      expect(text({ ownerName: "Ann" }, where)).toContain("Owner: Ann");
+      expect(text({ ownerName: "deleted account" }, where)).toContain("Owner: deleted user");
+      expect(text({}, where)).not.toContain("Owner");
+    }
+  });
+
   it("lists items under Done — continuing, without buttons", () => {
     const root = view(data([], { continuing: [item({ what: "Five" })], empty: "Nothing needs you." }));
     expect(root.all("h3").map((x) => x.textContent)).toContain("Done — continuing");

@@ -372,6 +372,15 @@ describe("the \"?\" and the status names", () => {
     expect(calls).toEqual([1]);
   });
 
+  it("queueRow shows the owner's name, 'deleted user' for an account that is gone, and nothing without one", () => {
+    const next = nextStep("queued", { repo: "o/r", runId: "q1" });
+    const text = (extra: Record<string, unknown>) => (runs.queueRow({ runId: "q1", kind: "run", next, ...extra }, () => {}) as FakeElement).textContent;
+    expect(text({ ownerName: "Ann" })).toContain("Ann");
+    expect(text({ ownerName: "deleted account" })).toContain("deleted user");
+    expect(text({ ownerName: "deleted account" })).not.toContain("deleted account");
+    expect(text({ ownerName: "Ann" }).replace("Ann", "")).toBe(text({}));
+  });
+
   it("queueRow marks a bug story as going first", () => {
     const next = nextStep("queued", { repo: "o/r", runId: "q1" });
     expect((runs.queueRow({ runId: "q1", kind: "run", next, priority: true }, () => {}) as FakeElement).textContent).toContain("goes first");
