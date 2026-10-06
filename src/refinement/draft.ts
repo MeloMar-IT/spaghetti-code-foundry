@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
@@ -27,7 +28,30 @@ export const REASON_MAX = 300;
 export const SUGGEST_FIELDS = ["title", "who", "what", "why", "criteria", "outOfScope", "dependsOn", "notes"] as const;
 export type SuggestField = (typeof SUGGEST_FIELDS)[number];
 
-export const DRAFT_LOG_KINDS = ["draft-added", "draft-removed", "epic-set", "epic-cleared", "suggestion-asked", "architect-suggested", "suggestion-accepted", "suggestion-rejected"] as const;
+/** The kinds of a remark of the architect's review. */
+export const REMARK_KINDS = ["uncheckable", "vague", "contradiction", "how", "plan"] as const;
+export type RemarkKind = (typeof REMARK_KINDS)[number];
+/** A review has at most this many remarks; a remark is at most REMARK_MAX characters, on one line, in at most REMARK_SENTENCES sentences. */
+export const REVIEW_MAX = 20;
+export const REMARK_MAX = 300;
+export const REMARK_SENTENCES = 2;
+
+/** How many sentences a text has: a stop, question mark or exclamation mark followed by a space starts the next one. */
+export const sentenceCount = (t: string): number => t.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+
+export const DRAFT_LOG_KINDS = [
+  "draft-added",
+  "draft-removed",
+  "epic-set",
+  "epic-cleared",
+  "suggestion-asked",
+  "architect-suggested",
+  "suggestion-accepted",
+  "suggestion-rejected",
+  "review-asked",
+  "architect-reviewed",
+  "moved-to-notes",
+] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
 export const isDraftKind = (what: string): boolean => (DRAFT_LOG_KINDS as readonly string[]).includes(what);
 
@@ -65,6 +89,20 @@ const SuggestionSchema = z
     } else if (x.text === undefined || x.issue !== undefined || x.draft !== undefined || (x.field === "criteria") !== (x.tie !== undefined)) fail();
   });
 const RejectedSchema = z.object({ field: z.enum(SUGGEST_FIELDS), text: text(LONG_TEXT_MAX), reason: text(REASON_MAX).optional() }).strict();
+/** `about`: the text of the field or criterion when the review was asked; the remark is stale when the text is not that any more. */
+const RemarkSchema = z
+  .object({
+    field: z.enum(REMARK_FIELDS),
+    item: z.uuid().optional(),
+    kind: z.enum(REMARK_KINDS),
+    text: text(REMARK_MAX, true).refine((t) => sentenceCount(t) <= REMARK_SENTENCES),
+    about: text(LONG_TEXT_MAX),
+  })
+  .strict()
+  .refine((r) => (r.field === "criteria") === (r.item !== undefined));
+const ReviewSchema = z.object({ at: z.iso.datetime(), remarks: z.array(RemarkSchema).max(REVIEW_MAX) }).strict();
+export type Remark = z.infer<typeof RemarkSchema>;
+export type Review = z.infer<typeof ReviewSchema>;
 export type Suggestion = z.infer<typeof SuggestionSchema>;
 export type Rejected = z.infer<typeof RejectedSchema>;
 
@@ -81,6 +119,7 @@ const DraftSchema = z
     notes: field(LONG_TEXT_MAX).optional(),
     suggestions: z.array(SuggestionSchema).max(SUGGESTIONS_MAX).optional(),
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
+    review: ReviewSchema.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
@@ -122,8 +161,8 @@ export const DraftsSchema = z
 export const EpicSchema = IssueNumber.max(Number.MAX_SAFE_INTEGER);
 
 export type Draft = z.infer<typeof DraftSchema>;
-type Field = z.infer<ReturnType<typeof field>>;
-type Criterion = z.infer<typeof CriterionSchema>;
+export type Field = z.infer<ReturnType<typeof field>>;
+export type Criterion = z.infer<typeof CriterionSchema>;
 type Depends = z.infer<typeof DependsSchema>;
 
 export interface DraftState {
@@ -136,10 +175,10 @@ export interface DraftChange extends DraftState {
 
 // ---- checking input --------------------------------------------------------------------------------
 
-const bad = (m: string) => new RefinementError("bad-draft", m);
-const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+export const bad = (m: string) => new RefinementError("bad-draft", m);
+export const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
-const TEXT_FIELDS = [
+export const TEXT_FIELDS = [
   ["title", "title", DRAFT_TITLE_MAX, true],
   ["who", "who part", PART_MAX, false],
   ["what", "what part", PART_MAX, false],
@@ -150,7 +189,7 @@ const TEXT_FIELDS = [
 type TextKey = (typeof TEXT_FIELDS)[number][0];
 
 /** The text, trimmed and with \n line ends; "" when it is empty. Throws bad-draft when it is not allowed. */
-function checkText(raw: unknown, label: string, max: number, oneLine: boolean): string {
+export function checkText(raw: unknown, label: string, max: number, oneLine: boolean): string {
   if (typeof raw !== "string") throw bad(`the ${label} must be text`);
   const t = raw.replace(/\r\n/g, "\n").trim();
   if (chars(t) > max) throw bad(`the ${label} can have at most ${max} characters`);
@@ -308,7 +347,7 @@ export function untie(drafts: Draft[], entryId: string): Draft[] {
 
 const FIELD_OF = new Map<string, (typeof TEXT_FIELDS)[number]>(TEXT_FIELDS.map((f) => [f[0], f]));
 
-const keysAre = (o: Record<string, unknown>, ...keys: string[]) => Object.keys(o).length === keys.length && keys.every((k) => k in o);
+export const keysAre = (o: Record<string, unknown>, ...keys: string[]) => Object.keys(o).length === keys.length && keys.every((k) => k in o);
 
 /**
  * The end of a suggestion run: the checked answer `{ field, suggestions }` becomes the waiting suggestions of `field` (the

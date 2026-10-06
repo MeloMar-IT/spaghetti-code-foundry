@@ -7,13 +7,14 @@ import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
+import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
-export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest"] as const;
+export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
@@ -50,7 +51,9 @@ const BriefSchema = z.object({ text: z.string().min(1).max(BRIEF_MAX), at: z.iso
 const ArchitectSchema = z
   .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional(), draft: z.uuid().optional(), field: z.enum(SUGGEST_FIELDS).optional() })
   .strict()
-  .refine((a) => (a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.draft === undefined && a.field === undefined));
+  .refine((a) =>
+    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
+  );
 
 const SessionSchema = z
   .object({
@@ -335,12 +338,13 @@ export const END_BAD_FORM = "The architect's answer did not have the agreed form
 export const END_NO_ROOM = "The talk or the log of this session has no room for the answer";
 export const END_NO_QUESTION = "The question of the person could not be found";
 export const END_NO_DRAFT = "The story draft for the suggestion could not be found";
+export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
 
 export interface ArchitectAsk {
   kind?: ArchitectKind;
   /** For kind `question`: the checked question. */
   question?: string;
-  /** For kind `suggest`: the draft and the field the suggestion is for. */
+  /** For kind `suggest`: the draft and the field the suggestion is for. For kind `review`: the draft. */
   draft?: string;
   field?: SuggestField;
 }
@@ -349,6 +353,7 @@ export interface ArchitectAsk {
 export function setArchitectRun(actor: Actor, id: string, runId: string, ask: ArchitectAsk = {}, opts: StoreOptions = {}): Session {
   const kind = ask.kind ?? "brief";
   if (kind === "suggest" && (!ask.draft || !ask.field)) throw new Error("a suggestion run needs a draft and a field");
+  if (kind === "review" && !ask.draft) throw new Error("a review run needs a draft");
   return change(actor, id, opts, false, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
     if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
@@ -358,13 +363,16 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
       ...(kind !== "brief" ? { kind } : {}),
       ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}),
       ...(kind === "suggest" ? { draft: ask.draft, field: ask.field } : {}),
+      ...(kind === "review" ? { draft: ask.draft } : {}),
     };
     const entry: LogItem =
       kind === "question"
         ? { at, by: actor.id, what: "asked", detail: cut(ask.question ?? "", DETAIL_MAX) }
         : kind === "suggest"
           ? { at, by: actor.id, what: "suggestion-asked", detail: ask.field }
-          : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
+          : kind === "review"
+            ? { at, by: actor.id, what: "review-asked" }
+            : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
     return { ...s, architect, updated: at, log: [...s.log, entry] };
   });
 }
@@ -382,7 +390,7 @@ export function noteArchitectResumed(id: string, runId: string, opts: StoreOptio
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { failed: string };
 
 /**
  * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
@@ -411,6 +419,17 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
         const c = addSuggested({ drafts: s.drafts, epic: s.epic }, s.talk, a.draft, a.field, end.suggested, end.refs ?? {});
         if (!c) return fail(END_NO_DRAFT);
         return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-suggested", a.field) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
+    if ("reviewed" in end) {
+      if (a.kind !== "review" || !a.draft) return fail(END_NO_REVIEW_DRAFT);
+      try {
+        const c = setReview({ drafts: s.drafts, epic: s.epic }, a.draft, end.reviewed, end.refs ?? {}, at);
+        if (!c) return fail(END_NO_REVIEW_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-reviewed", c.line?.detail) };
       } catch (e) {
         if (!(e instanceof RefinementError)) throw e;
         return fail(END_BAD_FORM);
@@ -528,4 +547,6 @@ export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, si
   changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input));
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
   changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input));
+/** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
 export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));

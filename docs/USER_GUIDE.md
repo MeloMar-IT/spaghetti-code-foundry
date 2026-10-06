@@ -1976,6 +1976,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/refinement/:id/drafts/:did` | yes | yes | save what you typed in a story draft of your refinement session; only the fields in the body change |
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
+| `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
@@ -2475,6 +2477,21 @@ You can ask the architect for a proposal for one field of a draft. It is only a 
 
 **Log.** The log tells that a suggestion was asked for (with the field), that the architect suggested, and that a suggestion was accepted or rejected.
 
+**Remarks from code checks.** Every draft in the session view has `remarks`, computed from its text on every read and save. No AI call is made and nothing is stored. They cover every field but the notes for the builder. Each remark has `field` (and `item`, the criterion id), `kind`, `word` (what was found) and `text` (a plain sentence).
+
+- `vague`: a word that cannot be checked, from a fixed list (for example "fast", "easy", "simple", "etc").
+- `plan`: text that reads like an implementation plan: a code block, a path with a file extension, a call like `save()`, or build steps ("first add a table, then …"). The remark says that this belongs in the build step. Text in backticks and web addresses are not flagged, so a story can name an API route or a setting on purpose.
+
+Remarks are advice. They never block a save or anything else.
+
+**Review by the architect.** `POST /api/refinement/:id/drafts/:did/review` (no body) starts an architect run and answers 202 with the session. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, a paused run is resumed by the same call, and a failed run changes nothing. The architect gets the idea, the brief, the map and the draft. It only points out weak spots; it changes no field and proposes no new text. Only this call starts an AI call; saving a draft never does.
+
+The result is stored with the draft as `review`: `{ at, remarks }`, at most 20 remarks. Each remark has `field` (and `item` for a criterion), `kind` and `text` (one or two sentences). The kinds are `uncheckable` (a criterion that cannot be checked), `vague`, `contradiction` (with another criterion or a rule of the map), `how` (it says how to build, not what is wanted) and `plan`. A new review replaces the old one. A remark about a text that has changed or moved since the review has `stale: true`.
+
+**Move to the notes.** `POST …/drafts/:did/move-to-notes` with `{ "field": "…", "item": "…" }` (`item` only for `criteria`) adds the text to the notes for the builder as a line "Wish: <text>" and removes it from its field. It works only for a text with a `plan` remark (code checks or review) or a `how` remark (review, not stale); otherwise it is refused. Nothing moves by itself. Typed text added to typed notes stays `typed`; any mix with accepted text makes the notes `accepted-edited`.
+
+**Log.** The log tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
+
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
 **The preview.** Every draft in the session has `preview`: `{ title, body }`, the story as Markdown. It is only your text and fixed words; show it as text. For example:
@@ -2575,7 +2592,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review]
 ```
 
 **What it reads.** The code of the repository only (the `develop` branch when there is one, else the default branch). The open issues are not read again: what the talk says about the backlog is what the architect knows of it.
@@ -2584,7 +2601,9 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 
 **`ask=question`.** The answer is `{ "answer": "…" }`, with no questions and no proposals. Every claim about the code names its file.
 
-**`ask=suggest`.** Run with `--var field=title|who|what|why|criteria|outOfScope|dependsOn|notes`. The answer is `{ "suggestions": [ … ] }`: `{ "text": "…" }` for a text field (one), `{ "text": "…", "from": "R1" }` for criteria (up to 10; `from` is a rule or example number of the task) and `{ "issue": 12 }` or `{ "draft": "D1" }` for depends on (up to 10; other items are left out). No questions and no proposals; never an implementation plan. The check prints `{ "field": …, "suggestions": [ … ] }`. Texts are cut at title 120 (on one line), who, what, why and criterion 500, out of scope and notes 5,000 characters. It fails with one plain sentence, without text of the answer, for questions or proposals, a `suggestions` that is not a list, an item that is not an object or has no text, a criterion without a rule or example number, an unknown `field`, or an `ask` that is not `round`, `question` or `suggest`.
+**`ask=suggest`.** Run with `--var field=title|who|what|why|criteria|outOfScope|dependsOn|notes`. The answer is `{ "suggestions": [ … ] }`: `{ "text": "…" }` for a text field (one), `{ "text": "…", "from": "R1" }` for criteria (up to 10; `from` is a rule or example number of the task) and `{ "issue": 12 }` or `{ "draft": "D1" }` for depends on (up to 10; other items are left out). No questions and no proposals; never an implementation plan. The check prints `{ "field": …, "suggestions": [ … ] }`. Texts are cut at title 120 (on one line), who, what, why and criterion 500, out of scope and notes 5,000 characters. It fails with one plain sentence, without text of the answer, for questions or proposals, a `suggestions` that is not a list, an item that is not an object or has no text, a criterion without a rule or example number, an unknown `field`, or an `ask` that is not `round`, `question`, `suggest` or `review`.
+
+**`ask=review`.** The answer is `{ "remarks": [ … ] }`. Each remark is `{ "field": "…", "item": "C1", "kind": "…", "text": "…" }`: `field` is `title`, `who`, `what`, `why`, `criteria` or `outOfScope`; `item` (a criterion number) only for `criteria`; `kind` is `uncheckable`, `vague`, `contradiction`, `how` or `plan`. The architect only points out: no questions, no proposals, no new text and no plan. The check prints `{ "remarks": [ … ] }`: the first 20, each text on one line, cut at 300 characters, in at most two sentences (more fails with one plain sentence, without text of the answer).
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 

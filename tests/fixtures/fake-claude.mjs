@@ -7,6 +7,7 @@
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
+// For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -88,7 +89,9 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
       : field === "dependsOn"
         ? [{ issue: 12 }, { draft: "D1" }]
         : [{ text: `A suggested ${field}` }];
-  const round = prompt.includes("What is asked of you now: suggest")
+  const round = prompt.includes("What is asked of you now: review")
+    ? { remarks: [{ field: "criteria", item: "C1", kind: "uncheckable", text: "Nobody can tell when this is met." }, { field: "what", kind: "how", text: "This says how to build it." }] }
+    : prompt.includes("What is asked of you now: suggest")
     ? { field, suggestions }
     : prompt.includes("What is asked of you now: question")
     ? { answer: found }
