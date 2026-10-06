@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { listRepos, ownsRepo } from "../auth/repos.js";
+import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
 import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, type ImpactRefs } from "./draft-impact.js";
+import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState } from "./draft-ready.js";
+import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
@@ -480,7 +482,14 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
 
 export interface TalkOptions extends StoreOptions {
   repoOk?: (owner: string, repo: string) => boolean;
+  /** The Definition of Ready of the repository (owner, GitHub name); undefined when the repository is not there. */
+  readyList?: (owner: string, repo: string) => readonly ReadyItem[] | undefined;
 }
+
+const defaultReadyList = (owner: string, repo: string): readonly ReadyItem[] | undefined => {
+  const r = findOwnedRepo(owner, repo);
+  return r ? readyListOf(r.definitionOfReady) : undefined;
+};
 
 /** The session with the changed talk and its log lines. Throws `limit` when the lines do not all fit before the slot kept for dropping. */
 interface LogLine {
@@ -491,7 +500,9 @@ interface LogLine {
 
 function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, by: string, keep = true): Session {
   if (c.lines.length) room(s, LOG_LIMIT - c.lines.length, keep);
-  return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
+  // A change of the open questions clears the checks of every draft.
+  const cleared = openMark(s.talk) !== openMark(c.talk) ? { drafts: clearAll(s.drafts), ...(s.state === "ready" ? { state: "drafting" as const } : {}) } : {};
+  return { ...s, ...cleared, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
 }
 
 /** The talk and the drafts change only in a session that is not dropped and whose repository is in My repositories. */
@@ -541,17 +552,20 @@ export function recordAsked(id: string, runId: string, asked: { question: string
 
 // ---- the story drafts ------------------------------------------------------------------------------
 
-function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState) => DraftChange | undefined): Session {
+function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState, x: { talk: Talk | undefined; list: readonly ReadyItem[]; at: string }) => DraftChange | undefined): Session {
   return change(actor, id, opts, false, (s, at) => {
     mustBeOpen(s, opts);
-    const c = fn({ drafts: s.drafts, epic: s.epic });
+    const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
+    const before = { drafts: s.drafts, epic: s.epic };
+    const c = fn(before, { talk: s.talk, list, at });
     if (!c) return undefined;
     if (c.line) room(s, LOG_LIMIT - 1);
     const { epic: _epic, ...rest } = s;
-    // The first draft starts the drafting; with none left the session is exploring again.
-    const state = s.state === "exploring" && !s.drafts.length && c.drafts.length ? "drafting" : s.state === "drafting" && s.drafts.length && !c.drafts.length ? "exploring" : s.state;
+    // A draft whose text changed has no check any more; the state follows the drafts (first draft, none left, all ready).
+    const drafts = clearChanged(before, c);
+    const state = sessionState(s.state, s.drafts.length > 0, drafts, list);
     const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
-    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts: c.drafts, state, updated: at, log: [...s.log, ...line] };
+    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
 
@@ -565,3 +579,33 @@ export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, si
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
 export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
 export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));
+
+// ---- the Definition of Ready -----------------------------------------------------------------------
+
+/** The person checks a draft against the Definition of Ready of the repository, by code: only `readiness` of the draft changes. */
+export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at));
+/** The person accepts an item of the list anyway, with a reason. */
+export const acceptAnywayOf = (actor: Actor, id: string, draftId: string, itemId: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at));
+export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list));
+
+/**
+ * A read: the stored drafting/ready state is made right for the list as it is now (an admin may have changed the list). Writes
+ * `state` only, no log line, and not `updated`. The lock is taken only when the state is wrong, and the state is worked out again
+ * under it. Undefined when nothing changes.
+ */
+export function correctReadyState(id: string, opts: TalkOptions = {}): Session | undefined {
+  const wrong = (s: Session): SessionState | undefined => {
+    if (s.state !== "drafting" && s.state !== "ready") return undefined;
+    const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+    if (!list) return undefined;
+    const state = sessionState(s.state, s.drafts.length > 0, s.drafts, list);
+    return state === s.state ? undefined : state;
+  };
+  const seen = getSession(id, opts);
+  if (!seen || wrong(seen) === undefined) return undefined;
+  return changeById(id, opts, (cur) => {
+    const state = wrong(cur);
+    return state === undefined ? undefined : { ...cur, state };
+  });
+}

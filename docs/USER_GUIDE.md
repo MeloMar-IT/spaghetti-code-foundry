@@ -2143,6 +2143,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
 | `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
 | `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
+| `POST /api/refinement/:id/drafts/:did/ready-check` | yes | yes | check a story draft of your refinement session against the Definition of Ready of its repository (by code, no AI call); no field changes |
+| `POST /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | accept an item of the Definition of Ready anyway for a story draft of your refinement session, with a reason; not for the implementation plan item |
+| `DELETE /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | remove the "accepted anyway" mark of an item from a story draft of your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
@@ -2668,7 +2671,20 @@ When the run ends, the checked view (see `ask=impact` below) is stored with the 
 
 **Move to the notes.** `POST …/drafts/:did/move-to-notes` with `{ "field": "…", "item": "…" }` (`item` only for `criteria`) adds the text to the notes for the builder as a line "Wish: <text>" and removes it from its field. It works only for a text with a `plan` remark (code checks or review) or a `how` remark (review, not stale); otherwise it is refused. Nothing moves by itself. Typed text added to typed notes stays `typed`; any mix with accepted text makes the notes `accepted-edited`.
 
-**Log.** The log tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
+**Ready check.** `POST …/drafts/:did/ready-check` (no body) checks the draft against the Definition of Ready of its repository, by code only (no AI call), and answers 200 with the session. Same rules as the other draft calls: owner only (404 another user, 403 an admin), 409 for a dropped session or a repository not in My repositories, and 409 when the log has no room. The draft shows `readiness`: `{ at, items: [{ id, text, result, reason, by }] }`. `result` is `met`, `not-met` or `unsure`; `by` is `code`; the reason is one sentence of at most 300 characters that names the field or text it is about. The check never changes a field of the draft.
+- `no-open-questions`: met when the map has no open question and no question waits for an answer; otherwise not met, with the count.
+- `out-of-scope`: met when Out of scope has text; otherwise not met.
+- `checkable`: not met with no acceptance criterion; otherwise unsure.
+- `value`: not met when "As …" or "so that …" is empty; otherwise unsure.
+- `standalone`: not met when a depends-on draft is gone or is the draft itself; otherwise unsure.
+- `no-plan`: not met when a `plan` remark exists (the word found is quoted); otherwise unsure.
+- `small` and items without a rule: unsure. An unsure reason says that the architect has to judge it.
+
+**Accepted anyway.** `POST …/drafts/:did/ready/:item/accept` with `{ "reason": "…" }` (1 to 300 characters, required) marks an item "accepted anyway"; `DELETE` on the same path removes the mark. The item with the rule `no-plan` cannot be accepted anyway (409); an item that is not in the repository's list is 404. The reasons are stored with the draft and go into `preview.body` as a section `### Accepted anyway`, one line per item (the item text and the reason); the section is left out when there are none. A mark counts only for the wording it was given for: after the admin rewords the item it is not shown or published, and neither is a mark for an item that is gone. A mark on an item the last check says is `met` stays stored, shows as "not needed" and is left out of the preview.
+
+**Ready.** A draft is `ready` when it has a check and every item of the repository's current list is `met` or accepted anyway; otherwise its `state` is `drafting`. An item that is new or reworded after the check counts as not checked. The session state is `ready` when it has at least one draft and every draft is ready, and goes back to `drafting` when any draft is not. The draft `state` is the truth; the session state is a summary. Any change of a draft's text, a move to the notes, an accepted suggestion, a removed draft it depended on, a change of the open questions or an Epic change that alters the preview removes the check results (of that draft, or of every draft for the last two) and makes it `drafting` again. The accepted-anyway reasons stay. The stored session state is corrected when the session is read, for example after the admin changed the list; publishing must call `isReady` again and not trust the stored state.
+
+**Log.** The log tells that a readiness check was made (with the counts), that an item was accepted anyway and that a mark was removed. A check and an accept need room in the log. It also tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
 
 **Remarks on the page.** Under a field or a criterion the page shows the remarks about that text. They are plain text, never HTML.
 - The remarks of the code checks show after each save, with the word that was found (for example: "fast" is vague — say what can be observed). They update by themselves; the field you are typing in is not redrawn, so its text and cursor stay.

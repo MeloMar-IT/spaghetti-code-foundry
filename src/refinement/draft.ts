@@ -3,6 +3,7 @@ import { z } from "zod";
 import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import { ImpactSchema } from "./draft-impact.js";
+import { READY_MAX, READY_TEXT_MAX } from "./ready-list.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
 // ---- limits (characters are counted as code points) ------------------------------------------------
@@ -54,6 +55,9 @@ export const DRAFT_LOG_KINDS = [
   "impact-asked",
   "architect-impact",
   "moved-to-notes",
+  "ready-checked",
+  "ready-accepted",
+  "ready-unaccepted",
 ] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
 export const isDraftKind = (what: string): boolean => (DRAFT_LOG_KINDS as readonly string[]).includes(what);
@@ -104,6 +108,25 @@ const RemarkSchema = z
   .strict()
   .refine((r) => (r.field === "criteria") === (r.item !== undefined));
 const ReviewSchema = z.object({ at: z.iso.datetime(), remarks: z.array(RemarkSchema).max(REVIEW_MAX) }).strict();
+export const READY_RESULTS = ["met", "not-met", "unsure"] as const;
+export const READY_BY = ["code"] as const;
+const READY_ID = z.string().regex(/^[a-z0-9-]{1,40}$/);
+/** The result of a readiness check: for each item of the list as it was then, its text, the result and why. */
+const ReadinessSchema = z
+  .object({
+    at: z.iso.datetime(),
+    items: z
+      .array(z.object({ id: READY_ID, text: text(READY_TEXT_MAX, true), result: z.enum(READY_RESULTS), reason: text(REASON_MAX, true), by: z.enum(READY_BY) }).strict())
+      .max(READY_MAX),
+  })
+  .strict();
+/** Items the person accepted anyway, with the item text they were given for and the reason. */
+const AcceptedSchema = z
+  .array(z.object({ id: READY_ID, text: text(READY_TEXT_MAX, true), reason: text(REASON_MAX, true), at: z.iso.datetime() }).strict())
+  .min(1)
+  .max(READY_MAX);
+export type Readiness = z.infer<typeof ReadinessSchema>;
+export type Accepted = z.infer<typeof AcceptedSchema>[number];
 export type Remark = z.infer<typeof RemarkSchema>;
 export type Review = z.infer<typeof ReviewSchema>;
 export type Suggestion = z.infer<typeof SuggestionSchema>;
@@ -124,12 +147,16 @@ const DraftSchema = z
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
     review: ReviewSchema.optional(),
     impact: ImpactSchema.optional(),
+    readiness: ReadinessSchema.optional(),
+    acceptedAnyway: AcceptedSchema.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
     const dup = (path: (string | number)[]) => ctx.addIssue({ code: "custom", message: "duplicate", path });
     const ids = new Set<string>();
     d.criteria.forEach((c, i) => (ids.has(c.id) ? dup(["criteria", i, "id"]) : ids.add(c.id)));
+    const accIds = new Set<string>();
+    d.acceptedAnyway?.forEach((x, i) => (accIds.has(x.id) ? dup(["acceptedAnyway", i, "id"]) : accIds.add(x.id)));
     const depIds = new Set<string>();
     const targets = new Set<string>();
     d.dependsOn.forEach((x, i) => {
@@ -467,7 +494,7 @@ export function rejectSuggestion(st: DraftState, draftId: string, sid: string, i
 export const oneLine = (t: string): string => t.replace(new RegExp(`\\s*[\\n${LS_PS}]\\s*`, "g"), " ");
 
 /** The draft as Markdown in the project's story format: only the person's text and fixed words. */
-export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }): { title: string; body: string } {
+export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }, accepted: { text: string; reason: string }[] = []): { title: string; body: string } {
   const part = (f: Field | undefined) => (f ? oneLine(f.text) : "…");
   const why = part(d.why);
   const sentence = `As ${part(d.who)}, I want ${part(d.what)}, so that ${why}${/[.!?]$/.test(why) ? "" : "."}`;
@@ -483,6 +510,7 @@ export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }): { titl
     ...(d.outOfScope ? [`### Out of scope\n${d.outOfScope.text}`] : []),
     ...(d.notes ? [`### Notes for the builder\n${d.notes.text}`] : []),
     `### Depends on\n${deps.length ? deps.join("\n") : "None (can be built on its own)."}`,
+    ...(accepted.length ? [["### Accepted anyway", ...accepted.map((a) => `- ${a.text}: ${oneLine(a.reason)}`)].join("\n")] : []),
   ];
   return { title: d.title?.text ?? "", body: blocks.join("\n\n") };
 }

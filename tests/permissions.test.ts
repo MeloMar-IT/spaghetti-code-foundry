@@ -212,6 +212,9 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/impact": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/impact`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/ready-check": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready-check`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/ready/:item/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready/value/accept`, body: {}, user: 404, admin: 404 },
+  "DELETE refinement/:id/drafts/:did/ready/:item/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready/value/accept`, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/reject": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
@@ -251,6 +254,9 @@ describe("the table", () => {
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "impact"])?.path).toBe("refinement/:id/drafts/:did/impact");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "ready-check"])?.path).toBe("refinement/:id/drafts/:did/ready-check");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "ready", "value", "accept"])?.path).toBe("refinement/:id/drafts/:did/ready/:item/accept");
+    expect(findRule("DELETE", ["refinement", "0000", "drafts", "0001", "ready", "value", "accept"])?.path).toBe("refinement/:id/drafts/:did/ready/:item/accept");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();

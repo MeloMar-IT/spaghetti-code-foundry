@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { listRepos, ownsRepo } from "../auth/repos.js";
+import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
 import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
@@ -7,7 +7,9 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
+import { acceptedLines, acceptedView, isReady, readinessView } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
+import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
@@ -16,8 +18,12 @@ import {
   type RefinementErrorCode,
   type Session,
   acceptProposal,
+  acceptAnywayOf,
   acceptSuggestionOf,
   addDraft,
+  checkReadyOf,
+  correctReadyState,
+  removeAcceptedOf,
   answerQuestion,
   moveToNotesOf,
   rejectSuggestionOf,
@@ -89,11 +95,22 @@ function githubNames(userId: string): string[] {
 }
 
 /** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
-const draftView = (s: Session) => (d: Draft) => {
-  const { review: _stored, impact: _impact, ...rest } = d;
+const draftView = (s: Session, list: readonly ReadyItem[]) => (d: Draft) => {
+  const { review: _stored, impact: _impact, readiness: _readiness, acceptedAnyway: _accepted, ...rest } = d;
   const review = reviewView(d);
   const impact = impactView(d, s.drafts);
-  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
+  const readiness = readinessView(d, list);
+  const accepted = acceptedView(d, list);
+  return {
+    ...rest,
+    state: isReady(d, list) ? "ready" : "drafting",
+    preview: preview(d, s, acceptedLines(d, list)),
+    remarks: draftRemarks(d),
+    ...(review ? { review } : {}),
+    ...(impact ? { impact } : {}),
+    ...(readiness ? { readiness } : {}),
+    ...(accepted.length ? { acceptedAnyway: accepted } : {}),
+  };
 };
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
@@ -102,6 +119,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
   const draftsHidden = !repoAvailable && s.drafts.length > 0;
+  const list = readyListOf(findOwnedRepo(s.owner, s.repo)?.definitionOfReady);
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -117,7 +135,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     idea: s.idea,
     state: s.state,
     // Like the talk, the drafts are not shown while the repository is not theirs.
-    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s)) }),
+    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s, list)) }),
     ...(s.epic !== undefined ? { epic: s.epic } : {}),
     architect: architectView(deps(ctx), s),
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
@@ -199,7 +217,9 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   /** The session when the caller may see it, after the end of its architect run was taken in. */
   const settled = (id: string) => {
     find(id);
-    return settleSession(deps(ctx), id) ?? find(id);
+    const s = settleSession(deps(ctx), id) ?? find(id);
+    // An admin may have changed the Definition of Ready: the stored drafting/ready state is made right on a read.
+    return correctReadyState(id) ?? s;
   };
   if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(ctx, settled(seg[1]!), user))), true;
   if (seg.length === 2 && method === "PUT") {
@@ -268,6 +288,16 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "ready-check" && method === "POST") {
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(checkReadyOf(actor, seg[1]!, seg[3]!).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "ready" && seg[6] === "accept" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(acceptAnywayOf(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "ready" && seg[6] === "accept" && method === "DELETE") {
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(removeAcceptedOf(actor, seg[1]!, seg[3]!, seg[5]!).id), user))), true;
   }
   if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "suggestions" && (seg[6] === "accept" || seg[6] === "reject") && method === "POST") {
     const body = await readJson(req);
