@@ -6,6 +6,7 @@ import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
+import { impactView } from "../refinement/draft-impact.js";
 import { reviewView } from "../refinement/draft-review.js";
 import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
@@ -89,9 +90,10 @@ function githubNames(userId: string): string[] {
 
 /** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
 const draftView = (s: Session) => (d: Draft) => {
-  const { review: _stored, ...rest } = d;
+  const { review: _stored, impact: _impact, ...rest } = d;
   const review = reviewView(d);
-  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}) };
+  const impact = impactView(d, s.drafts);
+  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
 };
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
@@ -262,6 +264,7 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return startRun({ kind: "suggest", draft: seg[3]!, field: body.field });
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;

@@ -11,6 +11,7 @@ export const TALK_FIRST_LINE = {
   question: "This is the talk of a refinement session. What is asked: an answer to a question of the person.",
   suggest: "This is the talk of a refinement session. What is asked: a suggestion for one field of a story draft.",
   review: "This is the talk of a refinement session. What is asked: a review of a story draft.",
+  impact: "This is the talk of a refinement session. What is asked: the architect's view of a story draft.",
 } as const;
 export type TalkKind = "round" | "question";
 
@@ -48,7 +49,7 @@ export function cutBytes(s: string, max: number): string {
   return out;
 }
 
-const LIST_TITLE = { rule: "Rules", example: "Examples", open: "Open questions" } as const;
+export const LIST_TITLE = { rule: "Rules", example: "Examples", open: "Open questions" } as const;
 
 function answerOf(q: Question): string {
   const a = q.answer;
@@ -71,7 +72,7 @@ function roundPart(talk: Talk, index: number): string {
   return lines.join("\n");
 }
 
-const list = (items: string[]) => (items.length ? items.map((t) => `- ${t}`).join("\n") : "(none)");
+export const list = (items: string[]) => (items.length ? items.map((t) => `- ${t}`).join("\n") : "(none)");
 
 function mapPart(talk: Talk): string {
   return [
@@ -189,7 +190,7 @@ export function suggestOf(task: string): { draft: string; field: SuggestField; r
   return { draft: d[1]!, field: d[2] as SuggestField, refs };
 }
 
-function draftPart(d: Draft, drafts: Draft[]): string {
+export function draftPart(d: Draft, drafts: Draft[]): string {
   const part = (label: string, f?: { text: string }) => `${label}: ${f ? oneLine(f.text) : "(empty)"}`;
   const deps = d.dependsOn.map((x) => (x.issue !== undefined ? `#${x.issue}` : `draft ${drafts.find((o) => o.id === x.draft)?.title?.text ?? "(no title)"}`));
   return [
