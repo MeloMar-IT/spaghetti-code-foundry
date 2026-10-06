@@ -4,14 +4,43 @@ export const setCsrf = (t) => {
   csrf = t || "";
 };
 
-/** `stay`: a 401 does not reload the page (a typing save must not throw the typed text away). */
-async function req(method, url, body, stay = false) {
+export const PREVIEW_TEXT = "This is a preview. Nothing can be changed here.";
+export const VIEW_ENDED_TEXT = "The view has ended.";
+
+let viewAs = "";
+let viewEnded = false;
+let onViewEnded = null;
+/** Starts (or, with "", stops) the read-only preview of one user's display. `onEnded` runs once, when the server refuses the view. */
+export const setViewAs = (id, onEnded) => {
+  viewAs = id || "";
+  viewEnded = false;
+  onViewEnded = onEnded || null;
+};
+
+/** The URL with `as=<id>` while a preview runs; `?` or `&` as the URL needs. */
+export const withAs = (url) => (viewAs ? `${url}${url.includes("?") ? "&" : "?"}as=${encodeURIComponent(viewAs)}` : url);
+
+/**
+ * `stay`: a 401 does not reload the page (a typing save must not throw the typed text away).
+ * `plain`: a call about the admin's own session or the view itself: no `as=`, allowed in a preview.
+ * In a preview every other call is a GET with `as=`, and anything else throws before `fetch`.
+ * A 403 there means the view has ended: the user display only makes calls the server allows a user, so no other 403 can happen.
+ */
+async function req(method, url, body, stay = false, plain = false) {
+  const preview = Boolean(viewAs) && !plain;
+  if (preview && method !== "GET") throw Object.assign(new Error(PREVIEW_TEXT), { preview: true });
+  if (preview && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
+  if (preview) url = withAs(url);
   const headers = body ? { "content-type": "application/json" } : {};
   if (method !== "GET" && csrf) headers["x-csrf-token"] = csrf;
   const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   // the session ended (expired, revoked, password changed): start again at the sign-in page
   if (r.status === 401 && !stay && !url.startsWith("/api/session")) location.reload();
+  if (preview && r.status === 403 && !viewEnded) {
+    viewEnded = true;
+    onViewEnded?.();
+  }
   if (!r.ok) throw Object.assign(new Error(data.error || `${r.status} ${r.statusText}`), { status: r.status });
   return data;
 }
@@ -25,11 +54,13 @@ const auditQuery = (f = {}) => {
 };
 
 export const api = {
-  session: () => req("GET", "/api/session"),
+  session: () => req("GET", "/api/session", undefined, false, true),
   signIn: (email, password) => req("POST", "/api/session", { email, password }),
   setPassword: (token, password) => req("POST", "/api/set-password", { token, password }),
   changePassword: (current, password) => req("POST", "/api/password", { current, password }),
-  signOut: () => req("DELETE", "/api/session"),
+  signOut: () => req("DELETE", "/api/session", undefined, false, true),
+  startViewAs: (userId) => req("POST", "/api/admin/view-as", { userId }, false, true),
+  stopViewAs: () => req("DELETE", "/api/admin/view-as", undefined, false, true),
   setup: (name, email, password) => req("POST", "/api/setup", { name, email, password }),
   info: () => req("GET", "/api/info"),
   flows: () => req("GET", "/api/flows"),
@@ -124,5 +155,8 @@ export const api = {
   stats: () => req("GET", "/api/stats"),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
-  events: (id) => new EventSource(`/api/runs/${enc(id)}/events`),
+  events: (id) => {
+    if (viewAs && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
+    return new EventSource(withAs(`/api/runs/${enc(id)}/events`));
+  },
 };

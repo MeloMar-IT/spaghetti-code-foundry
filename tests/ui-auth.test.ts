@@ -574,6 +574,16 @@ describe("roles in the page", () => {
     expect(auth.otherDisplay(undefined, "admin", "")).toBe("/user/");
   });
 
+  it("otherDisplay keeps an admin on the user display only for a view", () => {
+    const user = { role: "user" };
+    const admin = { role: "admin" };
+    expect(auth.otherDisplay(admin, "user", "#/runs", "u1")).toBe("");
+    expect(auth.otherDisplay(admin, "user", "", "")).toBe("/");
+    expect(auth.otherDisplay(user, "user", "#/runs", "u1")).toBe("");
+    expect(auth.otherDisplay(user, "admin", "#/repos", "u1")).toBe("/user/#/repos");
+    expect(auth.otherDisplay(admin, "admin", "#/flows", "u1")).toBe("");
+  });
+
   describe("enterDisplay", () => {
     const signedOut = () => (document.body as unknown as FakeElement).classList.contains("signed-out");
     const settle = () => new Promise((r) => setTimeout(r, 5));
@@ -597,6 +607,16 @@ describe("roles in the page", () => {
       expect(go).toHaveBeenCalledWith("/user/#/repos");
       expect(done).not.toHaveBeenCalled();
       expect(signedOut()).toBe(true);
+    });
+
+    it("keeps an admin on the user display for a view and sends one without", async () => {
+      const admin = { id: "a1", role: "admin" };
+      const go = vi.fn();
+      await expect(auth.enterDisplay("user", { signIn: async () => admin, go, hash: () => "", viewAs: "u1" })).resolves.toBe(admin);
+      expect(go).not.toHaveBeenCalled();
+      void auth.enterDisplay("user", { signIn: async () => admin, go, hash: () => "", viewAs: "" });
+      await settle();
+      expect(go).toHaveBeenCalledWith("/");
     });
 
     it("does not redirect while the sign-in is pending", async () => {
