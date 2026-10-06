@@ -1,4 +1,5 @@
 import { SUGGEST_FIELDS, oneLine, type Draft, type SuggestField, type SuggestRefs } from "./draft.js";
+import { readyMark, type ReadyRefs } from "./draft-ready.js";
 import type { ReviewRefs } from "./draft-review.js";
 import { cut, type Talk, type Question } from "./talk.js";
 
@@ -12,6 +13,7 @@ export const TALK_FIRST_LINE = {
   suggest: "This is the talk of a refinement session. What is asked: a suggestion for one field of a story draft.",
   review: "This is the talk of a refinement session. What is asked: a review of a story draft.",
   impact: "This is the talk of a refinement session. What is asked: the architect's view of a story draft.",
+  ready: "This is the talk of a refinement session. What is asked: a judgment of the readiness of a story draft.",
 } as const;
 export type TalkKind = "round" | "question";
 
@@ -433,6 +435,153 @@ export function reviewText(input: ReviewInput): string {
   }
   while (!fits(text) && (n.notes || n.outOfScope || n.criteria > 0)) {
     if (n.notes) n.notes = false;
+    else if (n.outOfScope) n.outOfScope = false;
+    else n.criteria--;
+    text = build(n, "", brief !== "");
+  }
+  return text;
+}
+
+// ---- the task of a readiness run -------------------------------------------------------------------
+
+export interface ReadyInput {
+  idea: string;
+  brief?: string;
+  talk: Talk;
+  /** The draft to judge, all drafts of the session (for the names in Depends on) and the items code left unsure. */
+  draft: Draft;
+  drafts: Draft[];
+  items: { id: string; text: string }[];
+}
+
+const HEAD_READY_MARK = /^Mark: ([0-9a-f]{64})$/;
+const READY_ITEM_ID = /^[a-z0-9-]{1,40}$/;
+const READY_ITEMS_MAX = 20;
+export const ITEMS_HEADING = "## The items to judge";
+
+/**
+ * The draft, the mark, the asked items and the ids of the criteria, read back from the five head lines of a readiness task: line 2
+ * names the draft, line 3 the ids behind the criteria numbers C1, C2, …, line 4 the mark of the draft and the map, line 5 the items
+ * (one JSON list of [id, text]). Only these lines are read, so no text of the idea or the draft can pass for them. Undefined for any
+ * other text.
+ */
+export function readyOf(task: string): { draft: string; refs: ReadyRefs } | undefined {
+  const [first, second, third, fourth, fifth] = task.split("\n", 5);
+  if (first !== TALK_FIRST_LINE.ready) return undefined;
+  const d = HEAD_REVIEW_DRAFT.exec(second ?? "");
+  const ids = HEAD_REVIEW_IDS.exec(third ?? "");
+  const mark = HEAD_READY_MARK.exec(fourth ?? "");
+  if (!d || !ids || !mark || !fifth?.startsWith("Items: ")) return undefined;
+  let items: unknown;
+  try {
+    items = JSON.parse(fifth.slice("Items: ".length));
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(items) || items.length > READY_ITEMS_MAX) return undefined;
+  const asked: [string, string][] = [];
+  for (const x of items) {
+    if (!Array.isArray(x) || x.length !== 2 || typeof x[0] !== "string" || typeof x[1] !== "string" || !READY_ITEM_ID.test(x[0])) return undefined;
+    asked.push([x[0], x[1]]);
+  }
+  const criteria: Record<string, string> = {};
+  for (const pair of ids[1]!.trim().split(" ").filter(Boolean)) {
+    const [key, id] = pair.split("=");
+    criteria[key!] = id!;
+  }
+  return { draft: d[1]!, refs: { mark: mark[1]!, items: asked, criteria } };
+}
+
+/**
+ * The task of a readiness run. Pure. Five head lines (what is asked; the draft; the ids of its criteria; the mark of the draft and the
+ * map; the items to judge as JSON), then the idea, the brief, the map, the draft, a notice of what was left out, and the items to
+ * judge (`id: text`). Over TALK_MAX_BYTES, the brief is cut first, then entries of the map from the end, last parts of the draft from
+ * the end (notes, depends on, out of scope, criteria). The items and the mark are never cut; the ids line names only criteria that are in
+ * the text.
+ */
+export function readyText(input: ReadyInput): string {
+  const { talk, draft: d } = input;
+  const brief = input.brief ?? "";
+  const rules = talk.map.rules.map((e) => oneLine(e.text));
+  const examples = talk.map.examples.map((e) => oneLine(e.text));
+  const open = talk.map.open.map((e) => oneLine(e.text));
+  const depends = d.dependsOn.map((x) => (x.issue !== undefined ? `#${x.issue}` : `draft ${oneLine(input.drafts.find((o) => o.id === x.draft)?.title?.text ?? "(no title)")}`));
+  const full = { rules: rules.length, examples: examples.length, open: open.length, criteria: d.criteria.length, outOfScope: d.outOfScope !== undefined, dependsOn: depends.length > 0, notes: d.notes !== undefined };
+  type Keep = typeof full;
+  const mark = readyMark(d, talk, input.drafts);
+  const asked = JSON.stringify(input.items.map((i) => [i.id, i.text]));
+  const itemsPart = `${ITEMS_HEADING}\n${list(input.items.map((i) => `${i.id}: ${oneLine(i.text)}`))}`;
+
+  const build = (n: Keep, briefText: string, briefCut: boolean): string => {
+    const crit = d.criteria.slice(0, n.criteria);
+    const part = (label: string, f?: { text: string }) => `${label}: ${f ? oneLine(f.text) : "(empty)"}`;
+    const left: string[] = [];
+    if (briefCut) left.push(brief && !briefText ? "The context brief was left out." : "The context brief was cut: only its first part is here.");
+    const missing = [
+      [full.rules - n.rules, "rules"],
+      [full.examples - n.examples, "examples"],
+      [full.open - n.open, "open questions"],
+    ].filter(([k]) => (k as number) > 0);
+    if (missing.length) left.push(`These were left out because they did not fit: ${missing.map(([k, w]) => `${k} ${w}`).join(", ")}.`);
+    const gone = [
+      ...(full.criteria - n.criteria > 0 ? [`${full.criteria - n.criteria} acceptance criteria`] : []),
+      ...(full.outOfScope && !n.outOfScope ? ["out of scope"] : []),
+      ...(full.dependsOn && !n.dependsOn ? ["depends on"] : []),
+      ...(full.notes && !n.notes ? ["the notes for the builder"] : []),
+    ];
+    if (gone.length) left.push(`These parts of the draft were left out because they did not fit: ${gone.join(", ")}.`);
+    const parts = [
+      `${TALK_FIRST_LINE.ready}\nDraft: ${d.id}\nIds:${crit.map((c, i) => ` C${i + 1}=${c.id}`).join("")}\nMark: ${mark}\nItems: ${asked}`,
+      `## The idea\n${input.idea}`,
+      `## The context brief\n${briefText || "(none)"}`,
+      [
+        "## The map of the story so far",
+        `### ${LIST_TITLE.rule}\n${list(rules.slice(0, n.rules))}`,
+        `### ${LIST_TITLE.example}\n${list(examples.slice(0, n.examples))}`,
+        `### ${LIST_TITLE.open}\n${list(open.slice(0, n.open))}`,
+      ].join("\n"),
+      [
+        "## The draft to judge",
+        part("Title", d.title),
+        part("Who", d.who),
+        part("What", d.what),
+        part("Why", d.why),
+        "### Acceptance criteria",
+        list(crit.map((c, i) => `C${i + 1}: ${oneLine(c.text)}`)),
+        ...(n.outOfScope ? ["### Out of scope", d.outOfScope?.text ?? "(empty)"] : []),
+        ...(n.dependsOn ? ["### Depends on", list(depends)] : []),
+        ...(n.notes ? ["### Notes for the builder (not judged)", d.notes?.text ?? "(empty)"] : []),
+      ].join("\n"),
+      ...(left.length ? [`## Left out\n${left.join("\n")}`] : []),
+      itemsPart,
+    ];
+    return parts.join("\n\n");
+  };
+
+  const fits = (t: string) => byteLength(t) <= TALK_MAX_BYTES;
+  const n = { ...full };
+  const whole = build(n, brief, false);
+  if (fits(whole)) return whole;
+  // The brief first.
+  if (brief) {
+    const probe = build(n, "x", true);
+    const room = TALK_MAX_BYTES - byteLength(probe) + 1;
+    if (room > 0) {
+      const t = build(n, cutBytes(brief, room), true);
+      if (fits(t)) return t;
+    }
+  }
+  // Then the map, from the end, a whole entry at a time; last the draft from its end.
+  let text = build(n, "", brief !== "");
+  for (const key of ["open", "examples", "rules"] as const) {
+    while (!fits(text) && n[key] > 0) {
+      n[key]--;
+      text = build(n, "", brief !== "");
+    }
+  }
+  while (!fits(text) && (n.notes || n.dependsOn || n.outOfScope || n.criteria > 0)) {
+    if (n.notes) n.notes = false;
+    else if (n.dependsOn) n.dependsOn = false;
     else if (n.outOfScope) n.outOfScope = false;
     else n.criteria--;
     text = build(n, "", brief !== "");

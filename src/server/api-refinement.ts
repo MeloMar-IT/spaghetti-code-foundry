@@ -10,7 +10,7 @@ import { architectView, askArchitect, settleSession, stopArchitect, type Archite
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
 import { otherDrafts } from "../refinement/known-areas.js";
-import { acceptedLines, acceptedView, isReady, readinessView } from "../refinement/draft-ready.js";
+import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
 import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
@@ -321,7 +321,18 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "ready-check" && method === "POST") {
-    return send(res, 200, guarded(ctx, () => view(ctx, settled(checkReadyOf(actor, seg[1]!, seg[3]!).id), user))), true;
+    const did = seg[3]!;
+    // The code checks come first and are stored; the architect judges only what they left unsure.
+    const checked = guarded(ctx, () => checkReadyOf(actor, seg[1]!, did));
+    const draft = checked.drafts.find((d) => d.id === did);
+    if (draft && unsureByCode(draft).length) return startRun({ kind: "ready", draft: did });
+    // Code decided everything: a run for this draft that is still there (paused, say) is not needed any more.
+    const body = guarded(ctx, () => {
+      const a = getSession(checked.id)?.architect;
+      if (a?.kind === "ready" && a.draft === did && a.failed === undefined && stopArchitect(deps(ctx), checked.id)) auditAction(ctx.diagLog, user.id, "run-cancel", a.runId);
+      return view(ctx, settled(checked.id), user);
+    });
+    return send(res, 200, body), true;
   }
   if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "ready" && seg[6] === "accept" && method === "POST") {
     const body = await readJson(req);

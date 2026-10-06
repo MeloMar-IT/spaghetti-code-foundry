@@ -79,11 +79,12 @@ const accept = (id: string, did: string, item: string, body: unknown = { reason:
 const unaccept = (id: string, did: string, item: string, who = ann) => call(who, "DELETE", url(id, `drafts/${did}/ready/${item}/accept`));
 
 describe("the ready check", () => {
-  it("answers 200 with readiness, state and preview, with the default list in order", async () => {
+  it("stores the results of code in the order of the default list; the architect is needed for the unsure ones, so without a brief it answers 409", async () => {
     const { id, did } = await withDraft();
     const r = await check(id, did);
-    expect(r.status).toBe(200);
-    const d = r.json().drafts[0];
+    expect(r.status).toBe(409);
+    expect(r.error()).toMatch(/look at the code first/);
+    const d = (await get(id)).drafts[0];
     expect(d.state).toBe("drafting");
     expect(d.readiness.items.map((i: any) => i.id)).toEqual(["value", "standalone", "checkable", "small", "no-open-questions", "out-of-scope", "no-plan"]);
     expect(d.readiness.items.every((i: any) => i.by === "code" && typeof i.reason === "string")).toBe(true);

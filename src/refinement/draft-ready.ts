@@ -1,4 +1,22 @@
-import { REASON_MAX, checkText, isObject, type Accepted, type Draft, type DraftChange, type DraftState, type Readiness } from "./draft.js";
+import { createHash } from "node:crypto";
+import {
+  LONG_TEXT_MAX,
+  READY_RESULTS,
+  REASON_MAX,
+  SUGGEST_FIELDS,
+  bad,
+  checkText,
+  isObject,
+  keysAre,
+  oneLine,
+  strictSentenceCount,
+  type Accepted,
+  type Draft,
+  type DraftChange,
+  type DraftState,
+  type Readiness,
+  type SuggestField,
+} from "./draft.js";
 import { draftRemarks, type RemarkField } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import type { ReadyItem } from "./ready-list.js";
@@ -96,7 +114,13 @@ export const isReady = (d: Draft, list: readonly ReadyItem[]): boolean => d.read
 /** The check for the view: only the items of the list as it is now; `stale` when an item has no result (new or reworded since). */
 export function readinessView(d: Draft, list: readonly ReadyItem[]): { at: string; items: Readiness["items"]; stale?: true } | undefined {
   if (!d.readiness) return undefined;
-  const items = list.flatMap((item) => resultOf(d, item) ?? []);
+  // `about` stays in the file: the view shows the result, field and criterion, not the text again.
+  const items = list.flatMap((item) => {
+    const r = resultOf(d, item);
+    if (!r) return [];
+    const { about: _about, ...shown } = r;
+    return [shown];
+  });
   return { at: d.readiness.at, items, ...(items.length < list.length ? { stale: true as const } : {}) };
 }
 
@@ -193,4 +217,97 @@ export function sessionState<T extends string>(cur: T, hadDrafts: boolean, draft
   else if ((state === "drafting" || state === "ready") && hadDrafts && !drafts.length) state = "exploring";
   if (state === "drafting" || state === "ready") state = drafts.length && drafts.every((d) => isReady(d, list)) ? "ready" : "drafting";
   return state as T;
+}
+
+// ---- the architect judges what code could not decide -----------------------------------------------
+
+/**
+ * What a readiness run was about, read back from the head of its task: the mark of the draft and the map as the architect saw them,
+ * the items it was asked to judge (id and text) and the ids behind the criteria numbers C1, C2, … that were in the text.
+ */
+export interface ReadyRefs {
+  mark: string;
+  items: [string, string][];
+  criteria: Record<string, string>;
+}
+
+/**
+ * A mark of everything the architect reads for a readiness check: the fields of the draft (a criterion with its id), what it depends
+ * on, the notes, and the rules, examples and open questions of the map. A change of any of it changes the mark.
+ */
+export function readyMark(d: Draft, talk: Talk | undefined, drafts: readonly Draft[]): string {
+  const title = (id?: string) => (id === undefined ? undefined : (drafts.find((x) => x.id === id)?.title?.text ?? null));
+  const map = talk?.map;
+  const key = JSON.stringify([
+    d.id,
+    d.title?.text,
+    d.who?.text,
+    d.what?.text,
+    d.why?.text,
+    d.criteria.map((c) => [c.id, c.text]),
+    d.outOfScope?.text,
+    d.dependsOn.map((x) => [x.issue, x.draft, title(x.draft)]),
+    d.notes?.text,
+    [map?.rules ?? [], map?.examples ?? [], map?.open ?? []].map((l) => l.map((e) => [e.id, e.text])),
+  ]);
+  return createHash("sha256").update(key).digest("hex");
+}
+
+/** The items the code check left `unsure`: they are the ones the architect judges. */
+export const unsureByCode = (d: Draft): { id: string; text: string }[] =>
+  (d.readiness?.items ?? []).filter((i) => i.by === "code" && i.result === "unsure").map((i) => ({ id: i.id, text: i.text }));
+
+const FIELD_SET: readonly string[] = SUGGEST_FIELDS;
+const RESULT_SET: readonly string[] = READY_RESULTS;
+
+/**
+ * The end of a readiness run: the checked answer `{ items }` becomes the results of the items code left `unsure`, as results of the
+ * architect. Nothing else changes: no field, no "accepted anyway" mark, no result of code. Throws bad-draft for a wrong form (also a
+ * result for an item whose stored result is not an `unsure` of code, or a criterion that is not in the task). Undefined when the draft
+ * is gone; "changed" when the draft or the map is not the one the architect saw (or the check is gone). An item that is gone from the
+ * list or reworded there, or was checked again with other text, is skipped: it gets no result.
+ */
+export function setJudged(st: DraftState, talk: Talk | undefined, draftId: string, output: unknown, refs: ReadyRefs | undefined, list: readonly ReadyItem[]): DraftChange | undefined | "changed" {
+  const d = st.drafts.find((x) => x.id === draftId);
+  if (!d) return undefined;
+  if (!refs) throw bad("the readiness run has no head lines");
+  if (!d.readiness || readyMark(d, talk, st.drafts) !== refs.mark) return "changed";
+  if (!isObject(output) || !keysAre(output, "items") || !Array.isArray(output.items)) throw bad("the results have the wrong form");
+  const asked = refs.items;
+  if (output.items.length !== asked.length) throw bad("there is not one result for every asked item");
+  const given = new Map<string, { result: Result; reason: string; field: SuggestField; criterion?: string }>();
+  for (const x of output.items as unknown[]) {
+    if (!isObject(x) || typeof x.id !== "string" || !asked.some(([id]) => id === x.id) || given.has(x.id)) throw bad("a result names an item that was not asked, or names it twice");
+    if (typeof x.result !== "string" || !RESULT_SET.includes(x.result)) throw bad("a result has no result of met, not-met or unsure");
+    if (typeof x.field !== "string" || !FIELD_SET.includes(x.field)) throw bad("a result names a field of the draft");
+    if (!keysAre(x, "id", "result", "reason", "field", ...(x.item !== undefined ? ["item"] : []))) throw bad("a result has an id, a result, a reason and a field");
+    let criterion: string | undefined;
+    if (x.item !== undefined) {
+      const known = typeof x.item === "string" ? refs.criteria[x.item] : undefined;
+      if (x.field !== "criteria" || known === undefined || !d.criteria.some((c) => c.id === known)) throw bad("a result names a criterion that is not in the draft");
+      criterion = known;
+    }
+    const reason = checkText(x.reason, "reason", REASON_MAX, true);
+    if (!reason) throw bad("a result needs a reason");
+    if (strictSentenceCount(reason) > 1) throw bad("a reason is one sentence");
+    given.set(x.id, { result: x.result as Result, reason, field: x.field as SuggestField, ...(criterion !== undefined ? { criterion } : {}) });
+  }
+  const done = new Map<string, Readiness["items"][number]>();
+  for (const [id, text] of asked) {
+    const stored = d.readiness.items.find((i) => i.id === id);
+    if (!stored || stored.text !== text) continue;
+    if (stored.by !== "code" || stored.result !== "unsure") throw bad("a result is for an item that code did not leave unsure");
+    if (!list.some((i) => i.id === id && i.text === text)) continue;
+    const g = given.get(id)!;
+    // The text the result points at, as the architect saw it; "(empty)" when there is none.
+    let about: string | undefined;
+    if (g.criterion !== undefined) about = d.criteria.find((c) => c.id === g.criterion)?.text;
+    else if (g.field === "criteria") about = d.criteria.map((c) => c.text).join("\n");
+    else if (g.field === "dependsOn") about = d.dependsOn.map((x) => (x.issue !== undefined ? `#${x.issue}` : `draft ${oneLine(st.drafts.find((o) => o.id === x.draft)?.title?.text ?? "(no title)")}`)).join("\n");
+    else about = d[g.field]?.text;
+    done.set(id, { ...stored, result: g.result, reason: g.reason, by: "architect", field: g.field, ...(g.criterion !== undefined ? { item: g.criterion } : {}), about: cut(about || "(empty)", LONG_TEXT_MAX) });
+  }
+  const count = (r: Result) => [...done.values()].filter((i) => i.result === r).length;
+  const next: Draft = { ...d, readiness: { ...d.readiness, items: d.readiness.items.map((i) => done.get(i.id) ?? i) } };
+  return { ...st, drafts: st.drafts.map((x) => (x === d ? next : x)), line: { what: "architect-judged", detail: `${count("met")} met, ${count("not-met")} not met, ${count("unsure")} unsure` } };
 }
