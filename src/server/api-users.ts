@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { AppReposError, getAppRepos, setAppRepos } from "../auth/app-repos.js";
 import { auditAction } from "../auth/audit.js";
 import { checkLimitsPatch, getLimits, setDefaultLimits, setUserLimits, type LimitsChange } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
@@ -22,6 +23,7 @@ const STATUS: Record<UserErrorCode, number> = {
 /** Turns an error into a 4xx for input problems; anything else is logged (file and kind, never a path or value) and answered with a plain 500. */
 function fail(ctx: ApiContext, e: unknown): never {
   if (e instanceof UserError) throw new HttpError(STATUS[e.code], e.message);
+  if (e instanceof AppReposError) throw new HttpError(e.code === "bad-list" ? 400 : 404, e.message);
   if (e instanceof HttpError) throw e;
   const log = ctx.diagLog;
   if (e instanceof StoreError) log?.(`users: ${basename(e.file)} ${e.kind}`);
@@ -155,6 +157,20 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     });
     throttlesOf(ctx).accounts.clear(u.email);
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
+  }
+
+  if (seg.length === 3 && seg[2] === "app-repos" && method === "GET") {
+    const repos = guardedUsers(ctx, () => {
+      if (!getUser(id)) throw new UserError("not-found", "no such account");
+      return getAppRepos(id);
+    });
+    return send(res, 200, { repos }), true;
+  }
+
+  if (seg.length === 3 && seg[2] === "app-repos" && method === "PUT") {
+    const body = await readJson(req);
+    const r = guardedUsers(ctx, () => setAppRepos(id, body.repos, { by }));
+    return send(res, 200, { repos: r.repos }), true;
   }
 
   if (seg.length === 3 && seg[2] === "link" && method === "POST") {

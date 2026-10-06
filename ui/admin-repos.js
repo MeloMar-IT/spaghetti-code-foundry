@@ -198,7 +198,7 @@ export async function renderAllRepos(main) {
   const row = (repo) => h("tr", {},
     h("td", { class: "mono" }, repo.url),
     h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
-    h("td", {}, methodLabel(repo, repo.account?.role === "admin")),
+    h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
     h("td", {}, h("span", { class: "pill" }, connectionStatus(repo))),
     h("td", {},
       h("button", { class: "small", onClick: async () => {

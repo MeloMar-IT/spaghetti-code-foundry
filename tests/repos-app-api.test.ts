@@ -52,6 +52,8 @@ beforeAll(async () => {
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
+  // the admin lets both accounts connect any acme repository through the app
+  for (const who of [ann, bob]) expect((await call(admin, "PUT", `/api/users/${who.user.id}/app-repos`, { repos: ["acme/*"] })).status).toBe(200);
 });
 afterAll(() => {
   close();

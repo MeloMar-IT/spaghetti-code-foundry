@@ -130,6 +130,16 @@ describe("the page", () => {
     expect(byClass(main(), "pill").map((e) => e.textContent)).toContain("blocked");
   });
 
+  it("marks a repository that is not on the app list, and only then", async () => {
+    repos = [rec({ method: "github-app", offAppList: true }), rec({ url: "https://github.com/o/b", method: "github-app" })];
+    await show();
+    const marks = byClass(main(), "pill").map((e) => e.textContent).filter((t) => t === "not on the app list");
+    expect(marks).toHaveLength(1);
+    const rows = walk(main()).filter((e) => e.tag === "tr").slice(1);
+    expect(rows[0]!.textContent).toContain("not on the app list");
+    expect(rows[1]!.textContent).not.toContain("not on the app list");
+  });
+
   it("shows the empty list text", async () => {
     await show();
     expect(main().textContent).toContain("No repositories yet.");

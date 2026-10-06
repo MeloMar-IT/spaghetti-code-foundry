@@ -5,6 +5,7 @@ import { removeCredentialsLocked } from "../credentials/store.js";
 import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent } from "./audit.js";
 import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
+import { checkAppReposFile, removeAppReposLocked } from "./app-repos.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
@@ -512,10 +513,12 @@ export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
       // (a repos.json that cannot be read stops it too), then the refinement sessions.
       checkRefinements();
       removeLimitsLocked(id);
+      checkAppReposFile(); // a broken app-repos.json stops the delete before anything changes
       removeReposLocked(id, (repoId, ids) => {
         if (opts.by !== undefined) appendAuditLocked(opts.by, { action: "repo-change", result: "ok", target: repoId, detail: watchersRemovedDetail(ids) });
       });
       removeRefinementsLocked(id);
+      removeAppReposLocked(id);
       removeSessionsLocked((s) => s.userId === id);
       const wiped = removeCredentialsLocked(id);
       writeJsonFile(usersPath(), { ...file, users: file.users.filter((u) => u.id !== id) });

@@ -133,7 +133,7 @@ nothing twice.
 |---|---|---|---|
 | SR-O1 | High | A run is not held by the operating system (issue "Platform 2d") | not filed yet |
 | SR-O2 | Fixed | The steps of a user's run saw the server's whole environment. Fixed in #300; what stays open is listed under "Credential leakage" | #300 |
-| SR-O3 | — | Issue "Platform 2c" | not filed yet |
+| SR-O3 | Fixed | Any user could connect any repository the GitHub App is installed on. Fixed in #301: each account has a list of app repositories, an admin is not limited, and existing connections are marked, not cut off | #301 |
 | SR-O4 | Medium | Any commenter's answer resumes a needs-info run (`src/github.ts:273-279`), and all comments reach the agent | not filed yet |
 | SR-O5 | Low | The connection test connects to any host and port, and git follows the first redirect | not filed yet |
 | SR-O6 | Low | `POST /api/repos` answers 409 for a repository of another account and lets an unverified token claim a name first | not filed yet |

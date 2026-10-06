@@ -1579,10 +1579,20 @@ token (the method "GitHub App" on My repositories). Set it up once:
    (this works as before). Without one, the app is used only for the repository method.
 3. Without an app ID, a key file and a name, the method is not offered, and the API answers 400.
 
-Install the app only on repositories that every Foundry user may work in, and choose "Only select
-repositories". The server finds the installation with the app's own key, so a user needs no rights on GitHub:
-if the app is installed on a whole organisation, any Foundry user can connect any repository of it and get push
-access through the app. The first account to add a repository gets it. A user cannot read these settings.
+The server finds the installation with the app's own key, so a user needs no rights on GitHub. That is why
+each account has a list of the repositories it may connect through the app. Set it on the Users page with the
+"App repositories" button: one entry per line, `owner/name`, or `owner/*` for every repository of an owner.
+An admin's own connections are not limited. A user cannot read or change any list, or these settings.
+
+- Adding a repository, changing its method to the app and testing an app connection answer 403 when the
+  repository is not on the account's list. GitHub is not asked.
+- An account without a list can connect nothing through the app. After an upgrade, set the list of every
+  account that needs the app.
+- The list is checked only when a connection is added, changed or tested. Existing connections keep working
+  in runs and watchers, also when you later remove an entry. To cut one off, remove the connection. The
+  admin's Repositories page marks an app connection that is not on its account's list with "not on the app list".
+- Still install the app only on repositories that Foundry users may work in, and choose "Only select repositories".
+
 After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
 
 **Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones here
@@ -2139,6 +2149,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/users/:id/link` | yes | no | a new set-password token for an account without a password |
 | `POST /api/users/:id/reset` | yes | no | take the password of an account away, end its sessions and give a one-time set-password token |
 | `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
+| `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
+| `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions and stored credentials |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |

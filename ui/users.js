@@ -34,6 +34,7 @@ export const lastSignInText = (u) => (u.lastSignIn ? timeAgo(u.lastSignIn) : "ne
 export const actionsFor = (u, now = Date.now()) => [
   "edit",
   "limits",
+  "app",
   u.hasPassword ? "reset" : "link",
   ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
   u.status === "blocked" ? "unblock" : "block",
@@ -342,8 +343,25 @@ const defaultLimitsDialog = (_u, { limits }) => {
   });
 };
 
-const DIALOGS = { edit: editDialog, limits: limitsDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
-const LABELS = { edit: "Edit", limits: "Limits", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
+/** The lines of the app-repositories box as a list: trimmed, empty lines dropped. */
+export const appReposBody = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+
+const appReposDialog = (u, { repos }) => {
+  const area = h("textarea", { name: "appRepos", class: "mono", rows: 8, style: { width: "100%" } });
+  area.value = repos.join("\n");
+  return callDialog({
+    title: `App repositories of ${u.name}`,
+    body: [
+      para(`Repositories ${u.name} may connect with the GitHub App. One per line: owner/name, or owner/* for all repositories of an owner. An empty list allows none. Connections that exist already keep working.`),
+      ...(u.role === "admin" ? [para("An admin is not limited; the list counts only if the account becomes a user.")] : []),
+      area],
+    label: "Save",
+    prepare: () => () => api.setUserAppRepos(u.id, appReposBody(area.value)),
+  });
+};
+
+const DIALOGS = { app: appReposDialog, edit: editDialog, limits: limitsDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
+const LABELS = { edit: "Edit", limits: "Limits", app: "App repositories", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
@@ -365,11 +383,21 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
   const reload = (next) => renderUsers(main, { me, notice: next, page }).catch((e) => toast(errorText(e), "error"));
 
   const act = async (u, kind) => {
-    const answer = await DIALOGS[kind](u, { me, page, limits });
+    let loaded = {};
+    if (kind === "app") {
+      try {
+        loaded = await api.userAppRepos(u.id);
+      } catch (e) {
+        if (mine !== generation || !onPage()) return;
+        return toast(errorText(e), "error");
+      }
+      if (mine !== generation || !onPage()) return;
+    }
+    const answer = await DIALOGS[kind](u, { me, page, limits, repos: loaded.repos ?? [] });
     if (answer && u.id === me && ["edit", "block", "delete"].includes(kind)) return page.reload();
     let next;
     if (answer && kind === "block") next = { text: cancelledText(u.name, cancelledTotal(answer.cancelled)) };
-    else if (answer && (kind === "edit" || kind === "limits")) toast("Saved");
+    else if (answer && (kind === "edit" || kind === "limits" || kind === "app")) toast("Saved");
     else if (answer && kind === "unlock") toast(`${u.name} is unlocked`);
     else if (answer && kind === "unblock") toast(`${u.name} is unblocked`);
     else if (answer && kind === "delete") toast(`${u.name} was deleted`);
