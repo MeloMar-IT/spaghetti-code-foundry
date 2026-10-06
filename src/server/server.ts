@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
 import { redactText } from "../credentials/redact.js";
@@ -28,6 +28,10 @@ import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.
 import { adoptRuns } from "../auth/run-owner.js";
 import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
+import { getRepo } from "../auth/repos.js";
+import { StoreError } from "../auth/store.js";
+import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers } from "../repos/watchers.js";
+import { getUser } from "../auth/users.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
@@ -64,13 +68,20 @@ export interface ServerOptions {
   signInClock?: () => number;
   /** How often old audit lines are removed, in ms (default one day). */
   auditSweepMs?: number;
+  /** How often the stored watchers are read again after the file could not be read, in ms (default 30000). */
+  watcherRetryMs?: number;
 }
 
 export interface ApiContext {
   opts: ServerOptions;
   scheduler: Scheduler;
   watchers: WatcherManager;
+  /** The config with the effective watcher list: the ones in config.yaml and the runnable ones of the repository store. */
   config: () => Config;
+  /** Only what is in config.yaml (what GET and PUT /api/config show and write). */
+  fileConfig: () => Config;
+  /** Stored watchers that cannot run now, each with its `problem`. */
+  blockedWatchers: () => BlockedWatcher[];
   reloadConfig: () => void;
   /** Set while the server waits to restart (new version, moved data folder). */
   restart?: RestartState;
@@ -101,6 +112,15 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   };
   const opts: ServerOptions = { ...given, log };
   let config = loadConfig();
+  // The effective config: config.yaml plus the runnable stored watchers (refreshed in every sync()).
+  let effective: Config = config;
+  let blocked: BlockedWatcher[] = [];
+  let stored: Config["watchers"] = [];
+  let failure: string | undefined;
+  let retryTimer: NodeJS.Timeout | undefined;
+  const rebuild = () => {
+    effective = stored.length ? { ...config, watchers: [...config.watchers, ...stored] } : config;
+  };
   const listen = config.server.listen;
   // Before anything starts (queue, watchers): a non-local address needs accounts.
   const problem = listenProblem(listen, hasAdmin);
@@ -115,7 +135,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   const scheduler = new Scheduler({
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
-    config: () => config,
+    config: () => effective,
     queueFile: join(process.env.FACTORY_HOME ?? FACTORY_HOME, "queue.json"),
     accountActive,
     onFinished: (s) => {
@@ -128,8 +148,52 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       if (s.vars?.github_repo && !steppedAsideFor(s)) watchers.kickRepo(s.vars.github_repo);
     },
   });
-  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => config, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart, startedAt: new Date() });
-  const ctx: ApiContext = { opts, diagLog: sink, scheduler, watchers, config: () => config, reloadConfig: () => (config = loadConfig()), listen };
+  /**
+   * Reads the stored watchers again. Fails closed: when the file cannot be read, no stored watcher runs (a run for an
+   * owner that cannot be checked must not start); the log names the file and the kind once, and a timer tries again.
+   */
+  const refreshStored = () => {
+    try {
+      const r = effectiveRepoWatchers(listRepoWatchers(), getRepo, getUser, config.watchers.map((w) => w.id));
+      stored = r.runnable;
+      blocked = r.blocked;
+      failure = undefined;
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    } catch (e) {
+      stored = [];
+      blocked = [];
+      const what = e instanceof StoreError ? `${basename(e.file)} ${e.kind}` : "unexpected error";
+      if (failure !== what) sink(`repo-watchers: ${what}`);
+      failure = what;
+      if (!retryTimer) {
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined;
+          // like the other timers: nothing during a restart wait, nothing on a server without watchers
+          if (opts.watchers === false || ctx.restart) return void refreshStored();
+          watchers.sync();
+        }, opts.watcherRetryMs ?? 30_000);
+        retryTimer.unref();
+      }
+    }
+    rebuild();
+  };
+  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => effective, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart, startedAt: new Date(), beforeSync: refreshStored });
+  const ctx: ApiContext = {
+    opts,
+    diagLog: sink,
+    scheduler,
+    watchers,
+    config: () => effective,
+    fileConfig: () => config,
+    blockedWatchers: () => blocked,
+    reloadConfig: () => {
+      config = loadConfig();
+      rebuild();
+    },
+    listen,
+  };
+  refreshStored();
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while
   // the server was down does not reach a run that is adopted later.
@@ -247,6 +311,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
       clearInterval(auditTimer);
+      clearTimeout(retryTimer);
       notifier?.stop();
       watchers.stopAll();
       server.close();

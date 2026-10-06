@@ -9,6 +9,9 @@ import { StoreError } from "../auth/store.js";
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
+import { RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher, removeWatchersOfRepos, updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
+import { watcherState } from "../words.js";
+import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 import { sessionUser } from "./api-auth.js";
@@ -35,6 +38,42 @@ export function guardedRepos<T>(ctx: ApiContext, fn: () => T): T {
     else if (e instanceof KeyError) log?.(`repos: keychain ${e.code === "wrong-key" ? "wrong-key" : "failed"}`);
     else log?.(`repos: unexpected ${e instanceof Error ? e.name : "error"}`);
     throw new HttpError(500, INTERNAL);
+  }
+}
+
+const WATCHER_STATUS = { "bad-watcher": 400, duplicate: 409, "not-found": 404 } as const;
+
+/** Like guardedRepos, for the watcher store: its input errors become 4xx; a broken store gives the fixed 500. */
+function guardedWatchers<T>(ctx: ApiContext, fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof RepoWatcherError) throw new HttpError(WATCHER_STATUS[e.code], e.message);
+    return guardedRepos(ctx, () => {
+      throw e;
+    });
+  }
+}
+
+/** GET /api/watchers: the watchers that run or are listed from config.yaml, and the stored ones that cannot run (with their `problem`, in the error state, without a status). */
+export function watcherRows(ctx: ApiContext) {
+  const blocked = ctx.blockedWatchers().map((b) => ({ ...b, state: watcherState(b.enabled ? "error" : "disabled") }));
+  return [...watchersWithNext(ctx), ...blocked];
+}
+
+/**
+ * Removes the watchers of repositories that are removed (the server's own delete paths), one audit line per repository.
+ * Never throws: a failure is logged with fixed words, and the watchers then show as blocked.
+ */
+export function dropRepoWatchers(ctx: ApiContext, by: string, repoIds: string[]): void {
+  try {
+    const gone = removeWatchersOfRepos(repoIds);
+    for (const id of repoIds) {
+      const mine = gone.filter((w) => w.repoId === id);
+      if (mine.length) auditAction(ctx.diagLog, by, "repo-change", id, `watchers removed: ${mine.map((w) => w.id).join(", ")}`);
+    }
+  } catch (e) {
+    ctx.diagLog?.(e instanceof StoreError ? `repos: ${basename(e.file)} ${e.kind}` : "repos: watchers could not be removed");
   }
 }
 
@@ -107,10 +146,59 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
   if (seg.length === 4 && seg[3] === "transfer" && method === "POST") {
     const body = await readJson(req);
     const r = guardedRepos(ctx, () => transferRepo(seg[2]!, given(body, "email")));
-    if (r.moved) auditAction(ctx.diagLog, by, "repo-transfer", r.repo.id, r.repo.owner);
+    if (r.moved) {
+      auditAction(ctx.diagLog, by, "repo-transfer", r.repo.id, r.repo.owner);
+      ctx.watchers.sync(); // the new owner gets the runs
+    }
     oldKeys(ctx, r.oldKeysLeft, "the repository was transferred");
     const row = adminRow(r.repo);
     return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg[3] === "watchers" && seg.length <= 5) return adminWatchers(ctx, req, res, seg, method, by);
+  return false;
+}
+
+/** The watchers of one repository (admin only): list, add, change (also enable and disable), delete. */
+async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
+  const repoId = seg[2]!;
+  const wid = seg[4];
+  const known = () => {
+    const rec = guardedRepos(ctx, () => getRepo(repoId));
+    if (!rec) throw new HttpError(404, "no such repository");
+    return rec;
+  };
+  const rowOf = (id: string, fallback: object) => watcherRows(ctx).find((w) => w.id === id && w.repoId === repoId) ?? fallback;
+  const audit = (detail: string) => auditAction(ctx.diagLog, by, "repo-change", repoId, detail);
+  if (seg.length === 4 && method === "GET") {
+    known();
+    guardedWatchers(ctx, listRepoWatchers); // a store that cannot be read is an error here, not an empty list
+    return send(res, 200, watcherRows(ctx).filter((w) => w.repoId === repoId)), true;
+  }
+  if (seg.length === 4 && method === "POST") {
+    const body = await readJson(req);
+    const rec = known();
+    const problem = guardedRepos(ctx, () => watcherRepoProblem(rec, getUser(rec.owner)));
+    if (problem) throw new HttpError(400, problem);
+    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id) }));
+    audit(`watcher ${w.id}: added`);
+    ctx.watchers.sync();
+    return send(res, 201, rowOf(w.id, w)), true;
+  }
+  if (seg.length === 5 && method === "PUT") {
+    const body = await readJson(req);
+    known();
+    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body));
+    if (r.changed.length) {
+      audit(`watcher ${wid}: ${r.changed.join(", ") === "enabled" ? (r.watcher.enabled ? "enabled" : "disabled") : `changed ${r.changed.join(", ")}`}`);
+      ctx.watchers.sync();
+    }
+    return send(res, 200, rowOf(wid!, r.watcher)), true;
+  }
+  if (seg.length === 5 && method === "DELETE") {
+    guardedWatchers(ctx, () => removeRepoWatcher(repoId, wid!));
+    audit(`watcher ${wid}: removed`);
+    ctx.watchers.sync();
+    return send(res, 200, { ok: true }), true;
   }
   return false;
 }
@@ -210,7 +298,10 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       installationId = await lookupInstallation(ctx, app, rec ? tryParseRepoUrl(rec.url)?.github : undefined);
     }
     const r = guardedRepos(ctx, () => setRepoAuth(user.id, seg[1]!, change, { installationId }));
-    if (r.changed) auditAction(ctx.diagLog, user.id, "repo-change", r.repo.id, r.repo.url);
+    if (r.changed) {
+      auditAction(ctx.diagLog, user.id, "repo-change", r.repo.id, r.repo.url);
+      ctx.watchers.sync(); // the method decides whether a watcher of this repository may run
+    }
     oldKeys(ctx, r.oldKeysLeft, "the repository was changed");
     const out = shown(r.repo);
     return send(res, 200, out, publicKeys([out])), true;
@@ -220,13 +311,21 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 2 && method === "DELETE") {
     const r = guardedRepos(ctx, () => removeRepo(user.id, seg[1]!));
-    if (r.removed) auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
+    if (r.removed) {
+      auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
+      dropRepoWatchers(ctx, user.id, [r.removed.id]);
+      ctx.watchers.sync();
+    }
     oldKeys(ctx, r.oldKeysLeft, "the repository was removed");
     return send(res, 200, { ok: true }), true;
   }
   if (seg.length === 3 && method === "DELETE") {
     const r = guardedRepos(ctx, () => removeGithubRepo(user.id, `${seg[1]}/${seg[2]}`));
-    if (r.removed) auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
+    if (r.removed) {
+      auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
+      dropRepoWatchers(ctx, user.id, [r.removed.id]);
+      ctx.watchers.sync();
+    }
     oldKeys(ctx, r.oldKeysLeft, "the repository was removed");
     return send(res, 200, { ok: true }), true;
   }

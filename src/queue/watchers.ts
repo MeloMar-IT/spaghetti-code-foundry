@@ -29,6 +29,8 @@ export interface WatcherManagerOptions {
   restart?: () => DetectorInput["restart"];
   /** When the server started (the monitor's quiet time counts from here; the Monitor object is made again when its config changes). */
   startedAt?: Date;
+  /** Called at the start of every sync(): the server reads the stored watchers again here. */
+  beforeSync?: () => void;
 }
 
 /** What a watcher tracks right now, for the next-step records. */
@@ -72,12 +74,13 @@ export class WatcherManager {
   }
 
   sync() {
+    this.o.beforeSync?.();
     this.drained = [];
     const wanted = new Map(this.o.config().watchers.filter((w) => w.enabled && w.source !== "monitor").map((w) => [w.id, w]));
     for (const [id, r] of this.running) {
       const cfg = wanted.get(id);
       if (!cfg || JSON.stringify(cfg) !== r.key) {
-        r.watcher.stop();
+        r.watcher.stop(true);
         this.board(r.watcher.cfg.github_repo).forget(id);
         this.running.delete(id);
         this.o.log(`[${id}] watcher stopped`);

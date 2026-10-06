@@ -3,7 +3,9 @@ import { StoreError } from "../auth/store.js";
 import {
   UserError, checkEmail, checkName, createUserWithLink, deleteUser, listUsers, getUser, newPasswordLink, resetPassword, setStatus, updateUser, type PublicUser, type UserErrorCode,
 } from "../auth/users.js";
+import { listRepos } from "../auth/repos.js";
 import { KeyError } from "../credentials/keychain.js";
+import { dropRepoWatchers } from "./api-repos.js";
 import { architectRunsOf, cancelReads } from "../refinement/architect.js";
 import { cancelAccountNow } from "./account-work.js";
 import { throttlesOf } from "./api-auth.js";
@@ -108,6 +110,7 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "PUT") {
     const body = await readJson(req);
     const u = await guardedUsersAsync(ctx, () => updateUser(id, { name: body.name as string, email: body.email as string, role: body.role as "admin" }, { by }));
+    ctx.watchers.sync(); // a new role or e-mail changes who may own a watcher
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
   }
 
@@ -116,12 +119,14 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     if (body.stopWork !== undefined && typeof body.stopWork !== "boolean") throw new HttpError(400, "stopWork must be true or false");
     const stopWork = body.stopWork === true;
     const u = await guardedUsersAsync(ctx, () => setStatus(id, "blocked", { by, stopWork }));
+    ctx.watchers.sync();
     const cancelled = cancelNow(ctx, id, "blocked", stopWork);
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)), cancelled }), true;
   }
 
   if (seg.length === 3 && seg[2] === "unblock" && method === "POST") {
     const u = await guardedUsersAsync(ctx, () => setStatus(id, "active", { by }));
+    ctx.watchers.sync();
     return send(res, 200, { user: view(ctx, u, runsOf(id), hasPassword(u)) }), true;
   }
 
@@ -149,7 +154,10 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 2 && method === "DELETE") {
     // The architect's reads of the account's sessions: running and paused ones are cancelled once the account is gone.
     const reads = guardedUsers(ctx, () => architectRunsOf(id));
+    const repoIds = guardedUsers(ctx, () => listRepos(id).map((x) => x.id));
     const r = guardedUsers(ctx, () => deleteUser(id, { by }));
+    dropRepoWatchers(ctx, by, repoIds);
+    ctx.watchers.sync();
     cancelReads({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog }, reads);
     const cancelled = cancelNow(ctx, id, "deleted");
     if (r.oldKeysLeft) {

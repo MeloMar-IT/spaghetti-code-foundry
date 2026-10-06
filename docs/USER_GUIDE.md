@@ -655,6 +655,22 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
+### Watchers of a repository (admins, API only)
+
+An admin can store a watcher for one connected repository, instead of in `config.yaml`. It has the
+same options as a watcher in `config.yaml`, except `github_repo` and `owner`: they come from the
+repository. The source `monitor` is not allowed.
+
+- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once.
+- **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
+- **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
+- **Runs** belong to the repository's owner, so they show in that user's "My runs".
+- **Lists:** `GET /api/watchers` also shows stored watchers, with their `repoId`. A stored watcher that cannot run shows a `problem` sentence.
+- **Removed with their repository:** when a repository is removed, or its owner is deleted, its stored watchers are removed too.
+- **Not yet:** checks, labels and status comments still use the server's own `gh` sign-in. A private repository that only its own token can read shows a watcher error. The Watchers page lists stored watchers, but Edit, Disable and Delete work only on watchers from `config.yaml`.
+
+The watchers are kept in `repo-watchers.json` in the data folder.
+
 ### The monitor: the Foundry checks itself
 
 The monitor is a watcher that looks at the Foundry itself and writes down what is wrong, so you
@@ -1958,6 +1974,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
+| `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
+| `POST /api/admin/repos/:id/watchers` | yes | no | add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API) |
+| `PUT /api/admin/repos/:id/watchers/:wid` | yes | no | change a watcher of a repository, or enable or disable it |
+| `DELETE /api/admin/repos/:id/watchers/:wid` | yes | no | delete a watcher of a repository |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
 | `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
