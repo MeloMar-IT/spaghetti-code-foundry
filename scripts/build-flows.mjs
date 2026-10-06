@@ -403,6 +403,11 @@ const reviseGate = (post) => ({
   routes: [{ if: "^REVISE\\s*$", goto: "revise_plan" }],
   on_success: post,
 });
+// What was typed when the run was started (empty for a watcher run): the planner reads it on top of the issue.
+const TASK_LINES = [
+  "What the person who started this run wrote (it may be empty; it comes on top of the issue):",
+  "{{task}}",
+];
 const planPhase = (post, { risk = false, split = false, sized = false, reviseAbove = false } = {}) => [
     {
       id: "plan",
@@ -422,6 +427,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         "The issue text above already includes all of its comments — do not try to fetch them (gh and web",
         "access are not available here). They may contain a previous plan and feedback on it — the feedback wins.",
         "If earlier questions were asked and the owner replied /defaults, take the recommendations as the answers.",
+        "",
+        ...TASK_LINES,
         "",
         "Investigate before you write (this is the most important part):",
         "- Read CLAUDE.md, the design docs it points to, and the parts of the code this issue touches.",
@@ -480,6 +487,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         "",
         "{{steps.pull_ticket.output}}",
         "",
+        ...TASK_LINES,
+        "",
         "=== PLAN ===",
         "{{steps.plan.output}}",
         ...(risk ? [...RISK_RUBRIC, "Give your own score (not the plan's) as a line: RISK_SCORE: <0-100>"] : []),
@@ -516,6 +525,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         ...(split && sized ? SPLIT_FORMAT : []),
         "",
         "{{steps.pull_ticket.output}}",
+        "",
+        ...TASK_LINES,
         "",
         "=== YOUR DRAFT PLAN ===",
         "{{steps.plan.output}}",
@@ -555,7 +566,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         '  printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\'',
         '  echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"',
         '  echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \\',
-        '  | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -',
+        '  | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1',
+        'printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\'',
       ].join("\n"),
       on_success: "stop",
     },

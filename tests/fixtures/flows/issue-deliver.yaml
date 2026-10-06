@@ -129,6 +129,9 @@ steps:
       access are not available here). They may contain a previous plan and feedback on it — the feedback wins.
       If earlier questions were asked and the owner replied /defaults, take the recommendations as the answers.
 
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
+
       Investigate before you write (this is the most important part):
       - Read CLAUDE.md, the design docs it points to, and the parts of the code this issue touches.
       - Find the existing classes, interfaces and patterns to reuse or extend, and how similar features
@@ -208,6 +211,9 @@ steps:
 
       {{steps.pull_ticket.output}}
 
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
+
       === PLAN ===
       {{steps.plan.output}}
 
@@ -255,6 +261,9 @@ steps:
 
       {{steps.pull_ticket.output}}
 
+      What the person who started this run wrote (it may be empty; it comes on top of the issue):
+      {{task}}
+
       === YOUR DRAFT PLAN ===
       {{steps.plan.output}}
 
@@ -292,7 +301,8 @@ steps:
         printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
         echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1
+      printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
     on_success: stop
   - id: split_gate
     type: shell

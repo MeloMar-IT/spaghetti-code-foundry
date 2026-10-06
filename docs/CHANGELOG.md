@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Workspace 4d-1 — the planning flows print their questions and read the task (#130).
+  - **Behaviour.** `send_back` (`issue-plan`, `issue-gitflow`) and `ask_for_info` (block `plan`) post the same comment as before. Their output is now the planner's text (without the `PLAN_STATUS:` and `ROUTE:` lines) instead of the comment link, so a user's run page shows the questions under **Questions**. The page shows the first 4,000 characters; the whole text is in the comment on the issue. When the comment cannot be posted the step fails, as before.
+  - **Task.** The prompts of `plan`, `plan_review` and `revise_plan` read the task under one fixed line; it may be empty and comes on top of the issue. `usesTask` is true for both flows, so Start work shows the Task box for a published copy. A watcher run has an empty task and plans as before.
+  - **Upgrade.** A run started before the update, and a published copy of an older flow (or a flow built from the old `plan` block), keep the link: save the flow again from the built-in one.
+  - **Not included.** Answering on the run page; the Jira and Linear flows (they already print their questions).
 - Fix a test that failed on a busy machine (one status comment for two watchers): it waits for the comment itself instead of a fixed ten seconds. It failed the tests before the change for two stories. A failing test is now also tried again twice before it counts (`retry` in `vitest.config.ts`), because several stories run the suite at the same time.
 - Gitflow: when a branch rule on GitHub refuses the push to `develop`, the run stops at once and says so. Before, it read the refusal as a develop that had moved, merged and tested three more times, and then failed without the real reason.
 - Refinement 4a — the story draft in the session (server) (#124).
