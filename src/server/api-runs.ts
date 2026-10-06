@@ -20,6 +20,7 @@ import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next
 import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
+import { gateRun } from "../run-gate.js";
 import type { Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
@@ -196,6 +197,9 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (!s) throw new HttpError(404, "run not found");
     // The one-read-at-a-time rules live in the session: an architect run is continued from there, for every role.
     if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
+    // One live look at the issue; a closed one is not continued (see run-gate.ts).
+    const gate = await gateRun(s, ctx.config());
+    if (!gate.ok) throw new HttpError(409, gate.message);
     if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
     const from = str(body, "from", false) || undefined;
     // The same answer for both roles; any other failure of submit is unexpected (and generic for a user).

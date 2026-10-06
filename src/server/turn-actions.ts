@@ -2,6 +2,7 @@ import { auditAction, type EventAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
 import { canWrite, commentOnIssue, commentsAfter, ghActsAsApp, ghLogin, isBot, issueComments, mayWrite, repoPermission, setLabels, withGhEnv } from "../github.js";
 import { labelNames } from "../queue/watcher.js";
+import { gateRun } from "../run-gate.js";
 import { commentDigest, composeComment, findComment, parseProposal, parseQuestions, visibleText, type ComposeAction, type Proposal, type Question } from "../turn-actions.js";
 import type { TurnAct, YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
@@ -167,6 +168,15 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
   if (g.busy.has(item.key)) throw new HttpError(409, "this is already being done — look again in a moment");
   g.busy.add(item.key);
   try {
+    // A closed issue is not retried: nothing is posted or labelled (see run-gate.ts).
+    if (req.action === "retry" || req.action === "retry_hint") {
+      const runId = item.next.runId ?? tracked.issues.find((i) => i.issue === issue)?.runId;
+      const found = runId ? ctx.scheduler.get(runId) : undefined;
+      const vars = { ...found?.vars, github_repo: repo, issue: String(issue) };
+      const run = { flow: "", source: undefined, owner: undefined, ...found, vars };
+      const gate = await gateRun(run, ctx.config(), { timeoutMs: GH_TIMEOUT_MS });
+      if (!gate.ok) throw new HttpError(409, gate.message);
+    }
     // Everything that talks to GitHub runs as the watcher's repository (its token or app), like the watcher's own check.
     await asRepo(ctx, item.watcher, async () => {
       const app = ghActsAsApp();

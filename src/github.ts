@@ -349,7 +349,7 @@ export const ISSUE_STATE_BATCH = 500;
  * error (also for a deleted issue or a pull request), an issue is missing or has an unknown state.
  * `before` runs ahead of every call; when it throws, nothing more is asked.
  */
-export async function issueStates(repo: string, numbers: number[], timeoutMs?: number, before?: () => void): Promise<Map<number, "open" | "closed">> {
+export async function issueStates(repo: string, numbers: number[], timeoutMs?: number, before?: () => void, env?: NodeJS.ProcessEnv): Promise<Map<number, "open" | "closed">> {
   const slash = repo.indexOf("/");
   const owner = repo.slice(0, Math.max(slash, 0));
   const name = repo.slice(slash + 1);
@@ -362,7 +362,7 @@ export async function issueStates(repo: string, numbers: number[], timeoutMs?: n
     // Only integers are written into the query text; the repository goes in as variables.
     const fields = chunk.map((n) => `i${n}: issue(number: ${n}) { state }`).join(" ");
     const query = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${fields}}}`;
-    const text = await gh(["api", "graphql", "--input", "-"], undefined, timeoutMs, JSON.stringify({ query, variables: { owner, name } }));
+    const text = await gh(["api", "graphql", "--input", "-"], env, timeoutMs, JSON.stringify({ query, variables: { owner, name } }));
     let body: { data?: { repository?: Record<string, { state?: unknown } | null> | null }; errors?: unknown[] };
     try {
       body = JSON.parse(text);
@@ -386,9 +386,9 @@ export async function issueStates(repo: string, numbers: number[], timeoutMs?: n
 }
 
 /** The state of one issue. Rejects when it cannot be read. */
-export async function issueState(repo: string, issue: number, timeoutMs?: number): Promise<"open" | "closed"> {
+export async function issueState(repo: string, issue: number, timeoutMs?: number, env?: NodeJS.ProcessEnv): Promise<"open" | "closed"> {
   if (!Number.isInteger(issue) || issue <= 0 || issue > 2147483647) throw new Error("not an issue number");
-  const s = (await issueStates(repo, [issue], timeoutMs)).get(issue);
+  const s = (await issueStates(repo, [issue], timeoutMs, undefined, env)).get(issue);
   if (!s) throw new Error(`GitHub did not report issue #${issue}`);
   return s;
 }

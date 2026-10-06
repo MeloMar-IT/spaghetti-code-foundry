@@ -5,6 +5,11 @@ import { execFile } from "node:child_process";
 import { parseArgs } from "node:util";
 import { mirrorEnvPrefixes } from "./engine/template.js";
 import { resumeRun, runFlow, type RunSummary } from "./engine/runner.js";
+import { loadRun } from "./engine/state.js";
+import { getRepo } from "./auth/repos.js";
+import { getUser } from "./auth/users.js";
+import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
+import { FORCE_HINT, gateRun } from "./run-gate.js";
 import { listBlocks } from "./flow/blocks.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
@@ -26,9 +31,9 @@ const usage = () => `Spaghetti Code Foundry (scf) — run custom flows of headle
 
 Usage:
   scf run <flow> --task "<text>" [options]       Run a flow against a repo
-  scf resume <run-id> [--from <step>]            Continue a stopped/failed/interrupted run
-  scf approve <run-id> [--note "..."]            Approve a run waiting at an approval step
-  scf reject <run-id> [--note "..."]             Reject it (the flow's on_failure path runs)
+  scf resume <run-id> [--from <step>] [--force]  Continue a stopped/failed/interrupted run
+  scf approve <run-id> [--note "..."] [--force]  Approve a run waiting at an approval step
+  scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run]
@@ -152,6 +157,7 @@ async function main(argv: string[]): Promise<number> {
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
       global: { type: "boolean" },
+      force: { type: "boolean" },
       port: { type: "string", short: "p" },
       every: { type: "string" },
       source: { type: "string" },
@@ -207,9 +213,26 @@ async function main(argv: string[]): Promise<number> {
     case "approve":
     case "reject": {
       if (!arg) throw new Error(`usage: scf ${cmd} <run-id>`);
+      const runsDir = resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs"));
+      if (!values.force) {
+        // A missing run is reported by resumeRun.
+        const run = loadRun(runsDir, arg);
+        if (run) {
+          const config = loadConfig();
+          let watchers = config.watchers;
+          try {
+            watchers = [...watchers, ...effectiveRepoWatchers(listRepoWatchers(), getRepo, getUser, watchers.map((w) => w.id)).runnable];
+          } catch {
+            // only config.yaml's watchers decide whether the live result is stored
+          }
+          const gate = await gateRun(run, { ...config, watchers });
+          if (!gate.ok) throw new Error(gate.message + FORCE_HINT);
+          if (gate.unchecked) process.stdout.write("could not check on GitHub whether the issue is closed — continuing\n");
+        }
+      }
       const summary = await resumeRun({
         runId: arg,
-        runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
+        runsDir,
         from: cmd === "resume" ? values.from : undefined,
         decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
         log: (m) => process.stdout.write(m + "\n"),
