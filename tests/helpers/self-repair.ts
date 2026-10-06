@@ -45,7 +45,7 @@ const FAKES = [
 ];
 
 export interface IssueSpec { number: number; labels?: string[]; createdAt?: string }
-export interface WorldOptions { reportTo?: string | false; testCmd?: string; monitor?: Record<string, unknown>; monitorWatcher?: boolean }
+export interface WorldOptions { reportTo?: string | false; testCmd?: string; monitor?: Record<string, unknown>; monitorWatcher?: boolean | "disabled" }
 
 /** A reading of `gh api rate_limit`: each resource as [used, limit]; the window resets in an hour. */
 export function rateJson(res: Record<string, [number, number]>, resetAt = Math.floor(Date.now() / 1000) + 3600): string {
@@ -114,7 +114,7 @@ export async function makeWorld(o: WorldOptions = {}): Promise<World> {
         remove_on_done: ["Factory_go"],
         vars: { test_cmd: o.testCmd ?? PLAIN_TEST, docs_required: "docs/CHANGELOG.md", union_merge_files: "docs/CHANGELOG.md" },
       },
-      ...(o.monitorWatcher === false ? [] : [{ id: "monitor", source: "monitor", every: "1h" }]),
+      ...(o.monitorWatcher === false ? [] : [{ id: "monitor", source: "monitor", every: "1h", enabled: o.monitorWatcher !== "disabled" }]),
       { id: PRIVATE.watcher, github_repo: PRIVATE.repo, enabled: false },
     ],
   });

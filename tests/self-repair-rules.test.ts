@@ -105,6 +105,7 @@ describe("self-repair rules", { timeout: 240_000 }, () => {
       expect(readFileSync(process.env.TEST_BRANCH_LOG, "utf8")).toContain("protected branch 'main' is blocked");
       expect(run.history.map((h) => h.id)).not.toContain("push_main");
       const again = await resumeRun({ runsDir: x.dirs.runs, runId: run.runId, claudeBin, config: x.config, from: "push_main" });
+      expect(again.status, again.reason).toBe("failed");
       expect(again.history.filter((h) => h.id === "push_main").at(-1)?.output ?? "").toContain("not a hotfix");
       expect(x.rev("main")).toBe(mainBefore);
     } finally {
@@ -112,12 +113,15 @@ describe("self-repair rules", { timeout: 240_000 }, () => {
     }
   });
 
-  it("with no monitor watcher nothing is created", async () => {
-    const x = await world({ monitorWatcher: false });
+  const monitorOff = async (monitorWatcher: false | "disabled") => {
+    const x = await world({ monitorWatcher });
+    expect(x.config.watchers.filter((c) => c.source === "monitor").map((c) => c.enabled)).toEqual(monitorWatcher === false ? [] : [false]);
     loop(x, "claim_areas");
     const manager = new WatcherManager({ scheduler: x.scheduler, runsDir: x.dirs.runs, repo: x.gh.tmp, config: () => x.config, log: () => {}, startedAt: new Date(Date.now() - HOUR) });
     try {
       manager.sync();
+      for (let i = 0; i < 100 && !manager.statuses().find((c) => c.id === WATCHER_ID)?.status?.lastTick; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(manager.statuses().find((c) => c.id === WATCHER_ID)?.status?.lastTick).toBeTruthy();
       await manager.runNow(WATCHER_ID);
       await manager.runNow(WATCHER_ID);
       expect(manager.monitorRunning()).toBe(false);
@@ -128,7 +132,7 @@ describe("self-repair rules", { timeout: 240_000 }, () => {
       expect(x.gh.ghLog()).not.toContain("gh api rate_limit");
 
       // The control: the same world with the monitor on finds it and makes the story.
-      x.config.watchers.push(WatcherSchema.parse({ id: "monitor", source: "monitor", every: "1h" }));
+      x.config.watchers = [...x.config.watchers.filter((c) => c.source !== "monitor"), WatcherSchema.parse({ id: "monitor", source: "monitor", every: "1h" })];
       manager.sync();
       for (let i = 0; i < 100 && !manager.monitorLastCheck(); i++) await new Promise((r) => setTimeout(r, 50));
       expect(manager.monitorRunning()).toBe(true);
@@ -138,7 +142,10 @@ describe("self-repair rules", { timeout: 240_000 }, () => {
     } finally {
       manager.stopAll();
     }
-  });
+  };
+
+  it("with no monitor watcher nothing is created", () => monitorOff(false));
+  it("with the monitor watcher disabled nothing is created", () => monitorOff("disabled"));
 
   it("without report_to the problems are found and no story is made", async () => {
     const x = await world({ reportTo: false });

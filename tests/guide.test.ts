@@ -128,12 +128,12 @@ describe("user guide: self-repair", () => {
   const manual = readFileSync("docs/USER_GUIDE.md", "utf8");
   const chapter = section(manual, "## 13. Self-repair (for admins)");
 
-  it("is in the contents list and has the seven topics, in order", () => {
+  it("is in the contents list and has exactly its eight sections, in order", () => {
     expect(manual).toContain("- [13. Self-repair (for admins)](#13-self-repair-for-admins)");
     const topics = [...chapter.matchAll(/^### (.+)$/gm)].map((m) => m[1]);
-    expect(topics.slice(0, 7)).toEqual([
+    expect(topics).toEqual([
       "What the monitor looks for", "What a bug story looks like", "How bug stories go first", "The hotfix path",
-      "The guard rails", "Switch it on and off", 'When it says "needs you"',
+      "The guard rails", "Switch it on and off", 'When it says "needs you"', "The incidents that are replayed in tests",
     ]);
   });
 
