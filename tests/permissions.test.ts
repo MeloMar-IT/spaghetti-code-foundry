@@ -172,7 +172,10 @@ const EXAMPLES: Record<string, Example> = {
   "POST credentials": { path: "credentials", body: {}, user: 400, admin: 400 },
   "GET users": no("users", 200),
   "POST users": no("users", 400, {}),
+  "GET users/limits": no("users/limits", 200),
+  "PUT users/limits": no("users/limits", 200, {}),
   "PUT users/:id": no(`users/${UNKNOWN}`, 404, {}),
+  "PUT users/:id/limits": no(`users/${UNKNOWN}/limits`, 404, {}),
   "POST users/:id/block": no(`users/${UNKNOWN}/block`, 404, {}),
   "POST users/:id/unblock": no(`users/${UNKNOWN}/unblock`, 404, {}),
   "POST users/:id/link": no(`users/${UNKNOWN}/link`, 404, {}),
@@ -236,6 +239,7 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("PUT", ["users", "limits"])?.path).toBe("users/limits");
     expect(findRule("POST", ["admin", "repos", UNKNOWN, "watchers"])?.path).toBe("admin/repos/:id/watchers");
     expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");
     expect(findRule("GET", ["admin", "credentials"])?.path).toBe("admin/credentials");

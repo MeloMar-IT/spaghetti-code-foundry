@@ -1628,6 +1628,15 @@ marked "(you)".
 - **Unblock** lets the user sign in again. Cancelled runs are not restarted.
 - **Delete** asks first, names the account, wipes its stored credentials and keeps its runs
   (they show `deleted user`). It cannot be undone.
+- **Limits** (per account) and **Default limits** (toolbar) set three limits: runs at the same
+  time, runs per day and the daily budget in USD. An empty field means "no limit". The defaults
+  apply to every account, admins too; an account's own value wins over the default. The Limits
+  column shows each account's effective limits and marks its own values with "(own)". Clear a field
+  in the account's dialog and the default applies again. Deleting an account removes its own
+  limits. **Limits are only stored and shown for now; nothing is enforced yet.** Only admins can
+  see or change them, and no answer to a user contains them. Each change writes a `limits-change`
+  line to the audit log with the account (or "defaults") and the field names, not the amounts.
+  Without a `limits.json` in the data folder, everything is "no limit".
 
 A refusal (the last admin, an e-mail that is taken, bad input) shows in the dialog and the list does
 not change. An error from Block or Delete can come after the change was made; close the dialog to
@@ -2074,8 +2083,11 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |
 | `GET /api/users` | yes | no | list the accounts |
+| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (stored and shown only; not enforced yet) |
+| `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
 | `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token |
 | `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |
+| `PUT /api/users/:id/limits` | yes | no | set or clear the limits of one account; a cleared one follows the default again |
 | `POST /api/users/:id/block` | yes | no | block an account, end its sessions and cancel its queued jobs |
 | `POST /api/users/:id/unblock` | yes | no | unblock an account |
 | `POST /api/users/:id/link` | yes | no | a new set-password token for an account without a password |
