@@ -8,13 +8,17 @@ import {
   RefinementError,
   addDraft,
   checkRefinements,
+  acceptProposal,
   createSession,
   dropSession,
+  endArchitectRun,
   getSession,
+  recordRound,
   refinementsPath,
   removeDraft,
   restoreSession,
   saveDraft,
+  setArchitectRun,
   setEpic,
 } from "../src/refinement/store.js";
 
@@ -23,6 +27,9 @@ const BOB = "22222222-2222-4222-8222-222222222222";
 const ADMIN = "33333333-3333-4333-8333-333333333333";
 const OK = { ownerOk: () => true, repoName: (_o: string, name: string) => name };
 const T = { repoOk: () => true };
+// close to the real clock, because calls without `now` use it
+const T0 = new Date();
+const at = (ms: number) => ({ ...T, now: () => new Date(T0.getTime() + ms) });
 const ann = { id: ANN, admin: false };
 const admin = { id: ADMIN, admin: true };
 let home: string;
@@ -83,7 +90,12 @@ const unchanged = (fn: () => unknown, c: string) => {
 describe("add and remove", () => {
   it("adds an empty draft, even with a brief, a map and an idea", () => {
     const id = make();
+    setArchitectRun(ann, id, "run-1", {}, {});
+    endArchitectRun(id, "run-1", { brief: { text: "The brief.", at: new Date().toISOString() } });
+    recordRound(id, "run-2", { questions: [], proposals: [{ list: "rule", text: "Only admins export." }], done: "Done." });
+    acceptProposal(ann, id, getSession(id)!.talk!.proposals[0]!.id, T);
     const s = addDraft(ann, id, T);
+    expect(s.brief).toBeDefined();
     expect(s.drafts).toEqual([{ id: s.drafts[0]!.id, criteria: [], dependsOn: [] }]);
     expect(s.state).toBe("drafting");
     expect(s.log.at(-1)).toMatchObject({ what: "draft-added", by: ANN });
@@ -133,17 +145,36 @@ describe("saving", () => {
     const logLen = getSession(id)!.log.length;
     const before = getSession(id)!.updated;
     const body = { title: " T ", who: "a", what: "b\r\nc", why: "d", criteria: [{ text: "one" }], outOfScope: "x", dependsOn: [{ issue: 3 }], notes: "n" };
-    const s = save(id, d, body);
+    const s = saveDraft(ann, id, d, body, at(60_000));
     const x = s.drafts[0]!;
-    expect(x.what!.text).toBe("b\nc");
-    expect(x.title!.text).toBe("T");
-    expect(x.criteria[0]).toMatchObject({ text: "one", from: "typed" });
-    expect(x.dependsOn[0]).toMatchObject({ issue: 3, from: "typed" });
+    expect(x).toEqual({
+      id: d,
+      title: { text: "T", from: "typed" },
+      who: { text: "a", from: "typed" },
+      what: { text: "b\nc", from: "typed" },
+      why: { text: "d", from: "typed" },
+      criteria: [{ id: expect.any(String), text: "one", from: "typed" }],
+      outOfScope: { text: "x", from: "typed" },
+      notes: { text: "n", from: "typed" },
+      dependsOn: [{ id: expect.any(String), issue: 3, from: "typed" }],
+    });
     expect(s.log).toHaveLength(logLen);
-    expect(s.updated >= before).toBe(true);
+    expect(s.updated).toBe(new Date(T0.getTime() + 60_000).toISOString());
+    expect(s.updated > before).toBe(true);
+    // all fields again, with the ids of the list items: nothing changes, so `updated` stays
     const bytes = file();
-    save(id, d, { title: "T", who: "a" });
+    saveDraft(ann, id, d, { ...body, criteria: [{ id: x.criteria[0]!.id, text: "one" }], dependsOn: [{ id: x.dependsOn[0]!.id, issue: 3 }] }, at(120_000));
     expect(file()).toBe(bytes);
+    // list rule "an item without `id` is new": the same text without its id is a new item, not a mistake
+    const again = saveDraft(ann, id, d, body, at(180_000));
+    const y = again.drafts[0]!;
+    expect(y.criteria).toHaveLength(1);
+    expect(y.criteria[0]).toMatchObject({ text: "one", from: "typed" });
+    expect(y.criteria[0]!.id).not.toBe(x.criteria[0]!.id);
+    expect(y.dependsOn).toHaveLength(1);
+    expect(y.dependsOn[0]).toMatchObject({ issue: 3, from: "typed" });
+    expect(y.dependsOn[0]!.id).not.toBe(x.dependsOn[0]!.id);
+    expect(again.updated).toBe(new Date(T0.getTime() + 180_000).toISOString());
   });
 
   it("removes an emptied field", () => {
@@ -198,6 +229,33 @@ describe("the record of where a text came from", () => {
     save(id, a, { title: "again" });
     y = draft(id, a);
     expect(y.title!.from).toBe("typed");
+  });
+
+  it("is typed for new text and new items in a draft that has accepted parts", () => {
+    const id = make();
+    const a = add(id);
+    save(id, a, { title: "T", criteria: [{ text: "c" }], dependsOn: [{ issue: 1 }] });
+    edit((f) => {
+      const x = f.sessions[0].drafts[0];
+      x.title.from = "accepted";
+      x.criteria[0].from = "accepted";
+      x.dependsOn[0].from = "accepted";
+    });
+    const x = draft(id, a);
+    save(id, a, {
+      who: "w",
+      what: "x",
+      why: "y",
+      outOfScope: "o",
+      notes: "n",
+      criteria: [{ id: x.criteria[0]!.id, text: "c" }, { text: "new" }],
+      dependsOn: [{ id: x.dependsOn[0]!.id, issue: 1 }, { issue: 2 }],
+    });
+    const y = draft(id, a);
+    expect([y.who, y.what, y.why, y.outOfScope, y.notes].map((f) => f!.from)).toEqual(["typed", "typed", "typed", "typed", "typed"]);
+    expect(y.criteria.map((c) => c.from)).toEqual(["accepted", "typed"]);
+    expect(y.dependsOn.map((c) => c.from)).toEqual(["accepted", "typed"]);
+    expect(y.title!.from).toBe("accepted");
   });
 });
 
@@ -259,6 +317,13 @@ describe("depends on", () => {
       "x",
     ];
     for (const list of b) unchanged(() => save(id, a, { dependsOn: list }), "bad-draft");
+    save(id, a, { dependsOn: [{ issue: 1 }] });
+    const x = draft(id, a).dependsOn[0]!;
+    const sentence = "no such depends-on item in this draft; load the session again";
+    unchanged(() => save(id, a, { dependsOn: [{ id: U, issue: 2 }] }), "bad-draft");
+    unchanged(() => save(id, a, { dependsOn: [{ id: x.id, issue: 1 }, { id: x.id, issue: 2 }] }), "bad-draft");
+    expect(msg(() => save(id, a, { dependsOn: [{ id: U, issue: 2 }] }))).toBe(sentence);
+    expect(msg(() => save(id, a, { dependsOn: [{ id: x.id, issue: 1 }, { id: x.id, issue: 2 }] }))).toBe(sentence);
     expect(msg(() => save(id, a, { dependsOn: [{ issue: 2 ** 53 }] }))).toBe("the issue number is too large");
     unchanged(() => save(id, a, { dependsOn: Array.from({ length: 21 }, (_, i) => ({ issue: i + 1 })) }), "limit");
   });
@@ -347,6 +412,14 @@ describe("limits and bad text", () => {
       unchanged(() => save(id, d, { [k]: 5 }), "bad-draft");
     }
     unchanged(() => save(id, d, { who: "fine", title: "a\u0001b" }), "bad-draft");
+    expect(msg(() => save(id, d, { criteria: [{ text: "a\u0001b" }] }))).toBe("the criterion has characters that are not allowed");
+    expect(msg(() => save(id, d, { criteria: [{ text: 5 }] }))).toBe("each criterion needs a text");
+    unchanged(() => save(id, d, { criteria: [{ text: "a\u0001b" }] }), "bad-draft");
+    unchanged(() => save(id, d, { criteria: [{ text: 5 }] }), "bad-draft");
+    unchanged(() => save(id, d, { criteria: [{ text: "fine" }, { text: "a\u0001b" }] }), "bad-draft");
+    unchanged(() => save(id, d, { who: "fine", criteria: [{ text: 5 }] }), "bad-draft");
+    expect(draft(id, d).criteria).toEqual([]);
+    expect(draft(id, d).who).toBeUndefined();
     unchanged(() => save(id, d, "text"), "bad-draft");
   });
 });
@@ -419,6 +492,8 @@ describe("the preview", () => {
       ].join("\n\n"),
     );
     const s = getSession(id)!;
+    // The plain case only. The parser gets two cases wrong: a "Depends on" or "Blocked by" line in out of scope or the notes
+    // is read first (src/queue/deps.ts:10-14), and a `#n` in a draft title is read as an issue (src/queue/deps.ts:33).
     expect(dependencies(p.body, 99, [{ number: 12, title: "Other" }, { number: 40, title: "Sign in" }])).toEqual([12, 40]);
     expect(dependencies(preview(draft(id, s.drafts[1]!.id), s).body, 99, [{ number: 12, title: "Other" }])).toEqual([]);
   });

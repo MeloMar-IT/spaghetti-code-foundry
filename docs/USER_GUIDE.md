@@ -2404,7 +2404,7 @@ A session keeps story drafts, so that what you write is saved. A draft has a **t
 - `DELETE /api/refinement/:id/drafts/:did` removes a draft, and it from the depends-on lists of the other drafts.
 - `PUT /api/refinement/:id/epic` with `{ "issue": 73 }` sets the Epic; `{ "issue": null }` clears it. It must be a whole number from 1; it is not checked against GitHub yet.
 
-**Only what you send changes.** A field you leave out stays. An empty field (`""`, spaces or `null`) is removed. A list is sent whole: an item with a known `id` and the same text stays as it is, a known `id` with a new text is changed, an item without `id` is new, and an item you leave out is removed. An unknown or repeated `id` answers 400 ("load the session again").
+**Only what you send changes.** A field you leave out stays. An empty field (`""`, spaces or `null`) is removed. A list is sent whole: an item with a known `id` and the same text stays as it is, a known `id` with a new text is changed, an item without `id` is new, and an item you leave out is removed. So send the `id` of every item you keep: the same text without its `id` is stored as a new item. An unknown or repeated `id` answers 400 ("load the session again").
 
 **Where a text came from.** Every text field and list item has `from`: `typed`, `accepted` (from a suggestion) or `accepted-edited`. The server sets it and ignores a `from` you send: new text is `typed`, and changing an `accepted` text makes it `accepted-edited`. Suggestions come in a later step.
 

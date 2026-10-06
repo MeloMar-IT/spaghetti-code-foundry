@@ -72,14 +72,14 @@ describe("story drafts over the API", () => {
     expect(d.preview.body).toBe("As …, I want …, so that ….\n\n### Acceptance criteria\n\n### Depends on\nNone (can be built on its own).");
     const s = await put(id, d.id, FULL);
     expect(s.status).toBe(200);
-    expect(s.json().drafts[0].preview.body).toBe(
-      "As an admin, I want to export a report, so that I can share it.\n\n### Acceptance criteria\n- [ ] It downloads\n\n### Out of scope\nPDF\n\n### Notes for the builder\nOld API\n\n### Depends on\nNone (can be built on its own).",
-    );
+    const BODY =
+      "As an admin, I want to export a report, so that I can share it.\n\n### Acceptance criteria\n- [ ] It downloads\n\n### Out of scope\nPDF\n\n### Notes for the builder\nOld API\n\n### Depends on\nNone (can be built on its own).";
+    expect(s.json().drafts[0].preview.body).toBe(BODY);
     expect(s.json().drafts[0].preview.title).toBe("Export");
     const e = await call(ann, "PUT", `/api/refinement/${id}/epic`, { issue: 73 });
     expect(e.status).toBe(200);
     expect(e.json().epic).toBe(73);
-    expect(e.json().drafts[0].preview.body.startsWith("**Epic:** #73\n\nAs an admin")).toBe(true);
+    expect(e.json().drafts[0].preview.body).toBe("**Epic:** #73\n\n" + BODY);
     const del = await call(ann, "DELETE", `/api/refinement/${id}/drafts/${d.id}`);
     expect(del.status).toBe(200);
     expect(del.json().drafts).toEqual([]);
@@ -167,7 +167,8 @@ describe("story drafts over the API", () => {
     const full = await call(ann, "POST", `/api/refinement/${id}/drafts`);
     expect([full.status, full.error()]).toEqual([400, "at most 20 story drafts"]);
     const d = (await get(id)).drafts[0].id;
-    expect((await put(id, d, { title: "x".repeat(121) })).status).toBe(400);
+    const long = await put(id, d, { title: "x".repeat(121) });
+    expect([long.status, long.error()]).toEqual([400, "the title can have at most 120 characters"]);
     const nl = await put(id, d, { title: "a b" });
     expect([nl.status, nl.error()]).toEqual([400, "the title must be on one line"]);
     expect((await put(id, U, { title: "x" })).status).toBe(404);
