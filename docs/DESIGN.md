@@ -233,6 +233,13 @@ What a watcher takes care of:
 - **A status comment** on the issue that is edited in place, not a new comment each time.
 - **Tidying:** closed issues lose their status labels; runs that wait for a person end when
   their issue is closed.
+- **Issue states.** At every check an issues watcher stores whether each issue with an
+  unfinished run (failed, stopped, waiting or cancelled, any flow, any age) is open or closed
+  (`src/issue-states.ts`). Issues in the open list of the check are stored as open without
+  asking GitHub; the rest go in one batched `gh api graphql` call (more than 500 are sent in
+  sequential chunks). If the call fails, nothing changes, `failedAt` is set and the watcher
+  shows the error `checking closed issues: …`. `knownIssueState(repo, issue)` answers `open`,
+  `closed`, `unknown` or `undefined` (no enabled issues watcher). Nothing a user sees uses it yet.
 
 ![Watchers and what each story is waiting for](images/watchers.png)
 
@@ -415,6 +422,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 

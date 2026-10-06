@@ -82,6 +82,7 @@ export function fakeGithub() {
   const labelsFile = `${ghLog}.labels`;
   // The status comments the Foundry remembers must not leak from one test into the next.
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "status-comments.json"), { force: true });
+  rmSync(join(process.env.FACTORY_HOME ?? tmp, "issue-states"), { recursive: true, force: true });
   Object.assign(process.env, {
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_GH_LOG: ghLog,

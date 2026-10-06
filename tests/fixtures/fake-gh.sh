@@ -69,6 +69,34 @@ if [ -n "$FAKE_GH_STORIES" ]; then
       story close "$3" "$reason"; exit 0; fi ;;
   esac
 fi
+# "api graphql --input -": issue states. Answers every alias i<N> from $FAKE_GH_FRESH, else $FAKE_GH_ISSUES_BY_REPO[owner/name], else $FAKE_GH_ISSUES; default OPEN.
+# $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
+# $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail.
+case "$all" in "api graphql"*)
+  gn=$(($(cat "$FAKE_GH_LOG.graphql" 2>/dev/null || echo 0) + 1)); echo "$gn" > "$FAKE_GH_LOG.graphql"
+  if [ -n "$FAKE_GH_GRAPHQL_FAIL_AFTER" ] && [ "$gn" -gt "$FAKE_GH_GRAPHQL_FAIL_AFTER" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  node -e '
+    const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    const e = process.env, q = input.query || "", v = input.variables || {};
+    const aliases = [...q.matchAll(/i(\d+): issue\(number: (\d+)\)/g)];
+    if (e.FAKE_GH_GRAPHQL_MAX && aliases.length > Number(e.FAKE_GH_GRAPHQL_MAX)) { console.error("gh: query too large"); process.exit(1); }
+    let list;
+    if (e.FAKE_GH_ISSUES_BY_REPO) list = JSON.parse(e.FAKE_GH_ISSUES_BY_REPO)[v.owner + "/" + v.name] || [];
+    else list = JSON.parse(e.FAKE_GH_FRESH || e.FAKE_GH_ISSUES || "[]");
+    const missing = (e.FAKE_GH_GRAPHQL_MISSING || "").split(/\s+/).filter(Boolean);
+    const repository = {}, errors = [];
+    for (const m of aliases) {
+      const n = Number(m[2]);
+      if (missing.includes(String(n))) { repository["i" + n] = null; errors.push({ type: "NOT_FOUND", path: ["repository", "i" + n], message: "Could not resolve to an Issue with the number of " + n + "." }); continue; }
+      const found = list.find((x) => x.number === n);
+      repository["i" + n] = { state: String((found && found.state) || "OPEN").toUpperCase() };
+    }
+    const body = { data: { repository } };
+    if (errors.length) { body.errors = errors; console.log(JSON.stringify(body)); console.error("gh: Could not resolve to an Issue"); process.exit(1); }
+    console.log(JSON.stringify(body));
+  '
+  exit $? ;;
+esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")

@@ -4,6 +4,7 @@ import type { Config, WatcherConfig } from "../config.js";
 import { selfBuild, selfContains } from "../engine/guards.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { readRateLimit, type RateReading } from "../github.js";
+import { dropIssueStates, storedIssueRepos } from "../issue-states.js";
 import { collectNames } from "../monitor/clean.js";
 import type { DetectorInput, LogLine } from "../monitor/detectors.js";
 import { describeEntry, loadGuard, storiesVerdict, writeLog } from "../monitor/guard.js";
@@ -103,6 +104,13 @@ export class WatcherManager {
       this.running.set(id, { watcher, key: JSON.stringify(cfg) });
       watcher.start();
       this.o.log(`[${id}] watching ${cfg.github_repo} (${cfg.source}) every ${cfg.every}`);
+    }
+    // Issue states count only while an enabled issues watcher checks the repository (duplicate ids do not matter here).
+    try {
+      const watched = new Set(this.o.config().watchers.filter((w) => w.enabled && w.source === "issues").map((w) => w.github_repo));
+      for (const repo of storedIssueRepos()) if (!watched.has(repo)) dropIssueStates(repo);
+    } catch (e) {
+      this.o.log(`! issue states: ${(e as Error).message}`);
     }
     this.syncMonitor(this.o.config().watchers.find((w) => w.source === "monitor" && w.enabled));
   }
