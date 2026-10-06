@@ -1,7 +1,24 @@
 #!/bin/sh
 # Stand-in for the GitHub CLI. Logs every call to $FAKE_GH_LOG; "repo clone <url> <folder> -- <git flags>" clones $FAKE_GH_REMOTE into the folder.
 # State lives next to the log: $FAKE_GH_LOG.pr (PR url once created), $FAKE_GH_LOG.checks (CI call count).
+# $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
+# "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
+if [ -n "$FAKE_GH_AUTH_LOG" ]; then
+  if [ -z "${GH_CONFIG_DIR+x}" ]; then cfg=host; else cfg=$(ls -A "$GH_CONFIG_DIR" 2>/dev/null | wc -l | tr -d ' '); fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "${GH_TOKEN:--}" "${GITHUB_TOKEN:--}" "${GH_ENTERPRISE_TOKEN:--}" "$cfg" "$*" >> "$FAKE_GH_AUTH_LOG"
+fi
 echo "gh $*" >> "$FAKE_GH_LOG"
+# $FAKE_GH_TOKEN_BY_REPO (JSON {"owner/name": "token"} or {"owner/name": ["token", …]}): a call for a listed repository whose GH_TOKEN is not
+# accepted fails with 401. The repository is the --repo value, "api repos/<o>/<n>/…" or "repo view <o/n>".
+if [ -n "$FAKE_GH_TOKEN_BY_REPO" ]; then
+  tr_repo=""; tr_prev=""; for a in "$@"; do [ "$tr_prev" = "--repo" ] && tr_repo="$a"; tr_prev="$a"; done
+  case "$1 $2" in "api repos/"*) tr_repo=${2#repos/}; tr_repo=$(echo "$tr_repo" | cut -d/ -f1-2) ;; "repo view") tr_repo=$3 ;; esac
+  if [ -n "$tr_repo" ] && ! node -e 'const m=JSON.parse(process.env.FAKE_GH_TOKEN_BY_REPO)[process.argv[1]];if(m===undefined)process.exit(0);process.exit([].concat(m).includes(process.env.GH_TOKEN||"")?0:1)' "$tr_repo"; then
+    echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1
+  fi
+fi
+# $FAKE_GH_NO_USER=1: "api user" fails like it does for an app installation token.
+if [ -n "$FAKE_GH_NO_USER" ] && [ "$1 $2" = "api user" ]; then echo "HTTP 403: Resource not accessible by integration (https://api.github.com/user)" >&2; exit 1; fi
 # $FAKE_GH_EXPECT_TOKEN (set, also when empty): a call whose GH_TOKEN differs fails like GitHub does for a bad token.
 if [ -n "${FAKE_GH_EXPECT_TOKEN+x}" ] && [ "$GH_TOKEN" != "$FAKE_GH_EXPECT_TOKEN" ]; then echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1; fi
 if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi

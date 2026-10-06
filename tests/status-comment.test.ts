@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RunSummary } from "../src/engine/state.js";
-import { commentId, isBot, isStatusComment, sameBody, STATUS_MARKER, upsertStatusComment } from "../src/github.js";
+import { commentId, type GhSession, isBot, isStatusComment, sameBody, STATUS_MARKER, upsertStatusComment } from "../src/github.js";
+import type { RepoGhIdentity } from "../src/queue/gh-identity.js";
 import { issueRank, issueRecord } from "../src/issue-record.js";
 import { firstLine, nextStep, runNextStep, type NextData, type NextStep } from "../src/next-step.js";
 import { leftBody, StatusComments, statusBody, statusTargets, type StatusView } from "../src/queue/status-comment.js";
@@ -561,6 +562,94 @@ describe("with the fake gh", () => {
         await sc.report("b", doneView([], { id: "b" }));
         expect(gh.ghLog()).toBe("");
       });
+    });
+  });
+});
+
+describe("StatusComments with a repository's sign-in", () => {
+  let gh: ReturnType<typeof fakeGithub>;
+  let auth: ReturnType<ReturnType<typeof fakeGithub>["authLog"]>;
+  let log: string[];
+  beforeEach(() => {
+    gh = fakeGithub();
+    auth = gh.authLog();
+    log = [];
+    process.env.GH_TOKEN = "host-token";
+  });
+  afterEach(() => gh.restore());
+
+  const sched = { queue: () => ({ pending: [], active: [] }), get: () => undefined } as unknown as StatusView["scheduler"];
+  const view = (nums: number[]): StatusView =>
+    ({ id: "w", label: "claude-factory", failedLabel: "factory:failed", tracked: nums.map((issue) => ({ issue, title: "T", done: true })), holds: [], closed: [], complete: true, scheduler: sched, lastRunId: () => undefined }) as StatusView;
+  const session = (token: string, app = false): GhSession => ({ env: { GH_TOKEN: token, GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined, GH_CONFIG_DIR: gh.tmp }, app, stamp: token });
+  const identity = (get: () => Promise<GhSession>): RepoGhIdentity => ({ prepare: get, usesHostLogin: () => false, dispose: () => {} });
+  const make = (id: RepoGhIdentity, o: { file?: string; key?: string } = {}) => {
+    const sc = new StatusComments(REPO, (m) => log.push(m), { gh: id, ...o });
+    sc.expect("w");
+    return sc;
+  };
+  const setComments = (...c: unknown[]) => { process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: c }); };
+  const mine = (id: number, over: Record<string, unknown> = {}) => ({
+    author: { login: "bot" }, body: `old\n\n${STATUS_MARKER}`, createdAt: "2026-01-01T00:00:00Z", url: `https://github.com/${REPO}/issues/3#issuecomment-${id}`, ...over,
+  });
+
+  it("runs a pass as the identity it gives", async () => {
+    await make(identity(async () => session("tok-1"))).report("w", view([3]));
+    const rows = auth.rows().filter((r) => /issue (view|comment)/.test(r.args));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.token === "tok-1" && r.githubToken === "-")).toBe(true);
+  });
+
+  it("makes no call and logs one line when there is no sign-in", async () => {
+    await make(identity(async () => { throw new Error("no sign-in here"); })).report("w", view([3]));
+    expect(auth.rows()).toEqual([]);
+    expect(log).toEqual(["! status comments: no sign-in here"]);
+  });
+
+  it("after the account changes, the cached comment is not edited: the comments are read and a new one is made", async () => {
+    let s = session("tok-1");
+    const sc = make(identity(async () => s));
+    setComments(mine(5, { viewerDidAuthor: true }));
+    await sc.report("w", view([3]));
+    expect(gh.statusEdits().map((e) => e.id)).toEqual(["5"]);
+    s = session("tok-2");
+    setComments(mine(9, { viewerDidAuthor: false }));
+    await sc.report("w", { ...view([3]), tracked: [{ issue: 3, title: "T" }] } as StatusView);
+    expect(gh.statusEdits().map((e) => e.id)).toEqual(["5"]); // not edited again
+    expect(gh.statusComments()).toHaveLength(1);
+  });
+
+  it("keeps the entries of boards with different keys, and a board without a key reads the old entry", async () => {
+    const file = join(gh.tmp, "data", "status-comments.json");
+    await make(identity(async () => session("t")), { file, key: `${REPO}#r1` }).report("w", view([3]));
+    const plain = new StatusComments(REPO, (m) => log.push(m), { file });
+    plain.expect("w");
+    await plain.report("w", view([4]));
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ [`${REPO}#r1`]: { w: [3] }, [REPO]: { w: [4] } });
+    const again = new StatusComments(REPO, () => {}, { file });
+    again.expect("w");
+    setComments(mine(7, { url: `https://github.com/${REPO}/issues/4#issuecomment-7`, viewerDidAuthor: true }));
+    await again.report("w", view([]));
+    expect(gh.statusEdits().map((e) => e.id)).toContain("7");
+  });
+
+  describe("as a GitHub App", () => {
+    it("edits a comment that gh says is its own, and asks for no user", async () => {
+      process.env.FAKE_GH_NO_USER = "1";
+      setComments(mine(5, { viewerDidAuthor: true }));
+      await make(identity(async () => session("ghs_app", true))).report("w", view([3]));
+      expect(gh.statusEdits().map((e) => e.id)).toEqual(["5"]);
+      expect(auth.rows().some((r) => /api user/.test(r.args))).toBe(false);
+    });
+
+    it("gives a fixed sentence for a status comment that does not say who wrote it, and makes no new comment", async () => {
+      process.env.FAKE_GH_NO_USER = "1";
+      setComments(mine(5));
+      await make(identity(async () => session("ghs_app", true))).report("w", view([3]));
+      expect(log.some((l) => l.includes("does not tell who wrote a comment"))).toBe(true);
+      expect(auth.rows().some((r) => /api user/.test(r.args))).toBe(false);
+      expect(gh.statusComments()).toHaveLength(0);
+      expect(gh.statusEdits()).toHaveLength(0);
     });
   });
 });

@@ -32,7 +32,7 @@ function stub(holds: ReturnType<typeof hold>[], labels?: Record<string, string>)
     opts: { log },
     config: () => config,
     scheduler: { list: () => [], get: () => undefined, briefs: () => [], queue: () => ({ pending: [], active: [] }) },
-    watchers: { statuses: () => [], tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
+    watchers: { statuses: () => [], identityOf: () => undefined, tracked: () => [{ watcher: config.watchers[0], status: { id: "a", lastActions: [], holds }, issues: holds.filter((h) => h.issue !== undefined && h.next.kind !== "release").map((h) => ({ issue: h.issue, title: `T${h.issue}`, runId: h.next.runId })) }], kickRepo: kick },
   } as unknown as ApiContext;
 }
 
@@ -90,6 +90,33 @@ describe("turnDetail", () => {
     expect(await status(turnDetail(rel, `release|${pr.url}`, NOW))).toBe(409);
     process.env.FAKE_GH_FAIL = "issue view";
     expect(await status(turnDetail(ctx, QKEY, NOW))).toBe(502);
+  });
+});
+
+describe("a repository's sign-in", () => {
+  const withIdentity = (prepare: () => Promise<unknown>) => {
+    const ctx = ctxAll() as unknown as { watchers: { identityOf: () => unknown } };
+    ctx.watchers.identityOf = () => ({ prepare });
+    return ctx as unknown as ApiContext;
+  };
+
+  it("detail and act call GitHub with the token of the watcher's repository only", async () => {
+    const auth = gh.authLog();
+    process.env.GH_TOKEN = "host-token";
+    const session = { env: { GH_TOKEN: "repo-token", GITHUB_TOKEN: undefined, GH_ENTERPRISE_TOKEN: undefined }, stamp: "s" };
+    const ctx = withIdentity(async () => session);
+    await act(ctx, { key: QKEY, action: "answer", stamp: SINCE, answers: [{ n: 1, text: "a" }] });
+    const rows = auth.rows();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.token === "repo-token")).toBe(true);
+  });
+
+  it("answers 409 with the sentence and makes no call when there is no sign-in", async () => {
+    const auth = gh.authLog();
+    const ctx = withIdentity(async () => { throw new Error("the sign-in is missing"); });
+    expect(await status(turnDetail(ctx, QKEY, NOW))).toBe(409);
+    expect(await status(turnAct(ctx, user, readAct({ key: QKEY, action: "answer", stamp: SINCE, digest: "x", answers: [{ n: 1, text: "a" }] }), NOW))).toBe(409);
+    expect(auth.rows()).toEqual([]);
   });
 });
 

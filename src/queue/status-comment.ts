@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import type { RunSummary } from "../engine/state.js";
 import { errorLine } from "../errors.js";
 import { FACTORY_HOME } from "../flow/load.js";
-import { sameBody, STATUS_MARKER, upsertStatusComment } from "../github.js";
+import { sameBody, STATUS_MARKER, upsertStatusComment, withGhEnv } from "../github.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { firstLine, nextStep, runNextStep, type NextBase, type NextData, type NextKind, type NextStep } from "../next-step.js";
+import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import type { Hold, TrackedIssue } from "./watcher.js";
 
@@ -205,11 +206,16 @@ export class StatusComments {
   private login?: string;
   private saved: string;
   private maxMs: number;
+  /** The entry of the file: the repository, or `repo#repoId` for the board of a repository's own sign-in. */
+  private key: string;
+  /** The stamp of the identity the cached ids and the login belong to. */
+  private stamp?: string;
 
-  constructor(private repo: string, private log: (msg: string) => void, private o: { file?: string; maxMs?: number } = {}) {
+  constructor(private repo: string, private log: (msg: string) => void, private o: { file?: string; maxMs?: number; gh?: RepoGhIdentity; key?: string } = {}) {
     this.maxMs = o.maxMs ?? MAX_MS;
+    this.key = o.key ?? repo;
     if (o.file) {
-      for (const [id, nums] of Object.entries(readFileData(o.file)[repo] ?? {})) {
+      for (const [id, nums] of Object.entries(readFileData(o.file)[this.key] ?? {})) {
         for (const n of nums) {
           const k = this.known.get(n);
           if (k) k.owners.push(id);
@@ -265,8 +271,8 @@ export class StatusComments {
     try {
       const all = readFileData(file);
       const entry = this.entry();
-      if (Object.keys(entry).length) all[this.repo] = entry;
-      else delete all[this.repo];
+      if (Object.keys(entry).length) all[this.key] = entry;
+      else delete all[this.key];
       mkdirSync(dirname(file), { recursive: true });
       const tmp = `${file}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(all, null, 2));
@@ -279,7 +285,15 @@ export class StatusComments {
 
   private async pass(alive: () => boolean): Promise<void> {
     try {
-      await this.run(alive);
+      // A rejection (no credential) is logged by report(); no call is made.
+      const session = await this.o.gh?.prepare();
+      if (session?.stamp !== this.stamp) {
+        // Another account: its login and the comment ids found with the old one are not valid for it.
+        this.stamp = session?.stamp;
+        this.login = undefined;
+        for (const k of this.known.values()) k.id = k.body = undefined;
+      }
+      await withGhEnv(session, () => this.run(alive));
     } finally {
       this.persist();
     }

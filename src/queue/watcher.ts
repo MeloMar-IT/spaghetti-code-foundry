@@ -3,11 +3,12 @@ import type { WatcherConfig } from "../config.js";
 import { loadRun, saveRun, spentToday, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
-import { canWrite, commentsAfter, ensureLabel, gh, ghJson, isBot, isStatusComment, issueComments, setLabels, type Comment, type Issue } from "../github.js";
+import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
+import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 
@@ -100,6 +101,8 @@ export interface WatcherDeps {
   peers?: () => { watcher: WatcherConfig; status: WatcherStatus; issues: TrackedIssue[] }[];
   /** Called after every check, good or failed (the monitor's request-limit reading). A rejection is ignored. */
   afterCheck?: () => Promise<void> | void;
+  /** The sign-in of the watcher's repository (stored watchers); without it the watcher uses the host's `gh` login. */
+  gh?: RepoGhIdentity;
 }
 
 export interface WatcherStatus {
@@ -247,7 +250,7 @@ export class Watcher {
     this.status = { id: cfg.id, lastActions: [] };
     this.L = labelNames(cfg);
     this.allStatus = Object.values(this.L);
-    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`));
+    this.statusComments = d.statusComments ?? new StatusComments(cfg.github_repo, (m) => d.log(`[${cfg.id}] ${m}`), { gh: d.gh });
     if (cfg.source === "issues" && cfg.status_comment) this.statusComments.expect(cfg.id);
   }
 
@@ -331,7 +334,7 @@ export class Watcher {
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        this.check(),
+        this.asRepo(() => this.check()),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error(`the check took longer than ${Math.round(this.checkTimeoutMs / 1000)}s and was given up`)), this.checkTimeoutMs);
         }),
@@ -351,7 +354,7 @@ export class Watcher {
       clearTimeout(timer);
       this.status.lastTick = new Date().toISOString();
       try {
-        await this.d.afterCheck?.();
+        await withGhEnv(undefined, () => this.d.afterCheck?.());
       } catch {
         // the hook must not change the outcome of a check
       }
@@ -361,6 +364,12 @@ export class Watcher {
         setTimeout(() => void this.tick(), 0);
       }
     }
+  }
+
+  /** Runs `fn` as the watcher's repository (its token or app); rejects with a plain sentence when there is no sign-in. The host login without one. */
+  private async asRepo<T>(fn: () => Promise<T>): Promise<T> {
+    const s = await this.d.gh?.prepare();
+    return withGhEnv(s, fn);
   }
 
   /** One check; throws when it fails. */
@@ -491,21 +500,23 @@ export class Watcher {
     void this.d.scheduler.wait(runId).then(async (s) => {
       this.waitingFor.delete(runId);
       if (!s || this.stopped) return;
-      // Cancelled while the issue is closed: clear the labels, no failure comment.
-      if (s.status === "cancelled" && (await this.issueClosed(issue))) {
-        await setLabels(this.repo, issue, undefined, this.allStatus).catch(() => {});
-        this.act(`#${issue} (closed) → cancelled · label → none`);
-        return;
-      }
-      // A split original was closed in favour of its parts: clear its labels, don't mark it done.
-      const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
-      const label = split ? undefined : labelFor(s, this.L);
-      const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
-      await setLabels(this.repo, issue, label, remove).catch(() => {});
-      if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
-      const why = s.reason ? explainError(s.reason) : undefined;
-      this.act(`#${issue} → ${s.status}${why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
-    });
+      await this.asRepo(async () => {
+        // Cancelled while the issue is closed: clear the labels, no failure comment.
+        if (s.status === "cancelled" && (await this.issueClosed(issue))) {
+          await setLabels(this.repo, issue, undefined, this.allStatus).catch(() => {});
+          this.act(`#${issue} (closed) → cancelled · label → none`);
+          return;
+        }
+        // A split original was closed in favour of its parts: clear its labels, don't mark it done.
+        const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
+        const label = split ? undefined : labelFor(s, this.L);
+        const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
+        await setLabels(this.repo, issue, label, remove).catch(() => {});
+        if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
+        const why = s.reason ? explainError(s.reason) : undefined;
+        this.act(`#${issue} → ${s.status}${why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
+      });
+    }).catch(() => {}); // prepare() can reject (no sign-in); the next check reconciles the labels
   }
 
   private async issueClosed(issue: number): Promise<boolean> {
@@ -1009,7 +1020,8 @@ export class Watcher {
     for (const c of after) {
       const m = APPROVE_RE.exec(c.body);
       if (!m) continue;
-      if (!(await canWrite(this.repo, c.author.login))) {
+      // An app has no user: its own comment (gh says so) counts as written with write access.
+      if (!(c.viewerDidAuthor === true && ghActsAsApp()) && !(await canWrite(this.repo, c.author.login))) {
         this.act(`ignored /${m[1]} from @${c.author.login} (no write access)`);
         continue;
       }

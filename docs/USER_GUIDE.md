@@ -715,7 +715,11 @@ repository. The source `monitor` is not allowed.
 - **Runs** belong to the repository's owner, so they show in that user's "My runs".
 - **Lists:** `GET /api/watchers` also shows stored watchers, with their `repoId`. A stored watcher that cannot run shows a `problem` sentence.
 - **Removed with their repository:** when a repository is removed, or its owner is deleted, its stored watchers are removed too.
-- **Not yet:** checks, labels and status comments still use the server's own `gh` sign-in. A private repository that only its own token can read shows a watcher error. The Watchers page lists stored watchers, but Edit, Disable and Delete work only on watchers from `config.yaml`.
+- **Sign-in:** a stored watcher talks to GitHub with its repository's own credential: the stored token, a GitHub App token limited to that repository, or the server's own `gh` login for the method `none`. With a token or the app, the server's login is never used, so one repository's watcher cannot see another. The same credential is used for the actions on its items under "Your turn". Watchers in `config.yaml` keep using the server's login.
+- **When the sign-in does not work** (missing, unreadable or refused, or the owner of a `none` repository is no admin), the watcher makes no GitHub call and its status says so in a plain sentence. It works again by itself at the next check once you fix the credential.
+- **Status comments:** a status comment is only edited by the account that wrote it. When a watcher's account changes (for example a new token of another account), it posts a new status comment and the old one stays as it is on open issues.
+- **Request limit:** a repository token or app has its own GitHub request limit. The limit the Foundry shows is that of the server's own login and the bot.
+- **Not yet:** the Watchers page lists stored watchers, but Edit, Disable and Delete work only on watchers from `config.yaml`.
 
 The watchers are kept in `repo-watchers.json` in the data folder.
 
