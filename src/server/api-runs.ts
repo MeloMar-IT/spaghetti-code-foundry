@@ -87,8 +87,11 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (!id && method === "POST") {
     const body = await readJson(req);
+    if (body.likeUser !== undefined && typeof body.likeUser !== "boolean") throw new HttpError(400, "likeUser must be true or false");
+    // An admin who asks for it starts under the rules of a user.
+    const asUser = !admin || body.likeUser === true;
     // What a user may never do is refused first, before any other field is looked at.
-    if (!admin) {
+    if (asUser) {
       if (body.yaml !== undefined) throw new HttpError(403, "only an admin can run a flow that is not saved");
       if (body.repo !== undefined && body.repo !== null && body.repo !== "") throw new HttpError(403, "only an admin can choose the folder");
     }
@@ -101,14 +104,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     let flow: Flow;
     let repo: string;
     let runVars = vars;
-    if (admin) {
+    if (!asUser) {
       repo = resolve(str(body, "repo", false) || opts.repo);
       if (!existsSync(repo)) throw new HttpError(400, `repo not found: ${repo}`);
       flow = typeof body.yaml === "string"
         ? parseFlow(body.yaml)
         : parseFlow(readFileSync(resolveFlowPath(str(body, "flow"), opts.repo), "utf8"));
     } else {
-      // A user starts a published, saved flow in the server's default folder, on one of their own repositories.
+      // A user (or an admin who starts like one) starts a published, saved flow in the server's default folder, on one of their own repositories.
       const name = str(body, "flow");
       if (!NAME_RE.test(name)) throw new HttpError(400, "invalid flow name");
       // The architect's flows are started from a refinement session only, also when an admin published a copy of them.
@@ -143,7 +146,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     }
     const lockKey = runVars.github_repo && (runVars.issue || runVars.pr) ? `${runVars.github_repo}#${runVars.issue || runVars.pr}` : undefined;
     const runId = scheduler.submit(
-      { kind: "run", flow, task, repo, vars: runVars, ...(admin ? {} : { frozenVars: true }) },
+      { kind: "run", flow, task, repo, vars: runVars, ...(asUser ? { frozenVars: true } : {}) },
       { lockKey, source: "ui", owner: user.id, queuedBy: user.id },
     );
     auditAction(ctx.diagLog, user.id, "run-start", runId);

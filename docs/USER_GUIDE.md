@@ -138,6 +138,12 @@ Pick a flow on the left, press **▶ Run**, describe the task and start it.
 
 When a run finishes, its branch stays in your repository. Review it, merge it, or delete it.
 
+### Start work as an admin
+
+An admin can also start a run the way a user does. Open **Start work** (`#/start`, before **Runs**). It lists the published flows and your repositories (My repositories), and asks for the task and the inputs the flow publishes. If no flow is published you see "No published flows yet. Publish one in the flow editor." After **Start** you land on the run page. The run is yours and shows in **Runs** with you as owner.
+
+The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **▶ Run** button of the flow editor works as before.
+
 ---
 
 ## 3. Follow, approve and resume runs
@@ -1995,7 +2001,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/providers/test` | yes | no | test a provider |
 | `GET /api/evals` | yes | no | eval reports |
 | `GET /api/stats` | yes | no | statistics |
-| `GET /api/flows` | yes | yes | list flows (a user sees the published flows only) |
+| `GET /api/flows` | yes | yes | list flows (a user sees the published flows only; an admin gets that list with `?published=1`) |
 | `GET /api/flows/:name` | yes | no | read a flow |
 | `PUT /api/flows/:name` | yes | no | save a flow |
 | `DELETE /api/flows/:name` | yes | no | delete a flow |
@@ -2007,7 +2013,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/queue` | yes | yes | the queue (a user sees their own queued runs and how many are ahead) |
 | `GET /api/runs` | yes | yes | list runs (a user sees their own) |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
-| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories) |
+| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session) |

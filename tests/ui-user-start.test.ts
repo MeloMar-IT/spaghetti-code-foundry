@@ -39,7 +39,10 @@ let release: () => void;
 let releaseRepos: () => void;
 
 const fakeApi = () => ({
-  flows: async () => data.flows,
+  flows: async (p?: unknown) => {
+    calls.flows.push(p);
+    return data.flows;
+  },
   repos: async () => {
     calls.repos++;
     if (data.holdRepos) await new Promise<void>((r) => (releaseRepos = r));
@@ -55,14 +58,14 @@ const fakeApi = () => ({
   },
 });
 
-async function open() {
+async function open(admin?: boolean) {
   main = document.createElement("div") as unknown as FakeElement;
-  const cleanup = await ui.renderStart(main, { a: fakeApi(), dialog, go });
+  const cleanup = await ui.renderStart(main, { a: fakeApi(), dialog, go, ...(admin === undefined ? {} : { admin }) });
   return cleanup as () => void;
 }
 
 beforeEach(() => {
-  calls = { repos: 0, start: [] };
+  calls = { repos: 0, start: [], flows: [] };
   go = vi.fn();
   dialog = vi.fn(async () => undefined);
   data = { flows: [], repos: [] };
@@ -452,5 +455,38 @@ describe("ui/style.css", () => {
     const form = css.slice(css.indexOf(".start-form { display: grid;"));
     expect(form.slice(0, form.indexOf("}"))).not.toContain("grid-template-columns");
     expect(css).toMatch(/\.start-form fieldset \{[^}]*min-width: 0/);
+  });
+});
+
+describe("renderStart: admin", () => {
+  it("asks for the published list only as an admin", async () => {
+    await open(true);
+    expect(calls.flows).toEqual([true]);
+    await open();
+    expect(calls.flows).toEqual([true, undefined]);
+  });
+
+  it("says to publish a flow when there are none", async () => {
+    await open(true);
+    expect(main.textContent).toContain(ui.NO_FLOWS_ADMIN);
+    expect(main.textContent).not.toContain(ui.NO_FLOWS);
+  });
+
+  it("sends likeUser: true and goes to the run page", async () => {
+    data.flows = [flow("a", [field("x")])];
+    await open(true);
+    await submit(main);
+    expect(calls.start).toEqual([{ flow: "a", task: "", vars: { x: "" }, likeUser: true }]);
+    expect(go).toHaveBeenCalledWith("#/runs/r1");
+  });
+
+  it("passes admin to the repository dialog", async () => {
+    data.flows = [flow("a", [field("github_repo")])];
+    for (const admin of [true, false]) {
+      await open(admin);
+      one(main, "button", { type: "button", "data-focus": "add-repo" }).fire("click");
+      await flush();
+      expect(dialog).toHaveBeenLastCalledWith({ admin, options: expect.anything() });
+    }
   });
 });

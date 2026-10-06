@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { userCommand, type UserIo } from "../src/auth/cli.js";
 import { createUser } from "../src/auth/users.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -502,5 +502,84 @@ describe("runs of older versions", () => {
     const done = runJson(s, "20260101-000000-live");
     expect(done.status).toBe("succeeded");
     expect(done.history.map((h: { id: string }) => h.id)).toEqual(["a"]);
+  });
+});
+
+describe("an admin starts like a user", () => {
+  let s: Srv;
+  let admin: TestSession;
+  let ann: TestSession;
+  const PICK = `name: pick
+workspace: empty
+vars:
+  github_repo: ""
+  x: flow
+publish:
+  enabled: true
+  vars:
+    github_repo: {mode: input}
+steps:
+  - {id: a, type: shell, run: "true"}
+`;
+  const start = (who: TestSession, body: unknown) => call(s, who, "POST", "/api/runs", body);
+
+  beforeAll(async () => {
+    s = await boot(prepare());
+    admin = await signInAs(s.base);
+    ann = await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
+    expect((await call(s, admin, "POST", "/api/repos", { name: "adm/app" })).status).toBe(201);
+    expect((await call(s, ann, "POST", "/api/repos", { name: "acme/app" })).status).toBe(201);
+    await saveFlow(s, admin, "pick", PICK);
+  });
+
+  it("starts on an own repository, owned by the admin", async () => {
+    const r = await start(admin, { flow: "pick", task: "t", vars: { github_repo: "adm/app" }, likeUser: true });
+    expect(r.status, r.text).toBe(201);
+    const id = r.json().runId as string;
+    await s.ctx.scheduler.wait(id);
+    expect(runJson(s, id)).toMatchObject({ owner: admin.user.id, source: "ui", repo: s.repo, vars: { github_repo: "adm/app" } });
+    const list = (await call(s, admin, "GET", "/api/runs")).json() as { runId: string; ownerName?: string }[];
+    expect(ownerRows(list)[id]).toBe("Test Admin");
+  });
+
+  it("freezes the variables", async () => {
+    const spy = vi.spyOn(s.ctx.scheduler, "submit");
+    try {
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "adm/app" }, likeUser: true })).status).toBe(201);
+      expect(spy.mock.calls.at(-1)![0]).toMatchObject({ kind: "run", frozenVars: true });
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "adm/app" } })).status).toBe(201);
+      expect(spy.mock.calls.at(-1)![0]).not.toHaveProperty("frozenVars");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("refuses a foreign repository, but only when asked to start like a user", async () => {
+    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" }, likeUser: true })).status).toBe(403);
+    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" } })).status).toBe(201);
+  });
+
+  it("refuses an unknown or architect flow, even a published copy", async () => {
+    expect((await start(admin, { flow: "no-such-flow", likeUser: true })).status).toBe(404);
+    await saveFlow(s, admin, "refine-brief", PICK.replace("name: pick", "name: refine-brief"));
+    expect((await start(admin, { flow: "refine-brief", vars: { github_repo: "adm/app" }, likeUser: true })).status).toBe(404);
+  });
+
+  it("refuses a likeUser that is not true or false", async () => {
+    for (const likeUser of ["yes", 1, null]) {
+      const r = await start(admin, { flow: "pick", likeUser });
+      expect([r.status, r.json().error]).toEqual([400, "likeUser must be true or false"]);
+    }
+    expect((await start(ann, { yaml: PICK, likeUser: "yes" })).status).toBe(400);
+  });
+
+  it("writes the run-start audit line", async () => {
+    const r = await start(admin, { flow: "pick", vars: { github_repo: "adm/app" }, likeUser: true });
+    const id = r.json().runId as string;
+    const audit = (await call(s, admin, "GET", "/api/audit?action=run-start")).json() as { entries: { actor: unknown; target: unknown }[] };
+    expect(audit.entries).toContainEqual(expect.objectContaining({
+      actor: { type: "account", id: admin.user.id, name: "Test Admin" },
+      target: { type: "text", text: id },
+    }));
   });
 });
