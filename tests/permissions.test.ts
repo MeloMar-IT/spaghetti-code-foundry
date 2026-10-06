@@ -831,3 +831,40 @@ describe("repositories over HTTP", () => {
     expect((await call(ann, "GET", "/api/repos")).status).toBe(200);
   });
 });
+
+describe("security review", () => {
+  const start = (who: TestSession, body: unknown) => call(who, "POST", "/api/runs", body);
+
+  it("resume with from is for admins only", async () => {
+    const mine = await waitingRun(ann);
+    const r = await call(ann, "POST", `/api/runs/${mine}/resume`, { from: "say" });
+    expect([r.status, r.error()]).toEqual([403, "only an admin can restart a run from a step"]);
+    const theirs = await waitingRun(admin);
+    expect((await call(admin, "POST", `/api/runs/${theirs}/resume`, { from: "say" })).status).toBe(202);
+    await ctx.scheduler.idle();
+  });
+
+  it("a flow that works in the server's folder is not for users", async () => {
+    expect((await call(admin, "PUT", "/api/flows/ip", { yaml: QUICK("ip", "", "inplace"), scope: "repo" })).status).toBe(200);
+    expect((await start(ann, { flow: "ip" })).status).toBe(403);
+    expect((await start(admin, { flow: "ip", likeUser: true })).status).toBe(403);
+    expect((await start(admin, { flow: "ip" })).status).toBe(201);
+    await ctx.scheduler.idle();
+    for (const [who, path] of [[ann, "/api/flows"], [admin, "/api/flows?published=1"]] as const) {
+      const list = (await call(who, "GET", path)).json() as { name: string }[];
+      expect(list.map((f) => f.name)).not.toContain("ip");
+      expect(list.map((f) => f.name)).toContain("walk");
+    }
+  });
+
+  it("the changes of such a run are for admins only", async () => {
+    const mine = await waitingRun(ann);
+    const copy = "inplace-run";
+    mkdirSync(join(runsDir, copy));
+    const j = runJson(mine);
+    writeFileSync(join(runsDir, copy, "run.json"), JSON.stringify({ ...j, runId: copy, runDir: join(runsDir, copy), flowDef: { ...j.flowDef, workspace: "inplace" } }));
+    expect((await call(ann, "GET", `/api/runs/${copy}/diff`)).status).toBe(403);
+    expect((await call(admin, "GET", `/api/runs/${copy}/diff`)).status).toBe(200);
+    expect((await call(ann, "GET", `/api/runs/${mine}/diff`)).status).toBe(200);
+  });
+});
