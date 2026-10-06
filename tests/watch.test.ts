@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { StatusComments } from "../src/queue/status-comment.js";
 import { parseFlow } from "../src/flow/load.js";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { BOT_MARKER, BOT_MARKERS, commentsAfter, isBot } from "../src/github.js";
-import { loadRun, saveRun } from "../src/engine/state.js";
+import { loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
+import { issueStatesDir, knownIssueState, readIssueStates, saveIssueStates } from "../src/issue-states.js";
+import { WatcherManager } from "../src/queue/watchers.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { failureComment, parseInterval, Watcher } from "../src/queue/watcher.js";
 import { watcherProblem } from "../src/server/next.js";
@@ -246,6 +248,249 @@ describe("watcher", () => {
     expect(ended.reason).toBe("the issue was closed on GitHub — nothing left to do");
     // An issue that is open (just not labelled) keeps its waiting run.
     delete process.env.FAKE_GH_FRESH;
+  });
+
+  describe("issue states", () => {
+    const runs = () => join(gh.tmp, "runs");
+    const graphql = () => gh.ghLog().split("\n").filter((l) => l.startsWith("gh api graphql")).length;
+    let template: RunSummary | undefined;
+    afterEach(() => {
+      template = undefined;
+      for (const k of ["FAKE_GH_FRESH", "FAKE_GH_FAIL", "FAKE_GH_FAIL_TEXT", "FAKE_GH_GRAPHQL_MAX", "FAKE_GH_GRAPHQL_FAIL_AFTER", "FAKE_GH_CLOSED_ISSUES", "FAKE_GH_HOLD", "FAKE_GH_HOLD_ON"]) delete process.env[k];
+    });
+    /** Writes a run folder for an issue (a copy of one real run), without running anything. */
+    const plant = (issue: string, status: RunSummary["status"] = "failed", repo = "acme/app", tag = "") => {
+      template ??= (() => {
+        const t = loadRun(runs(), runFor("4").runId)!;
+        return t;
+      })();
+      const runId = `plant-${repo.replace("/", "-")}-${issue}-${status}${tag}`;
+      const runDir = join(runs(), runId);
+      mkdirSync(runDir, { recursive: true });
+      saveRun({ ...template, runId, runDir, status, vars: { ...template.vars, github_repo: repo, issue } });
+      return runId;
+    };
+    /** A real run for #4 that stops with questions (a template for planted runs); #4 stays in the open list. */
+    const prepare = async (w: Watcher) => {
+      process.env.FAKE_PLAN = "Which DB?\nPLAN_STATUS: NEEDS_INFO";
+      issues([4]);
+      await w.tick();
+      await settle();
+      expect(runFor("4").status).toBe("stopped");
+      issues([4, "factory:needs-info"]); // it waits for answers
+      await w.tick(); // the run exists now: this check stores its issue
+      await settle();
+      expect(scheduler.list().filter((s) => s.vars.issue === "4")).toHaveLength(1);
+    };
+
+    it("asks GitHub once for the issues that are not in the open list, and stores each state", async () => {
+      const w = watcher();
+      await prepare(w);
+      expect(graphql()).toBe(0); // #4 is in the open list: open, without asking
+      expect(knownIssueState("acme/app", 4)).toBe("open");
+      plant("6");
+      issues();
+      process.env.FAKE_GH_FRESH = JSON.stringify([{ number: 4, state: "CLOSED" }]);
+      await w.tick();
+      await settle();
+      expect(w.status.lastError).toBeUndefined();
+      expect(graphql()).toBe(1);
+      expect(runFor("4").status).toBe("cancelled"); // endWaitsOfClosedIssues is unchanged; cancelled still counts
+      expect(knownIssueState("acme/app", 4)).toBe("closed");
+      expect(knownIssueState("acme/app", 6)).toBe("open");
+    });
+
+    it("makes no call without candidates, and still stores the entry", async () => {
+      issues();
+      const w = watcher();
+      await w.tick();
+      expect(graphql()).toBe(0);
+      expect(w.status.lastError).toBeUndefined();
+      const r = readIssueStates("acme/app")!;
+      expect(r.checkedAt).toBeDefined();
+      expect(r.issues).toEqual({});
+    });
+
+    it("a failed batch changes no state, sets failedAt and shows as the watcher error, also next to a tidy error", async () => {
+      const w = watcher();
+      await prepare(w);
+      plant("6");
+      issues();
+      await w.tick();
+      await settle();
+      expect(knownIssueState("acme/app", 6)).toBe("open");
+      const before = readIssueStates("acme/app")!;
+      expect(before.failedAt).toBeUndefined();
+      process.env.FAKE_GH_FAIL = "api graphql";
+      process.env.FAKE_GH_FAIL_TEXT = "HTTP 502";
+      plant("7");
+      await w.tick();
+      expect(w.status.lastError).toMatch(/^checking closed issues: /);
+      expect(w.status.holds).toBeDefined();
+      const after = readIssueStates("acme/app")!;
+      expect(after.issues).toEqual(before.issues);
+      expect(after.failedAt).toBeDefined();
+      expect(knownIssueState("acme/app", 6)).toBe("open");
+      expect(knownIssueState("acme/app", 7)).toBe("unknown");
+      // Both the tidy scan and the batch fail: the error is still the batch's.
+      delete process.env.FAKE_GH_FAIL;
+      delete process.env.FAKE_GH_FAIL_TEXT;
+      process.env.FAKE_GH_GRAPHQL_FAIL_AFTER = "0";
+      process.env.FAKE_GH_CLOSED_ISSUES = JSON.stringify([{ number: 9, title: "nine", labels: [{ name: "factory:working" }], state: "CLOSED" }]);
+      process.env.FAKE_GH_FAIL = "issue edit";
+      await w.tick();
+      expect(w.status.lastError).toMatch(/^checking closed issues: /);
+      // The next good check clears error and failedAt.
+      delete process.env.FAKE_GH_FAIL;
+      delete process.env.FAKE_GH_GRAPHQL_FAIL_AFTER;
+      delete process.env.FAKE_GH_CLOSED_ISSUES;
+      await w.tick();
+      expect(w.status.lastError).toBeUndefined();
+      expect(readIssueStates("acme/app")!.failedAt).toBeUndefined();
+      expect(knownIssueState("acme/app", 7)).toBe("open");
+    });
+
+    it("prunes an issue whose runs are all finished", async () => {
+      const w = watcher();
+      await prepare(w);
+      const id = plant("6");
+      issues();
+      await w.tick();
+      await settle();
+      expect(knownIssueState("acme/app", 6)).toBe("open");
+      const s = loadRun(runs(), id)!;
+      saveRun({ ...s, status: "succeeded" });
+      await w.tick();
+      await settle();
+      expect(knownIssueState("acme/app", 6)).toBeUndefined();
+    });
+
+    it("takes only failed, stopped, waiting and cancelled runs of this repository with a numeric issue", async () => {
+      const w = watcher();
+      await prepare(w);
+      for (const st of ["failed", "stopped", "waiting", "cancelled"] as const) plant(String({ failed: 11, stopped: 12, waiting: 13, cancelled: 14 }[st]), st);
+      plant("15", "succeeded");
+      plant("16", "running"); // no live process: the scheduler reports it as failed (interrupted), so it counts
+      plant("17", "failed", "other/repo");
+      plant("abc", "failed");
+      plant("0018", "failed");
+      plant("0", "failed");
+      plant("2147483647", "failed", "acme/app", "-max");
+      plant("2147483648", "failed", "acme/app", "-over");
+      issues();
+      process.env.FAKE_GH_FRESH = JSON.stringify([{ number: 11, state: "CLOSED" }]);
+      await w.tick();
+      await settle();
+      const stored = Object.keys(readIssueStates("acme/app")!.issues).map(Number).sort((a, b) => a - b);
+      expect(stored).toEqual([4, 11, 12, 13, 14, 16, 18, 2147483647]); // not 15 (succeeded), 17 (other repository), "abc", 0 or 2147483648
+      expect(knownIssueState("acme/app", 11)).toBe("closed");
+      expect(knownIssueState("acme/app", 18)).toBe("open");
+    });
+
+    it("asks about more than 100 issues in one call, and splits above 500", async () => {
+      const w = watcher();
+      await prepare(w);
+      for (let n = 101; n <= 250; n++) plant(String(n));
+      issues();
+      await w.tick();
+      await settle();
+      expect(w.status.lastError).toBeUndefined();
+      expect(graphql()).toBe(1);
+      expect(Object.keys(readIssueStates("acme/app")!.issues)).toHaveLength(151);
+      for (let n = 251; n <= 1105; n++) plant(String(n));
+      await w.tick();
+      await settle();
+      expect(graphql()).toBe(1 + 3); // 1,006 numbers not in the open list: 500 + 500 + 6 (#4 is cancelled by now, still a candidate)
+      expect(Object.keys(readIssueStates("acme/app")!.issues)).toHaveLength(1006);
+    }, 120_000);
+
+    it("a call that is too large changes no state", async () => {
+      const w = watcher();
+      await prepare(w);
+      for (let n = 101; n <= 250; n++) plant(String(n));
+      issues();
+      await w.tick();
+      await settle();
+      const before = readIssueStates("acme/app")!;
+      process.env.FAKE_GH_GRAPHQL_MAX = "100";
+      await w.tick();
+      expect(w.status.lastError).toMatch(/^checking closed issues: /);
+      expect(readIssueStates("acme/app")!.issues).toEqual(before.issues);
+    }, 120_000);
+
+    it("a check that was given up writes nothing", async () => {
+      const w = watcher();
+      await prepare(w);
+      for (let n = 101; n <= 700; n++) plant(String(n));
+      issues();
+      const hold = join(gh.tmp, "hold");
+      writeFileSync(hold, "");
+      process.env.FAKE_GH_HOLD = hold;
+      process.env.FAKE_GH_HOLD_ON = "api graphql";
+      w.checkTimeoutMs = 2_000;
+      await w.tick();
+      expect(w.status.lastError).toMatch(/given up/);
+      const callsAtTimeout = graphql();
+      rmSync(hold);
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(graphql()).toBe(callsAtTimeout); // no second chunk
+      expect(readIssueStates("acme/app")?.issues["101"]).toBeUndefined();
+    }, 120_000);
+
+    describe("manager", () => {
+      const REPO = "acme/app";
+      const entry = (id: string, over: Record<string, unknown> = {}) => ({ id, github_repo: REPO, label: "Factory_go", flow: oldFlowFor({}), every: "1h", ...over });
+      const manage = (list: Record<string, unknown>[]) => {
+        let config = ConfigSchema.parse({ protected_branches: [], watchers: list });
+        const m = new WatcherManager({ scheduler, runsDir: runs(), repo: gh.tmp, config: () => config, log: (l) => lines.push(l) });
+        return { m, set: (l: Record<string, unknown>[]) => { config = ConfigSchema.parse({ protected_branches: [], watchers: l }); } };
+      };
+      const put = (repo = REPO) => saveIssueStates(repo, new Map([[4, "closed"]]));
+
+      it("drops the entry when the last issues watcher of a repository is disabled or removed", async () => {
+        issues();
+        const { m, set } = manage([entry("a")]);
+        put();
+        m.sync();
+        expect(knownIssueState(REPO, 4)).toBe("closed"); // watched: kept
+        set([entry("a", { enabled: false })]);
+        m.sync();
+        expect(knownIssueState(REPO, 4)).toBeUndefined();
+        expect(readdirSync(issueStatesDir())).toEqual([]);
+        put();
+        set([]);
+        m.sync();
+        expect(knownIssueState(REPO, 4)).toBeUndefined();
+        m.stopAll();
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      it("keeps the entry while another enabled issues watcher, also with the same id, names the repository", async () => {
+        issues();
+        const { m, set } = manage([entry("a"), entry("b")]);
+        m.sync();
+        put();
+        set([entry("a", { enabled: false }), entry("b")]);
+        m.sync();
+        expect(knownIssueState(REPO, 4)).toBe("closed");
+        set([entry("same", { enabled: false }), entry("same")]); // duplicate ids are allowed
+        m.sync();
+        expect(knownIssueState(REPO, 4)).toBe("closed");
+        m.stopAll(); // stopping does not drop
+        expect(knownIssueState(REPO, 4)).toBe("closed");
+        await new Promise((r) => setTimeout(r, 300));
+      });
+
+      it("drops an entry of a repository no watcher names, and a changed repository", async () => {
+        issues();
+        const { m } = manage([entry("a")]);
+        put("other/repo");
+        m.sync();
+        expect(knownIssueState("other/repo", 4)).toBeUndefined();
+        m.stopAll();
+        await new Promise((r) => setTimeout(r, 300));
+      });
+    });
   });
 
   it("asks for info, then resumes the same run once someone answers", async () => {

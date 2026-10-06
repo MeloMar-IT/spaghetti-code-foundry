@@ -281,3 +281,55 @@ export async function createLabelIfMissing(repo: string, name: string, color: st
     throw e;
   }
 }
+
+/** At most this many issue numbers go in one GraphQL call; more go in sequential calls. */
+export const ISSUE_STATE_BATCH = 500;
+
+/**
+ * The state of each issue, in one GraphQL call per 500 numbers. Rejects when a call fails, GitHub reports any
+ * error (also for a deleted issue or a pull request), an issue is missing or has an unknown state.
+ * `before` runs ahead of every call; when it throws, nothing more is asked.
+ */
+export async function issueStates(repo: string, numbers: number[], timeoutMs?: number, before?: () => void): Promise<Map<number, "open" | "closed">> {
+  const slash = repo.indexOf("/");
+  const owner = repo.slice(0, Math.max(slash, 0));
+  const name = repo.slice(slash + 1);
+  if (slash < 0 || !owner || !name) throw new Error(`not a repository: ${repo}`);
+  const wanted = [...new Set(numbers.filter((n) => Number.isInteger(n) && n > 0 && n <= 2147483647))];
+  const out = new Map<number, "open" | "closed">();
+  for (let i = 0; i < wanted.length; i += ISSUE_STATE_BATCH) {
+    before?.();
+    const chunk = wanted.slice(i, i + ISSUE_STATE_BATCH);
+    // Only integers are written into the query text; the repository goes in as variables.
+    const fields = chunk.map((n) => `i${n}: issue(number: ${n}) { state }`).join(" ");
+    const query = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${fields}}}`;
+    const text = await gh(["api", "graphql", "--input", "-"], undefined, timeoutMs, JSON.stringify({ query, variables: { owner, name } }));
+    let body: { data?: { repository?: Record<string, { state?: unknown } | null> | null }; errors?: unknown[] };
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error("GitHub gave an answer that is not JSON");
+    }
+    if (Array.isArray(body.errors) && body.errors.length) {
+      const first = body.errors[0] as { message?: unknown };
+      throw new Error(`GitHub reported an error: ${typeof first?.message === "string" ? first.message : "unknown"}`);
+    }
+    const repoData = body.data?.repository;
+    if (!repoData || typeof repoData !== "object") throw new Error(`GitHub gave no repository for ${repo}`);
+    for (const n of chunk) {
+      const s = repoData[`i${n}`]?.state;
+      const state = typeof s === "string" ? s.toLowerCase() : "";
+      if (state !== "open" && state !== "closed") throw new Error(`GitHub did not report issue #${n}`);
+      out.set(n, state);
+    }
+  }
+  return out;
+}
+
+/** The state of one issue. Rejects when it cannot be read. */
+export async function issueState(repo: string, issue: number, timeoutMs?: number): Promise<"open" | "closed"> {
+  if (!Number.isInteger(issue) || issue <= 0 || issue > 2147483647) throw new Error("not an issue number");
+  const s = (await issueStates(repo, [issue], timeoutMs)).get(issue);
+  if (!s) throw new Error(`GitHub did not report issue #${issue}`);
+  return s;
+}

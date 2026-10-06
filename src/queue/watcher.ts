@@ -3,7 +3,8 @@ import type { WatcherConfig } from "../config.js";
 import { loadRun, saveRun, spentToday, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
-import { canWrite, commentsAfter, ensureLabel, gh, ghJson, isBot, isStatusComment, issueComments, setLabels, type Comment, type Issue } from "../github.js";
+import { canWrite, commentsAfter, ensureLabel, gh, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, type Comment, type Issue } from "../github.js";
+import { markIssueCheckFailed, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { LABEL_WORDS } from "../words.js";
@@ -333,7 +334,10 @@ export class Watcher {
       await Promise.race([
         this.check(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`the check took longer than ${Math.round(this.checkTimeoutMs / 1000)}s and was given up`)), this.checkTimeoutMs);
+          timer = setTimeout(() => {
+            this.tickToken++; // the check that was given up must not write anything more
+            reject(new Error(`the check took longer than ${Math.round(this.checkTimeoutMs / 1000)}s and was given up`));
+          }, this.checkTimeoutMs);
         }),
       ]);
       if (token === this.tickToken) {
@@ -860,6 +864,8 @@ export class Watcher {
     let closedWhole = false;
     await this.tidyClosed(runs, holds, closed).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
     await this.endWaitsOfClosedIssues(new Set(issues.map((i) => i.number))).catch((e: Error) => { tidyError ??= e; });
+    let statesError: Error | undefined;
+    await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
     alive();
     const before = new Map((this.status.holds ?? []).map((h) => [holdKey(h), h.seen]));
@@ -874,8 +880,38 @@ export class Watcher {
     this.labelOff = offNow;
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped);
     // The closed-issue scan is part of the check: its failure is the check's error.
+    if (statesError) throw new Error(`checking closed issues: ${errorLine(statesError.message)}`); // first: this prefix is the contract
     if (tidyError) throw new Error(`tidying closed issues: ${errorLine(tidyError.message)}`);
     if (labelError) throw new Error(`correcting labels: ${errorLine(labelError.message)}`);
+  }
+
+  /** Stores which issues with an unfinished run are open or closed: one batched call for those not in the open list. */
+  private async checkIssueStates(open: Issue[], alive: () => void) {
+    const UNFINISHED = ["failed", "stopped", "waiting", "cancelled"];
+    const candidates = new Set<number>();
+    for (const b of this.d.scheduler.briefs()) {
+      if (b.githubRepo !== this.repo || !b.issue || !/^\d+$/.test(b.issue) || !UNFINISHED.includes(b.status)) continue;
+      const n = Number(b.issue); // "004" is issue 4
+      if (n >= 1 && n <= 2147483647) candidates.add(n);
+    }
+    const listed = new Set(open.map((i) => i.number));
+    const states = new Map<number, "open" | "closed">();
+    const ask: number[] = [];
+    for (const n of candidates) if (listed.has(n)) states.set(n, "open"); else ask.push(n);
+    try {
+      // alive() runs before every chunk, so a check that was given up asks and writes nothing more.
+      for (const [n, s] of await issueStates(this.repo, ask, 60_000, alive)) states.set(n, s);
+      alive();
+    } catch (e) {
+      try {
+        alive(); // a retired or given-up watcher writes nothing (its entry may just have been dropped)
+        markIssueCheckFailed(this.repo);
+      } catch {
+        // nothing to record
+      }
+      throw e;
+    }
+    saveIssueStates(this.repo, states);
   }
 
   /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
