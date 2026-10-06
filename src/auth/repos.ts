@@ -386,10 +386,11 @@ export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ow
  * Adds a repository. The record is written first and the token second, and a failed second write takes the record back,
  * so no token exists without a record. `ownerOk` says whether the account exists (default: it is in users.json).
  */
-export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string } = {}): PublicRepo {
+export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void } = {}): PublicRepo {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
   const { url, auth } = addPlan(input);
   return withAuthLock(() => {
+    opts.authorize?.(); // asked again under the lock: what was allowed before the lookup may be taken back since
     const file = addChecks(userId, url, opts);
     if (auth.method === "github-app") checkInstallationId(opts.installationId);
     // a failed key leaves both files as they were
@@ -434,7 +435,7 @@ export interface AuthChange {
   newKey?: unknown;
 }
 
-type AuthOpts = { ownerOk?: (userId: string) => boolean; installationId?: string };
+type AuthOpts = { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void };
 
 /** All checks of a change, and the record it would give. Inside the lock; writes nothing. */
 function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange, opts: AuthOpts, requireId: boolean) {
@@ -504,6 +505,7 @@ export function checkRepoAuth(userId: string, id: string, input: AuthChange, opt
 export function setRepoAuth(userId: string, id: string, input: AuthChange, opts: AuthOpts = {}): { repo: PublicRepo; oldKeysLeft: number; changed: boolean } {
   if ([input.method, input.username, input.token, input.url, input.newKey].every((v) => v === undefined)) throw badAuth("give a method, a user name, a token, an address or a new key");
   return withAuthLock(() => {
+    opts.authorize?.(); // asked again under the lock: what was allowed before the lookup may be taken back since
     const file = read();
     const { rec, next, auth, deploy, app, secret, credentialId } = authPlan(file, userId, id, input, opts, true);
     let oldKeysLeft = 0;

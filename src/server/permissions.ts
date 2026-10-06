@@ -86,6 +86,8 @@ export const RULES: Rule[] = [
   r("POST", "users/:id/link", "no", "a new set-password token for an account without a password"),
   r("POST", "users/:id/reset", "no", "take the password of an account away, end its sessions and give a one-time set-password token"),
   r("POST", "users/:id/unlock", "no", "remove the lock after too many wrong tries (a short wait for the address can remain)"),
+  r("GET", "users/:id/app-repos", "no", "the repositories an account may connect through the GitHub App"),
+  r("PUT", "users/:id/app-repos", "no", "set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none"),
   r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions and stored credentials"),
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),

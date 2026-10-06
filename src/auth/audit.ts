@@ -29,6 +29,7 @@ export const EVENT_ACTIONS = [
   "repo-change",
   "repo-remove",
   "repo-transfer",
+  "app-repos-change",
   "credential-add",
   "credential-remove",
   "flow-publish",

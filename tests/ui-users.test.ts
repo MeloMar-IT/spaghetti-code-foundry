@@ -29,6 +29,9 @@ let holdNext: boolean;
 let held: { release: () => void } | undefined;
 let heldGets: (() => void)[][];
 let clipboard: any;
+let appRepos: Record<string, string[]>;
+let appGets: number;
+let heldApp: (() => void)[] | undefined;
 let page: any;
 const realFetch = globalThis.fetch;
 
@@ -40,6 +43,9 @@ const user = (over: object = {}) => ({
 beforeEach(() => {
   users = [user({ id: "me", name: "Root", email: "root@example.com", role: "admin", runs: 0 }), user()];
   gets = 0;
+  appGets = 0;
+  heldApp = undefined;
+  appRepos = {};
   sent = [];
   answers = [];
   holdNext = false;
@@ -54,6 +60,13 @@ beforeEach(() => {
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (init.method === "GET" && url.endsWith("/app-repos")) {
+      appGets++;
+      const a = answers.shift();
+      if (heldApp) await new Promise<void>((r) => heldApp!.push(r));
+      if (a && a !== "throw") return reply({ error: a.error }, a.status);
+      return reply({ repos: appRepos[url.split("/")[3] ?? ""] ?? [] });
+    }
     if (init.method === "GET") {
       gets++;
       const snapshot = users.map((u) => ({ ...u }));
@@ -71,6 +84,7 @@ beforeEach(() => {
     if (answer === "throw") throw new TypeError("fetch failed");
     const id = url.split("/")[3] ?? "";
     const target = users.find((u) => u.id === id);
+    if (url.endsWith("/app-repos") && !answer) return reply({ repos: body.repos });
     const apply = () => {
       if (init.method === "PUT" && target) Object.assign(target, body);
       if (url.endsWith("/block") && target) target.status = "blocked";
@@ -151,15 +165,15 @@ describe("pure functions", () => {
     expect(ui.lastSignInText({ lastSignIn: new Date().toISOString() })).toBe("just now");
   });
   it("actionsFor", () => {
-    expect(ui.actionsFor(user())).toEqual(["edit", "reset", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "reset", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "link", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "reset", "unlock", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "reset", "unlock", "unblock", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "link", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "reset", "block", "view", "delete"]);
-    expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "reset", "block", "delete"]);
+    expect(ui.actionsFor(user())).toEqual(["edit", "app", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ status: "blocked" }))).toEqual(["edit", "app", "reset", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false }))).toEqual(["edit", "app", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ hasPassword: false, status: "blocked" }))).toEqual(["edit", "app", "link", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE }))).toEqual(["edit", "app", "reset", "unlock", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, status: "blocked" }))).toEqual(["edit", "app", "reset", "unlock", "unblock", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "app", "link", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "app", "reset", "block", "view", "delete"]);
+    expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "app", "reset", "block", "delete"]);
   });
   it("blockedLinkText", () => {
     expect(ui.blockedLinkText(user())).toBe("");
@@ -215,9 +229,9 @@ describe("the list", () => {
     expect(cells("Bob")[4]).toBe("never");
     expect(cells("Cy")[3]).toBe("no password yet");
     const labels = (n: string) => rowOf(n).all("button").map((b) => b.textContent);
-    expect(labels("Ann")).toEqual(["Edit", "Reset password", "Block", "View as user", "Delete"]);
-    expect(labels("Bob")).toEqual(["Edit", "Reset password", "Unblock", "View as user", "Delete"]);
-    expect(labels("Cy")).toEqual(["Edit", "New link", "Block", "View as user", "Delete"]);
+    expect(labels("Ann")).toEqual(["Edit", "App repositories", "Reset password", "Block", "View as user", "Delete"]);
+    expect(labels("Bob")).toEqual(["Edit", "App repositories", "Reset password", "Unblock", "View as user", "Delete"]);
+    expect(labels("Cy")).toEqual(["Edit", "App repositories", "New link", "Block", "View as user", "Delete"]);
     expect(labels("Root")).not.toContain("View as user");
     expect(main().all("input")).toHaveLength(0);
   });
@@ -399,6 +413,53 @@ describe("Unlock", () => {
     press(button(root(), "Unlock"));
     await flush();
     expect(errLine(root())[0]!.textContent).toBe("no such account");
+  });
+});
+
+describe("App repositories", () => {
+  it("turns the lines of the box into a list", () => {
+    expect(ui.appReposBody(" acme/app \n\n acme/* \r\n")).toEqual(["acme/app", "acme/*"]);
+    expect(ui.appReposBody("")).toEqual([]);
+  });
+
+  it("loads the list, sends the lines and says Saved", async () => {
+    appRepos.u1 = ["acme/one", "acme/*"];
+    await show();
+    await open("Ann", "App repositories");
+    expect(appGets).toBe(1);
+    expect(field(root(), "appRepos")!.value).toBe("acme/one\nacme/*");
+    expect(root().textContent).toContain("An empty list allows none");
+    expect(root().textContent).not.toContain("An admin is not limited");
+    field(root(), "appRepos")!.value = "acme/two\n\n  acme/three  ";
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent).toEqual([{ method: "PUT", url: "/api/users/u1/app-repos", body: { repos: ["acme/two", "acme/three"] } }]);
+    expect(root().children).toHaveLength(0);
+    expect(toastText()).toBe("Saved");
+  });
+
+  it("shows a server error in the dialog", async () => {
+    await show();
+    await open("Ann", "App repositories");
+    answers.push({ status: 400, error: 'entry 1 is not valid: write "owner/name" or "owner/*"' });
+    field(root(), "appRepos")!.value = "nonsense";
+    press(button(root(), "Save"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toContain("entry 1 is not valid");
+  });
+
+  it("toasts and opens no dialog when the list cannot be loaded", async () => {
+    await show();
+    answers.push({ status: 404, error: "no such account" });
+    await open("Ann", "App repositories");
+    expect(root().children).toHaveLength(0);
+    expect(toastText()).toBe("no such account");
+  });
+
+  it("tells that an admin is not limited", async () => {
+    await show();
+    await open("Root", "App repositories");
+    expect(root().textContent).toContain("An admin is not limited; the list counts only if the account becomes a user.");
   });
 });
 
@@ -624,6 +685,22 @@ describe("late answers", () => {
     wait.forEach((r) => r());
     await load;
     expect(main().textContent).toBe("");
+  });
+  it("opens no app-repositories dialog and shows no error when the page was left while the list loads", async () => {
+    for (const fail of [false, true]) {
+      const stop = await ui.renderUsers(main(), { me: "me", page });
+      heldApp = [];
+      const wait = heldApp;
+      if (fail) answers.push({ status: 404, error: "no such account" });
+      press(button(rowOf("Ann"), "App repositories"));
+      await flush();
+      stop(); // the person goes to another page
+      wait.forEach((r) => r());
+      await flush();
+      heldApp = undefined;
+      expect(root().children).toHaveLength(0);
+      expect(toastText()).toBe("");
+    }
   });
 });
 
