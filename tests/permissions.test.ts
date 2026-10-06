@@ -508,6 +508,66 @@ describe("starting a run as a user", () => {
   });
 });
 
+describe("starting a run like a user, as an admin", () => {
+  const start = (who: TestSession, body: unknown) => call(who, "POST", "/api/runs", body);
+  const saveFlow = async (name: string, yaml: string) => expect((await call(admin, "PUT", `/api/flows/${name}`, { yaml, scope: "repo" })).status).toBe(200);
+
+  beforeAll(async () => {
+    await saveFlow("lu-plain", QUICK("lu-plain"));
+    await saveFlow("lu-withrepo", QUICK("lu-withrepo", "vars:\n  github_repo: owner/repo\n", "empty", ["github_repo"]));
+    await saveFlow("lu-private", PRIVATE("lu-private"));
+  });
+
+  it("gives an admin the user's list with published=1", async () => {
+    const mine = await call(admin, "GET", "/api/flows?published=1");
+    expect(mine.status).toBe(200);
+    const list = mine.json() as { name: string }[];
+    for (const f of list) expect(Object.keys(f).sort()).toEqual(["description", "fields", "name", "title", "usesTask", "version"]);
+    expect(list.map((f) => f.name)).toContain("walk");
+    expect(list).toEqual((await call(ann, "GET", "/api/flows")).json());
+    expect((await call(ann, "GET", "/api/flows?published=1")).json()).toEqual((await call(ann, "GET", "/api/flows")).json());
+    for (const v of ["0", "true"]) {
+      const all = (await call(admin, "GET", `/api/flows?published=${v}`)).json() as { path?: string; scope?: string }[];
+      expect(all.length).toBeGreaterThan(0);
+      for (const f of all) expect(f).toHaveProperty("path");
+    }
+  });
+
+  it("refuses yaml and a folder", async () => {
+    const y = await start(admin, { yaml: QUICK("x"), likeUser: true });
+    expect([y.status, y.error()]).toEqual([403, "only an admin can run a flow that is not saved"]);
+    const r = await start(admin, { flow: "lu-plain", repo: tmp, likeUser: true });
+    expect([r.status, r.error()]).toEqual([403, "only an admin can choose the folder"]);
+  });
+
+  it("finds published flows only", async () => {
+    const r = await start(admin, { flow: "lu-private", likeUser: true });
+    expect([r.status, r.error()]).toEqual([404, "flow not found"]);
+    expect((await start(admin, { flow: "lu-private" })).status).toBe(201);
+  });
+
+  it("keeps to the inputs and to own repositories", async () => {
+    const foreign = await start(admin, { flow: "lu-withrepo", vars: { github_repo: "acme/app" }, likeUser: true });
+    expect([foreign.status, foreign.error()]).toEqual([403, '"acme/app" is not one of your repositories']);
+    const set = await start(admin, { flow: "lu-plain", vars: { github_repo: "x/y" }, likeUser: true });
+    expect([set.status, set.error()]).toEqual([403, 'you cannot set the var "github_repo"']);
+  });
+
+  it("wants likeUser to be true or false", async () => {
+    for (const likeUser of ["yes", 1, null]) {
+      const r = await start(admin, { flow: "lu-plain", likeUser });
+      expect([r.status, r.error()]).toEqual([400, "likeUser must be true or false"]);
+    }
+    expect((await start(ann, { yaml: QUICK("x"), likeUser: "yes" })).status).toBe(400);
+  });
+
+  it("changes nothing for a user, and nothing for likeUser: false", async () => {
+    expect((await start(ann, { yaml: QUICK("x"), likeUser: true })).status).toBe(403);
+    expect((await start(ann, { flow: "lu-plain", likeUser: true })).status).toBe(201);
+    expect((await start(admin, { yaml: QUICK("inline2", "", "inplace"), repo: tmp, likeUser: false })).status).toBe(201);
+  });
+});
+
 describe("a role change", () => {
   it("a demoted admin loses admin rights on the next call", async () => {
     const dana = await signInAs(base, { name: "Dana", email: "dana@example.com", role: "admin" });

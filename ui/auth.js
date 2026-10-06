@@ -245,8 +245,7 @@ export function userPage(hash) {
 export function otherDisplay(user, display, hash) {
   const admin = isAdmin(user);
   if (admin === (display === "admin")) return "";
-  // the admin display has no Start work page
-  return (admin ? "/" : "/user/") + (isUserHash(hash) && !(admin && hash === "#/start") ? hash : "");
+  return (admin ? "/" : "/user/") + (isUserHash(hash) ? hash : "");
 }
 
 /**

@@ -32,7 +32,7 @@ export const api = {
   signOut: () => req("DELETE", "/api/session"),
   setup: (name, email, password) => req("POST", "/api/setup", { name, email, password }),
   info: () => req("GET", "/api/info"),
-  flows: () => req("GET", "/api/flows"),
+  flows: (published) => req("GET", published ? "/api/flows?published=1" : "/api/flows"),
   flow: (name) => req("GET", `/api/flows/${enc(name)}`),
   saveFlow: (name, yaml, scope) => req("PUT", `/api/flows/${enc(name)}`, { yaml, scope }),
   deleteFlow: (name) => req("DELETE", `/api/flows/${enc(name)}`),
