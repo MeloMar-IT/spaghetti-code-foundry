@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { briefsOf } from "./helpers/briefs.js";
 import { ConfigSchema } from "../src/config.js";
 import { saveFindings } from "../src/monitor/findings.js";
 import { saveGuard, switchStories } from "../src/monitor/guard.js";
@@ -9,7 +10,7 @@ import { markerHash } from "../src/monitor/story.js";
 import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
 import { TurnNotifier } from "../src/server/notifier.js";
-import { allNext } from "../src/server/next.js";
+import { allNext, collectNext, knownRuns } from "../src/server/next.js";
 import { dismissTurn, turnFor } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
 
@@ -36,7 +37,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, o.listed ?? n).slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
-      briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
+      briefs: () => briefsOf(runs),
       queue: () => ({ pending: [], active: [] }),
     },
     watchers: { tracked: () => o.tracked ?? [], statuses: () => o.statuses ?? [] },
@@ -109,6 +110,83 @@ describe("Your turn runs", () => {
     const oldWaiting = run("ow", { status: "waiting", source: "ui", waiting: { stepId: "gate", message: "ok?", since: ago(40) }, startedAt: ago(40) });
     const oldFailed = run("of", { source: "ui", finishedAt: ago(3) });
     expect(ids([...fresh, oldWaiting, oldFailed]).sort()).toEqual(["of", "ow"]);
+  });
+
+  describe("an old run that a newer run replaced", () => {
+    const unrelated = (n = 250) => Array.from({ length: n }, (_, i) => run(`s${i}`, { status: "succeeded", reason: undefined, source: "ui", startedAt: ago(10), finishedAt: ago(10) }));
+    const work = { github_repo: "acme/app", issue: "7" };
+    const newer = (over: Record<string, unknown> = {}) => run("nw", { flow: "issue-gitflow", status: "succeeded", reason: undefined, source: "ui", vars: work, startedAt: ago(5), finishedAt: ago(5), ...over });
+    const oldWaiting = () => run("ow", { status: "waiting", source: "ui", vars: work, waiting: { stepId: "gate", message: "ok?", since: ago(40) }, startedAt: ago(40) });
+
+    it("is not listed when 250 other runs lie between", () => {
+      expect(ids([newer({ startedAt: ago(0.05), finishedAt: ago(0.05) }), ...unrelated(), oldWaiting()])).not.toContain("ow");
+    });
+
+    it("is not listed when both runs are older than the newest 250", () => {
+      expect(ids([...unrelated(), newer(), oldWaiting()])).not.toContain("ow");
+    });
+
+    it("is listed when no newer run exists", () => {
+      const out = items(stub({ config: cfg([issuesWatcher]), runs: [...unrelated(), oldWaiting()] }));
+      expect(out).toMatchObject([{ next: { kind: "approval", runId: "ow" } }]);
+    });
+
+    it("is listed when the newer run is of another issue or repository", () => {
+      expect(ids([...unrelated(), newer({ vars: { ...work, issue: "8" } }), oldWaiting()])).toContain("ow");
+      expect(ids([...unrelated(), newer({ vars: { ...work, github_repo: "other/app" } }), oldWaiting()])).toContain("ow");
+    });
+
+    it("keeps the newest run in the list", () => {
+      const waitingNew = run("nw", { status: "waiting", source: "ui", vars: work, waiting: { stepId: "gate", message: "ok?", since: ago(5) }, startedAt: ago(5) });
+      const oldDone = run("od", { flow: "issue-gitflow", status: "succeeded", reason: undefined, source: "ui", vars: work, startedAt: ago(40), finishedAt: ago(40) });
+      expect(ids([waitingNew, ...unrelated(), oldDone])).toContain("nw");
+    });
+
+    it("ties go to the first run in the list", () => {
+      const a = run("a", { vars: work, source: "ui", startedAt: ago(3), finishedAt: ago(3) });
+      const b = run("b", { vars: work, source: "ui", startedAt: ago(3), finishedAt: ago(3) });
+      const ctx = stub({ config: cfg([issuesWatcher]), runs: [a, b] });
+      const next = collectNext(ctx, knownRuns(ctx)).next;
+      expect([next(a).kind, next(b).kind]).not.toContain(undefined);
+      expect(next(a).kind).not.toBe("superseded");
+      expect(next(b).kind).toBe("superseded");
+    });
+
+    it.each([["pr", { pr: "12" }], ["ci_run", { ci_run: "99" }]])("holds for a %s too", (_n, extra) => {
+      const vars = { github_repo: "acme/app", ...extra };
+      const old = run("old", { vars, status: "stopped", source: "ui", startedAt: ago(40), finishedAt: ago(40) });
+      const nw = run("nw", { vars, status: "succeeded", reason: undefined, source: "ui", startedAt: ago(5), finishedAt: ago(5) });
+      const ctx = stub({ config: cfg([issuesWatcher]), runs: [nw, ...unrelated(), old] });
+      expect(collectNext(ctx, knownRuns(ctx)).next(old).kind).toBe("superseded");
+    });
+
+    it("builds the page without reading the 250 other runs", () => {
+      const runs = [...unrelated(), newer(), oldWaiting()];
+      const base = stub({ config: cfg([issuesWatcher]), runs });
+      const gets: string[] = [];
+      let biggest = 0;
+      const sched = base.scheduler as unknown as { list: (n?: number) => unknown; get: (id: string) => unknown };
+      const list = sched.list.bind(sched);
+      const get = sched.get.bind(sched);
+      sched.list = (n?: number) => { biggest = Math.max(biggest, n ?? 100); return list(n); };
+      sched.get = (id: string) => { gets.push(id); return get(id); };
+      expect(items(base).map((i) => i.next.runId)).not.toContain("ow");
+      expect(biggest).toBeLessThanOrEqual(200);
+      expect(gets.filter((id) => /^s\d+$/.test(id))).toEqual([]);
+    });
+
+    it("builds the index of briefs once for many runs", () => {
+      const runs = [newer(), oldWaiting(), ...unrelated(5)];
+      const base = stub({ config: cfg([issuesWatcher]), runs });
+      const sched = base.scheduler as unknown as { briefs: () => unknown };
+      const briefs = sched.briefs.bind(sched);
+      let calls = 0;
+      sched.briefs = () => { calls++; return briefs(); };
+      const next = collectNext(base, runs).next;
+      const before = calls;
+      for (const r of runs) next(r);
+      expect(calls - before).toBeLessThanOrEqual(1);
+    });
   });
 
   it("shows a run that a tracked issue refers to once", () => {

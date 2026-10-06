@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- An old run replaced by a newer run is now always left out of Your turn (#284). Before, only the newest 200 runs were compared, so with more runs in between the old run stayed listed.
+  - **Rule.** A run is replaced when a newer run exists for the same repository and issue, pull request or CI run, however many runs lie between them and also when the newer run is of another flow.
+  - **Fast.** `nextFor` builds one index of the newest run per work item from the run briefs, once per page, so a page does not read every `run.json`. `RunBrief` has two new fields, `pr` and `ciRun`. The statistics (`supersededRuns` in `src/stats.ts`) are unchanged.
+  - **Known gap.** The `superseded` flag on the Runs list still uses the loaded runs only, so it can differ from Your turn for very old runs.
+
 - Refinement 4d — suggestions on the draft page: accept, edit and accept, reject (#127).
   - **Behaviour.** Every field of an open draft has **Suggest**, with the hints "ask the architect to look at the code first" (no brief) and "accept a rule or an example first" (criteria without a map entry). While the architect works a line says so and no Suggest button shows; a paused run shows **Ask again**, a failed one **Try again**. A suggestion shows next to its field, marked "Suggested", with **Accept**, **Edit and accept** (a dialog; not for Depends on) and **Reject** (a dialog with an optional reason). Criteria show their rule or example and are decided one by one. Accept on a text field that shows text asks before it replaces it. Unsaved text in other fields is kept. Fields, criteria and depends-on items show "typed", "accepted" or "accepted, then edited". The log tells suggestions asked for, made, accepted and rejected in words; the Context brief part does not show a suggestion run's line. A suggestion run for a draft that is not open shows its line at the top of Story drafts.
   - **Safe.** No new route and no change in `permissions.ts`. Every text is set as text, never as HTML. Suggest saves typed text first and sends nothing if that save fails. Dropped sessions, admins and missing repositories see waiting suggestions and the marks without buttons.

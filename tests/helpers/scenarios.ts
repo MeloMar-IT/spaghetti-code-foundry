@@ -1,5 +1,6 @@
 import { ConfigSchema, type Config } from "../../src/config.js";
 import type { RunSummary } from "../../src/engine/state.js";
+import { briefsOf } from "./briefs.js";
 import { nextStep, runNextStep, type NextStep, type NextWho } from "../../src/next-step.js";
 import type { ApiContext } from "../../src/server/server.js";
 
@@ -46,7 +47,7 @@ export function scenarioCtx(w: World): ApiContext {
     scheduler: {
       list: (n = 100) => w.runs.slice(0, n),
       get: (id: string) => w.runs.find((r) => r.runId === id),
-      briefs: () => w.runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
+      briefs: () => briefsOf(w.runs),
       queue: () => ({ pending: (w.pending ?? []).map((runId) => ({ runId, kind: "run", enqueuedAt: ago(0.01) })), active: (w.active ?? []).map((runId) => ({ runId })) }),
       isActive: (id: string) => (w.active ?? []).includes(id),
     },

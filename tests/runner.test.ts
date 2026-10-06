@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -259,6 +259,25 @@ describe("run source and briefs", () => {
     expect(listRunBriefs(runsDir).find((x) => x.runId === a.runId)!.status).toBe("succeeded");
     writeFileSync(file, "{ broken");
     expect(listRunBriefs(runsDir).map((x) => x.runId)).toEqual([b.runId]);
+  });
+
+  it("carries the pull request and CI run of a run in its brief", async () => {
+    const { listRunBriefs } = await import("../src/engine/state.js");
+    const runsDir = join(tmp, "runs-vars");
+    const write = (id: string, vars: Record<string, unknown>) => {
+      const runDir = join(runsDir, id);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "run.json"), JSON.stringify({ runId: id, flow: "f", status: "failed", startedAt: "2026-01-01T00:00:00Z", runDir, vars }));
+    };
+    write("20260101-000000-aaaa", { github_repo: "acme/app", pr: "12" });
+    write("20260102-000000-bbbb", { github_repo: "acme/app", ci_run: "99" });
+    write("20260103-000000-cccc", { github_repo: "acme/app", issue: "7" });
+    const by = Object.fromEntries(listRunBriefs(runsDir).map((x) => [x.runId, x]));
+    expect(by["20260101-000000-aaaa"]).toMatchObject({ pr: "12" });
+    expect(by["20260101-000000-aaaa"]).not.toHaveProperty("ciRun");
+    expect(by["20260102-000000-bbbb"]).toMatchObject({ ciRun: "99" });
+    expect(by["20260103-000000-cccc"]).not.toHaveProperty("pr");
+    expect(by["20260103-000000-cccc"]).not.toHaveProperty("ciRun");
   });
 });
 

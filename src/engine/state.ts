@@ -126,6 +126,9 @@ export interface RunBrief {
   /** `vars.github_repo` and `vars.issue` of the run, when it has them. */
   githubRepo?: string;
   issue?: string;
+  /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
+  pr?: string;
+  ciRun?: string;
   /** A "running" run.json with no live process (set by the scheduler). */
   interrupted?: boolean;
 }
@@ -165,7 +168,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;

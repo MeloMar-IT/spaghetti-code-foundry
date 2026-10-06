@@ -9,6 +9,7 @@ import type { ApiContext } from "../src/server/server.js";
 import { mergedPrs, sinceFor } from "../src/server/since.js";
 import { dismissTurn, turnFor } from "../src/server/your-turn.js";
 import { fakeGithub } from "./helpers/fake-github.js";
+import { briefsOf } from "./helpers/briefs.js";
 
 // "Since you last looked" against a stub context (no server) and the fake gh.
 
@@ -35,7 +36,7 @@ function stub(o: { config?: ReturnType<typeof cfg>; runs?: ReturnType<typeof run
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
-      briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
+      briefs: () => briefsOf(runs),
       queue: () => ({ pending: [], active: [] }),
     },
     watchers: { tracked: () => o.tracked ?? [], statuses: () => [] },

@@ -1,4 +1,5 @@
 import { flowPath } from "./helpers/fake-github.js";
+import { briefsOf } from "./helpers/briefs.js";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -256,7 +257,7 @@ function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tr
     scheduler: {
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
-      briefs: () => runs.map((r) => ({ runId: r.runId, flow: r.flow, status: r.status, startedAt: r.startedAt, finishedAt: r.finishedAt, source: r.source, runDir: r.runDir })),
+      briefs: () => briefsOf(runs),
       queue: () => ({ pending: o.pending ?? [], active: (o.active ?? []).map((runId) => ({ runId })) }),
     },
     watchers: { tracked: () => o.tracked?.(config) ?? [] },
