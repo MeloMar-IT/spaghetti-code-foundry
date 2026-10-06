@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement 5a — Definition of Ready per repository (#290).
+  - **Behaviour.** Every repository has a Definition of Ready: an ordered list of items, by default seven. An admin changes it in a **Definition of Ready** dialog on the Repositories page (reword, add, remove, move, add a default item back, **Back to the default**). The My repositories page shows it read-only. It is only stored and shown for now.
+  - **API.** `PUT /api/admin/repos/:id/ready` (admin), `GET /api/repos/:id/ready` (owner or admin); `GET /api/admin/repos` rows have `ready`. The change is audited as `repo-change`.
+  - **Safe.** Texts are one line, at most 200 characters, set as text and never put in the audit line. A new optional `definitionOfReady` field in `repos.json`; existing files load unchanged.
+  - **Code.** `src/refinement/ready-list.ts`, `setRepoReady` and `findOwnedRepo` in `src/auth/repos.ts`.
 - Refinement 4f — remarks on the draft page: checks, review, move to notes (#129).
   - **Behaviour.** Under each field and criterion of an open draft the page shows the remarks of the code checks (updated from the save answer, without redrawing the field in use) and of the architect's review, with the kind in words ("Cannot be checked", "Vague", "Contradicts", "Describes how to build", "An implementation plan"), "written before your last change" for a stale remark, and when the review was made. **Review draft** asks for a review; a line shows while the architect works, **Ask again** or **Try again** after a pause or failure. A plan or how-to-build remark says it belongs in the build step and has **Move to notes for the builder**; after a confirmation the text moves to the notes as a "Wish:" line. Unsaved text is saved first (Suggest does this too now). No text changes unless the person types or presses a button. The log tells a review asked for, made and a text moved; the Context brief part does not show a review run's line.
   - **Safe.** No new route and no change in `permissions.ts`. Every text is set as text, never as HTML. Remarks and buttons show only where the draft fields show.

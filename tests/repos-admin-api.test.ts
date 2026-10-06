@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { auditPath } from "../src/auth/audit.js";
 import { addRepo } from "../src/auth/repos.js";
+import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { setStatus } from "../src/auth/users.js";
 import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -64,8 +66,8 @@ let annRepo: { id: string };
 let bobRepo: { id: string };
 
 describe("admin repositories API", () => {
-  it("answers 403 to a user on all three routes", async () => {
-    for (const [m, p, b] of [["GET", "/api/admin/repos"], ["PUT", `/api/admin/repos/${UNKNOWN}/settings`, {}], ["POST", `/api/admin/repos/${UNKNOWN}/transfer`, { email: "a@b.io" }]] as const) {
+  it("answers 403 to a user on all four routes", async () => {
+    for (const [m, p, b] of [["GET", "/api/admin/repos"], ["PUT", `/api/admin/repos/${UNKNOWN}/settings`, {}], ["PUT", `/api/admin/repos/${UNKNOWN}/ready`, { items: null }], ["POST", `/api/admin/repos/${UNKNOWN}/transfer`, { email: "a@b.io" }]] as const) {
       const r = await call(ann, m, p, b);
       expect([r.status, r.error()]).toEqual([403, "not allowed for your role"]);
     }
@@ -160,6 +162,93 @@ describe("admin repositories API", () => {
     expect(r.error()).toContain("the repository was transferred, but an old key is still in the Keychain");
     expect((await mine(ann)).some((x) => x.id === repo.id)).toBe(true);
     expect((await call(admin, "POST", `/api/admin/repos/${repo.id}/transfer`, { email: "ann@example.com" })).status).toBe(200);
+  });
+
+  describe("Definition of Ready", () => {
+    const READY = (id: string) => `/api/admin/repos/${id}/ready`;
+    const audited = () =>
+      (existsSync(auditPath()) ? readFileSync(auditPath(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>) : []).filter(
+        (e) => e.action === "repo-change" && (e.detail ?? "").startsWith("definition of ready"),
+      );
+    const defaults = DEFAULT_READY.map((i) => ({ ...i }));
+    let repo: { id: string };
+
+    it("answers 403 to a user, 404 to an unknown repository and 400 with one sentence", async () => {
+      repo = await addFor(ann, "acme/ready");
+      const r = await call(ann, "PUT", READY(repo.id), { items: null });
+      expect([r.status, r.error()]).toEqual([403, "not allowed for your role"]);
+      expect((await call(admin, "PUT", READY(UNKNOWN), { items: null })).status).toBe(404);
+      const none = await call(admin, "PUT", READY(repo.id), { items: [] });
+      expect([none.status, none.error()]).toEqual([400, "the list needs at least 1 item"]);
+      const dup = await call(admin, "PUT", READY(repo.id), { items: [{ text: "A" }, { text: "a" }] });
+      expect([dup.status, dup.error()]).toEqual([400, "two items have the same text"]);
+    });
+
+    it("every admin row has the default list", async () => {
+      const row = (await all()).find((r) => r.id === repo.id) as unknown as { ready: unknown };
+      expect(row.ready).toEqual({ items: defaults, isDefault: true });
+      expect(row).not.toHaveProperty("definitionOfReady");
+    });
+
+    it("sets a changed list; the owner and an admin read it, others get 404", async () => {
+      const items = [{ id: "no-plan", text: "no plan here" }, { text: "my own item" }, ...defaults.filter((i) => i.id !== "no-plan").map(({ id, text }) => ({ id, text }))];
+      const r = await call(admin, "PUT", READY(repo.id), { items });
+      expect(r.status).toBe(200);
+      expect(r.json().ready.isDefault).toBe(false);
+      expect(r.json()).not.toHaveProperty("definitionOfReady");
+      const mineRead = await call(ann, "GET", `/api/repos/${repo.id}/ready`);
+      expect(mineRead.status).toBe(200);
+      const view = mineRead.json() as { items: { id: string; text: string; rule?: string }[]; isDefault: boolean };
+      expect(view.isDefault).toBe(false);
+      expect(view.items.map((i) => i.text).slice(0, 2)).toEqual(["no plan here", "my own item"]);
+      expect(view.items[0]).toEqual({ id: "no-plan", text: "no plan here", rule: "no-plan" });
+      expect(view.items[1]).not.toHaveProperty("rule");
+      expect((await call(admin, "GET", `/api/repos/${repo.id}/ready`)).json()).toEqual(view);
+      const other = await call(bob, "GET", `/api/repos/${repo.id}/ready`);
+      expect([other.status, other.error()]).toEqual([404, "no such repository"]);
+      expect((await call(ann, "GET", `/api/repos/${UNKNOWN}/ready`)).status).toBe(404);
+      expect((await call(ann, "GET", "/api/repos")).text).not.toContain("my own item");
+    });
+
+    it("puts a removed default item back by its id", async () => {
+      const without = (await call(ann, "GET", `/api/repos/${repo.id}/ready`)).json().items.filter((i: { id: string }) => i.id !== "no-plan");
+      await call(admin, "PUT", READY(repo.id), { items: without });
+      const back = await call(admin, "PUT", READY(repo.id), { items: [...without, { id: "no-plan", text: "no plan again" }] });
+      expect(back.json().ready.items.at(-1)).toEqual({ id: "no-plan", text: "no plan again", rule: "no-plan" });
+    });
+
+    it("goes back to the default with null or with the default list", async () => {
+      expect((await call(admin, "PUT", READY(repo.id), { items: null })).json().ready).toEqual({ items: defaults, isDefault: true });
+      await call(admin, "PUT", READY(repo.id), { items: [{ text: "x" }] });
+      expect((await call(admin, "PUT", READY(repo.id), { items: defaults })).json().ready.isDefault).toBe(true);
+      expect((await call(ann, "GET", `/api/repos/${repo.id}/ready`)).json()).toEqual({ items: defaults, isDefault: true });
+    });
+
+    it("audits a change without the texts, and a no-op writes nothing", async () => {
+      const before = audited().length;
+      const first = await call(admin, "PUT", READY(repo.id), { items: [{ text: "secret wording" }, { text: "two" }] });
+      // the same list sent back with its ids changes nothing
+      await call(admin, "PUT", READY(repo.id), { items: first.json().ready.items });
+      const lines = audited().slice(before);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ target: repo.id, detail: "definition of ready: 2 items" });
+      expect(readFileSync(auditPath(), "utf8")).not.toContain("secret wording");
+      await call(admin, "PUT", READY(repo.id), { items: null });
+      expect(audited().at(-1)).toMatchObject({ detail: "definition of ready: back to the default" });
+      const n = audited().length;
+      await call(admin, "PUT", READY(repo.id), { items: null });
+      expect(audited()).toHaveLength(n);
+    });
+
+    it("stays after a transfer (the new owner reads it, the old one gets 404) and goes with the repository", async () => {
+      await call(admin, "PUT", READY(repo.id), { items: [{ text: "kept" }] });
+      const before = (await call(ann, "GET", `/api/repos/${repo.id}/ready`)).json();
+      expect((await call(admin, "POST", `/api/admin/repos/${repo.id}/transfer`, { email: "bob@example.com" })).status).toBe(200);
+      expect((await call(bob, "GET", `/api/repos/${repo.id}/ready`)).json()).toEqual(before);
+      expect((await call(ann, "GET", `/api/repos/${repo.id}/ready`)).status).toBe(404);
+      expect((await call(bob, "DELETE", `/api/repos/${repo.id}`)).status).toBe(200);
+      expect((await all()).some((r) => r.id === repo.id)).toBe(false);
+    });
   });
 
   it("never holds a token in an answer or in the log", () => {

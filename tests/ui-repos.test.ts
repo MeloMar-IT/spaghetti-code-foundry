@@ -34,6 +34,8 @@ const connection = (ok: boolean, over: object = {}) => ({
 /** The answer of GET /api/repos/methods (undefined: the call fails, and the page behaves as before). */
 let methodsAnswer: any;
 let methodsCalls = 0;
+/** The answer of GET /api/repos/<id>/ready (undefined: a 404). */
+let readyAnswer: any;
 const APP_URL = "https://github.com/apps/foundry-app/installations/new";
 const appOptions = (over: object = {}) => ({ methods: ["github-token", "https-token", "ssh-deploy-key", "github-app"], githubApp: { available: true, installUrl: APP_URL }, ...over });
 let hold: { release: (a?: Answer) => void } | undefined;
@@ -63,10 +65,14 @@ beforeEach(() => {
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   methodsAnswer = undefined;
   methodsCalls = 0;
+  readyAnswer = undefined;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET" && url === "/api/repos/methods") {
       methodsCalls++;
       return methodsAnswer ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+    }
+    if (init.method === "GET" && url.endsWith("/ready")) {
+      return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
     }
     if (init.method === "GET") {
       gets++;
@@ -204,6 +210,33 @@ describe("pure functions", () => {
     expect(ui.repoProblem({ url: "u", method: "test-key", values: {}, methods: [KEY_METHOD] })).toBe("Fill in the private key.");
   });
 
+  it("readyView shows the list read-only, with who set it", async () => {
+    repos = [{ id: "r1", url: "https://github.com/o/a", method: "github-token" }];
+    readyAnswer = { items: [{ id: "a", text: "first" }, { id: "b", text: "<b>second</b>" }], isDefault: false };
+    await ui.renderRepos(main());
+    press(button(main(), "Definition of Ready"));
+    await flush();
+    expect(walk(root()).filter((e) => e.tag === "li").map((e) => e.textContent)).toEqual(["first", "<b>second</b>"]);
+    expect(walk(root()).some((e) => e.tag === "b")).toBe(false);
+    expect(root().textContent).toContain("Set by your administrator.");
+    for (const tag of ["input", "textarea"]) expect(walk(root()).filter((e) => e.tag === tag)).toEqual([]);
+    expect(button(root(), "Save")).toBeUndefined();
+    readyAnswer = { items: [{ id: "a", text: "first" }], isDefault: true };
+    pressEscape();
+    press(button(main(), "Definition of Ready"));
+    await flush();
+    expect(root().textContent).toContain("The default list.");
+  });
+
+  it("readyView toasts an error and opens no dialog", async () => {
+    repos = [{ id: "r1", url: "https://github.com/o/a", method: "github-token" }];
+    await ui.renderRepos(main());
+    press(button(main(), "Definition of Ready"));
+    await flush();
+    expect(toastText()).toBe("no such repository");
+    expect(root().children).toHaveLength(0);
+  });
+
   it("repoBody", () => {
     expect(ui.repoBody({ url: " u ", method: "github-token", values: { username: "x", token: "t" } })).toEqual({ url: "u", method: "github-token", token: "t" });
     expect(ui.repoBody({ url: "u", method: "https-token", values: { username: " ann ", token: " t " } })).toEqual({ url: "u", method: "https-token", username: "ann", token: "t" });
@@ -231,7 +264,7 @@ describe("the page", () => {
     expect(text).toContain("ann");
     expect(text.split("Not tested yet")).toHaveLength(3);
     const rowButtons = walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent);
-    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Change authentication", "Remove", "Test connection", "Change authentication", "Remove"]);
+    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Change authentication", "Definition of Ready", "Remove", "Test connection", "Change authentication", "Definition of Ready", "Remove"]);
     for (const tag of ["input", "select", "textarea"]) expect(main().all(tag)).toEqual([]);
     expect(errLine(main())).toEqual([]);
   });

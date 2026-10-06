@@ -189,6 +189,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
+  "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
@@ -216,6 +217,7 @@ const EXAMPLES: Record<string, Example> = {
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
+  "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
   "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
   "POST admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404, {}),
@@ -251,6 +253,8 @@ describe("the table", () => {
     expect(findRule("GET", ["repos", "methods"])?.path).toBe("repos/methods");
     expect(findRule("PUT", ["repos", "a", "auth"])?.path).toBe("repos/:id/auth");
     expect(findRule("POST", ["repos", "a", "test"])?.path).toBe("repos/:id/test");
+    expect(findRule("GET", ["repos", "a", "ready"])?.path).toBe("repos/:id/ready");
+    expect(findRule("PUT", ["admin", "repos", "a", "ready"])?.path).toBe("admin/repos/:id/ready");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");
     expect(findRule("PUT", ["admin", "repos", "a", "settings"])?.path).toBe("admin/repos/:id/settings");
     expect(findRule("GET", ["admin"])).toBeUndefined();

@@ -80,6 +80,78 @@ export function settingsDialog(repo) {
   return shown.then(() => state.pending);
 }
 
+/** The default Definition of Ready (the same ids and texts as the server's). */
+export const READY_DEFAULTS = [
+  { id: "value", text: "the value is clear (who and why)" },
+  { id: "standalone", text: "it stands on its own or its dependencies are named" },
+  { id: "checkable", text: "every acceptance criterion can be checked" },
+  { id: "small", text: "it is small enough to build in one go" },
+  { id: "no-open-questions", text: "there are no open questions" },
+  { id: "out-of-scope", text: "it says what is out of scope" },
+  { id: "no-plan", text: "it contains no implementation plan" },
+];
+const READY_MAX = 20;
+
+/** The request body for the Definition of Ready: an item with an id keeps it, one without is new. */
+export function readyBody(rows) {
+  return { items: rows.map((r) => (r.id ? { id: r.id, text: String(r.text ?? "").trim() } : { text: String(r.text ?? "").trim() })) };
+}
+
+/** Edits the Definition of Ready of one repository. Resolves once the dialog is closed and any request has finished. */
+export function readyDialog(repo) {
+  const state = { busy: false, closed: false, pending: null };
+  const shown = modal("Definition of Ready", (close) => {
+    let rows = (repo.ready?.items ?? READY_DEFAULTS).map((i) => ({ id: i.id, text: i.text }));
+    let inputs = [];
+    const list = h("div", { style: { display: "grid", gap: "6px" } });
+    const extra = h("div", { class: "row", style: { flexWrap: "wrap" } });
+    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const take = () => rows.forEach((r, i) => { r.text = inputs[i].value; });
+    // every button: copy what was typed, change the rows, draw again
+    const change = (fn) => () => {
+      if (state.busy) return;
+      take();
+      fn();
+      err.textContent = "";
+      draw();
+    };
+    const move = (i, by) => change(() => rows.splice(i + by, 0, rows.splice(i, 1)[0]));
+    const draw = () => {
+      inputs = rows.map((r, i) => h("input", { name: "item", maxlength: 200, autocomplete: "off", value: r.text }));
+      mount(list, rows.map((r, i) => h("div", { class: "row" },
+        h("span", { class: "muted" }, `${i + 1}.`),
+        inputs[i],
+        h("button", { class: "small", disabled: i === 0, "aria-label": `Move item ${i + 1} up`, onClick: move(i, -1) }, "Up"),
+        h("button", { class: "small", disabled: i === rows.length - 1, "aria-label": `Move item ${i + 1} down`, onClick: move(i, 1) }, "Down"),
+        h("button", { class: "small danger", disabled: rows.length <= 1, "aria-label": `Remove item ${i + 1}`, onClick: change(() => rows.splice(i, 1)) }, "Remove"))));
+      mount(extra,
+        h("button", { class: "small", disabled: rows.length >= READY_MAX, onClick: change(() => rows.push({ text: "" })) }, "+ Add item"),
+        READY_DEFAULTS.filter((d) => !rows.some((r) => r.id === d.id)).map((d) =>
+          h("button", { class: "small", disabled: rows.length >= READY_MAX, onClick: change(() => rows.push({ id: d.id, text: d.text })) }, `Add back: ${d.text}`)));
+    };
+    draw();
+    const back = h("button", { class: "small", onClick: () => {
+      if (state.busy) return;
+      rows = READY_DEFAULTS.map((d) => ({ ...d }));
+      err.textContent = "";
+      draw();
+    } }, "Back to the default");
+    const save = h("button", { class: "primary", onClick: () => {
+      if (state.busy) return;
+      take();
+      if (rows.some((r) => !String(r.text).trim())) return void (err.textContent = "Fill in every item, or remove it.");
+      sendFrom({ button: save, err, close, state, done: "Definition of Ready saved", send: () => api.setRepoReady(repo.id, readyBody(rows)) });
+    } }, "Save");
+    return h("div", { style: { display: "grid", gap: "12px" } },
+      h("p", { class: "mono" }, repo.url),
+      list, extra,
+      h("div", { class: "row" }, back, h("small", {}, "Back to the default drops the items you added and your wording.")),
+      err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
+  });
+  shown.then(() => { state.closed = true; });
+  return shown.then(() => state.pending);
+}
+
 /** Asks for the e-mail of the new owner. Resolves once the dialog is closed and any request has finished. */
 export function transferDialog(repo) {
   const state = { busy: false, closed: false, pending: null };
@@ -133,6 +205,10 @@ export async function renderAllRepos(main) {
         await settingsDialog(repo);
         reload();
       } }, "Settings"), " ",
+      h("button", { class: "small", onClick: async () => {
+        await readyDialog(repo);
+        reload();
+      } }, "Definition of Ready"), " ",
       h("button", { class: "small", onClick: async () => {
         await transferDialog(repo);
         reload();
