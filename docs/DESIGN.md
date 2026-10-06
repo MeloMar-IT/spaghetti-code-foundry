@@ -463,7 +463,10 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 
 ## 17. Where it is going
 
-- **Refinement:** (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
+- **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`
+  has the schema and the pure `saveTyped` and `preview`, and each text and list item records `typed`,
+  `accepted` or `accepted-edited`. The stored `dependsOn` list is the truth; the preview is text for
+  reading, not for parsing back.) (the architect's read is built: `askArchitect` in `src/refinement/architect.ts`
   queues the shipped flow `refine-brief` with source `refinement <session id>`, the only way in;
   the scheduler's `onFinished` hook and every session read settle the end of the run into the
   session, which keeps the latest brief and the current run. The question round is the shipped flow

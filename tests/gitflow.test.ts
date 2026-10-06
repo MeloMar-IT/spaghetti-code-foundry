@@ -214,6 +214,33 @@ describe("gitflow pipeline", () => {
     expect(runOf("5")!.status).toBe("succeeded");
   });
 
+  it("stops at once, with the reason, when a branch rule on GitHub refuses the push to develop", async () => {
+    // The remote refuses every direct push to develop, like a GitHub branch rule does.
+    const hook = join(gh.remote, "hooks", "pre-receive");
+    writeFileSync(hook, [
+      "#!/bin/sh",
+      "while read old new ref; do",
+      '  if [ "$ref" = refs/heads/develop ] && [ "$old" != 0000000000000000000000000000000000000000 ]; then',
+      '    echo "error: GH013: Repository rule violations found for refs/heads/develop." >&2',
+      '    echo "- Changes must be made through a pull request." >&2',
+      "    exit 1",
+      "  fi",
+      "done",
+    ].join("\n"), { mode: 0o755 });
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("failed");
+    const ids = run.history.map((h) => h.id);
+    // Not read as "develop moved": one merge, one push, no merging again.
+    expect(ids.filter((id) => id === "merge_develop")).toHaveLength(1);
+    expect(ids.at(-1)).toBe("push_develop");
+    const out = run.history.at(-1)!.output;
+    expect(out).toContain("a branch rule of the repository does not let this account push to develop directly");
+    expect(out).not.toContain("MOVED");
+  });
+
   it("does not lock docs or whole test folders", () => {
     const dir = mkdtempSync(join(tmpdir(), "lockign-"));
     writeFileSync(join(dir, "run.json"), JSON.stringify({ status: "running" }));

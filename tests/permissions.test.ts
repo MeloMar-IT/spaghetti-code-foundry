@@ -204,6 +204,10 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/proposals/:pid/reject": { path: `refinement/${UNKNOWN}/proposals/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "DELETE refinement/:id/map/:eid": { path: `refinement/${UNKNOWN}/map/${UNKNOWN}`, user: 404, admin: 404 },
+  "POST refinement/:id/drafts": { path: `refinement/${UNKNOWN}/drafts`, body: {}, user: 404, admin: 404 },
+  "PUT refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
+  "DELETE refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, user: 404, admin: 404 },
+  "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
@@ -246,6 +250,10 @@ describe("the table", () => {
     expect(findRule("POST", ["refinement", "a", "round"])?.path).toBe("refinement/:id/round");
     expect(findRule("POST", ["refinement", "a", "ask"])?.path).toBe("refinement/:id/ask");
     expect(findRule("PUT", ["refinement", "a", "map", "b"])?.path).toBe("refinement/:id/map/:eid");
+    expect(findRule("POST", ["refinement", "a", "drafts"])?.path).toBe("refinement/:id/drafts");
+    expect(findRule("PUT", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
+    expect(findRule("DELETE", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
+    expect(findRule("PUT", ["refinement", "a", "epic"])?.path).toBe("refinement/:id/epic");
     expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
 

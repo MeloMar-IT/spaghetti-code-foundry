@@ -1,0 +1,62 @@
+name: Owner PR policy
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - edited
+
+permissions:
+  contents: read
+
+jobs:
+  owner-pr-policy:
+    name: owner-pr-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate contributor and branch route
+        shell: bash
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$BASE_BRANCH" == "develop" ]]; then
+            case "$AUTHOR_ASSOCIATION" in
+              OWNER|COLLABORATOR)
+                echo "Registered repository contributor: $PR_AUTHOR"
+                ;;
+              *)
+                echo "Only the owner or an invited repository collaborator may target develop."
+                exit 1
+                ;;
+            esac
+            exit 0
+          fi
+
+          if [[ "$BASE_BRANCH" == "main" ]]; then
+            if [[ "$PR_AUTHOR" != "MeloMar-IT" ]]; then
+              echo "Only the repository owner may create a pull request to main."
+              exit 1
+            fi
+
+            if [[ "$HEAD_BRANCH" != "develop" || "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]]; then
+              echo "Pull requests to main must come from this repository's develop branch."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          echo "This policy only permits pull requests to develop or main."
+          exit 1
