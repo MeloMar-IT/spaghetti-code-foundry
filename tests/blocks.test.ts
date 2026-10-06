@@ -8,6 +8,7 @@ import { listBlocks, parseBlock } from "../src/flow/blocks.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
 import { commentFirst, commentText, nextStepEnv, reportFirst } from "../src/next-step.js";
 import { closing, fakeGithub, first, flowPath } from "./helpers/fake-github.js";
+import { userRun } from "../src/server/user-view.js";
 import { scanNode, scanRepo, scanShell, scanTool } from "./helpers/comment-scan.js";
 
 describe("block library", () => {
@@ -68,6 +69,28 @@ describe("comment wording comes from the next-step module", () => {
     expect(step, `${file}#${id}`).toBeDefined();
     return step!.run ?? "";
   };
+  it("the asking steps print the planner's text after the comment", () => {
+    const post = "--body-file - >/dev/null || exit 1\n";
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
+      const run = stepRun(flowPath(f), "send_back");
+      expect(run, f).toContain(post);
+      expect(run.trimEnd(), f).toMatch(/\nprintf '%s\\n' "\$out" \| sed '\/\^PLAN_STATUS:\/d'$/);
+    }
+    const asked = (file: string) => {
+      const run = stepRun(file, "ask_for_info");
+      expect(run, file).toContain(post);
+      expect(run.trimEnd(), file).toMatch(/\nprintf '%s\\n' "\$out" \| sed -E '\/\^\(PLAN_STATUS\|ROUTE\):\/d'$/);
+      const def = parseYaml(readFileSync(file, "utf8")) as { steps: { id: string; on_success?: string; repo_access?: boolean }[] };
+      expect(def.steps.find((x) => x.id === "ask_for_info"), file).toMatchObject({ on_success: "stop", repo_access: true });
+    };
+    for (const f of ["blocks/plan.yaml", flowPath("github-issue"), flowPath("github-pr"), flowPath("github-auto")]) asked(f);
+    for (const f of ["jira-ticket", "linear-ticket"]) {
+      const run = stepRun(flowPath(f), "ask_for_info");
+      expect(run, f).not.toContain("gh issue comment");
+      expect(run.trim().replace(/\s+/g, " "), f).toBe(`printf '%s ' "$FACTORY_OUT_PLAN" | sed -E '/^(PLAN_STATUS|ROUTE):/d'`);
+    }
+  });
+
   it("uses the right variable in the right step", () => {
     expect(stepRun("blocks/plan.yaml", "ask_for_info")).toContain("${FACTORY_NEXT_PLANNER_QUESTIONS}");
     expect(stepRun("blocks/request-approval.yaml", "request_approval")).toContain("${FACTORY_NEXT_APPROVAL}");
@@ -165,6 +188,7 @@ describe("every posted comment starts with a first-line variable", () => {
   bad("a call split over lines by continuations", 'echo hi | gh \\\n  issue comment 1 --body "text"');
   it("accepts good shell comments", () => {
     expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } \\\n  | gh issue comment 1 --body-file -')).toEqual([]);
+    expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } \\\n  | gh issue comment 1 --body-file - >/dev/null || exit 1\necho x')).toEqual([]);
     const two = 'a="$FACTORY_FIRST_MERGE_PR"; if x; then first="$FACTORY_FIRST_MERGE_PR"; else first="$FACTORY_FIRST_OPEN_PR"; fi\n{\n  echo "$first"; echo\n  echo x\n} | gh pr comment 1 --body-file -';
     expect(scanShell(two)).toEqual([]);
     expect(scanShell("echo nothing")).toEqual([]);
@@ -251,6 +275,22 @@ describe("github-issue flow (fake gh + claude)", { timeout: 30_000 }, () => {
     expect(closing(c.body)).toEqual([`_${commentText("planner_questions")}_`, `<!-- claude-factory run=${s.runId} -->`]);
     expect(log).toContain("Which database should be used?");
     expect(log).not.toContain("PLAN_STATUS");
+    const out = s.history.at(-1)!.output;
+    expect(out.trim()).toBe("Which database should be used?");
+    expect(out).not.toContain("PLAN_STATUS");
+    expect(out).not.toContain("issuecomment");
+    expect(userRun(s).questions).toBe("Which database should be used?");
+  });
+
+  it("fails, and does not stop with questions, when the comment cannot be posted", async () => {
+    process.env.FAKE_PLAN = "Which database should be used?\nPLAN_STATUS: NEEDS_INFO";
+    process.env.FAKE_GH_FAIL = "issue comment";
+    const s = await run();
+    expect(s.status).toBe("failed");
+    expect(s.history.at(-1)).toMatchObject({ id: "ask_for_info", ok: false });
+    expect(s.reason).toContain('step "ask_for_info" failed');
+    expect(gh.comments()).toEqual([]);
+    expect(userRun(s).questions).toBeUndefined();
   });
 
   it("rejects a non-numeric issue", async () => {
