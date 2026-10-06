@@ -49,6 +49,7 @@ export const api = {
   resumeRun: (id, from) => req("POST", `/api/runs/${enc(id)}/resume`, { from }),
   approveRun: (id, note) => req("POST", `/api/runs/${enc(id)}/approve`, { note }),
   rejectRun: (id, note) => req("POST", `/api/runs/${enc(id)}/reject`, { note }),
+  answerRun: (id, text) => req("POST", `/api/runs/${enc(id)}/answer`, { text }),
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
   repos: () => req("GET", "/api/repos"),

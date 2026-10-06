@@ -85,6 +85,8 @@ export interface NextData {
   /** Link to the issue or pull request (default: none). */
   issueUrl?: string;
   questions?: number;
+  /** `planner_questions`: the answer is typed on the run page of the user display (no watcher follows the run, its flow reads the task). */
+  answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
   message?: string;
   reason?: string;
@@ -281,8 +283,10 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "You";
       why = kind === "questions" ? "It has questions before it starts" : "The planner has questions";
       action = q ? `Answer ${plural(q, "question")}` : "Answer the questions";
-      say = kind === "questions" ? `${action.toLowerCase()} on the issue, or reply /defaults to go with the recommendations` : `${action.toLowerCase()} on the issue and it continues`;
-      if (kind === "planner_questions" && !d.watched) w = runWhere ?? where;
+      const here = kind === "planner_questions" && !!d.answerHere && !!runWhere;
+      say = kind === "questions" ? `${action.toLowerCase()} on the issue, or reply /defaults to go with the recommendations`
+        : `${action.toLowerCase()} ${here ? "on the run page" : "on the issue"} and it continues`;
+      if (kind === "planner_questions" && (here || !d.watched)) w = runWhere ?? where;
       break;
     }
     case "approve_plan":

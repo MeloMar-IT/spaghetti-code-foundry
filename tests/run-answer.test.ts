@@ -509,6 +509,28 @@ describe("POST /api/runs/:id/answer", () => {
     }
   });
 
+  it("says where to answer", async () => {
+    (s.ctx.config() as { watchers: unknown[] }).watchers.push({ id: "w", enabled: true, source: "issues", github_repo: "acme/app", flow: "ask", label: "ready" });
+    try {
+      handRun("here-run");
+      const ann1 = (await call(s, ann, "GET", "/api/runs/here-run")).json();
+      expect(ann1.next.text).toBe("The planner has questions — answer the questions on the run page and it continues.");
+      expect(ann1.next.where.url).toBe("#/runs/here-run");
+      const listed = (await call(s, ann, "GET", "/api/runs")).json().find((r: { runId: string }) => r.runId === "here-run");
+      expect(listed.next.text).toBe(ann1.next.text);
+      expect(listed.next.who).toBe("You");
+      expect((await call(s, admin, "GET", "/api/runs/here-run")).json().next.text).toContain("on the issue");
+      handRun("w-run", { source: "watcher w issue #7", vars: { github_repo: "acme/app", issue: "7" } });
+      expect((await call(s, ann, "GET", "/api/runs/w-run")).json().next.text).toContain("on the issue");
+      handRun("hand-w", { vars: { github_repo: "acme/app", issue: "7" } });
+      expect((await call(s, ann, "GET", "/api/runs/hand-w")).json().next.text).toContain("on the run page");
+      handRun("nt-run", { flowDef: parseFlow(NO_TASK) });
+      expect((await call(s, ann, "GET", "/api/runs/nt-run")).json().next.text).toContain("on the issue");
+    } finally {
+      (s.ctx.config() as { watchers: unknown[] }).watchers.length = 0;
+    }
+  });
+
   it("keeps the text out of queue.json, the audit log and the server log, and redacts stored secrets", async () => {
     const id = await startAsk(ann);
     const marker = "MARKER-7f3a9c";

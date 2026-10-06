@@ -706,6 +706,32 @@ describe("releaseAtFor and trackingWatcher", () => {
   });
 });
 
+describe("answerHere", () => {
+  it("sends the user to the run page for the planner's questions", () => {
+    const n = nextStep("planner_questions", { runId: "r1" }, { answerHere: true, forUser: true });
+    expect(n.text).toBe("The planner has questions — answer the questions on the run page and it continues.");
+    expect(n.where).toEqual({ label: "Run page", url: "#/runs/r1" });
+    expect(n.who).toBe("You");
+    expect(n.action).toBe("Answer the questions");
+    expect(nextStep("planner_questions", { runId: "r1" }, { answerHere: true, questions: 2 }).text).toContain("answer 2 questions on the run page and it continues");
+    const hand = nextStep("planner_questions", { runId: "r1" }, { answerHere: true, watched: true, issueUrl: "https://github.com/o/r/issues/7" });
+    expect(hand.text).toContain("on the run page");
+    expect(hand.where.url).toBe("#/runs/r1");
+  });
+  it("keeps the issue without the option, without a run, and for the questions before a start", () => {
+    expect(nextStep("planner_questions", { runId: "r1" }, { watched: true }).text).toContain("on the issue");
+    expect(nextStep("planner_questions", { runId: "r1" }, {}).text).toContain("on the issue");
+    expect(nextStep("planner_questions", {}, { answerHere: true }).text).toContain("on the issue");
+    expect(nextStep("questions", { runId: "r1" }, { answerHere: true }).text).toContain("on the issue");
+    expect(commentText("planner_questions")).toBe("The planner has questions — answer the questions on the issue and it continues.");
+  });
+  it("is read by runNextStep, also for a run that a newer one replaced", () => {
+    const r = run({ status: "stopped", reason: 'stopped at step "ask_for_info"' });
+    expect(runNextStep(r, { answerHere: true, forUser: true }).text).toContain("on the run page");
+    expect(runNextStep(r, { forUser: true }).text).toContain("on the issue");
+  });
+});
+
 describe("records for a user", () => {
   const BAD = /\$|budget|Settings|in the flow|Codex|claude/i;
   const failed = (reason: string) => run({ status: "failed", reason, state: { next: "a", steps: {}, visits: {} } });

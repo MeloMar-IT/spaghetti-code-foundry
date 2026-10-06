@@ -11,6 +11,8 @@ export const NOT_FOUND = "This run was not found. It may have been removed.";
 export const NO_STEPS = "No steps finished yet.";
 export const NO_CHANGES = "No changes yet.";
 const REFRESH_MS = 30_000;
+export const NO_ANSWER = "Write your answer first.";
+export const ANSWER_SENT = "Answer sent — continuing";
 const NOT_CANCELLED = "The run could not be cancelled. It may have just finished.";
 
 /** The first line of a task. */
@@ -238,7 +240,30 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   }
   mount(tabsBox, h("div", { class: "seg tabs", style: { marginBottom: "12px" } }, tabButtons.map(([, b]) => b)), tabBody);
   mount(tabBody, logEl);
-  mount(main, head, alertEl, tabsBox);
+
+  // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
+  let sending = false;
+  let expectAnswers = 0;
+  const answerInput = h("textarea", { name: "answer", rows: 4, "data-focus": "answer-text" });
+  const answerErr = h("p", { class: "status bad", role: "alert", style: { margin: 0 } });
+  const answerBtn = h("button", { type: "submit", class: "primary" }, "Send answer");
+  const answerForm = h("form", { class: "run-answer", onSubmit: sendAnswer },
+    h("label", { class: "field" }, h("span", {}, "Your answer"), answerInput),
+    answerErr,
+    h("div", { class: "row" }, answerBtn));
+  answerInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault?.();
+      sendAnswer();
+    }
+  });
+  const givenBox = h("div");
+  const answerBox = h("div", {}, givenBox, answerForm);
+  answerForm.hidden = true;
+  mount(main, head, alertEl, answerBox, tabsBox);
+
+  /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
+  const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
 
   const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
   const back = () => h("a", { class: "btn ghost", href: "#/runs", "aria-label": "Back to My runs" }, "←");
@@ -255,6 +280,53 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   function draw() {
     if (dialogOpen) return;
+    drawHead();
+    drawAnswer();
+  }
+
+  function drawAnswer() {
+    const s = summary;
+    const given = Array.isArray(s?.answers) ? s.answers : [];
+    mount(givenBox, given.length
+      ? h("section", { class: "card run-answers", "aria-label": "Answers given" }, h("h2", {}, "Answers given"), h("ol", {}, given.map((x) => h("li", {}, String(x?.text ?? "")))))
+      : null);
+    const show = !!s && !!s.questions && s.canAnswer === true && job === null && s.status !== "queued";
+    if (answerForm.hidden === !show) return;
+    answerForm.hidden = !show;
+    if (!show) answerErr.textContent = "";
+  }
+
+  async function sendAnswer(e) {
+    e?.preventDefault?.();
+    if (sending) return;
+    const text = answerInput.value.trim();
+    if (!text) { answerErr.textContent = NO_ANSWER; return; }
+    sending = true;
+    // Counted before the call: a stream update can bring the stored answer while the POST is still out.
+    const had = Array.isArray(summary?.answers) ? summary.answers.length : 0;
+    answerBtn.disabled = true;
+    answerErr.textContent = "";
+    try {
+      await a.answerRun(runId, text);
+    } catch (ex) {
+      if (!gone) answerErr.textContent = errorText(ex);
+      sending = false;
+      answerBtn.disabled = false;
+      return;
+    }
+    sending = false;
+    answerBtn.disabled = false;
+    if (gone) return;
+    answerInput.value = "";
+    // The form goes away at once; an older summary must not bring it back before the run has moved on.
+    expectAnswers = Math.max(expectAnswers, had + 1);
+    if (summary) summary = { ...summary, canAnswer: undefined };
+    toast(ANSWER_SENT);
+    draw();
+    await refresh();
+  }
+
+  function drawHead() {
     const hasTabs = !!summary;
     tabsBox.hidden = !hasTabs;
     if (!summary && !job) {
@@ -290,7 +362,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         steprow ? h("dl", { class: "meta" }, steprow) : null),
       h("div", { class: "card", style: { marginBottom: "16px" } },
         s.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, s.task) : null,
-        s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap" } }, h("b", {}, "Questions"), "\n", s.questions) : null,
+        s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, h("b", {}, "Questions"), "\n", s.questions) : null,
         h("dl", { class: "meta" },
           work ? row("Repository", work) : null,
           s.branch ? row("Branch", s.branch) : null,
@@ -303,7 +375,9 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const [runP, queueP] = await Promise.allSettled([a.run(runId), a.queue()]);
     if (gone) return;
     if (mineRun === runSeq) {
-      if (runP.status === "fulfilled") {
+      if (runP.status === "fulfilled" && staleAfterSend(runP.value)) {
+        // older than the answer just sent: keep what we have
+      } else if (runP.status === "fulfilled") {
         const had = summary?.history?.length;
         summary = runP.value;
         runError = null;
@@ -381,6 +455,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       return;
     }
     if (!s || typeof s !== "object") return;
+    if (staleAfterSend(s)) return;
     runSeq++;
     const had = summary?.history?.length;
     summary = s;

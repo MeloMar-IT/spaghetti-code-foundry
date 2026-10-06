@@ -139,6 +139,15 @@ describe("renderMyRuns", () => {
     a = { runs: vi.fn(async () => data.runs), queue: vi.fn(async () => ({ pending: data.pending, active: [] })), cancelRun: vi.fn(async () => ({ cancelled: true })) };
   });
 
+  it("marks a run that is answered on its page as yours and puts it on top", async () => {
+    data.runs = [run("r2", { startedAt: iso(1) }), run("q1", { status: "stopped", startedAt: iso(20), next: rec("planner_questions", "q1", { answerHere: true, forUser: true }) })];
+    await open();
+    const [first] = find(main, "li");
+    expect(first!.attrs.class).toContain("who-you");
+    expect(first!.textContent).toContain("on the run page");
+    expect(one(first!, "a").attrs.href).toBe("#/runs/q1");
+  });
+
   it("draws one card per run with a real link and no click handler", async () => {
     data.runs = [run("r1", { vars: { github_repo: "o/r", issue: "7" }, next: rec("approval", "r1") }), run("r2", { vars: { github_repo: "o/r" } }), run("r3")];
     await open();
@@ -274,7 +283,190 @@ describe("renderMyRun", () => {
       rejectRun: vi.fn(async () => ({})),
       resumeRun: vi.fn(async () => ({})),
       cancelRun: vi.fn(async () => ({ cancelled: true })),
+      answerRun: vi.fn(async () => ({})),
     };
+  });
+
+  const asking = (over: any = {}) => summaryOf({ status: "stopped", questions: "Q1?", canAnswer: true, next: rec("planner_questions", "r1", { answerHere: true }), ...over });
+  const form = () => one(main, "form", { class: "run-answer" });
+  const box = () => one(main, "textarea");
+  const send = async (text: string) => { box().value = text; form().fire("submit", { preventDefault() {} }); await flush(); };
+
+  it("shows the answer form under the questions", async () => {
+    state.summary = asking();
+    await open();
+    expect(form().hidden).toBe(false);
+    expect(one(form(), "label").textContent).toContain("Your answer");
+    expect(one(form(), "button").textContent).toBe("Send answer");
+    expect(main.textContent).toContain("Q1?");
+  });
+
+  it("has no form without canAnswer, questions, with a job, queued, or not found", async () => {
+    for (const s of [asking({ canAnswer: undefined }), asking({ questions: undefined }), asking({ status: "queued" })]) {
+      state.summary = s;
+      await open();
+      expect(form().hidden).toBe(true);
+    }
+    state.summary = asking();
+    state.pending = [job("r1")];
+    await open();
+    expect(form().hidden).toBe(true);
+    state.pending = [];
+    state.summary = null;
+    state.runError = refused("run not found", 404);
+    await open();
+    expect(form().hidden).toBe(true);
+  });
+
+  it("sends the trimmed text, empties the box and shows the next state", async () => {
+    state.summary = asking();
+    await open();
+    box().value = "  use B \n";
+    form().fire("submit", { preventDefault() {} });
+    state.summary = summaryOf({ status: "running" });
+    await flush();
+    expect(a.answerRun).toHaveBeenCalledWith("r1", "use B");
+    expect(box().value).toBe("");
+    expect(toastText()).toBe("Answer sent — continuing");
+    expect(form().hidden).toBe(true);
+    expect(a.run.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("sends with Ctrl+Enter and ⌘+Enter, not with Enter", async () => {
+    state.summary = asking();
+    await open();
+    box().value = "x";
+    box().fire("keydown", { key: "Enter", preventDefault() {} });
+    await flush();
+    expect(a.answerRun).not.toHaveBeenCalled();
+    box().fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await flush();
+    expect(a.answerRun).toHaveBeenCalledTimes(1);
+    state.summary = asking();
+    emit("update", { summary: state.summary });
+    box().value = "y";
+    box().fire("keydown", { key: "Enter", metaKey: true, preventDefault() {} });
+    await flush();
+    expect(a.answerRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for text first and does not send an empty box", async () => {
+    state.summary = asking();
+    await open();
+    await send("   ");
+    expect(one(form(), "p", { role: "alert" }).textContent).toBe("Write your answer first.");
+    expect(a.answerRun).not.toHaveBeenCalled();
+    expect(one(form(), "button").disabled).toBeFalsy();
+  });
+
+  it("does not send twice while the call is out", async () => {
+    state.summary = asking();
+    await open();
+    let release!: () => void;
+    a.answerRun.mockImplementationOnce(() => new Promise((res) => { release = () => res({}); }));
+    await send("use B");
+    expect(one(form(), "button").disabled).toBe(true);
+    form().fire("submit", { preventDefault() {} });
+    box().fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await flush();
+    expect(a.answerRun).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    expect(one(form(), "button").disabled).toBe(false);
+  });
+
+  it("shows a refusal in the form and keeps the text", async () => {
+    state.summary = asking();
+    await open();
+    a.answerRun.mockRejectedValueOnce(refused("this run did not stop with questions"));
+    await send("use B");
+    expect(one(form(), "p", { role: "alert" }).textContent).toBe("this run did not stop with questions");
+    expect(box().value).toBe("use B");
+    expect(one(form(), "button").disabled).toBe(false);
+    form().fire("submit", { preventDefault() {} });
+    await flush();
+    expect(a.answerRun).toHaveBeenCalledTimes(2);
+    a.answerRun.mockRejectedValueOnce(new TypeError("fetch failed"));
+    await send("use B");
+    expect(one(form(), "p", { role: "alert" }).textContent).toBe("Could not reach the server.");
+  });
+
+  it("keeps the box, its text and the focus while the page updates", async () => {
+    state.summary = asking();
+    await open();
+    const el = box();
+    el.focus();
+    el.value = "typing";
+    emit("update", { summary: asking({ flow: "renamed" }) });
+    await flush();
+    expect(box()).toBe(el);
+    expect(el.value).toBe("typing");
+    expect((document as any).activeElement).toBe(el);
+    expect(main.textContent).toContain("renamed");
+  });
+
+  it("brings the form back from the stream and hides it again", async () => {
+    state.summary = summaryOf({ status: "running" });
+    await open();
+    expect(form().hidden).toBe(true);
+    const calls = a.run.mock.calls.length;
+    emit("update", { summary: asking() });
+    expect(form().hidden).toBe(false);
+    expect(a.run.mock.calls.length).toBe(calls);
+    emit("update", { summary: summaryOf({ status: "running" }) });
+    expect(form().hidden).toBe(true);
+    expect(one(form(), "p", { role: "alert" }).textContent).toBe("");
+  });
+
+  it("ignores an older update after the answer was sent", async () => {
+    const before = asking();
+    state.summary = before;
+    await open();
+    state.summary = summaryOf({ status: "running", answers: [{ at: "a", text: "use B" }] });
+    await send("use B");
+    expect(form().hidden).toBe(true);
+    emit("update", { summary: before });
+    expect(form().hidden).toBe(true);
+    expect(main.textContent).not.toContain("Q1?");
+    emit("update", { summary: asking({ answers: [{ at: "a", text: "use B" }] }) });
+    expect(form().hidden).toBe(false);
+  });
+
+  it("shows the next question round when the stored answer arrived before the POST resolved", async () => {
+    state.summary = asking();
+    await open();
+    let release!: () => void;
+    a.answerRun.mockImplementationOnce(() => new Promise((res) => { release = () => res({}); }));
+    await send("use B");
+    emit("update", { summary: summaryOf({ status: "running", answers: [{ at: "a", text: "use B" }] }) });
+    release();
+    state.summary = summaryOf({ status: "running", answers: [{ at: "a", text: "use B" }] });
+    await flush();
+    emit("update", { summary: asking({ answers: [{ at: "a", text: "use B" }] }) });
+    expect(form().hidden).toBe(false);
+  });
+
+  it("lists the answers, oldest first, as plain text; also after a cancelled resume", async () => {
+    state.summary = asking({ answers: [{ at: "a", text: "first <b>x</b>" }, { at: "b", text: "second" }] });
+    await open();
+    const items = find(main, "li").map((li) => li.textContent);
+    expect(items).toEqual(["first <b>x</b>", "second"]);
+    state.summary = summaryOf({ status: "cancelled", answers: [{ at: "a", text: "one" }] });
+    await open();
+    expect(find(main, "li").map((li) => li.textContent)).toEqual(["one"]);
+    expect(form().hidden).toBe(true);
+    button("retry").click();
+    await flush();
+    expect(a.resumeRun).toHaveBeenCalledWith("r1");
+    state.summary = summaryOf({});
+    await open();
+    expect(main.textContent).not.toContain("Answers given");
+  });
+
+  it("draws no cost, model, agent or folder next to the form", async () => {
+    state.summary = asking({ answers: [{ at: "a", text: "ok" }] });
+    await open();
+    expect(main.textContent).not.toMatch(/\$|model|folder|Codex|claude/i);
   });
 
   it("shows the right buttons for each status", async () => {
@@ -554,6 +746,11 @@ describe("renderMyRun", () => {
 describe("ui/style.css", () => {
   const css = readFileSync("ui/style.css", "utf8");
   const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
+  it("lets the answer form shrink and its text wrap", () => {
+    expect(rule(".run-answer")).not.toMatch(/(^|[^-])width:/);
+    expect(rule(".run-answer[hidden]")).toContain("display: none");
+    expect(rule(".run-answers li")).toContain("overflow-wrap: anywhere");
+  });
   it("is one column of cards, wraps the buttons and scrolls the log and diff", () => {
     expect(rule(".run-cards")).not.toBe("");
     expect(rule(".run-cards")).not.toContain("grid-template-columns");

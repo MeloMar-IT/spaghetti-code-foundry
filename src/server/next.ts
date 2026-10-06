@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stepLogFile } from "../engine/execute.js";
 import { buildHistory, runProgress, runTiming, withWaitLeft, type DurationHistory } from "../estimate.js";
-import type { RunSummary } from "../engine/state.js";
+import { answerRoom, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
@@ -10,7 +10,7 @@ import type { WatcherConfig } from "../config.js";
 import { supersededRuns } from "../stats.js";
 import { watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
-import { userRecord, userTask } from "./user-view.js";
+import { answerBlock, userRecord, userTask } from "./user-view.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** Why the server waits to restart, and since when. */
@@ -105,9 +105,12 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       else superseded = supersededRuns([...known, run]).has(run.runId); // an older run beyond the loaded list
     }
     const title = tracked.flatMap((t) => t.issues.filter(() => t.watcher.github_repo === v.github_repo)).find((i) => String(i.issue) === v.issue)?.title;
+    // The same test as `canAnswer` (api-runs.ts): the answer box is on the user's run page only.
+    const answerHere = forUser && !answerBlock(run, cfg.watchers) && answerRoom(run) > 0;
     const rec = runNextStep(run, {
       queued: queued ? { waitingFor: queued.waitingFor, behindPriority: queued.behindPriority } : undefined,
-      superseded,
+      superseded: superseded && !answerHere,
+      answerHere,
       watched: !!w,
       failedLabel: w && labelNames(w).failed,
       releaseAt: run.status === "succeeded" ? releaseAtFor(cfg.watchers, run, load()) : undefined,
@@ -121,8 +124,8 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       if (closed) return closed;
     }
     // The watcher's hold for the same run and reason knows more (pull request, question count).
-    // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run.
-    const hold = forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed")
+    // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run; so does a run that is answered on its page.
+    const hold = forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))
       ? undefined
       : tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.runId === run.runId && (h.next.kind === rec.kind ||
         // "A bug story goes first" holds a stopped run that the watcher would resume: only while the run still is stopped.
