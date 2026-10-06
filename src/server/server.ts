@@ -44,6 +44,7 @@ import { sinceRoutes } from "./since.js";
 import { yourTurnRoutes } from "./your-turn.js";
 import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
+import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
@@ -66,6 +67,8 @@ export interface ServerOptions {
   refinementSweepMs?: number;
   /** The clock of the sign-in waits and locks, in ms (default Date.now). A test moves it. */
   signInClock?: () => number;
+  /** The clock of the "view as user" previews, in ms (default Date.now). A test moves it. */
+  viewAsClock?: () => number;
   /** How often old audit lines are removed, in ms (default one day). */
   auditSweepMs?: number;
   /** How often the stored watchers are read again after the file could not be read, in ms (default 30000). */
@@ -99,7 +102,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -208,11 +211,18 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     const method = req.method ?? "GET";
     const seg = path.split("/").filter(Boolean).slice(1); // drop "api"
     // The guard comes first: without a session nothing is answered, not even the moved-folder message with its path.
-    if (await authRoutes(ctx, req, res, seg, method)) return;
-    const user = await requireSession(ctx, req, method);
-    const admin = user.role === "admin";
+    const as = asParam(req);
+    if (as !== undefined && method !== "GET") throw new HttpError(403, READ_ONLY);
+    // GET /api/session is the one call that ignores `as`; every other call with `as` passes the view checks below
+    const plain = as === undefined || (seg.length === 1 && seg[0] === "session");
+    if (plain && (await authRoutes(ctx, req, res, seg, method))) return;
+    const caller = await requireSession(ctx, req, method);
+    // in a view an unexpected error gets the fixed sentence of a user
+    const admin = as === undefined && caller.role === "admin";
+    let user = caller;
     let where = seg.join("/");
     try {
+      if (as !== undefined) user = viewedUser(ctx, req, caller, as);
       // The table decides first: a call without a rule is 404, and a user only gets what the table gives.
       const rule = findRule(method, seg);
       if (!rule) throw new HttpError(404, "not found");
@@ -221,7 +231,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       const moved = method === "GET" ? undefined : homeMoved();
       if (moved) throw new HttpError(503, movedText(moved, admin));
       for (const route of ROUTES) {
-        if (await route(ctx, req, res, seg, method, user)) return watchSession(req, res);
+        if (await route(ctx, req, res, seg, method, user)) return watchSession(req, res, as);
       }
       throw new HttpError(404, "not found");
     } catch (e) {
@@ -233,10 +243,10 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   }
 
   /** A response that stays open (the run log stream) is closed when its session ends. */
-  function watchSession(req: IncomingMessage, res: ServerResponse) {
+  function watchSession(req: IncomingMessage, res: ServerResponse, as?: string) {
     if (res.writableEnded || res.destroyed) return;
     const timer = setInterval(() => {
-      if (!sessionAlive(ctx, req)) res.destroy();
+      if (!sessionAlive(ctx, req) || (as !== undefined && !viewRunning(ctx, req, as))) res.destroy();
     }, opts.sessionRecheckMs ?? SESSION_RECHECK_MS);
     timer.unref();
     res.on("close", () => clearInterval(timer));

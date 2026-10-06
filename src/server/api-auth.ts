@@ -130,7 +130,13 @@ export async function requireSession(ctx: ApiContext, req: IncomingMessage, meth
   return cur.user;
 }
 
-/** The signed-in account of a request (call after requireSession). */
+/** The id of the request's session (the hash of the cookie token, never the token), or undefined without a cookie. */
+export function sessionKey(ctx: ApiContext, req: IncomingMessage): string | undefined {
+  const token = cookieToken(ctx, req);
+  return token ? sessionId(token) : undefined;
+}
+
+/** The signed-in account of a request. Only `viewRunning` calls it: it needs the caller read fresh from the session. */
 export function sessionUser(ctx: ApiContext, req: IncomingMessage): User {
   const cur = currentSession(ctx, req);
   if (!cur) throw new HttpError(401, "sign in first");
