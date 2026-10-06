@@ -9,6 +9,12 @@ if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi
 if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$FAKE_GH_HOLD" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
+# $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
+fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
+if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
+  FAKE_GH_ISSUES=$(node -e 'const m=JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO);console.log(JSON.stringify(m[process.argv[1]]||[]))' "$fake_repo"); export FAKE_GH_ISSUES; unset FAKE_GH_FRESH
+fi
 # Edit or delete of a comment (gh api repos/…/issues/comments/<id> [-X DELETE]): logged, the edit with the body field of the JSON on stdin.
 all="$*"
 case "$all" in "api repos/"*"/issues/comments/"*)
@@ -76,7 +82,9 @@ case "$1 $2" in
       *"--json state") node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN"};console.log(JSON.stringify({state:i.state||"OPEN"}))' "$3" ;;
       *"--json state,labels"*) node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN",labels:[]};console.log(JSON.stringify({state:i.state||"OPEN",labels:i.labels||[]}))' "$3" ;;
       *"--json title,body,labels,comments"*) c=${FAKE_GH_PARENT:-}; [ -n "$c" ] || c='{"title":"Add a feature","body":"**Epic:** Updates\n\nPlease add feature.txt","labels":[{"name":"enhancement"},{"name":"Factory_go"},{"name":"Factory_working"}],"comments":[]}'; printf '%s' "$c" ;;
-      *"--json comments,labels"*) c=${FAKE_GH_COMMENTS:-}; [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
+      *"--json comments,labels"*) c=""
+         if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
+         [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}; [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       *) printf '# #%s: Add a feature\nhttps://github.com/owner/repo/issues/%s\n\nPlease add feature.txt\n' "$3" "$3"
          if [ -n "$FAKE_GH_ISSUE_EXTRA" ]; then printf '%s\n' "$FAKE_GH_ISSUE_EXTRA"; fi ;;

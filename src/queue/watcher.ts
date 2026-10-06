@@ -234,6 +234,8 @@ export class Watcher {
   private kickAgain = false;
   private setupDone = false;
   private stopped = false;
+  /** Stopped for good (changed or removed): a check that is still running starts nothing more. */
+  private retired = false;
   /** Runs whose end will set the label (so a run is waited for once). */
   private waitingFor = new Set<string>();
 
@@ -279,9 +281,13 @@ export class Watcher {
     void loop();
   }
 
-  /** Stop polling. Runs keep going; their labels are reconciled on the next start. */
-  stop() {
+  /**
+   * Stop polling. Runs keep going; their labels are reconciled on the next start. With `retire` a check that is
+   * running now also starts nothing more (the watcher was changed or removed).
+   */
+  stop(retire = false) {
     this.stopped = true;
+    if (retire) this.retired = true;
     clearTimeout(this.timer);
     this.status.nextTick = undefined;
   }
@@ -457,7 +463,11 @@ export class Watcher {
 
   /** Every run a watcher starts goes through here: a new run belongs to the watcher's owner; a resume keeps the run's own. */
   private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string }): string {
-    return this.d.scheduler.submit(job, { ...meta, ...(job.kind === "run" ? { owner: watcherOwner(this.cfg.owner) } : {}) });
+    if (this.retired) throw new Error("this watcher was stopped");
+    // A watcher of a repository passes the repository owner's id; it never falls back to the first admin.
+    if (this.cfg.repoId !== undefined && !this.cfg.ownerId) throw new Error("this watcher has no owner (the repository's owner is not an account)");
+    const owner = this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
+    return this.d.scheduler.submit(job, { ...meta, ...(job.kind === "run" ? { owner } : {}) });
   }
 
   private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
@@ -566,8 +576,9 @@ export class Watcher {
   private async tickIssues() {
     // A check that was given up (timeout) must not start runs or store holds next to a newer check.
     const mine = this.tickToken;
-    const alive = () => { if (mine !== this.tickToken) throw new Error("this check was given up"); };
+    const alive = () => { if (mine !== this.tickToken || this.retired) throw new Error("this check was given up"); };
     const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt"]);
+    alive();
     const whole = issues.length < 100;
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
