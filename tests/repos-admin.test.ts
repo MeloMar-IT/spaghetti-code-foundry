@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { checkRepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
-import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo } from "../src/auth/repos.js";
+import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, removeGithubRepo, removeRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo, watchersRemovedDetail } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
+import { AuditEntrySchema } from "../src/auth/audit.js";
+import { addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 import { createUser, setStatus } from "../src/auth/users.js";
 import { credentialsPath, listCredentials, readSecret, removeCredential } from "../src/credentials/store.js";
@@ -404,5 +406,73 @@ describe("what a transfer does to a sign-in", () => {
 
   it("takes no option that changes what happens to a credential", () => {
     expectTypeOf<keyof TransferOptions>().toEqualTypeOf<"findOwner">();
+  });
+});
+
+describe("removing a repository removes its watchers", () => {
+  const ids = () => listRepoWatchers().map((w) => w.id);
+  const setUp = () => {
+    const a = addRepo(ANN, "acme/one", OK);
+    const b = addRepo(ANN, "acme/two", OK);
+    addRepoWatcher(a.id, { id: "a1" });
+    addRepoWatcher(a.id, { id: "a2" });
+    addRepoWatcher(b.id, { id: "b1" });
+    return { a, b };
+  };
+
+  it("removeRepo and removeGithubRepo return the ids, and another repository keeps its watchers", () => {
+    const { a } = setUp();
+    expect(removeRepo(ANN, a.id)).toMatchObject({ watchers: ["a1", "a2"] });
+    expect(ids()).toEqual(["b1"]);
+    expect(removeGithubRepo(ANN, "acme/two")).toMatchObject({ watchers: ["b1"] });
+    expect(ids()).toEqual([]);
+    const c = addRepo(ANN, "acme/three", OK);
+    expect(removeRepo(ANN, c.id).watchers).toEqual([]);
+  });
+
+  it("stops on a broken watcher file and keeps the record and its token", () => {
+    const rec = addRepo(ANN, { url: "acme/tok", method: "github-token", token: TOKEN }, OK);
+    writeFileSync(repoWatchersPath(), "not json");
+    expect(() => removeRepo(ANN, rec.id)).toThrow(StoreError);
+    expect(listRepos(ANN).map((r) => r.id)).toContain(rec.id);
+    expect(listCredentials(ANN)).toHaveLength(1);
+  });
+
+  it("puts the watchers back when repos.json cannot be written, and removes them when it works", () => {
+    const { a } = setUp();
+    const before = listRepoWatchers();
+    mkdirSync(reposPath() + ".tmp");
+    expect(() => removeRepo(ANN, a.id)).toThrow(expect.objectContaining({ kind: "cannot-write" }));
+    expect(listRepos(ANN).map((r) => r.id)).toContain(a.id);
+    expect(listRepoWatchers()).toEqual(before);
+    rmSync(reposPath() + ".tmp", { recursive: true });
+    expect(removeRepo(ANN, a.id).watchers).toEqual(["a1", "a2"]);
+  });
+
+  it("puts the watchers back when the token cannot be removed", () => {
+    const rec = addRepo(ANN, { url: "acme/tok", method: "github-token", token: TOKEN }, OK);
+    addRepoWatcher(rec.id, { id: "t1" });
+    addRepo(ANN, { url: "acme/tok2", method: "github-token", token: TOKEN }, OK); // a credential is left, so the key is needed
+    kc.fail("find");
+    expect(() => removeRepo(ANN, rec.id)).toThrow();
+    kc.fail();
+    expect(ids()).toEqual(["t1"]);
+    expect(listRepos(ANN).map((r) => r.id)).toContain(rec.id);
+  });
+
+  it("a transfer leaves the watcher file as it is", () => {
+    const { a } = setUp();
+    const before = readFileSync(repoWatchersPath(), "utf8");
+    transferRepo(a.id, "bob@example.com", { findOwner });
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(before);
+  });
+
+  it("writes the audit detail in short form and cuts a long list to what the log accepts", () => {
+    expect(watchersRemovedDetail(["a", "b"])).toBe("watchers removed: a, b");
+    const long = watchersRemovedDetail(Array.from({ length: 200 }, (_, i) => `watcher-${i}`));
+    expect(long.length).toBeLessThanOrEqual(500);
+    expect(long.endsWith("…")).toBe(true);
+    const entry = { action: "repo-change", by: "cli", time: new Date().toISOString(), result: "ok", target: ANN, detail: long };
+    expect(AuditEntrySchema.safeParse(entry).success).toBe(true);
   });
 });

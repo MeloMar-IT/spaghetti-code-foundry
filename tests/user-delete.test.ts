@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, reposPath } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
+import { addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { createSession, listSessions, refinementsPath } from "../src/refinement/store.js";
 import { readSessions } from "../src/auth/sessions.js";
 import { randomUUID } from "node:crypto";
@@ -175,6 +176,75 @@ describe("deleteUser", () => {
     expect(listUsers().map((u) => u.id)).not.toContain(ann.id);
     expect(existsSync(usersPath())).toBe(true);
     expect(UserError).toBeDefined();
+  });
+});
+
+describe("deleteUser and the watchers of the account", () => {
+  const auditFile = () => join(home, "audit.jsonl");
+  const auditLines = () => (existsSync(auditFile()) ? readFileSync(auditFile(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : []);
+  const ids = () => listRepoWatchers().map((w) => w.id);
+  const setUp = () => {
+    const a1 = addRepo(ann.id, "acme/one");
+    const a2 = addRepo(ann.id, "acme/two");
+    addRepo(ann.id, "acme/none");
+    const b1 = addRepo(bob.id, "acme/bob");
+    addRepoWatcher(a1.id, { id: "a1x" });
+    addRepoWatcher(a1.id, { id: "a1y" });
+    addRepoWatcher(a2.id, { id: "a2x" });
+    addRepoWatcher(b1.id, { id: "b1x" });
+    return { a1, a2 };
+  };
+
+  it("removes the watchers of the account's repositories and keeps the other account's", () => {
+    setUp();
+    deleteUser(ann.id);
+    expect(ids()).toEqual(["b1x"]);
+    expect(auditLines()).toEqual([]); // no `by`, no lines
+  });
+
+  it("writes one `repo-change` line per repository with watchers, then the `delete` line", () => {
+    const { a1, a2 } = setUp();
+    deleteUser(ann.id, { by: "cli" });
+    expect(auditLines().map((l) => [l.action, l.target ?? l.userId, l.detail])).toEqual([
+      ["repo-change", a1.id, "watchers removed: a1x, a1y"],
+      ["repo-change", a2.id, "watchers removed: a2x"],
+      ["delete", ann.id, undefined],
+    ]);
+  });
+
+  it("stops on a broken watcher file, and works once it is fixed", () => {
+    setUp();
+    const good = readFileSync(repoWatchersPath(), "utf8");
+    writeFileSync(repoWatchersPath(), "not json");
+    const users = readFileSync(usersPath());
+    const repos = readFileSync(reposPath());
+    expect(code(() => deleteUser(ann.id, { by: "cli" }))).toBeInstanceOf(StoreError);
+    expect(readFileSync(usersPath())).toEqual(users);
+    expect(readFileSync(reposPath())).toEqual(repos);
+    writeFileSync(repoWatchersPath(), good);
+    deleteUser(ann.id, { by: "cli" });
+    expect(ids()).toEqual(["b1x"]);
+  });
+
+  it("keeps the watchers and writes no line when repos.json cannot be written", () => {
+    setUp();
+    mkdirSync(reposPath() + ".tmp");
+    expect(code(() => deleteUser(ann.id, { by: "cli" }))).toBeInstanceOf(StoreError);
+    expect(ids()).toHaveLength(4);
+    expect(auditLines().filter((l) => l.action === "repo-change")).toEqual([]);
+  });
+
+  it("keeps the audit lines of a delete that failed later, and the second try adds only `delete`", () => {
+    setUp();
+    cred(ann, "a", "Aa1");
+    cred(bob, "b", "Bb2"); // a credential is left, so the Keychain is asked
+    kc.fail("find");
+    expect(code(() => deleteUser(ann.id, { by: "cli" }))).toBeInstanceOf(KeyError);
+    expect(ids()).toEqual(["b1x"]);
+    expect(auditLines().map((l) => l.action)).toEqual(["repo-change", "repo-change"]);
+    kc.fail();
+    deleteUser(ann.id, { by: "cli" });
+    expect(auditLines().map((l) => l.action)).toEqual(["repo-change", "repo-change", "delete"]);
   });
 });
 

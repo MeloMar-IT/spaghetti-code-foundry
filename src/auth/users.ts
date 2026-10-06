@@ -5,7 +5,7 @@ import { removeCredentialsLocked } from "../credentials/store.js";
 import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent } from "./audit.js";
 import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
-import { removeReposLocked } from "./repos.js";
+import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
@@ -497,7 +497,7 @@ export interface DeletedUser {
 }
 
 /**
- * Deletes an account. Order: sessions, then credentials (with a new key), then users.json, so every partial state is
+ * Deletes an account. Order: repositories (with their watchers, one audit line each), sessions, then credentials (with a new key), then users.json, so every partial state is
  * safe and a second run finishes the job. The last admin that is not blocked cannot be deleted.
  */
 export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
@@ -510,7 +510,9 @@ export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
       // A refinements.json that cannot be read stops the delete before anything changes; then the repository list
       // (a repos.json that cannot be read stops it too), then the refinement sessions.
       checkRefinements();
-      removeReposLocked(id);
+      removeReposLocked(id, (repoId, ids) => {
+        if (opts.by !== undefined) appendAuditLocked(opts.by, { action: "repo-change", result: "ok", target: repoId, detail: watchersRemovedDetail(ids) });
+      });
       removeRefinementsLocked(id);
       removeSessionsLocked((s) => s.userId === id);
       const wiped = removeCredentialsLocked(id);

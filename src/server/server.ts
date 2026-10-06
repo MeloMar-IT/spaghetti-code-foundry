@@ -28,9 +28,9 @@ import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.
 import { adoptRuns } from "../auth/run-owner.js";
 import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
-import { getRepo } from "../auth/repos.js";
+import { getRepo, listAllRepos } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
-import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers } from "../repos/watchers.js";
+import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers, removeOrphanWatchers, repoWatchersMtime } from "../repos/watchers.js";
 import { getUser } from "../auth/users.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
@@ -169,14 +169,17 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       if (!retryTimer) {
         retryTimer = setTimeout(() => {
           retryTimer = undefined;
-          // like the other timers: nothing during a restart wait, nothing on a server without watchers
-          if (opts.watchers === false || ctx.restart) return void refreshStored();
-          watchers.sync();
+          syncStored();
         }, opts.watcherRetryMs ?? 30_000);
         retryTimer.unref();
       }
     }
     rebuild();
+  };
+  /** Brings the watchers in line with the stores; like the other timers: only the lists during a restart wait or on a server without watchers. */
+  const syncStored = () => {
+    if (opts.watchers === false || ctx.restart) return void refreshStored();
+    watchers.sync();
   };
   const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => effective, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart, startedAt: new Date(), beforeSync: refreshStored });
   const ctx: ApiContext = {
@@ -193,11 +196,19 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     listen,
   };
+  // a stored watcher without a repository is removed before the lists are built
+  try {
+    for (const w of removeOrphanWatchers(() => listAllRepos().map((r) => r.id))) {
+      log(`repo-watchers: removed leftover watcher "${w.id}" (its repository is gone)`);
+    }
+  } catch (e) {
+    log(`! repo-watchers: leftover watchers could not be removed: ${e instanceof StoreError ? `${basename(e.file)} ${e.kind}` : "unexpected error"}`);
+  }
   refreshStored();
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while
   // the server was down does not reach a run that is adopted later.
-  const sweep = accountSweeper(scheduler, log);
+  const sweep = accountSweeper(scheduler, log, { changed: syncStored, stamp: repoWatchersMtime });
   sweep();
   const refinementSweep = refinementSweeper(log);
   refinementSweep();

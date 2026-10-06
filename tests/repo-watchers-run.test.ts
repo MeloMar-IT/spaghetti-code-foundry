@@ -1,13 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addRepo } from "../src/auth/repos.js";
-import { createUser } from "../src/auth/users.js";
+import { addRepo, reposPath } from "../src/auth/repos.js";
+import { createUser, deleteUser, setStatus } from "../src/auth/users.js";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
-import { repoWatchersPath } from "../src/repos/watchers.js";
+import { addRepoWatcher, removeWatchersOfRepos, repoWatchersPath } from "../src/repos/watchers.js";
 import { startServer } from "../src/server/server.js";
 import { claudeBin, fakeGithub, oldFlowFor } from "./helpers/fake-github.js";
 import { fakeKeychain } from "./helpers/keychain.js";
@@ -48,6 +49,9 @@ describe("a Watcher of a repository", () => {
     const mine = start({ repoId: "r1", ownerId: ann.id });
     await mine.w.tick();
     expect(mine.scheduler.queue().pending.map((p) => mine.scheduler.ownerOf(p.runId))).toEqual([ann.id]);
+    // the owner also counts as the one that queued it, so blocking the owner drops the job instead of letting it start
+    expect(mine.scheduler.cancelAccount(ann.id)).toEqual({ queued: 1, running: 0, waiting: 0 });
+    expect(mine.scheduler.queue().pending).toEqual([]);
     // no owner: nothing is queued, and the first admin gets nothing
     const none = start({ repoId: "r1" });
     await none.w.tick();
@@ -87,11 +91,27 @@ describe("watchers of two repositories", () => {
   let ann: TestSession;
   let logs: string[];
   let kc: ReturnType<typeof fakeKeychain>;
+  const begin = async () => {
+    ({ close, ctx } = await startServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), port, claudeBin, watcherRetryMs: 50, accountSweepMs: 50, log: (m) => void logs.push(m) }));
+  };
+  /** Stops the server and starts it again on the same data folder. */
+  const restart = async () => {
+    close();
+    await new Promise((r) => setTimeout(r, 150));
+    await begin();
+    ctx.scheduler.drain();
+  };
+  const until = async (fn: () => boolean, ms = 3000) => {
+    const end = Date.now() + ms;
+    while (!fn() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    return fn();
+  };
+  const trackedIds = () => ctx.watchers.tracked().map((t) => t.watcher.id);
 
   beforeEach(async () => {
     logs = [];
     kc = fakeKeychain();
-    ({ close, ctx } = await startServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), port, claudeBin, watcherRetryMs: 50, log: (m) => void logs.push(m) }));
+    await begin();
     ctx.scheduler.drain();
     admin = await signInAs(base);
     ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
@@ -162,6 +182,96 @@ describe("watchers of two repositories", () => {
     expect((await call(second, "DELETE", `/api/repos/${repo.id}`)).status).toBe(200);
     expect(ctx.watchers.tracked()).toEqual([]);
     expect(readFileSync(repoWatchersPath(), "utf8")).not.toContain("web-w");
+  });
+
+  it("sends the runs of a transferred repository to the new owner", async () => {
+    const second = await signInAs(base, { name: "Second", email: "second@example.com", role: "admin" });
+    const repo = addRepo(admin.user.id, { url: "acme/web" });
+    process.env.FAKE_GH_ISSUES = "[]";
+    await addWatcher(repo.id, "web-w");
+    expect((await call(admin, "POST", `/api/admin/repos/${repo.id}/transfer`, { email: second.user.email })).status).toBe(200);
+    // the watcher that runs after the transfer has finished its first check; only then does the issue appear
+    expect(await until(() => ctx.watchers.tracked()[0]?.status.lastOk !== undefined, 8000)).toBe(true);
+    process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 4, title: "four", labels: [{ name: "claude-factory" }] }]);
+    const queued = () => ctx.scheduler.queue().pending.filter((p) => p.lockKey === "acme/web#4");
+    for (let i = 0; i < 40 && !queued().length; i++) {
+      await ctx.watchers.runNow("web-w");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(queued()).toHaveLength(1);
+    expect(ctx.scheduler.ownerOf(queued()[0]!.runId)).toBe(second.user.id);
+  });
+
+  it("follows a block, an unblock and a delete made from the command line", async () => {
+    const repo = addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
+    addRepoWatcher(repo.id, { id: "app-w" });
+    ctx.watchers.sync();
+    expect(trackedIds()).toEqual(["app-w"]);
+    await setStatus(ann.user.id, "blocked", { by: "cli" });
+    expect(await until(() => trackedIds().length === 0)).toBe(true);
+    const row = ((await (await call(admin, "GET", "/api/watchers")).json()) as { id: string; state: { name: string } }[]).find((w) => w.id === "app-w");
+    expect(row?.state.name).toBe("paused");
+    await setStatus(ann.user.id, "active", { by: "cli" });
+    expect(await until(() => trackedIds().length === 1)).toBe(true);
+    deleteUser(ann.user.id, { by: "cli" });
+    expect(await until(() => trackedIds().length === 0)).toBe(true);
+    const rows = (await (await call(admin, "GET", "/api/watchers")).json()) as { id: string }[];
+    expect(rows.map((w) => w.id)).not.toContain("app-w");
+  });
+
+  it("drops a pending job of the owner's watcher when the owner is blocked, and never starts it", async () => {
+    const repo = addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
+    process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 4, title: "four", labels: [{ name: "claude-factory" }] }]);
+    await call(admin, "POST", `/api/admin/repos/${repo.id}/watchers`, { id: "app-w" });
+    expect(await until(() => ctx.scheduler.queue().pending.some((p) => p.lockKey === "acme/app#4"), 8000)).toBe(true);
+    expect((await call(admin, "POST", `/api/users/${ann.user.id}/block`, {})).status).toBe(200);
+    expect(ctx.scheduler.queue().pending.some((p) => p.lockKey === "acme/app#4")).toBe(false);
+  });
+
+  it("notices a change of the watcher file made outside the server", async () => {
+    const repo = addRepo(admin.user.id, { url: "acme/web" });
+    addRepoWatcher(repo.id, { id: "web-w" });
+    ctx.watchers.sync();
+    expect(trackedIds()).toEqual(["web-w"]);
+    await new Promise((r) => setTimeout(r, 20));
+    removeWatchersOfRepos([repo.id]);
+    expect(await until(() => trackedIds().length === 0)).toBe(true);
+  });
+
+  describe("at start", () => {
+    const setUp = () => {
+      const repo = addRepo(admin.user.id, { url: "acme/web" });
+      addRepoWatcher(repo.id, { id: "web-w" });
+      addRepoWatcher(randomUUID(), { id: "orphan-w" });
+    };
+
+    it("removes a watcher without a repository, and logs it", async () => {
+      setUp();
+      await restart();
+      expect(readFileSync(repoWatchersPath(), "utf8")).not.toContain("orphan-w");
+      expect(logs).toContain('repo-watchers: removed leftover watcher "orphan-w" (its repository is gone)');
+      expect(trackedIds()).toEqual(["web-w"]);
+    });
+
+    it("removes nothing when repos.json cannot be read", async () => {
+      setUp();
+      const before = readFileSync(repoWatchersPath(), "utf8");
+      writeFileSync(reposPath(), "not json");
+      await restart();
+      expect(readFileSync(repoWatchersPath(), "utf8")).toBe(before);
+      expect(logs.some((l) => l.startsWith("! repo-watchers: leftover watchers could not be removed: repos.json"))).toBe(true);
+    });
+
+    it("logs a leftover that cannot be removed, and keeps the other watchers running", async () => {
+      setUp();
+      const before = readFileSync(repoWatchersPath(), "utf8");
+      mkdirSync(repoWatchersPath() + ".tmp");
+      await restart();
+      expect(readFileSync(repoWatchersPath(), "utf8")).toBe(before);
+      expect(logs).toContain("! repo-watchers: leftover watchers could not be removed: repo-watchers.json cannot-write");
+      expect(trackedIds()).toEqual(["web-w"]);
+      expect(ctx.blockedWatchers().find((b) => b.id === "orphan-w")?.problem).toMatch(/not connected any more/);
+    });
   });
 
   it("fails closed when the store cannot be read, and runs again when it can", async () => {

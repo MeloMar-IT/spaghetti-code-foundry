@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withAuthLock } from "../src/auth/store.js";
 import {
-  addRepoWatcher, configIdProblem, effectiveRepoWatchers, listRepoWatchers, removeRepoWatcher, removeWatchersOfRepos, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
+  OWNER_BLOCKED, addRepoWatcher, configIdProblem, effectiveRepoWatchers, listRepoWatchers, removeOrphanWatchers, removeRepoWatcher, removeWatchersOfRepos, removeWatchersOfReposLocked, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
 } from "../src/repos/watchers.js";
 
 let home: string;
@@ -138,6 +139,91 @@ describe("duplicate ids", () => {
     expect(r.blocked[0]!.problem).toMatch(/used by another watcher in config.yaml/);
     writeFileSync(repoWatchersPath(), JSON.stringify({ version: 1, watchers: [{ repoId: repo, id: "d" }, { repoId: other, id: "d" }] }));
     expect(() => listRepoWatchers()).toThrow(expect.objectContaining({ kind: "wrong-format" }));
+  });
+});
+
+describe("removeWatchersOfReposLocked", () => {
+  it("throws outside the lock, removes and returns the watchers inside it, and undo puts them back", () => {
+    addRepoWatcher(repo, { id: "a" });
+    addRepoWatcher(repo, { id: "b" });
+    addRepoWatcher(other, { id: "c" });
+    expect(() => removeWatchersOfReposLocked([repo])).toThrow(/inside withAuthLock/);
+    const before = listRepoWatchers();
+    const r = withAuthLock(() => removeWatchersOfReposLocked([repo]));
+    expect(r.gone.map((w) => w.id)).toEqual(["a", "b"]);
+    expect(listRepoWatchers().map((w) => w.id)).toEqual(["c"]);
+    withAuthLock(() => r.undo());
+    expect(listRepoWatchers()).toEqual(before);
+  });
+
+  it("writes nothing when nothing matches, and its undo writes nothing either", () => {
+    addRepoWatcher(other, { id: "c" });
+    const r = withAuthLock(() => removeWatchersOfReposLocked([repo]));
+    expect(r.gone).toEqual([]);
+    const bytes = readFileSync(repoWatchersPath(), "utf8") + " ";
+    writeFileSync(repoWatchersPath(), bytes);
+    withAuthLock(() => r.undo());
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(bytes);
+    expect(withAuthLock(() => removeWatchersOfReposLocked([])).gone).toEqual([]);
+  });
+});
+
+describe("removeOrphanWatchers", () => {
+  it("removes only the watchers whose repository is not in the list", () => {
+    addRepoWatcher(repo, { id: "keep" });
+    addRepoWatcher(other, { id: "orphan" });
+    expect(removeOrphanWatchers(() => [repo]).map((w) => w.id)).toEqual(["orphan"]);
+    expect(listRepoWatchers().map((w) => w.id)).toEqual(["keep"]);
+  });
+
+  it("writes nothing without a leftover, and does not ask for the repositories of an empty store", () => {
+    let asked = 0;
+    expect(removeOrphanWatchers(() => (asked++, []))).toEqual([]);
+    expect(asked).toBe(0);
+    addRepoWatcher(repo, { id: "keep" });
+    const touched = readFileSync(repoWatchersPath(), "utf8") + "\n";
+    writeFileSync(repoWatchersPath(), touched);
+    expect(removeOrphanWatchers(() => [repo])).toEqual([]);
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(touched);
+  });
+
+  it("leaves the file as it is when the list throws, when the write fails and when the file is broken", () => {
+    addRepoWatcher(other, { id: "orphan" });
+    const bytes = readFileSync(repoWatchersPath(), "utf8");
+    expect(() => removeOrphanWatchers(() => { throw new Error("no"); })).toThrow("no");
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(bytes);
+    mkdirSync(repoWatchersPath() + ".tmp");
+    expect(() => removeOrphanWatchers(() => [])).toThrow(expect.objectContaining({ kind: "cannot-write" }));
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(bytes);
+    rmSync(repoWatchersPath() + ".tmp", { recursive: true });
+    writeFileSync(repoWatchersPath(), "not json");
+    expect(() => removeOrphanWatchers(() => [])).toThrow(expect.objectContaining({ name: "StoreError" }));
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe("not json");
+  });
+});
+
+describe("a blocked owner", () => {
+  const owner = () => ({ id: randomUUID(), email: "ann@example.com", role: "user", status: "blocked" });
+  const rec = (o: { id: string }, method = "github-token") => ({ id: repo, url: "https://github.com/acme/app", method, owner: o.id });
+
+  it("pauses the watcher, whatever else is wrong with the repository", () => {
+    for (const method of ["github-token", "https-token", "none"]) {
+      const o = owner();
+      const w = addRepoWatcher(repo, { id: `w-${method}` });
+      const r = effectiveRepoWatchers([w], () => rec(o, method), () => o);
+      expect(r.runnable).toEqual([]);
+      expect(r.blocked[0]).toMatchObject({ paused: true, problem: OWNER_BLOCKED, owner: "ann@example.com" });
+    }
+  });
+
+  it("does not hide a clash with config.yaml, a missing repository or a missing owner", () => {
+    const o = owner();
+    const w = addRepoWatcher(repo, { id: "w" });
+    const clash = effectiveRepoWatchers([w], () => rec(o), () => o, ["w"]).blocked[0]!;
+    expect(clash.problem).toMatch(/config.yaml/);
+    expect(clash).not.toHaveProperty("paused");
+    expect(effectiveRepoWatchers([w], () => undefined, () => o).blocked[0]).not.toHaveProperty("paused");
+    expect(effectiveRepoWatchers([w], () => rec(o), () => undefined).blocked[0]).not.toHaveProperty("paused");
   });
 });
 

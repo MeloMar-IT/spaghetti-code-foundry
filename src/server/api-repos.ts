@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction } from "../auth/audit.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../auth/repos.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
@@ -9,7 +9,7 @@ import { StoreError } from "../auth/store.js";
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
-import { RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher, removeWatchersOfRepos, updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
+import { RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
 import { watcherState } from "../words.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
@@ -55,25 +55,26 @@ function guardedWatchers<T>(ctx: ApiContext, fn: () => T): T {
   }
 }
 
-/** GET /api/watchers: the watchers that run or are listed from config.yaml, and the stored ones that cannot run (with their `problem`, in the error state, without a status). */
+/** GET /api/watchers: the watchers that run or are listed from config.yaml, and the stored ones that cannot run (with their `problem`, in the disabled, paused or error state, without a status). */
 export function watcherRows(ctx: ApiContext) {
-  const blocked = ctx.blockedWatchers().map((b) => ({ ...b, state: watcherState(b.enabled ? "error" : "disabled") }));
+  const blocked = ctx.blockedWatchers().map((b) => ({ ...b, state: watcherState(!b.enabled ? "disabled" : b.paused ? "paused" : "error") }));
   return [...watchersWithNext(ctx), ...blocked];
 }
 
 /**
- * Removes the watchers of repositories that are removed (the server's own delete paths), one audit line per repository.
- * Never throws: a failure is logged with fixed words, and the watchers then show as blocked.
+ * Removes a repository through `remove` (which also removes its watchers), writes the audit lines and always brings the
+ * running watchers in line, also when the removal failed half way.
  */
-export function dropRepoWatchers(ctx: ApiContext, by: string, repoIds: string[]): void {
+function removeAndTell(ctx: ApiContext, by: string, remove: () => ReturnType<typeof removeRepo>): void {
   try {
-    const gone = removeWatchersOfRepos(repoIds);
-    for (const id of repoIds) {
-      const mine = gone.filter((w) => w.repoId === id);
-      if (mine.length) auditAction(ctx.diagLog, by, "repo-change", id, `watchers removed: ${mine.map((w) => w.id).join(", ")}`);
+    const r = guardedRepos(ctx, remove);
+    if (r.removed) {
+      auditAction(ctx.diagLog, by, "repo-remove", r.removed.id, r.removed.url);
+      if (r.watchers?.length) auditAction(ctx.diagLog, by, "repo-change", r.removed.id, watchersRemovedDetail(r.watchers));
     }
-  } catch (e) {
-    ctx.diagLog?.(e instanceof StoreError ? `repos: ${basename(e.file)} ${e.kind}` : "repos: watchers could not be removed");
+    oldKeys(ctx, r.oldKeysLeft, "the repository was removed");
+  } finally {
+    ctx.watchers.sync();
   }
 }
 
@@ -310,23 +311,11 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;
   }
   if (seg.length === 2 && method === "DELETE") {
-    const r = guardedRepos(ctx, () => removeRepo(user.id, seg[1]!));
-    if (r.removed) {
-      auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
-      dropRepoWatchers(ctx, user.id, [r.removed.id]);
-      ctx.watchers.sync();
-    }
-    oldKeys(ctx, r.oldKeysLeft, "the repository was removed");
+    removeAndTell(ctx, user.id, () => removeRepo(user.id, seg[1]!));
     return send(res, 200, { ok: true }), true;
   }
   if (seg.length === 3 && method === "DELETE") {
-    const r = guardedRepos(ctx, () => removeGithubRepo(user.id, `${seg[1]}/${seg[2]}`));
-    if (r.removed) {
-      auditAction(ctx.diagLog, user.id, "repo-remove", r.removed.id, r.removed.url);
-      dropRepoWatchers(ctx, user.id, [r.removed.id]);
-      ctx.watchers.sync();
-    }
-    oldKeys(ctx, r.oldKeysLeft, "the repository was removed");
+    removeAndTell(ctx, user.id, () => removeGithubRepo(user.id, `${seg[1]}/${seg[2]}`));
     return send(res, 200, { ok: true }), true;
   }
   return false;

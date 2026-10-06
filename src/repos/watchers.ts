@@ -2,7 +2,7 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { githubNameOf } from "../auth/repo-url.js";
-import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
+import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { RepoWatcherSchema, type RepoWatcherOptions, type WatcherConfig } from "../config.js";
 
 /**
@@ -128,6 +128,35 @@ export function removeWatchersOfRepos(repoIds: string[]): StoredWatcher[] {
   });
 }
 
+/**
+ * Like removeWatchersOfRepos, for a caller that holds the auth lock (and throws when it does not). `undo()` writes the
+ * old list back (a no-op when nothing was removed), for a caller whose next write fails.
+ */
+export function removeWatchersOfReposLocked(repoIds: string[]): { gone: StoredWatcher[]; undo: () => void } {
+  if (!authLockHeld()) throw new Error("removeWatchersOfReposLocked must run inside withAuthLock");
+  if (!repoIds.length) return { gone: [], undo: () => {} };
+  const all = read();
+  const gone = all.filter((w) => repoIds.includes(w.repoId));
+  if (!gone.length) return { gone, undo: () => {} };
+  save(all.filter((w) => !repoIds.includes(w.repoId)));
+  return { gone, undo: () => save(all) };
+}
+
+/**
+ * Removes the watchers whose repository is not in the list `repoIds` returns, and returns them. `repoIds` is not called
+ * for an empty store, and nothing is written when there is no leftover. A file that cannot be read throws a StoreError.
+ */
+export function removeOrphanWatchers(repoIds: () => string[]): StoredWatcher[] {
+  return withAuthLock(() => {
+    const all = read();
+    if (!all.length) return [];
+    const known = new Set(repoIds());
+    const gone = all.filter((w) => !known.has(w.repoId));
+    if (gone.length) save(all.filter((w) => known.has(w.repoId)));
+    return gone;
+  });
+}
+
 /** The modification time of the file (0 when there is none); a cheap way to see that nothing was written. */
 export const repoWatchersMtime = (): number => {
   try {
@@ -161,12 +190,17 @@ export function watcherRepoProblem(rec: RepoLike, owner: UserLike | undefined): 
   return undefined;
 }
 
+/** The problem of a watcher whose owner is blocked; the words of the "paused" state. */
+export const OWNER_BLOCKED = "paused: the owner is blocked";
+
 export interface BlockedWatcher extends Omit<WatcherConfig, "github_repo" | "owner"> {
   github_repo: string;
   owner?: string;
   repoId: string;
   /** Why it cannot run. */
   problem: string;
+  /** True when it waits only because its owner is blocked (it starts again on unblock). */
+  paused?: true;
 }
 
 /** Splits the stored watchers into the ones that can run (as `WatcherConfig`) and the ones that cannot (with their problem). Every watcher is in exactly one list. */
@@ -191,11 +225,14 @@ export function effectiveRepoWatchers(
     }
     const owner = getUser(rec.owner);
     const github_repo = githubNameOf(rec.url) ?? "";
+    if (owner && owner.status !== "active") {
+      // a blocked owner wins over the other problems of the repository; the watcher starts again on unblock
+      blocked.push({ ...w, github_repo, owner: owner.email, problem: OWNER_BLOCKED, paused: true });
+      continue;
+    }
     const problem = watcherRepoProblem(rec, owner);
     if (problem || !owner) {
       blocked.push({ ...w, github_repo, owner: owner?.email, problem: problem ?? "the owner of this repository is not an account any more" });
-    } else if (owner.status !== "active") {
-      blocked.push({ ...w, github_repo, owner: owner.email, problem: "the owner of this repository is blocked" });
     } else runnable.push({ ...w, github_repo, owner: owner.email, ownerId: rec.owner });
   }
   return { runnable, blocked };

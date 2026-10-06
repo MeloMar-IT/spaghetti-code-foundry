@@ -467,7 +467,9 @@ export class Watcher {
     // A watcher of a repository passes the repository owner's id; it never falls back to the first admin.
     if (this.cfg.repoId !== undefined && !this.cfg.ownerId) throw new Error("this watcher has no owner (the repository's owner is not an account)");
     const owner = this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
-    return this.d.scheduler.submit(job, { ...meta, ...(job.kind === "run" ? { owner } : {}) });
+    // the owner's account also counts as the one that queued it, so a block or delete drops the job and holds it while blocked
+    const queuedBy = this.cfg.repoId !== undefined ? { queuedBy: this.cfg.ownerId } : {};
+    return this.d.scheduler.submit(job, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
   }
 
   private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
