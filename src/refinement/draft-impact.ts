@@ -39,6 +39,27 @@ const basis = z.enum(BASES);
 const count = z.number().int().min(0).max(IMPACT_SIZE_NUMBER_MAX);
 const issue = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 
+export const normArea = (a: string): string => a.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+
+/** The rule of overlaps() in tools/area-lock (equal, or one is a path prefix of the other) — keep the two the same. */
+export function areaOverlaps(a: string, b: string): boolean {
+  a = normArea(a);
+  b = normArea(b);
+  if (a.startsWith("@") || b.startsWith("@")) return a === b;
+  if (a === "*" || b === "*") return true;
+  return a === b || a.startsWith(b + "/") || b.startsWith(a + "/");
+}
+
+/** Paths fit for the part "Areas the Foundry knows": normalised, every path the schema accepts (also with spaces), unique. */
+export function safeAreas(raw: string[]): string[] {
+  const out = new Set<string>();
+  for (const r of raw) {
+    const a = normArea(r);
+    if (a && path.safeParse(a).success) out.add(a);
+  }
+  return [...out];
+}
+
 /** The lists as the architect gives them and as they are stored; only the form of a link to a draft differs. */
 function shape<L extends z.ZodType<string>>(draftLink: L) {
   const link = z
@@ -62,7 +83,12 @@ function shape<L extends z.ZodType<string>>(draftLink: L) {
       .strict()
       .refine((s) => s.size === sizeWord(s.files, s.lines)),
     overlaps: z
-      .array(z.object({ issue, areas: z.array(path).min(1).max(IMPACT_OVERLAP_AREAS_MAX), basis: z.literal("estimate"), why: prose(2) }).strict())
+      .array(
+        z
+          .object({ issue: issue.optional(), draft: draftLink.optional(), areas: z.array(path).min(1).max(IMPACT_OVERLAP_AREAS_MAX), basis, why: prose(2) })
+          .strict()
+          .refine((x) => (x.issue === undefined) !== (x.draft === undefined)),
+      )
       .max(IMPACT_MAX.overlaps),
     sensitive: z.array(z.object({ topic: z.enum(TOPICS), basis, why: prose(2) }).strict()).max(IMPACT_MAX.sensitive),
   };
@@ -79,14 +105,21 @@ export const ImpactSchema = z
 export type Impact = z.infer<typeof ImpactSchema>;
 
 const AnswerSchema = z
-  .object(shape(z.string().regex(/^D\d{1,6}$/)))
+  .object({ ...shape(z.string().regex(/^D\d{1,6}$/)), open: z.array(issue).max(200).optional() })
   .strict()
   .refine(related);
 
-/** Read back from the head of the task: the ids behind D1, D2, … and the mark of the draft when it was asked. */
+/** The areas the Foundry knew when the view was asked: by issue number (`active` when it is being built) and by draft number ("D3"). */
+export interface KnownAreas {
+  issues: Record<string, { areas: string[]; active?: true }>;
+  drafts: Record<string, string[]>;
+}
+
+/** Read back from the task: the ids behind D1, D2, …, the mark of the draft when it was asked and the areas the Foundry knew. */
 export interface ImpactRefs {
   drafts: Record<string, string>;
   mark: string;
+  known?: KnownAreas;
 }
 
 type Marked = Pick<Draft, "title" | "who" | "what" | "why" | "criteria" | "outOfScope" | "dependsOn">;
@@ -124,23 +157,61 @@ export function setImpact(st: DraftState, draftId: string, output: unknown, refs
     }
     return out;
   };
-  const impact: Impact = { at, mark: refs.mark, areas: a.areas, dependsOn: links(a.dependsOn), dependents: links(a.dependents), risks: a.risks, size: a.size, overlaps: a.overlaps, sensitive: a.sensitive };
+  // An overlap is `found` only when the known areas of its target support it; an issue must be open or being built.
+  const seenOverlap = new Set<string>();
+  const overlaps: Impact["overlaps"] = [];
+  for (const o of a.overlaps) {
+    let target: { issue: number } | { draft: string };
+    let known: string[] | undefined;
+    if (o.draft !== undefined) {
+      const id = refs.drafts[o.draft];
+      if (id === undefined || id === d.id) continue;
+      target = { draft: id };
+      known = refs.known?.drafts[o.draft];
+    } else {
+      const entry = refs.known?.issues[String(o.issue)];
+      // A task from before the known part and `open` existed was checked by the old tool, which already required an open issue.
+      const legacy = refs.known === undefined && a.open === undefined;
+      if (!legacy && !a.open?.includes(o.issue!) && !entry?.active) continue;
+      target = { issue: o.issue! };
+      known = entry?.areas;
+    }
+    const key = "issue" in target ? `i${target.issue}` : `d${target.draft}`;
+    if (seenOverlap.has(key)) continue;
+    seenOverlap.add(key);
+    const found = (known ?? []).some((k) => o.areas.some((x) => areaOverlaps(k, x)));
+    overlaps.push({ ...target, areas: o.areas, basis: found ? "found" : "estimate", why: o.why });
+  }
+  const impact: Impact = { at, mark: refs.mark, areas: a.areas, dependsOn: links(a.dependsOn), dependents: links(a.dependents), risks: a.risks, size: a.size, overlaps, sensitive: a.sensitive };
   if (!ImpactSchema.safeParse(impact).success) throw bad("the architect's view has the wrong form");
   const next: Draft = { ...d, impact };
   return { ...st, drafts: st.drafts.map((y) => (y === d ? next : y)), line: { what: "architect-impact", detail: impact.size.size } };
 }
 
-export type ImpactView = Omit<Impact, "mark" | "size"> & { size: Impact["size"] & { basis: "estimate" }; outOfDate?: true };
+export type ImpactView = Omit<Impact, "mark" | "size" | "overlaps"> & {
+  size: Impact["size"] & { basis: "estimate" };
+  overlaps: (Impact["overlaps"][number] & { title?: string })[];
+  outOfDate?: true;
+};
 
-/** The stored view for the caller: no mark; `outOfDate` when the draft changed since it was asked; no links to drafts that are gone. */
-export function impactView(d: Draft, drafts: Draft[]): ImpactView | undefined {
+/**
+ * The stored view for the caller: no mark; `outOfDate` when the draft changed since it was asked; no links to drafts that are gone.
+ * An overlap with a draft carries its title, taken from `drafts` or from `others` (drafts of the owner's other sessions).
+ */
+export function impactView(d: Draft, drafts: Draft[], others: Pick<Draft, "id" | "title">[] = []): ImpactView | undefined {
   if (!d.impact) return undefined;
-  const { mark, size, dependsOn, dependents, ...rest } = d.impact;
+  const { mark, size, dependsOn, dependents, overlaps, ...rest } = d.impact;
   const here = (l: { draft?: string }) => l.draft === undefined || drafts.some((o) => o.id === l.draft);
+  const named = overlaps.flatMap((o) => {
+    if (o.draft === undefined) return [o];
+    const t = drafts.find((x) => x.id === o.draft) ?? others.find((x) => x.id === o.draft);
+    return t ? [{ ...o, title: t.title?.text ?? "" }] : [];
+  });
   return {
     ...rest,
     dependsOn: dependsOn.filter(here),
     dependents: dependents.filter(here),
+    overlaps: named,
     size: { ...size, basis: "estimate" },
     ...(draftMark(d) !== mark ? { outOfDate: true as const } : {}),
   };

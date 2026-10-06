@@ -3,14 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
-import { draftMark, impactView, type ImpactRefs } from "../src/refinement/draft-impact.js";
+import { areaOverlaps, draftMark, impactView, normArea, safeAreas, type ImpactRefs } from "../src/refinement/draft-impact.js";
 import { impactOf, impactText } from "../src/refinement/impact-text.js";
+import { knownAreas, otherDrafts, planAreas } from "../src/refinement/known-areas.js";
 import {
   END_BAD_FORM,
   RefinementError,
   addDraft,
   checkRefinements,
   createSession,
+  dropSession,
   endArchitectRun,
   getSession,
   refinementsPath,
@@ -171,7 +173,7 @@ describe("a stored view", () => {
     ["an unsafe issue number", { ...ANSWER(), dependsOn: [{ issue: 2 ** 60, basis: "found", why: "x" }] }],
     ["a found area without files", { ...ANSWER(), areas: [{ ...area, files: [] }] }],
     ["a size word that does not fit", { ...ANSWER(), size: { size: "large", files: 1, lines: 1, why: "x" } }],
-    ["an overlap that is not an estimate", { ...ANSWER(), overlaps: [{ issue: 1, areas: ["src/export"], basis: "found", why: "x" }] }],
+    ["an overlap with an issue and a draft", { ...ANSWER(), overlaps: [{ issue: 1, draft: "D1", areas: ["src/export"], basis: "estimate", why: "x" }] }],
     ["an overlap with an area not in the answer", { ...ANSWER(), overlaps: [{ issue: 1, areas: ["src/other"], basis: "estimate", why: "x" }] }],
     ["a non-object", "text"],
   ])("is a bad form for %s: the old view stays", (_n, output) => {
@@ -237,7 +239,7 @@ describe("the task", () => {
     const text = impactText({ idea: s.idea, brief: "The brief", talk: emptyTalk(), draft: d, drafts: s.drafts });
     expect(text.split("\n").slice(0, 4)).toEqual([TALK_FIRST_LINE.impact, `Draft: ${did}`, `Ids: D2=${o}`, `Asked: ${draftMark(d)}`]);
     expect(text).toContain("D2: Import");
-    expect(impactOf(text)).toEqual({ draft: did, refs: { drafts: { D2: o }, mark: draftMark(d) } });
+    expect(impactOf(text)).toEqual({ draft: did, refs: { drafts: { D2: o }, mark: draftMark(d), known: { issues: {}, drafts: {} } } });
   });
 
   it("is not read from a review task or a damaged head", () => {
@@ -265,5 +267,271 @@ describe("the task", () => {
     expect(askOfJob(REFINE_ROUND_FLOW, "impact", text)).toEqual({ kind: "impact", draft: did });
     expect(askOfJob(REFINE_ROUND_FLOW, undefined, text)).toEqual({ kind: "impact", draft: did });
     expect(askOfJob(REFINE_ROUND_FLOW, "impact", "nonsense")).toEqual({ kind: "impact" });
+  });
+});
+
+describe("the area rule", () => {
+  it("is the rule of the area lock", () => {
+    expect(areaOverlaps("src", "src")).toBe(true);
+    expect(areaOverlaps("src", "src/a/b.ts")).toBe(true);
+    expect(areaOverlaps("src/a/b.ts", "src")).toBe(true);
+    expect(areaOverlaps("src/a", "src/ab")).toBe(false);
+    expect(areaOverlaps("*", "anything")).toBe(true);
+    expect(areaOverlaps("@x", "@x")).toBe(true);
+    expect(areaOverlaps("@x", "src")).toBe(false);
+    expect(areaOverlaps("@x", "*")).toBe(false);
+    expect(areaOverlaps("./src/", "src/a")).toBe(true);
+    expect(normArea(" ./src// ")).toBe("src");
+  });
+
+  it("keeps only paths fit for the known part", () => {
+    expect(safeAreas(["./src/", "src", "a b/c,d", "../x", "/abs", "", "ui/app.js"])).toEqual(["src", "a b/c,d", "ui/app.js"]);
+    expect(safeAreas(["x".repeat(151)])).toEqual([]);
+    expect(safeAreas(Array.from({ length: 30 }, (_, i) => `d${i}`))).toHaveLength(30);
+  });
+});
+
+describe("overlaps", () => {
+  const overlap = (target: Record<string, unknown>, over: Record<string, unknown> = {}) => ({ ...target, areas: ["src/export"], basis: "estimate", why: "Same files.", ...over });
+  const run = (over: unknown[], known: ImpactRefs["known"] | undefined, open?: number[], drafts: Record<string, string> = {}) => {
+    const { id, did } = setup();
+    impact(id, did, { ...ANSWER(), overlaps: over, ...(open ? { open } : {}) }, { drafts, mark: draftMark(draft(id, did)), ...(known ? { known } : {}) });
+    return { id, did, v: view(id, did)! };
+  };
+
+  it("is found when the known areas of an open issue overlap", () => {
+    const { v } = run([overlap({ issue: 31 })], { issues: { "31": { areas: ["src"] } }, drafts: {} }, [31]);
+    expect(v.overlaps).toEqual([{ issue: 31, areas: ["src/export"], basis: "found", why: "Same files." }]);
+  });
+
+  it("is an estimate when the issue is open but not known", () => {
+    const { v } = run([overlap({ issue: 32 })], { issues: { "31": { areas: ["src"] } }, drafts: {} }, [31, 32]);
+    expect(v.overlaps.map((o) => [o.issue, o.basis])).toEqual([[32, "estimate"]]);
+  });
+
+  it("becomes an estimate when a found claim is not supported by the known areas", () => {
+    const { v } = run([overlap({ issue: 31 }, { basis: "found" })], { issues: { "31": { areas: ["ui"] } }, drafts: {} }, [31]);
+    expect(v.overlaps.map((o) => o.basis)).toEqual(["estimate"]);
+  });
+
+  it("keeps issue overlaps as estimates for a legacy task: no known part and no open list", () => {
+    const { v } = run([overlap({ issue: 31 }, { basis: "found" })], undefined, undefined);
+    expect(v.overlaps.map((o) => [o.issue, o.basis])).toEqual([[31, "estimate"]]);
+  });
+
+  it("reads a task without the known part as unknown, not empty", () => {
+    const { s } = (() => {
+      const { id } = setup();
+      return { s: getSession(id)! };
+    })();
+    const text = impactText({ idea: s.idea, talk: emptyTalk(), draft: s.drafts[0]!, drafts: s.drafts });
+    const legacy = text.replace(/\n\n## Areas the Foundry knows\n\(none\)/, "");
+    expect(impactOf(legacy)!.refs.known).toBeUndefined();
+  });
+
+  it("is an estimate when no areas are known at all", () => {
+    const { v } = run([overlap({ issue: 31 }, { basis: "found" })], undefined, [31]);
+    expect(v.overlaps.map((o) => o.basis)).toEqual(["estimate"]);
+  });
+
+  it("drops an issue that is not open, keeps one that is being built, and repeats only once", () => {
+    const known = { issues: { "40": { areas: ["src/export"], active: true as const } }, drafts: {} };
+    expect(run([overlap({ issue: 40 }), overlap({ issue: 41 })], known, [31]).v.overlaps.map((o) => o.issue)).toEqual([40]);
+    expect(run([overlap({ issue: 40 }), overlap({ issue: 41 })], known, undefined).v.overlaps.map((o) => o.issue)).toEqual([40]);
+    expect(run([overlap({ issue: 31 }), overlap({ issue: 31 })], undefined, [31]).v.overlaps).toHaveLength(1);
+  });
+
+  it("names another draft by its title, is found by its known areas, and goes with the draft", () => {
+    const { id, did } = setup();
+    const o = addDraft(ann, id, T).drafts[1]!.id;
+    saveDraft(ann, id, o, { title: "Import" }, T);
+    const refs = { drafts: { D1: did, D2: o }, mark: draftMark(draft(id, did)), known: { issues: {}, drafts: { D2: ["src/export/x.ts"] } } };
+    impact(id, did, { ...ANSWER(), overlaps: [overlap({ draft: "D2" }), overlap({ draft: "D2" }), overlap({ draft: "D1" }), overlap({ draft: "D9" })] }, refs);
+    const v = view(id, did)!;
+    expect(v.overlaps).toEqual([{ draft: o, areas: ["src/export"], basis: "found", why: "Same files.", title: "Import" }]);
+    saveDraft(ann, id, o, { title: "Import data" }, T);
+    expect(view(id, did)!.overlaps[0]!.title).toBe("Import data");
+    removeDraft(ann, id, o, T);
+    expect(view(id, did)!.overlaps).toEqual([]);
+  });
+
+  it("names a draft of another session, which goes with its draft, its session and its owner", () => {
+    const { id, did } = setup();
+    const b = createSession(ANN, { repo: "acme/app", idea: "Other" }, OK).id;
+    const bd = addDraft(ann, b, T).drafts[0]!.id;
+    saveDraft(ann, b, bd, { title: "Import", what: "to import" }, T);
+    impact(b, bd);
+    const s = getSession(id)!;
+    const known = knownAreas({ briefs: () => [], get: () => undefined, queue: () => ({ pending: [] }) } as never, s);
+    expect(known.drafts).toEqual([{ id: bd, title: "Import", areas: ["src/export"] }]);
+    const text = impactText({ idea: s.idea, talk: emptyTalk(), draft: s.drafts[0]!, drafts: s.drafts, known });
+    expect(text).toContain('\n- D2, a draft: [["src/export"],"Import"]');
+    const refs = impactOf(text)!.refs;
+    expect(refs.drafts).toEqual({ D2: bd });
+    expect(refs.known!.drafts).toEqual({ D2: ["src/export"] });
+    impact(id, did, { ...ANSWER(), overlaps: [overlap({ draft: "D2" })] }, refs);
+    const shown = () => impactView(draft(id, did), getSession(id)!.drafts, otherDrafts(getSession(id)!))!.overlaps;
+    expect(shown().map((o) => [o.draft, o.title, o.basis])).toEqual([[bd, "Import", "found"]]);
+    saveDraft(ann, b, bd, { title: "Import more" }, T);
+    expect(shown()[0]!.title).toBe("Import more");
+    // Another owner or another repository never resolves.
+    const other = createSession("22222222-2222-4222-8222-222222222222", { repo: "acme/app", idea: "x" }, OK).id;
+    addDraft({ id: "22222222-2222-4222-8222-222222222222", admin: false }, other, T);
+    const elsewhere = createSession(ANN, { repo: "acme/other", idea: "x" }, OK).id;
+    addDraft(ann, elsewhere, T);
+    expect(otherDrafts(getSession(id)!).map((d) => d.id)).toEqual([bd]);
+    dropSession(ann, b, T);
+    expect(shown()).toEqual([]);
+    expect(otherDrafts(getSession(id)!)).toEqual([]);
+  });
+
+  it("settles an old stored view with an estimate overlap", () => {
+    const { id, did } = setup();
+    impact(id, did);
+    const file = refinementsPath();
+    const json = JSON.parse(readFileSync(file, "utf8"));
+    json.sessions[0].drafts[0].impact.overlaps = [{ issue: 3, areas: ["src/export"], basis: "estimate", why: "Old." }];
+    writeFileSync(file, JSON.stringify(json));
+    expect(() => checkRefinements()).not.toThrow();
+    expect(view(id, did)!.overlaps).toEqual([{ issue: 3, areas: ["src/export"], basis: "estimate", why: "Old." }]);
+  });
+});
+
+describe("the part Areas the Foundry knows", () => {
+  const pair = () => {
+    const { id, did } = setup();
+    const o = addDraft(ann, id, T).drafts[1]!.id;
+    saveDraft(ann, id, o, { title: "Import" }, T);
+    impact(id, o);
+    return { id, did, o, s: getSession(id)! };
+  };
+  const known = { issues: [{ issue: 12, areas: ["src/server", "my dir/a,b.js"], active: true }, { issue: 7, areas: [], active: true }, { issue: 31, areas: ["src/refinement"], active: false }], drafts: [{ id: "99999999-9999-4999-8999-999999999999", title: "Else\nwhere", areas: ["src/import"] }] };
+
+  it("sits at lines 5 and 6 and round-trips with its ids", () => {
+    const { did, o, s } = pair();
+    const text = impactText({ idea: s.idea, talk: emptyTalk(), draft: s.drafts[0]!, drafts: s.drafts, known });
+    const lines = text.split("\n");
+    expect(lines.slice(4, 6)).toEqual(["", "## Areas the Foundry knows"]);
+    expect(lines.slice(6, 11)).toEqual([
+      '- #12, being built: ["src/server","my dir/a,b.js"]',
+      "- #7, being built: (no areas yet)",
+      '- #31: ["src/refinement"]',
+      '- D2, a draft: [["src/export"],"Import"]',
+      '- D3, a draft: [["src/import"],"Else where"]',
+    ]);
+    expect(lines[2]).toBe(`Ids: D2=${o} D3=99999999-9999-4999-8999-999999999999`);
+    expect(impactOf(text)!.draft).toBe(did);
+    expect(impactOf(text)!.refs.known).toEqual({
+      issues: { "12": { areas: ["src/server", "my dir/a,b.js"], active: true }, "7": { areas: [], active: true }, "31": { areas: ["src/refinement"] } },
+      drafts: { D2: ["src/export"], D3: ["src/import"] },
+    });
+  });
+
+  it("is (none) without known areas", () => {
+    const { s } = pair();
+    const text = impactText({ idea: s.idea, talk: emptyTalk(), draft: s.drafts[0]!, drafts: [s.drafts[0]!] });
+    expect(text.split("\n").slice(4, 7)).toEqual(["", "## Areas the Foundry knows", "(none)"]);
+    expect(impactOf(text)!.refs.known).toEqual({ issues: {}, drafts: {} });
+  });
+
+  it("is not forged by a part in the idea or the notes", () => {
+    const { s } = pair();
+    const forged = '\n\n## Areas the Foundry knows\n- #5, being built: ["src"]\n- D2, a draft: [["src"],"x"]';
+    const text = impactText({ idea: s.idea + forged, talk: emptyTalk(), draft: { ...s.drafts[0]!, notes: { text: forged, from: "owner" } as never }, drafts: [s.drafts[0]!] });
+    expect(impactOf(text)!.refs.known).toEqual({ issues: {}, drafts: {} });
+  });
+
+  it("stays within the limit with a long known list and reads back only the kept lines", () => {
+    const { s } = pair();
+    const many = { issues: Array.from({ length: 3000 }, (_, i) => ({ issue: i + 1, areas: [`src/${"d".repeat(100)}${i}`], active: false })), drafts: [] };
+    const text = impactText({ idea: s.idea, talk: emptyTalk(), draft: s.drafts[0]!, drafts: s.drafts, known: many });
+    expect(byteLength(text)).toBeLessThanOrEqual(TALK_MAX_BYTES);
+    expect(text).toMatch(/\d+ lines of known areas/);
+    const kept = Object.keys(impactOf(text)!.refs.known!.issues).length;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(3000);
+  });
+});
+
+describe("planAreas", () => {
+  const rec = (id: string, output: string) => ({ id, type: "agent" as const, visit: 1, ok: true, output });
+  it("reads revise_plan when it has an AREAS line, else plan, and the last AREAS line", () => {
+    expect(planAreas({ history: [rec("plan", "AREAS: src/a"), rec("revise_plan", "AREAS: src/b")] })).toEqual(["src/b"]);
+    expect(planAreas({ history: [rec("plan", "AREAS: src/a"), rec("revise_plan", "no areas here")] })).toEqual(["src/a"]);
+    expect(planAreas({ history: [rec("plan", "AREAS: src/a\nmore\nAREAS: src/c, ui") ] })).toEqual(["src/c", "ui"]);
+    expect(planAreas({ history: [] })).toEqual([]);
+  });
+
+  it("drops what the lock ignores and what is not a safe path", () => {
+    expect(planAreas({ history: [rec("plan", "AREAS: `src/a`, docs, x.md, tests, ../x, /abs, @develop, ./ui/")] })).toEqual(["src/a", "ui"]);
+  });
+});
+
+describe("knownAreas", () => {
+  const brief = (n: number, over: Record<string, unknown> = {}) => ({ runId: `r${n}`, dirName: `r${n}`, flow: "x", status: "succeeded", startedAt: `2026-01-${String(10 + (n % 20)).padStart(2, "0")}T00:00:00Z`, githubRepo: "acme/app", issue: String(n), ...over });
+  const plan = (areas: string) => ({ history: [{ id: "plan", type: "agent", visit: 1, ok: true, output: `AREAS: ${areas}` }] });
+  const stub = (briefs: unknown[], runs: Record<string, unknown>, pending: unknown[] = []) =>
+    ({
+      briefs: () => briefs,
+      get: (id: string) => {
+        const r = runs[id];
+        if (r instanceof Error) throw r;
+        return r;
+      },
+      queue: () => ({ pending }),
+    }) as never;
+  const session = () => getSession(setup().id)!;
+
+  it("takes the newest run of each issue of this repository, of any account, ignoring case and other repositories", () => {
+    const s = session();
+    const briefs = [
+      brief(1, { runId: "new", dirName: "new", startedAt: "2026-02-01T00:00:00Z", owner: "someone-else", githubRepo: "ACME/App" }),
+      brief(1, { runId: "old", dirName: "old", startedAt: "2026-01-01T00:00:00Z" }),
+      brief(2, { githubRepo: "acme/other" }),
+      brief(3, { issue: "x" }),
+      brief(4, { issue: undefined }),
+    ];
+    const k = knownAreas(stub(briefs, { new: plan("src/new"), old: plan("src/old"), r2: plan("src/two"), r3: plan("src/three") }), s);
+    expect(k.issues).toEqual([{ issue: 1, areas: ["src/new"], active: false }]);
+  });
+
+  it("puts issues that are being built first, lists a queued first run without areas, and skips a run that cannot be read", () => {
+    const s = session();
+    const briefs = [brief(1, { startedAt: "2026-03-01T00:00:00Z" }), brief(2, { status: "running", startedAt: "2026-01-01T00:00:00Z" }), brief(3, { status: "waiting" }), brief(5)];
+    const runs = { r1: plan("src/one"), r2: new Error("broken"), r3: plan("src/three"), r5: new Error("broken") };
+    const k = knownAreas(stub(briefs, runs, [{ kind: "run", githubRepo: "acme/app", issue: "9" }, { kind: "run", githubRepo: "acme/other", issue: "8" }]), s);
+    expect(k.issues.map((i) => [i.issue, i.active, i.areas])).toEqual([
+      [9, true, []],
+      [3, true, ["src/three"]],
+      [2, true, []],
+      [1, false, ["src/one"]],
+    ]);
+  });
+
+  it("makes an issue with a queued job active, and keeps at most 50 issues", () => {
+    const s = session();
+    const briefs = Array.from({ length: 60 }, (_, i) => brief(i + 1, { startedAt: `2026-01-01T00:00:${String(i).padStart(2, "0")}Z` }));
+    const runs = Object.fromEntries(briefs.map((b) => [b.runId, plan("src/a")]));
+    const k = knownAreas(stub([...briefs].reverse(), runs, [{ kind: "run", githubRepo: "acme/app", issue: "1" }]), s);
+    expect(k.issues).toHaveLength(50);
+    expect(k.issues[0]).toEqual({ issue: 1, areas: ["src/a"], active: true });
+    expect(k.issues[1]!.issue).toBe(60);
+  });
+
+  it("has nothing when nothing is known, and excludes drafts of dropped sessions and other repositories", () => {
+    const { id } = setup();
+    const b = createSession(ANN, { repo: "acme/app", idea: "Other" }, OK).id;
+    const bd = addDraft(ann, b, T).drafts[0]!.id;
+    saveDraft(ann, b, bd, { title: "Import" }, T);
+    impact(b, bd);
+    const c = createSession(ANN, { repo: "acme/other", idea: "Else" }, OK).id;
+    const cd = addDraft(ann, c, T).drafts[0]!.id;
+    saveDraft(ann, c, cd, { title: "Else" }, T);
+    impact(c, cd);
+    const s = getSession(id)!;
+    const empty = stub([], {});
+    expect(knownAreas(empty, s).drafts.map((d) => d.id)).toEqual([bd]);
+    dropSession(ann, b, T);
+    expect(knownAreas(empty, s)).toEqual({ issues: [], drafts: [] });
   });
 });

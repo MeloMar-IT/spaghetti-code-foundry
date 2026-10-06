@@ -7,6 +7,7 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
+import { otherDrafts } from "../refinement/known-areas.js";
 import { reviewView } from "../refinement/draft-review.js";
 import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
@@ -92,7 +93,9 @@ function githubNames(userId: string): string[] {
 const draftView = (s: Session) => (d: Draft) => {
   const { review: _stored, impact: _impact, ...rest } = d;
   const review = reviewView(d);
-  const impact = impactView(d, s.drafts);
+  // Drafts of the owner's other sessions are looked up only for an overlap with a draft that is not in this session.
+  const outside = d.impact?.overlaps.some((o) => o.draft !== undefined && !s.drafts.some((x) => x.id === o.draft));
+  const impact = impactView(d, s.drafts, outside ? otherDrafts(s) : []);
   return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
 };
 

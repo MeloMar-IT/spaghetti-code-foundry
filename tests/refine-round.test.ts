@@ -160,9 +160,9 @@ describe("refine-round flow", { timeout: 60_000 }, () => {
       expect(readdirSync(s.workdir!)).toEqual(["issues.md", "repo"]);
     });
 
-    it("a small draft: the README area with its file, no overlaps, the seven keys in order", async () => {
+    it("a small draft: the README area with its file, no overlaps, the eight keys in order", async () => {
       const c = checked(await run("talk", { ask: "impact" }));
-      expect(Object.keys(c)).toEqual(["areas", "dependsOn", "dependents", "risks", "size", "overlaps", "sensitive"]);
+      expect(Object.keys(c)).toEqual(["areas", "dependsOn", "dependents", "risks", "size", "overlaps", "sensitive", "open"]);
       expect(c.size.size).toBe("small");
       expect(c.areas).toEqual([{ area: "README.md", files: ["README.md"], basis: "found", why: expect.stringContaining("README") }]);
       expect(c.overlaps).toEqual([]);
@@ -188,12 +188,12 @@ describe("refine-round flow", { timeout: 60_000 }, () => {
       expect(c.overlaps).toEqual([{ issue: 31, areas: ["README.md"], basis: "estimate", why: "It changes the same file." }]);
     });
 
-    it("an overlap with an issue that was not read, or an area that is not in the answer, fails", async () => {
+    it("an overlap with an issue that was not read passes (the Foundry decides); an area that is not in the answer fails", async () => {
       process.env.FAKE_GH_ISSUES = JSON.stringify([issue(31)]);
       process.env.FAKE_ROUND = JSON.stringify(answer({ overlaps: [{ issue: 99, areas: ["README.md"], basis: "estimate", why: "x" }] }));
-      const unknown = await run("talk", { ask: "impact" });
-      expect(unknown.status).toBe("failed");
-      expect(out(unknown, "check_round")).toBe("overlap 1 names an issue that is not among the open issues that were read");
+      const unknown = checked(await run("talk", { ask: "impact" }));
+      expect(unknown.overlaps).toEqual([{ issue: 99, areas: ["README.md"], basis: "estimate", why: "x" }]);
+      expect(unknown.open).toEqual([31]);
       process.env.FAKE_ROUND = JSON.stringify(answer({ overlaps: [{ issue: 31, areas: ["src/other"], basis: "estimate", why: "x" }] }));
       const other = await run("talk", { ask: "impact" });
       expect(out(other, "check_round")).toBe("overlap 1 names an area that is not among the areas of the answer");
@@ -779,8 +779,9 @@ describe("refine-round-check for impact", () => {
       size: SIZE,
       overlaps: [{ issue: 31, areas: ["src/a"], basis: "estimate", why: "Same files." }],
       sensitive: [topic()],
+      open: [31, 32],
     });
-    expect(Object.keys(r.json())).toEqual(["areas", "dependsOn", "dependents", "risks", "size", "overlaps", "sensitive"]);
+    expect(Object.keys(r.json())).toEqual(["areas", "dependsOn", "dependents", "risks", "size", "overlaps", "sensitive", "open"]);
   });
 
   it("makes missing lists empty and fails without a size", () => {
@@ -818,9 +819,9 @@ describe("refine-round-check for impact", () => {
     ["a risk of two sentences with a closing bracket", base({ risks: [risk({ text: "Data may be lost (see the log.) Users retry." })] }), "risk 1 has more than one sentence"],
     ["an area path of 151 characters", base({ areas: [area({ area: "p".repeat(151) })] }), "area 1 names a path of more than 150 characters"],
     ["a file path of 151 characters", base({ areas: [area({ files: ["q".repeat(151)] })] }), "area 1 names a path of more than 150 characters"],
-    ["an overlap without an issue", base({ areas: [area()], overlaps: [overlap({ issue: undefined })] }), "overlap 1 names no issue"],
+    ["an overlap without an issue or a draft", base({ areas: [area()], overlaps: [overlap({ issue: undefined })] }), "overlap 1 names no issue and no draft"],
+    ["an overlap with a bad draft", base({ areas: [area()], overlaps: [overlap({ issue: undefined, draft: "x" })] }), "overlap 1 names no issue and no draft"],
     ["an overlap with no areas", base({ areas: [area()], overlaps: [overlap({ areas: [] })] }), "overlap 1 names no area"],
-    ["an overlap with an unknown issue", base({ areas: [area()], overlaps: [overlap({ issue: 99 })] }), "overlap 1 names an issue that is not among the open issues that were read"],
     ["an overlap with an unknown area", base({ areas: [area()], overlaps: [overlap({ areas: ["src/b"] })] }), "overlap 1 names an area that is not among the areas of the answer"],
     ["an unknown topic", base({ sensitive: [topic({ topic: "money" })] }), "sensitive topic 1 has no topic of sign-in, permissions, secrets, credentials or user-data"],
     ["an empty why", base({ sensitive: [topic({ why: " " })] }), "sensitive topic 1 has no why"],
@@ -829,9 +830,21 @@ describe("refine-round-check for impact", () => {
     ["an absolute file", base({ areas: [area({ files: ["/etc/passwd"] })] }), "area 1 names a path outside the repository"],
   ])("fails for %s, and the sentence holds no text", (_n, raw, sentence) => fails({ ...raw, junk: "SECRET" }, sentence));
 
-  it("fails for an overlap when there is no issues.md", () => {
+  it("passes an overlap with an issue that was not read, and an overlap with a draft", () => {
+    const r = check(base({ areas: [area()], overlaps: [overlap({ issue: 99 }), overlap({ issue: undefined, draft: "D1" })] }));
+    expect(r.status).toBe(0);
+    expect(r.json().overlaps).toEqual([
+      { issue: 99, areas: ["src/a"], basis: "estimate", why: "Same files." },
+      { draft: "D1", areas: ["src/a"], basis: "estimate", why: "Same files." },
+    ]);
+    expect(r.json().open).toEqual([31, 32]);
+  });
+
+  it("prints no open issues when there is no issues.md", () => {
     rmSync(join(dir, "issues.md"));
-    fails(base({ areas: [area()], overlaps: [overlap()] }), "overlap 1 names an issue that is not among the open issues that were read");
+    const r = check(base({ areas: [area()], overlaps: [overlap()] }));
+    expect(r.status).toBe(0);
+    expect(r.json().open).toEqual([]);
   });
 
   it("keeps text of the answer out of the failing sentence", () => {

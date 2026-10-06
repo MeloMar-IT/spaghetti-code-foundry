@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
 const saved: Record<string, string | undefined> = {};
-const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND"];
+const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND", "FAKE_GH_ISSUES"];
 const opts = (): ServerOptions => ({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
 
 beforeEach(async () => {
@@ -36,6 +36,7 @@ beforeEach(async () => {
   delete process.env.FAKE_GH_SLEEP;
   delete process.env.FAKE_BRIEF;
   delete process.env.FAKE_ROUND;
+  delete process.env.FAKE_GH_ISSUES;
   kc = fakeKeychain();
   started = await startServer(opts());
   admin = await signInAs(base);
@@ -137,6 +138,21 @@ describe("impact", () => {
     await impact(id, did);
     const d = (await idle(id)).drafts[0];
     expect(d.impact.dependents).toEqual([{ draft: d2, basis: "estimate", why: "It builds on this." }]);
+  });
+
+  it("tells the architect the areas of the Foundry's runs and marks an overlap found only when they support it", async () => {
+    mkdirSync(join(tmp, "runs", "seed-1"), { recursive: true });
+    const seeded = { runId: "seed-1", flow: "gitflow", status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z", runDir: join(tmp, "runs", "seed-1"), vars: { github_repo: "acme/app", issue: "31" }, history: [{ id: "plan", type: "agent", visit: 1, ok: true, output: "Plan\nAREAS: src/server, README.md" }] };
+    writeFileSync(join(tmp, "runs", "seed-1", "run.json"), JSON.stringify(seeded));
+    const open = (n: number) => ({ number: n, title: `Issue ${n}`, body: `Body ${n}`, labels: [{ name: "enhancement" }], comments: [] });
+    process.env.FAKE_GH_ISSUES = JSON.stringify([open(31), open(32)]);
+    const claim = (issue: number) => ({ issue, areas: ["src/server"], basis: "found", why: "Same files." });
+    process.env.FAKE_ROUND = JSON.stringify(answer({ areas: [{ area: "src/server", files: ["src/server/a.ts"], basis: "found", why: "It is read." }], overlaps: [claim(31), claim(32), claim(99)] }));
+    const { id, did } = await withDraft();
+    const r = await impact(id, did);
+    expect(runJson(r.json().architect.runId).task).toContain("## Areas the Foundry knows\n- #31: [\"src/server\"]\n");
+    const d = (await idle(id)).drafts[0];
+    expect(d.impact.overlaps.map((o: any) => [o.issue, o.basis])).toEqual([[31, "found"], [32, "estimate"]]);
   });
 
   it("goes out of date after an edit, also one made while the run was active", async () => {
