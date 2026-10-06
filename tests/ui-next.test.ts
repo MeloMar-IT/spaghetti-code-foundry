@@ -88,6 +88,16 @@ describe("note of an unchecked issue", () => {
     expect(runs.actions({ ...base, status: "failed", next: { kind: "failed" } })).toHaveLength(2);
     expect(runs.actions({ ...base, status: "waiting", next: { kind: "issue_closed" } })).toHaveLength(1);
   });
+  it("the run page actions hide Approve, Resume and Retry for a retired flow, and the line shows only then", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const base = { runId: "r1", state: { next: "a", steps: {}, visits: {} }, flowDef: { steps: [{ id: "a" }] } };
+    expect(runs.actions({ ...base, status: "failed", next: { kind: "failed", retired: true } })).toHaveLength(0);
+    expect(runs.actions({ ...base, status: "succeeded", next: { kind: "done", retired: true } })).toHaveLength(0);
+    expect(runs.actions({ ...base, status: "waiting", next: { kind: "approval", retired: true } })).toHaveLength(1);
+    expect(runs.retiredLine({ next: { kind: "failed", retired: true } }).textContent).toBe("This run's flow is retired — it cannot be resumed.");
+    expect(runs.retiredLine({ next: { kind: "failed" } })).toBeNull();
+    expect(runs.retiredLine({})).toBeNull();
+  });
 });
 
 describe("ui/next.js renderer", () => {
@@ -697,6 +707,25 @@ describe("the Runs pages for a user", () => {
       delete answers["/api/run-owners"];
     }
     expect(admin.all("th").map((t) => t.textContent)).toContain("Cost");
+  });
+
+  it("the run page of an admin shows the retired line and no Resume, Retry, Approve or Reject", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const { handlers } = stubEventSource();
+    const main = connected();
+    const stop = runs.renderRunDetail(main, "r1");
+    const failed = { ...RUN, status: "failed", state: { next: "a" }, flowDef: { steps: [{ id: "a" }] } };
+    handlers.update!({ data: JSON.stringify({ summary: { ...failed, next: { kind: "failed", status: "x", text: "t", retired: true } } }) });
+    await vi.advanceTimersByTimeAsync(0);
+    const buttons = () => main.all("button").map((b) => b.textContent);
+    expect(main.textContent).toContain("This run's flow is retired — it cannot be resumed.");
+    expect(buttons().some((t) => /Resume|Approve|Reject/.test(t))).toBe(false);
+    expect(main.all("select")).toHaveLength(0);
+    handlers.update!({ data: JSON.stringify({ summary: { ...failed, next: { kind: "failed", status: "x", text: "t" } } }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(main.textContent).not.toContain("flow is retired");
+    expect(buttons().some((t) => /Resume/.test(t))).toBe(true);
+    stop();
   });
 
   it("the run page of an admin links to the flow", async () => {

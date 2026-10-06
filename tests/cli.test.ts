@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -333,6 +333,57 @@ describe("scf resume, approve and reject of a closed issue", { timeout: 120_000 
     expect(r.status).toBe(1);
     expect(r.stderr).toContain(MESSAGE + HINT);
     expect(scf([cmd, id, "--force"]).stdout).toContain("run:");
+  });
+
+  describe("of a retired flow", () => {
+    const RETIRED = (name: string) => `The flow "${name}" is retired — this run cannot be resumed. Start the work again with a current flow.`;
+    /** The run as a watcher left it (no hand-start mark), with its flow file gone unless `keep`. */
+    const retire = (id: string, name: string, keep = false) => {
+      const file = join(runs, id, "run.json");
+      const s = JSON.parse(readFileSync(file, "utf8"));
+      delete s.source;
+      writeFileSync(file, JSON.stringify(s));
+      if (!keep) rmSync(join(home, "flows", `${name}.yaml`));
+    };
+
+    it("refuses resume with the sentence and the force hint; --force continues", () => {
+      const id = failing();
+      retire(id, "flaky");
+      const r = scf(["resume", id]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(RETIRED("flaky") + HINT);
+      writeFileSync(join(home, "ok"), "");
+      expect(scf(["resume", id, "--force"]).status).toBe(0);
+    });
+
+    it.each([["approve"], ["reject"]])("refuses %s, and --force runs it", (cmd) => {
+      const id = waiting();
+      retire(id, "gated");
+      const r = scf([cmd, id]);
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(RETIRED("gated") + HINT);
+      expect(scf([cmd, id, "--force"]).stdout).toContain("run:");
+    });
+
+    it("lets the closed message win", () => {
+      const id = failing();
+      retire(id, "flaky");
+      setIssue("CLOSED");
+      expect(scf(["resume", id]).stderr).toContain(MESSAGE + HINT);
+    });
+
+    it("resumes while the flow file is still there, and a hand-started run whose file is gone", () => {
+      const a = failing();
+      retire(a, "flaky", true);
+      writeFileSync(join(home, "ok"), "");
+      expect(scf(["resume", a]).status).toBe(0);
+      rmSync(join(home, "ok"));
+      const b = failing();
+      rmSync(join(home, "flows", "flaky.yaml"));
+      writeFileSync(join(home, "ok"), "");
+      expect(JSON.parse(readFileSync(join(runs, b, "run.json"), "utf8")).source).toBe("cli");
+      expect(scf(["resume", b]).status).toBe(0);
+    });
   });
 
   it("shows --force in the usage", () => {

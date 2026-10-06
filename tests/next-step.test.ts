@@ -662,6 +662,68 @@ describe("runNextStep", () => {
   });
 });
 
+describe("a run of a retired flow", () => {
+  it("a failed record says to start over, watched or not, and carries the flag", () => {
+    const a = nextStep("failed", {}, { reason: 'step "x" failed', retired: true });
+    expect(a.retired).toBe(true);
+    expect(a.text).toMatch(/then start a new run\.$/);
+    const b = nextStep("failed", {}, { reason: 'step "x" failed', retired: true, watched: true, failedLabel: "factory:failed" });
+    expect(b.text).toMatch(/remove the `factory:failed` label to start over\.$/);
+    expect(b.text).not.toContain("resume the run");
+    expect(nextStep("failed", {}, { reason: 'step "x" failed' }).retired).toBeUndefined();
+  });
+  it("interrupted, cancelled and stopped records say to start a new run, for the user, also when watched", () => {
+    for (const w of [{}, { watched: true }]) {
+      const i = nextStep("interrupted", {}, { retired: true, ...w });
+      expect([i.who, i.action, i.text]).toEqual(["You", "Start a new run", "The run was interrupted — start a new run."]);
+      const c = nextStep("cancelled", {}, { retired: true, ...w });
+      expect([c.who, c.action]).toEqual(["You", "Start a new run if you want it"]);
+      expect(c.text).toContain("start a new run if you want it");
+      const s = nextStep("stopped", {}, { retired: true, ...w });
+      expect([s.who, s.action]).toEqual(["You", "Look at the run and start a new run"]);
+      expect(s.text).toContain("look at the run and start a new run");
+      expect(s.retired).toBe(true);
+    }
+  });
+  it("a retired factory failure drops a fix that says to resume", () => {
+    const n = nextStep("failed", {}, { cause: "factory", reason: "no network", fix: "check the network connection, then resume the run", retired: true });
+    expect(n.text).not.toContain("resume");
+    expect(n.text).toMatch(/start a new run\.$/);
+  });
+  it("a retired stopped run gets the stopped record for a limit, a question or a release; an interruption keeps its own", () => {
+    for (const reason of ["daily budget reached", "usage limit reached", 'stopped at step "send_back" — needs attention', 'stopped at step "wait_for_merge" — needs attention', 'stopped at step "wait_for_area" — needs attention']) {
+      const n = runNextStep(run({ status: "stopped", reason }), { retired: true });
+      expect([reason, n.kind, n.retired]).toEqual([reason, "stopped", true]);
+    }
+    expect(runNextStep(run({ status: "stopped", reason: "interrupted — resume it" }), { retired: true }).kind).toBe("interrupted");
+    expect(runNextStep(run({ status: "stopped", reason: "daily budget reached" })).kind).toBe("daily_budget");
+  });
+  it("the failure card of a retired run offers a new run, although a step could be resumed", () => {
+    const f = run({ status: "failed", reason: 'step "x" failed: exit code 1', state: { next: "x", steps: {}, visits: {} } });
+    const n = runNextStep(f, { retired: true });
+    expect(n.retired).toBe(true);
+    expect(n.failure?.options[0]).toContain("Retry — start a new run");
+    expect(n.text).toMatch(/start a new run\.$/);
+    expect(runNextStep(f).failure?.options[0]).not.toContain("start a new run");
+  });
+  it("the flag stays on waiting, running, succeeded, queued and superseded records", () => {
+    const w = run({ status: "waiting", waiting: { stepId: "gate", message: "ok", since: "x" } });
+    expect(runNextStep(w, { retired: true })).toMatchObject({ kind: "approval", retired: true });
+    expect(runNextStep(run({ status: "running" }), { retired: true })).toMatchObject({ kind: "running", retired: true });
+    expect(runNextStep(run({ status: "succeeded" }), { retired: true })).toMatchObject({ kind: "done", retired: true });
+    expect(runNextStep(run({ status: "failed" }), { retired: true, queued: {} })).toMatchObject({ kind: "queued", retired: true });
+    expect(runNextStep(run({ status: "failed" }), { retired: true, superseded: true })).toMatchObject({ kind: "superseded", retired: true });
+    expect(runNextStep(w).retired).toBeUndefined();
+  });
+  it("a known closed issue wins: the record is issue_closed without the flag", () => {
+    const n = runNextStep(run({ status: "failed", reason: "boom" }), { retired: true, issueClosed: true });
+    expect(n.kind).toBe("issue_closed");
+    expect(n.retired).toBeUndefined();
+    // a running run is not closed by the issue
+    expect(runNextStep(run({ status: "running" }), { retired: true, issueClosed: true }).retired).toBe(true);
+  });
+});
+
 describe("releaseWatchersFor", () => {
   const w = (over: Record<string, unknown>) => WatcherSchema.parse({ id: "x", github_repo: "acme/app", task: "t", source: "schedule", flow: "release-daily", at: "17:00", ...over });
   const flowRun = (...ids: string[]) => run({ flowDef: { steps: ids.map((id) => ({ id })) } as unknown as RunSummary["flowDef"] });

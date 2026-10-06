@@ -10,6 +10,7 @@ import { mergedPrs, sinceFor } from "../src/server/since.js";
 import { dismissTurn, turnFor } from "../src/server/your-turn.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { briefsOf } from "./helpers/briefs.js";
+import { flowRepo } from "./helpers/flow-repo.js";
 
 // "Since you last looked" against a stub context (no server) and the fake gh.
 
@@ -21,7 +22,7 @@ const issuesWatcher = { id: "a", github_repo: "acme/app", flow: "github-issue" }
 
 const step = (id: string, ok = true) => ({ id, ok, output: "" });
 const run = (runId: string, over: Record<string, unknown> = {}) => ({
-  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: "acme/app", issue: "7" }, repo: "/x",
+  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: "acme/app", issue: "7" }, repo: flowRepo(),
   status: "succeeded", runDir: "/tmp/none", startedAt: at(9, 30), finishedAt: at(10), history: [step("commit")],
   state: { next: null, steps: {}, visits: {} }, totalCostUsd: 0, ...over,
 }) as never as import("../src/engine/state.js").RunSummary;
