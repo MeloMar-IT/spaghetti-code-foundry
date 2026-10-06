@@ -64,6 +64,12 @@ export function knownIssueState(repo: string, issue: number | string): IssueStat
   return r.failedAt ? "unknown" : undefined;
 }
 
+/** What the store says about the issue of a run; undefined without a repository or a numeric issue. */
+export function runIssueState(run: { vars?: Record<string, string> }): IssueState | "unknown" | undefined {
+  const repo = run.vars?.github_repo, issue = run.vars?.issue;
+  return repo && issue && /^\d+$/.test(issue) ? knownIssueState(repo, issue) : undefined;
+}
+
 /** Written to a temporary file and renamed, so a reader never sees half a file. */
 function write(repo: string, value: RepoIssueStates) {
   const file = fileOf(repo);

@@ -7,6 +7,7 @@ import { ConfigSchema, type Config } from "../src/config.js";
 import { AnswerRefused, resumeRun, runFlow, saveAnswer } from "../src/engine/runner.js";
 import { ANSWERS_HEADING, TASK_MAX_BYTES, answerRoom, taskWithAnswers } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
+import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -587,6 +588,45 @@ describe("POST /api/runs/:id/answer", () => {
     } finally {
       ctl.abort();
       await pump;
+    }
+  });
+
+  it("a stopped run's stream sends a new record when its issue turns out to be closed, and again when unknown", async () => {
+    const id = await startAsk(ann);
+    const file = runFile(id);
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...stored, vars: { ...stored.vars, github_repo: "acme/app", issue: "7" } }));
+    const ctl = new AbortController();
+    const res = await fetch(`${s.base}/api/runs/${id}/events`, { headers: ann.headers(), signal: ctl.signal });
+    const reader = res.body!.getReader();
+    let text = "";
+    const pump = (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return;
+          text += new TextDecoder().decode(value);
+        }
+      } catch {
+        // closed
+      }
+    })();
+    const waitFor = async (fn: () => boolean) => {
+      const end = Date.now() + 8000;
+      while (!fn() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+      return fn();
+    };
+    try {
+      saveIssueStates("acme/app", new Map([[7, "closed"]]));
+      expect(await waitFor(() => text.includes('"kind":"issue_closed"'))).toBe(true);
+      text = "";
+      saveIssueStates("acme/app", new Map());
+      markIssueCheckFailed("acme/app");
+      expect(await waitFor(() => text.includes('"issueUnchecked":true'))).toBe(true);
+    } finally {
+      ctl.abort();
+      await pump;
+      dropIssueStates("acme/app");
     }
   });
 

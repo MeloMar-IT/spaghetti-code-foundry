@@ -4,6 +4,7 @@ import { stepLogFile } from "../engine/execute.js";
 import { buildHistory, runProgress, runTiming, withWaitLeft, type DurationHistory } from "../estimate.js";
 import { answerRoom, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
+import { runIssueState } from "../issue-states.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
@@ -34,6 +35,12 @@ export function areaWait(run: RunSummary): { runId: string; areas: string } | un
   } catch {
     return undefined;
   }
+}
+
+/** Adds the note that the issue could not be checked: unfinished runs only. */
+function unchecked(rec: NextStep, run: RunSummary): NextStep {
+  if (run.status === "running" || run.status === "succeeded" || rec.kind === "done" || rec.kind === "superseded" || rec.kind === "issue_closed") return rec;
+  return runIssueState(run) === "unknown" ? { ...rec, issueUnchecked: true } : rec;
 }
 
 /** The watcher's "closed on GitHub, run still busy" record for a run. */
@@ -108,7 +115,9 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     const title = tracked.flatMap((t) => t.issues.filter(() => t.watcher.github_repo === v.github_repo)).find((i) => String(i.issue) === v.issue)?.title;
     // The same test as `canAnswer` (api-runs.ts): the answer box is on the user's run page only.
     const answerHere = forUser && !answerBlock(run, cfg.watchers) && answerRoom(run) > 0;
+    const state = queued ? undefined : runIssueState(run);
     const rec = runNextStep(run, {
+      issueClosed: state === "closed",
       queued: queued ? { waitingFor: queued.waitingFor, behindPriority: queued.behindPriority } : undefined,
       superseded: superseded && !answerHere,
       answerHere,
@@ -124,6 +133,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       const closed = closedHold(tracked, run.runId);
       if (closed) return closed;
     }
+    if (rec.kind === "issue_closed") return rec;
     // The watcher's hold for the same run and reason knows more (pull request, question count).
     // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run; so does a run that is answered on its page.
     const hold = forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))
@@ -134,7 +144,8 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     const out = waitLeft(hold?.next ?? rec);
     if (out.kind === "done" || out.kind === "superseded") return out;
     const timing = out.kind === "running" && run.status === "running" ? runTiming(run, historyFor(ctx)) : runProgress(run);
-    return timing ? { ...out, timing } : out;
+    const withTiming = timing ? { ...out, timing } : out;
+    return queued ? withTiming : unchecked(withTiming, run);
   };
 }
 
@@ -318,6 +329,7 @@ export function collectNext(ctx: ApiContext, list: RunSummary[]) {
       else if (rec.source === "queued") e = { next: waitLeft(rec.next) };
       else if (rec.source === "hold") e = holdEntry(t, hold!);
       else e = { next: rec.next };
+      if (run && !isLive && e.next.runId === run.runId) e = { ...e, next: unchecked(e.next, run) };
       issues.push({ ...e, watcher: t.watcher.id, runId: i.runId, key: `${base.repo}#${i.issue}`, rank: issueRank(isLive, !!i.done), priority: i.priority });
     }
   }

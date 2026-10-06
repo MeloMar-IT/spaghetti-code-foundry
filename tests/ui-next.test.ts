@@ -75,6 +75,21 @@ describe("ui/next.js helpers", () => {
   });
 });
 
+describe("note of an unchecked issue", () => {
+  it("nextParts shows it only when issueUnchecked is set", () => {
+    const text = (n: unknown) => (ui.nextParts(n) as (FakeElement | null)[]).filter(Boolean).map((p) => p!.textContent).join(" ");
+    expect(text({ ...dep(), issueUnchecked: true })).toContain("The state of the issue on GitHub could not be checked");
+    expect(text(dep())).not.toContain("could not be checked");
+  });
+  it("the run page actions hide Approve, Resume and Retry for a closed issue", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const base = { runId: "r1", state: { next: "a", steps: {}, visits: {} }, flowDef: { steps: [{ id: "a" }] } };
+    expect(runs.actions({ ...base, status: "failed", next: { kind: "issue_closed" } })).toHaveLength(0);
+    expect(runs.actions({ ...base, status: "failed", next: { kind: "failed" } })).toHaveLength(2);
+    expect(runs.actions({ ...base, status: "waiting", next: { kind: "issue_closed" } })).toHaveLength(1);
+  });
+});
+
 describe("ui/next.js renderer", () => {
   const render = (els: unknown[]) => els.filter(Boolean) as FakeElement[];
 

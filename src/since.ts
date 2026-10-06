@@ -135,7 +135,7 @@ export function buildSince(o: SinceInput): SinceSummary {
       const e = entryOf(run, storyTitle(run) || next.title || run.flow, runWhere(run));
       (outcome === "develop" ? develop : done).push(e);
     }
-    if (run.status === "failed" && next.kind !== "superseded" && next.kind !== "interrupted") {
+    if (run.status === "failed" && next.kind !== "superseded" && next.kind !== "issue_closed" && next.kind !== "interrupted") {
       const key = story || run.runId;
       failedRuns.add(run.runId);
       if (seenFailed.has(key)) continue;

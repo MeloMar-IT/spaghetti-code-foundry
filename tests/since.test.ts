@@ -139,6 +139,12 @@ describe("buildSince", () => {
     expect(group(s, "failed")!.items[0]!.title).toBe("github-issue");
   });
 
+  it("leaves out a failed run of a closed issue, but not one of another issue", () => {
+    const r = (id: string, issue: string) => run(id, { status: "failed", history: [], vars: { github_repo: "o/a", issue } });
+    const s = build({ runs: [entry(r("a", "1"), "issue_closed"), entry(r("b", "2"))] });
+    expect(group(s, "failed")!.items).toHaveLength(1);
+  });
+
   it("filters newly waiting items", () => {
     const w = (key: string, stamp: string, over: Record<string, unknown> = {}) => ({
       key, repo: "o/a", what: key, next: nextStep("questions", { repo: "o/a", issue: 3, title: key }, {}), unblocks: 0, dismissable: true, stamp, ...over,

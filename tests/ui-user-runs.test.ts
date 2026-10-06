@@ -63,6 +63,9 @@ describe("helpers", () => {
     expect(k("queued")).toEqual(["cancel"]);
     expect(k("failed", { refinement: "s1" })).toEqual([]);
     expect(k("failed", {}, true)).toEqual(["cancel"]);
+    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "issue_closed" } })).toEqual([]);
+    expect(k("waiting", { next: { kind: "issue_closed" } })).toEqual(["cancel"]);
+    expect(k("failed", { next: { kind: "failed" } })).toEqual(["retry"]);
     expect(k("waiting", {}, true)).toEqual(["cancel"]);
   });
 

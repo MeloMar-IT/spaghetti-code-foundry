@@ -77,6 +77,14 @@ describe("small helpers", () => {
   });
 });
 
+describe("turnView unchecked issue", () => {
+  it("shows the note only for an item whose issue could not be checked", () => {
+    const n = nextStep("failed", { repo: "o/a", issue: 5, title: "Five" }, { watched: true });
+    expect(view(data([item({}, { ...n, issueUnchecked: true } as never)])).textContent).toContain("The state of the issue on GitHub could not be checked");
+    expect(view(data([item({}, n)])).textContent).not.toContain("could not be checked");
+  });
+});
+
 describe("turnView", () => {
   it("shows the repository, what, action, why, what waits for it and since", () => {
     const root = view(data([item({ unblocks: 3 }), item({ key: "k6", unblocks: 1, what: "Six" }, nextStep("approval", { repo: "o/a", issue: 6 }))]));

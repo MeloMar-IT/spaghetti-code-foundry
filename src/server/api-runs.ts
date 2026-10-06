@@ -210,8 +210,9 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (action === "events" && method === "GET") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
     // What a viewer sees of the record, sent last.
-    const shown = (n: NextStep) => [n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
-    let last = "";
+    const shown = (n: NextStep) => [n.kind, n.issueUnchecked ? "unchecked" : "", n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
+    const first = scheduler.get(id);
+    let last = first ? shown(view(nextFor(ctx, undefined, !admin)(first))) : "";
     let lastCan = false;
     // The folders of the run, to take out of what a user reads.
     let known = admin ? undefined : scheduler.get(id);
@@ -239,7 +240,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       const s = scheduler.get(id);
       if (!s) return;
       // A queued, dropped or cancelled resume sends no update: also look at whether an answer would be accepted.
-      if ((s.status === "running" && shown(view(nextFor(ctx, undefined, !admin)(s))) !== last) || ("canAnswer" in answerable(s)) !== lastCan) write({ type: "update", summary: s });
+      if (shown(view(nextFor(ctx, undefined, !admin)(s))) !== last || ("canAnswer" in answerable(s)) !== lastCan) write({ type: "update", summary: s });
     }, NEXT_RECHECK_MS);
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
     req.on("close", () => {
