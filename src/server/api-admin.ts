@@ -1,6 +1,5 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditAction, changedKeys } from "../auth/audit.js";
-import { watcherOwnerProblem } from "../auth/run-owner.js";
 import { hasAdmin } from "../auth/users.js";
 import { CONFIG_PATH, ConfigSchema, saveConfig } from "../config.js";
 import { spentToday } from "../engine/state.js";
@@ -11,7 +10,7 @@ import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { computeStats } from "../stats.js";
 import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
-import { configIdProblem } from "../repos/watchers.js";
+import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
 import { watcherRows } from "./api-repos.js";
 import type { Route } from "./server.js";
 
@@ -53,7 +52,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const inFile = before.watchers;
         // ids are unique on the whole install: only new duplicates and new collisions with the store are refused
         const stored = [...ctx.config().watchers.filter((w) => w.repoId !== undefined), ...ctx.blockedWatchers()];
-        const bad = watcherOwnerProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
+        const bad = fileWatcherProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
         if (bad) throw new Error(bad);
         saved = saveConfig(body);
       } catch (e) {

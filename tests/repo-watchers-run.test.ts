@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, reposPath } from "../src/auth/repos.js";
 import { createUser, deleteUser, setStatus } from "../src/auth/users.js";
-import { ConfigSchema, WatcherSchema } from "../src/config.js";
+import { ConfigSchema, WatcherSchema, saveConfig } from "../src/config.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { addRepoWatcher, removeWatchersOfRepos, repoWatchersPath } from "../src/repos/watchers.js";
@@ -284,7 +284,9 @@ describe("watchers of two repositories", () => {
   it("fails closed when the store cannot be read, and runs again when it can", async () => {
     const repo = addRepo(admin.user.id, { url: "acme/web" });
     await addWatcher(repo.id, "web-w");
-    await call(admin, "PUT", "/api/config", { ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/file" }] });
+    saveConfig({ ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/file" }] });
+    ctx.reloadConfig();
+    ctx.watchers.sync();
     expect(ctx.watchers.tracked().map((t) => t.watcher.id).sort()).toEqual(["file-w", "web-w"]);
     const good = readFileSync(repoWatchersPath(), "utf8");
     writeFileSync(repoWatchersPath(), "not json");

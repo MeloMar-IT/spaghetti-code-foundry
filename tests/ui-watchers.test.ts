@@ -150,7 +150,7 @@ describe("the page", () => {
     watchers = [{ id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }];
     const main = await draw();
     const card = cardOf(main, "f");
-    expect(card.textContent).toContain("moves to its repository at the next update");
+    expect(card.textContent).toContain("it moves to its repository when the server starts");
     expect(buttons(card)).toEqual(["Check now"]);
     sent = [];
     press(button(card, "Check now"));

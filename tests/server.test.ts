@@ -61,7 +61,9 @@ describe("ui server", () => {
     }
     const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
     const watcher = { id: "off", enabled: false, github_repo: "acme/app", label: "x", flow: "used-by-watcher" };
-    expect((await json("PUT", "/api/config", { ...cfg, watchers: [watcher] })).status).toBe(200);
+    const { saveConfig } = await import("../src/config.js");
+    saveConfig({ ...cfg, watchers: [watcher] }); // a file watcher: the API no longer saves one
+    ctx.reloadConfig();
 
     const refused = await json("DELETE", "/api/flows/used-by-watcher");
     expect(refused.status).toBe(409);
@@ -70,7 +72,8 @@ describe("ui server", () => {
     expect(step.status).toBe(409);
     expect(((await step.json()) as { error: string }).error).toContain("flow parent (runs it as a step)");
 
-    expect((await json("PUT", "/api/config", { ...cfg, watchers: [] })).status).toBe(200);
+    saveConfig({ ...cfg, watchers: [] });
+    ctx.reloadConfig();
     expect((await json("DELETE", "/api/flows/used-by-watcher")).status).toBe(200);
     expect((await json("DELETE", "/api/flows/parent")).status).toBe(200);
     expect((await json("DELETE", "/api/flows/used-by-step")).status).toBe(200);

@@ -178,7 +178,7 @@ export async function renderWatchers(main) {
         h("span", { class: "spacer" }),
         buttons(w, kind)),
       w.problem ? h("p", { class: "status bad", style: { margin: "4px 0" } }, w.problem) : null,
-      kind === "file" ? h("div", { class: "muted", style: { fontSize: "12.5px" } }, "moves to its repository at the next update") : null,
+      kind === "file" ? h("div", { class: "muted", style: { fontSize: "12.5px" } }, "still in config.yaml: it moves to its repository when the server starts; the server log says why if it stays") : null,
       h("div", { class: "muted", style: { fontSize: "12.5px" } },
         w.source === "monitor" ? `every ${w.every}` : w.source === "schedule" ? (w.at ? `checks every ${w.every}` : `max 1 run per ${w.every}`) : `every ${w.every} · max ${w.max_per_tick} per check`,
         w.exclude_labels?.length ? ` · skips ${w.exclude_labels.join(", ")}` : "",

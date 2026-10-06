@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, getRepo, setRepoAuth } from "../src/auth/repos.js";
+import { saveConfig } from "../src/config.js";
 import { removeCredential } from "../src/credentials/store.js";
 import { SIGN_IN_PREFIX } from "../src/queue/gh-identity.js";
 import { startServer } from "../src/server/server.js";
@@ -91,7 +92,9 @@ describe("a stored watcher's GitHub calls", () => {
     issues();
     const a = addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN_A });
     await addWatcher(a.id, "app-w");
-    await call(admin, "PUT", "/api/config", { ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/app", label: "other-label" }] });
+    saveConfig({ ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/app", label: "other-label" }] });
+    ctx.reloadConfig();
+    ctx.watchers.sync();
     await firstChecks();
     auth.clear();
     await call(admin, "POST", "/api/watchers/file-w/tick", {});

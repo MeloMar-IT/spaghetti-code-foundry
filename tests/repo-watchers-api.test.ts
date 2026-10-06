@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { addRepo, removeRepo, reposPath } from "../src/auth/repos.js";
+import { saveConfig } from "../src/config.js";
 import { OWNER_BLOCKED, addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { startServer } from "../src/server/server.js";
 import { fakeGithub } from "./helpers/fake-github.js";
@@ -137,10 +138,12 @@ describe("watchers of a repository: the routes", () => {
     const config = (await call(admin, "GET", "/api/config")).json();
     const put = (watchers: unknown[]) => call(admin, "PUT", "/api/config", { ...config, watchers });
     const w = { id: "file-w", github_repo: "acme/file", enabled: false };
-    expect((await put([w])).status).toBe(200);
+    saveConfig({ ...config, watchers: [w] }); // a file watcher: the API no longer saves a new one
+    ctx.reloadConfig();
+    ctx.watchers.sync();
     expect((await call(admin, "POST", path(annRepo), { id: "file-w" })).status).toBe(409);
-    expect((await put([w, { ...w, id: "admin-w" }])).error()).toMatch(/invalid config: .*admin-w.*repository/);
-    expect((await put([w, { ...w, id: "new" }, { ...w, id: "new" }])).error()).toMatch(/used twice/);
+    expect((await put([w, { ...w, id: "admin-w" }])).error()).toMatch(/invalid config: .*admin-w.*Watchers page/);
+    expect((await put([w, { ...w, id: "new" }, { ...w, id: "new" }])).error()).toMatch(/Watchers page/);
   });
 
   it("keeps stored watchers out of GET and PUT /api/config", async () => {
