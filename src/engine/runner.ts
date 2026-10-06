@@ -24,6 +24,7 @@ import {
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { stepIsolated } from "./isolation.js";
 import { removeSignInDir } from "./repo-access.js";
 import { appendLiveLog, loadRun, saveRun, spentToday, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
@@ -188,6 +189,9 @@ async function drive(
   };
   const lf = learningsFile(summary.vars, summary.repo);
 
+  // The bot's name and token, asked once per run; only steps that keep the machine's login get them.
+  let botOnce: Promise<Record<string, string>> | undefined;
+  const botEnv = () => (botOnce ??= identityEnv(config).catch((e) => ((botOnce = undefined), Promise.reject(e))));
   let baseEnv: Record<string, string>;
   try {
     baseEnv = {
@@ -201,8 +205,9 @@ async function drive(
       ...nextStepEnv(),
       ...protectedBranchEnv(config.protected_branches, config.secret_scan),
       ...selfEnv(),
-      ...(await identityEnv(config)),
     };
+    // fails before any step, as before, when the run starts with the machine's login
+    if (!stepIsolated(summary.owner, summary.vars.github_repo)) await botEnv();
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: summary.state.next, lastOutput: "" });
   }
@@ -213,6 +218,7 @@ async function drive(
     summary,
     config,
     baseEnv,
+    botEnv,
     hotfix: hotfixState(summary.flowDef, config),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,

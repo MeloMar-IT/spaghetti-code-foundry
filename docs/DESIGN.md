@@ -363,6 +363,20 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   which keeps a folder only while its holder's pid runs with the recorded start time. Removal
   fails closed: a folder that stays fails the step or the resume (`SIGN_IN_NOT_REMOVED`).
   Limits: the `gh` stand-in catches `gh` by name only, and a process that leaves its group is not stopped.
+- **Runs that never use the machine's login.** `stepIsolated()` (`src/engine/isolation.ts`) is true for
+  every run with a user owner and for an admin's run on a repository with a stored sign-in
+  (`hasStoredSignIn()`), and fails closed (unknown owner, unreadable file). It is asked per step from the
+  scope's `github_repo`. For such a step `isolationEnv()` removes every token variable (`tokenVarNames()`,
+  the bot's own included), gives `gh` an empty folder of its own, `GIT_CONFIG_GLOBAL=/dev/null`, no system
+  config, no ssh agent or `GIT_SSH`, https and file only, no prompts, `user.useConfigOnly` and a credential
+  helper reset (appended after the engine's own `GIT_CONFIG_*` entries, so `core.hooksPath` stays), and sets
+  the commit name from `commitIdentity()` (bot name and e-mail from Settings, field by field, else
+  `getUser(owner)`). With no identity the step is refused (`NO_COMMIT_IDENTITY`). `engine.botEnv()` gives the
+  bot's token and name once per run, only to steps that keep the machine's login. In agent steps
+  `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
+  (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Limits: the
+  environment only, not an OS sandbox (a step can read the account's files and Keychain or call `ssh`);
+  Codex still reads `~/.codex/config.toml`; the push hook does not run in a Docker step.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
@@ -382,6 +396,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Commands with text from an issue | Issue text and step output travel as environment variables only |
 | A reviewer changes code | Reviewers get read-only tools |
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
+| A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 

@@ -88,8 +88,8 @@ describe("a marked step", { timeout: 60_000 }, () => {
     const config = ConfigSchema.parse({ protected_branches: [], bot: { gh_token_env: "BOT_TOKEN_FOR_TEST" } });
     const s = await go(flowOf(), { owner: user.id, config });
     expect(out(s, "marked")).toContain("stored host=github.com");
-    expect(out(s, "plain")).toBe(BOT);
-    expect(out(s, "agent")).toContain("gh_token=other");
+    expect(out(s, "plain")).toBe("none");
+    expect(out(s, "agent")).toContain("gh_token=none");
   });
 
   it("is signed in two sub-flows deep", async () => {
@@ -170,7 +170,11 @@ describe("the environment of a marked step", { timeout: 60_000 }, () => {
     expect(new Set(dirs).size).toBe(2);
     expect(dirs).not.toContain(process.env.GH_CONFIG_DIR);
     for (const d of dirs) expect(existsSync(d)).toBe(false);
-    expect(out(s, "plain")).toBe(process.env.GH_CONFIG_DIR);
+    // an unflagged step of this user run has an empty folder of its own too
+    const own = out(s, "plain");
+    expect(own).not.toBe(process.env.GH_CONFIG_DIR);
+    expect(own).toContain("scf-gh-");
+    expect(existsSync(own)).toBe(false);
   });
 
   it("hides the token and writes it nowhere", async () => {

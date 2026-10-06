@@ -160,10 +160,11 @@ export function isAuthError(error: string | undefined, output: string): boolean 
 }
 
 /** Environment for Claude Code talking to a non-Anthropic endpoint. */
-export function claudeProviderEnv(t: Target): NodeJS.ProcessEnv {
+export function claudeProviderEnv(t: Target, neverSend: readonly string[] = []): NodeJS.ProcessEnv {
   const p = t.provider;
   if (p.kind === "anthropic") return {};
-  const token = p.kind === "anthropic-compatible" ? (p.api_key_env ? process.env[p.api_key_env] : undefined) : p.kind;
+  // a variable in `neverSend` (a GitHub token) is never passed on to the provider as its key
+  const token = p.kind === "anthropic-compatible" ? (p.api_key_env && !neverSend.includes(p.api_key_env) ? process.env[p.api_key_env] : undefined) : p.kind;
   if (p.kind === "anthropic-compatible" && !p.base_url) throw new Error(`provider ${t.providerName} needs base_url`);
   const env: NodeJS.ProcessEnv = {
     ANTHROPIC_BASE_URL: p.base_url,

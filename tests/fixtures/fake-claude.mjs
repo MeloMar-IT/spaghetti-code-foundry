@@ -5,7 +5,7 @@
 // permission_denials (command for Bash, file_path otherwise); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 let prompt = "";
@@ -17,6 +17,7 @@ const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const ghSeen = !process.env.GH_TOKEN ? "none" : process.env.GH_TOKEN === process.env.FAKE_GH_EXPECT_TOKEN ? "stored" : "other";
 let result = `ok args=${args.join(" ")}`;
 const denials = [];
+const shown = [];
 for (const line of prompt.split("\n")) {
   // With `--tools ""` the real CLI has no tools: nothing is written or refused.
   const noTools = args.includes("--tools") && args[args.indexOf("--tools") + 1] === "";
@@ -30,6 +31,14 @@ for (const line of prompt.split("\n")) {
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];
   if (line === "SHOWGH") result = `gh_token=${ghSeen}`;
+  // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
+  const sv = line.match(/^SHOWVARS (.*)$/);
+  if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  if (line === "SHOWGHDIR") {
+    const d = process.env.GH_CONFIG_DIR;
+    shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
+  }
+  if (shown.length) result = shown.join("\n");
   if (line === "SHOWENV") result = `base=${process.env.ANTHROPIC_BASE_URL ?? ""} token=${process.env.ANTHROPIC_AUTH_TOKEN ?? ""} haiku=${process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? ""} args=${args.join(" ")}`;
 }
 if (prompt.includes("CLAUDE_SIGNED_OUT")) {
@@ -53,7 +62,7 @@ let canned;
 let cost = 0.01;
 if (prompt.includes("Explain why this run of a coding flow failed")) {
   const e = process.env.FAKE_EXPLAIN;
-  canned = e === "ARGS" ? `KIND: code\nWHY: args ${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} gh=${process.env.GH_TOKEN ?? ""}` : e ?? "KIND: code\nWHY: the tests still fail after the fixes";
+  canned = e === "ARGS" ? `KIND: code\nWHY: args ${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} gh=${["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", ...(process.env.FAKE_EXPLAIN_VARS ?? "").split(",")].filter((n) => n && process.env[n]).join(",")}` : e ?? "KIND: code\nWHY: the tests still fail after the fixes";
   cost = 0.002;
 } else if (prompt.includes("Write a context brief for the idea below")) {
   // The architect's brief (refine-brief). FAKE_BRIEF replaces it; FAKE_BRIEF=ECHO adds the CLI arguments, the working folder and the prompt.

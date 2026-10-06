@@ -110,7 +110,7 @@ describe("watcher", () => {
   /** Let runs finish and label callbacks run. */
   const settle = async () => {
     await scheduler.idle();
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 800)); // a comment written after the run ends can come late on a busy machine
   };
   const runFor = (issue: string) => scheduler.list().find((s) => s.vars.issue === issue)!;
 
@@ -615,7 +615,11 @@ describe("watcher", () => {
 
   describe("failure comment", () => {
     const FACTORY_LINE = "🤖 **Spaghetti Code Foundry** itself failed on this issue, not the code.";
-    const bodyOf = (issue: number) => gh.comments().find((c) => c.issue === issue)!.body;
+    // The failure comment is written after the run ends: on a busy machine it can come later than `settle` waits.
+    const bodyOf = async (issue: number) => {
+      for (let i = 0; i < 150 && !gh.comments().some((c) => c.issue === issue); i++) await new Promise((r) => setTimeout(r, 100));
+      return gh.comments().find((c) => c.issue === issue)!.body;
+    };
     const headOf = (body: string) => body.slice(0, body.indexOf("<details>"));
     const localFlow = (yaml: string) => {
       const file = join(gh.tmp, "local.yaml");
@@ -629,7 +633,9 @@ describe("watcher", () => {
       const w = watcher();
       await w.tick();
       await settle();
-      const body = bodyOf(4);
+      // on a busy machine the comment can come later than `settle` waits
+      for (let i = 0; i < 100 && !gh.comments().some((c) => c.issue === 4 && c.body.includes("itself failed")); i++) await new Promise((r) => setTimeout(r, 100));
+      const body = await bodyOf(4);
       expect(body.split("\n")[2]).toBe(FACTORY_LINE);
       expect(body.split("\n").at(-1)).toBe(`<!-- claude-factory run=${runFor("4").runId} -->`);
       expect(headOf(body)).toContain("- **Why:** The plan had no questions to ask.");
@@ -647,8 +653,9 @@ describe("watcher", () => {
       issues([5]);
       await w.tick();
       await settle();
-      expect(bodyOf(5).split("\n")[0]).toMatch(/^\*\*What you need to do:\*\* /);
-      expect(bodyOf(5).split("\n")[2]).toBe("🤖 **Spaghetti Code Foundry** could not finish this issue.");
+      const body = await bodyOf(5);
+      expect(body.split("\n")[0]).toMatch(/^\*\*What you need to do:\*\* /);
+      expect(body.split("\n")[2]).toBe("🤖 **Spaghetti Code Foundry** could not finish this issue.");
     });
 
     it("names the custom failed label", async () => {
@@ -657,7 +664,7 @@ describe("watcher", () => {
       const w = watcher({ status_labels: { failed: "Factory_ERROR" } });
       await w.tick();
       await settle();
-      expect(first(bodyOf(4))).toContain("`Factory_ERROR`");
+      expect(first(await bodyOf(4))).toContain("`Factory_ERROR`");
     });
 
     it("shows only the tool and program of a blocked command", async () => {
@@ -666,7 +673,7 @@ describe("watcher", () => {
       issues([6]);
       await w.tick();
       await settle();
-      const body = bodyOf(6);
+      const body = await bodyOf(6);
       expect(body.split("\n")[2]).toBe(FACTORY_LINE);
       // The raw text under Details is the unchanged output tail; the plain lines above it carry only the tool and program.
       const head = headOf(body);
@@ -1325,10 +1332,10 @@ describe("watcher", () => {
       const manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: (l) => lines.push(l) });
       manager.sync();
       try {
-        for (let i = 0; i < 100 && manager.statuses().some((s) => !s.status?.lastTick); i++) await new Promise((r) => setTimeout(r, 100));
+        for (let i = 0; i < 200 && manager.statuses().some((s) => !s.status?.lastTick); i++) await new Promise((r) => setTimeout(r, 100));
         await settle();
         // The comment is written by a shared writer after the checks end: on a busy machine it can come later than `settle` waits.
-        for (let i = 0; i < 100 && !gh.statusComments().some((c) => c.issue === 5); i++) await new Promise((r) => setTimeout(r, 100));
+        for (let i = 0; i < 300 && !gh.statusComments().some((c) => c.issue === 5); i++) await new Promise((r) => setTimeout(r, 100));
         await settle(); // and a second, wrong comment would show up by now
         expect(gh.statusComments().filter((c) => c.issue === 5)).toHaveLength(1);
         expect(JSON.parse(readFileSync(join(process.env.FACTORY_HOME!, "status-comments.json"), "utf8"))).toMatchObject({ "acme/app": { a: [5], b: [5] } });

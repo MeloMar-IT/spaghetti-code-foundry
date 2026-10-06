@@ -112,8 +112,8 @@ describe("a marked step with a deploy key", { timeout: 60_000 }, () => {
       { config: config({ bot: { gh_token_env: "BOT_TOKEN_FOR_TEST" } }) },
     );
     expect(s.status).toBe("succeeded");
-    expect(out(s, "plain")).toBe(`key=none url=none gh=${BOT}\nclean`);
-    expect(out(s, "agent")).toContain("gh_token=other");
+    expect(out(s, "plain")).toBe("key=none url=none gh=\nclean");
+    expect(out(s, "agent")).toContain("gh_token=none");
   });
 
   it("uses only that key: no agent, no ssh files of the account, host keys in the data folder", async () => {

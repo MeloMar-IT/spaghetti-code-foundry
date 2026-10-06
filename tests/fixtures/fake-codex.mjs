@@ -2,7 +2,7 @@
 // Stand-in for `codex exec --json`: reads the prompt from stdin, emits Codex JSONL events.
 // Prompt directives: "WRITE <file> <text>" writes a file; "SAY <text>" sets the answer;
 // "LIMIT" fails with a rate limit. Args are echoed into the answer for assertions.
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
@@ -26,6 +26,7 @@ if (prompt.includes("CODEX_LIMIT")) {
 }
 let answer = `codex ok args=${args.join(" ")}\nPROMPT<<${prompt}>>`;
 let n = 0;
+const shown = [];
 for (const line of prompt.split("\n")) {
   const w = line.match(/^WRITE (\S+) (.*)$/);
   if (w) {
@@ -34,6 +35,13 @@ for (const line of prompt.split("\n")) {
   }
   const s = line.match(/^SAY (.*)$/);
   if (s) answer = s[1];
+  const sv = line.match(/^SHOWVARS (.*)$/);
+  if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  if (line === "SHOWGHDIR") {
+    const d = process.env.GH_CONFIG_DIR;
+    shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
+  }
+  if (shown.length) answer = shown.join("\n");
 }
 emit({ type: "item.completed", item: { id: `item_${n++}`, type: "command_execution", command: "git status", aggregated_output: "clean\n", exit_code: 0, status: "completed" } });
 if (prompt.includes("VERDICT: APPROVE")) answer = process.env.FAKE_CODEX_VERDICT ?? "Fine.\nVERDICT: APPROVE";

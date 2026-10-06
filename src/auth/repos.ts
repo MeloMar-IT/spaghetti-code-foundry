@@ -166,6 +166,14 @@ export function ownsRepo(userId: string, name: string): boolean {
   return read().repos.some((r) => r.owner === userId && tryParseRepoUrl(r.url)?.github !== undefined && keyOfRecord(r) === key);
 }
 
+/** True when the account has this GitHub repository with a method other than "none". Reads no secret, sets no "last used". Throws like read(). */
+export function hasStoredSignIn(userId: string, githubName: string): boolean {
+  if (!validGithubName(githubName)) return false;
+  const key = githubKey(githubName);
+  const rec = read().repos.find((r) => r.owner === userId && keyOfRecord(r) === key);
+  return rec !== undefined && rec.method !== "none";
+}
+
 // ---- reading with the stored token -----------------------------------------------------------------
 
 export const NEEDS_TOKEN = "set a token for this repository under My repositories";
