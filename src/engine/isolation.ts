@@ -26,6 +26,20 @@ export function stepIsolated(owner: string | undefined, githubRepo: string | und
   }
 }
 
+/** The owner's id when the owner is a user; undefined without an owner or for a readable admin. Fails closed like `stepIsolated`. */
+export function userAccount(owner: string | undefined): string | undefined {
+  if (!owner) return undefined;
+  try {
+    const user = getUser(owner);
+    return user && user.role === "admin" ? undefined : owner;
+  } catch {
+    return owner;
+  }
+}
+
+/** Why a user's run in the server's own folder stops before any step. */
+export const INPLACE_REFUSED = "This flow works directly in the server's folder, so only an admin can run it.";
+
 /** Name and e-mail for commits: the bot's from Settings, else the owner's account (field by field). Undefined when one is missing. */
 export function commitIdentity(config: Pick<Config, "bot">, owner: string | undefined): CommitIdentity | undefined {
   let user: CommitIdentity | undefined;

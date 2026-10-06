@@ -257,6 +257,9 @@ export const FlowSchema = z
     for (const [key, spec] of Object.entries(flow.publish?.vars ?? {})) {
       const path = ["publish", "vars", key];
       if (!Object.hasOwn(flow.vars, key)) ctx.addIssue({ code: "custom", path, message: `unknown variable "${key}"` });
+      if (spec.mode === "input" && key === "agent_env") {
+        ctx.addIssue({ code: "custom", path, message: "agent_env sets the environment of agent steps and cannot be filled in by users; use fixed or hidden" });
+      }
       if (spec.mode === "input" && !isVarName(key)) {
         ctx.addIssue({ code: "custom", path, message: "a variable users fill in needs a name of letters, digits, _ or -" });
       }
@@ -273,6 +276,9 @@ export const FlowSchema = z
       // A value a user fills in must not be pasted into a shell command.
       flow.steps.forEach((s, i) => {
         if (s.type !== "shell") return;
+        if (/\{\{\s*vars\s*\}\}/.test(s.run)) {
+          ctx.addIssue({ code: "custom", path: ["steps", i, "run"], message: "{{vars}} holds the values users fill in; in a shell step read $FACTORY_VAR_<NAME> instead" });
+        }
         for (const m of s.run.matchAll(/\{\{\s*vars\.([\w-]+)\s*\}\}/g)) {
           if (inputs.includes(m[1]!)) {
             ctx.addIssue({ code: "custom", path: ["steps", i, "run"], message: `"${m[1]}" is filled in by users; in a shell step use $${varEnvName(m[1]!)} instead of {{vars.${m[1]}}}` });

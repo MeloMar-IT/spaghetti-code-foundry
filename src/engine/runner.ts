@@ -24,7 +24,7 @@ import {
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
-import { stepIsolated } from "./isolation.js";
+import { INPLACE_REFUSED, stepIsolated, userAccount } from "./isolation.js";
 import { removeSignInDir } from "./repo-access.js";
 import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
@@ -73,9 +73,12 @@ export function newRunId(now = new Date()): string {
   return `${ts}-${randomBytes(2).toString("hex")}`;
 }
 
-export function learningsFile(vars: Record<string, string>, repo: string): string {
-  const key = vars.github_repo && vars.github_repo !== "owner/repo" ? vars.github_repo : basename(repo);
-  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", `${key.replace(/[^\w.-]+/g, "__")}.md`);
+/** The learnings file of a run. Without a usable `github_repo` the key is the folder name; a user's account then gets its own file. */
+export function learningsFile(vars: Record<string, string>, repo: string, account?: string): string {
+  const named = vars.github_repo && vars.github_repo !== "owner/repo";
+  const key = named ? vars.github_repo : basename(repo);
+  const suffix = !named && account ? `__${account}` : "";
+  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", `${`${key}${suffix}`.replace(/[^\w.-]+/g, "__")}.md`);
 }
 
 /** The variables of a run: the flow's defaults, then the folder's own settings (not for an empty workspace), then the given ones. */
@@ -176,6 +179,10 @@ async function drive(
     appendLiveLog(summary.runDir, line);
     opts.log?.(line);
   };
+  // a user's run in the server's own folder never runs a step (start, resume, approve, reject, answer and the queue all pass here)
+  if (summary.flowDef?.workspace === "inplace" && userAccount(summary.owner)) {
+    return finish(summary, opts, config, { outcome: "failed", reason: INPLACE_REFUSED, next: summary.state.next, lastOutput: "" });
+  }
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
   try {
@@ -187,7 +194,7 @@ async function drive(
     saveRun(summary);
     opts.onUpdate?.(summary);
   };
-  const lf = learningsFile(summary.vars, summary.repo);
+  const lf = learningsFile(summary.vars, summary.repo, userAccount(summary.owner));
 
   // The bot's name and token, asked once per run; only steps that keep the machine's login get them.
   let botOnce: Promise<Record<string, string>> | undefined;

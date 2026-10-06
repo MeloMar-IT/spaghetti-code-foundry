@@ -46,7 +46,7 @@ export interface ParsedRepoUrl {
 
 const bad = (message: string) => new RepoError("bad-url", message);
 const HOST_RE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
-const USER_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 const SEGMENT_RE = /^[A-Za-z0-9._~-]+$/;
 
 /**

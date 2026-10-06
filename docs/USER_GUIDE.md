@@ -2024,11 +2024,32 @@ keeps the number; turning the flow off and on again raises it. A run keeps the f
 with, even if you save a new version while it waits, and the run page shows "Flow version". If
 you edit a flow file by hand, raise the number yourself.
 
-**Trust.** Roles limit the API and the pages. They do not limit what a run can do. A user who can
-start a run can run commands as your Mac user (through the task and variables such as
-`test_cmd`), with the server's GitHub access. That is the same as admin rights. Give a user
-account only to people you would give an admin account. To switch user runs off, change the rule
-`POST runs` to `no` in `src/server/permissions.ts`.
+**Trust.** Roles limit the API and the pages. They do not fully limit what a run can do. The
+server's GitHub login is not put into a user's run. But the run still works as your Mac account,
+so it can read that account's files and Keychain, and so it can still reach the login. Give a user
+account only to people you would give an admin account. A run is not held by the operating system
+yet (SR-O1 in `docs/THREAT_MODEL.md`). To switch user runs off, change the rule `POST runs` to
+`no` in `src/server/permissions.ts`.
+
+**Security rules for published flows.** A published flow is code that users steer with text. Keep
+to these rules:
+
+- Never paste user text into a shell command: no `{{vars.<input>}}` and no bare `{{vars}}`. Read
+  `"$FACTORY_VAR_NAME"` and `"$FACTORY_TASK"`, always in quotes.
+- Never `eval` or `sh -c` a value users fill in. Do not publish `test_cmd` or `agent_env` as an
+  input.
+- For users' repositories use `workspace: empty` and clone in a `repo_access` step. `worktree` is a
+  branch of the server's own folder: all runs share its git folder, branches and settings, so use
+  it only when every user may see that code and each other's work. `inplace` is refused for users.
+- Give agent steps only the tools they need. The task and the issue text are untrusted
+  instructions.
+- Keep secrets out of `vars`. Hidden variables are not secret from the run itself.
+
+The flow editor refuses `{{vars}}` in a shell `run` and `agent_env` as an input when you save a
+flow that has a user input. `from` on resume is for admins only; a user gets 403. A user's run of an
+`inplace` flow fails before any step, the flow is not listed for users, and a user gets 403 for its
+diff. A user's run without `github_repo` keeps its learnings in a file of its own account. What is
+protected and what is still open is in `docs/THREAT_MODEL.md`.
 
 **After an upgrade.** Existing accounts with the role `user` lose access to everything but Refinement, Runs and My repositories.
 Change a role with `scf user role <e-mail> admin|user`, or create an admin with
