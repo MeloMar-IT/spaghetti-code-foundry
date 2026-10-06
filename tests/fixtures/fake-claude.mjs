@@ -5,6 +5,8 @@
 // permission_denials (command for Bash, file_path otherwise); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
+// For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
+// answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -79,7 +81,16 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
 } else if (prompt.includes("This is a question round of a refinement session.")) {
   // The architect's question round (refine-round). FAKE_ROUND replaces the answer; FAKE_ROUND=ECHO adds the CLI arguments, the working folder and the prompt.
   const found = `The README is ${existsSync("repo/README.md") ? "found" : "missing"} (README.md).`;
-  const round = prompt.includes("What is asked of you now: question")
+  const field = /^The field, when it is `suggest`: (\w*)$/m.exec(prompt)?.[1] ?? "";
+  const suggestions =
+    field === "criteria"
+      ? [{ text: "The export downloads a CSV file.", from: "R1" }, { text: "An empty report downloads a file with only the header.", from: "E1" }]
+      : field === "dependsOn"
+        ? [{ issue: 12 }, { draft: "D1" }]
+        : [{ text: `A suggested ${field}` }];
+  const round = prompt.includes("What is asked of you now: suggest")
+    ? { field, suggestions }
+    : prompt.includes("What is asked of you now: question")
     ? { answer: found }
     : {
         questions: [

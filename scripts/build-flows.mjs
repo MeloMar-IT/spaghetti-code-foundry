@@ -25,7 +25,7 @@ const swap = (text, from, to) => {
 //   human in the loop — issue-plan → (you add Factory_code) → issue-code-daily → daily-pr
 //   gitflow           — epic-questions → issue-gitflow → release-daily
 //   refinement        — refine-brief (the architect reads a repository and its backlog; changes nothing)
-//                       refine-round — the architect asks the questions of a refinement round, or answers one (read-only)
+//                       refine-round — the architect asks the questions of a refinement round, answers one, or suggests text for a draft (read-only)
 // Everything else is retired: still generated (the tests run on these flows), but not shipped.
 const RETIRED = new Set(["chore", "ci-fix", "github-auto", "github-issue", "github-pr", "jira-ticket", "linear-ticket", "pr-feedback", "issue-deliver"]);
 
@@ -2091,29 +2091,30 @@ write("refine-brief", {
   ],
 });
 
-// ── refine-round: the architect asks the questions of a refinement round, or answers one (read-only) ──
+// ── refine-round: the architect asks the questions of a refinement round, answers one, or suggests text (read-only) ──
 // Like refine-brief: only reads, the repository is in repo/, the talk is only {{task}} in the agent prompt. The open
 // issues are not read again. check_round (tools/refine-round-check) checks the form and the limits of the answer.
 write("refine-round", {
   title: "Refinement: a question round of the architect",
   lines: [
-    'scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question]',
+    'scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…]',
     "",
     "clone (develop, else the default branch) → round (read-only: Read, Glob, Grep) → check_round",
-    "ask=round (default): questions, proposals and done. ask=question: an answer. Nothing is written to GitHub.",
+    "ask=round (default): questions, proposals and done. ask=question: an answer. ask=suggest: text for one field of a story",
+    "draft (--var field=title, who, what, why, criteria, outOfScope, dependsOn or notes). Nothing is written to GitHub.",
   ],
 }, {
-  description: "The architect asks the questions of a refinement round, or answers a question of the person (read-only)",
+  description: "The architect asks the questions of a refinement round, answers a question of the person, or suggests text for a story draft (read-only)",
   workspace: "empty",
   defaults: { timeout_sec: 1800 },
   limits: { max_cost_usd: 3 },
-  vars: { github_repo: "owner/repo", ask: "round" },
+  vars: { github_repo: "owner/repo", ask: "round", field: "" },
   steps: [
     REFINE_CLONE,
     {
       id: "round",
       type: "claude",
-      description: "The architect reads the code and asks the questions, or answers the question of the person",
+      description: "The architect asks its questions, answers the question of the person, or suggests text for a story draft",
       model: "claude-opus-5-5",
       permission_mode: "dontAsk",
       allowed_tools: ["Read", "Glob", "Grep"],
@@ -2131,9 +2132,10 @@ write("refine-round", {
         "{{steps.clone.output}}",
         "The open issues are not here and you do not read them again: what the talk says about the backlog is what you know of it.",
         "",
-        "Read before you write: the parts of the code the talk is about. Find them with Glob and Grep, then read the files.",
+        "When it is `round` or `question`, read before you write: the parts of the code the talk is about. Find them with Glob and Grep, then read the files.",
         "",
         "What is asked of you now: {{vars.ask}}",
+        "The field, when it is `suggest`: {{vars.field}}",
         "",
         "## When it is `round`: ask what a good team would ask in refinement",
         "",
@@ -2184,6 +2186,26 @@ write("refine-round", {
         'every claim about the code. When you cannot find it out, say "I don\'t know" and what you looked for.',
         'Answer with one JSON object and nothing else: { "answer": "your answer" }',
         "Ask no questions and propose no entries.",
+        "",
+        "## When it is `suggest`: propose text for one field of the story draft",
+        "",
+        "Work from the talk: the idea, the context brief, the map and the draft. Open a file only to check a claim.",
+        "The third line of the talk holds ids for the Foundry. Do not use them.",
+        "Propose text for that one field only. The person accepts, edits or rejects it.",
+        "Never write an implementation plan, and never say how to build it.",
+        "Do not repeat a suggestion the person rejected; use the reason.",
+        "",
+        'For `title`, `who`, `what`, `why`, `outOfScope` and `notes`, give one suggestion: { "suggestions": [ { "text": "…" } ] }',
+        "",
+        "For `criteria`: propose acceptance criteria one by one, at most 10.",
+        "Each comes from one rule or one example of the map and names it by its number (R1, E2). Use only numbers that are in the talk.",
+        "Each says what can be observed when it works.",
+        'No criterion without a rule or an example. Form: { "suggestions": [ { "text": "…", "from": "R1" } ] }',
+        "",
+        'For `dependsOn`: at most 10, each { "issue": 12 } or { "draft": "D1" }, only what the talk gives a reason for.',
+        "",
+        'When you have nothing to suggest, answer { "suggestions": [] }.',
+        "Answer with one JSON object and nothing else. Ask no questions and propose no entries.",
       ].join("\n"),
     },
     {

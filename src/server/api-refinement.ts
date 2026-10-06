@@ -13,8 +13,10 @@ import {
   type RefinementErrorCode,
   type Session,
   acceptProposal,
+  acceptSuggestionOf,
   addDraft,
   answerQuestion,
+  rejectSuggestionOf,
   removeDraft,
   saveDraft,
   setEpic,
@@ -244,6 +246,15 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 4 && seg[2] === "drafts" && method === "DELETE") {
     return send(res, 200, guarded(ctx, () => view(ctx, settled(removeDraft(actor, seg[1]!, seg[3]!).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "suggest" && method === "POST") {
+    const body = await readJson(req);
+    return startRun({ kind: "suggest", draft: seg[3]!, field: body.field });
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "suggestions" && (seg[6] === "accept" || seg[6] === "reject") && method === "POST") {
+    const body = await readJson(req);
+    const decide = seg[6] === "accept" ? acceptSuggestionOf : rejectSuggestionOf;
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(decide(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
   }
   if (seg.length === 3 && seg[2] === "epic" && method === "PUT") {
     const body = await readJson(req);

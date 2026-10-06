@@ -116,10 +116,39 @@ describe("refine-round flow", { timeout: 60_000 }, () => {
     expect(checked(s).questions).toHaveLength(1);
   });
 
-  it("fails for an ask that is not round or question", async () => {
+  it("fails for an ask that is not round, question or suggest", async () => {
     const s = await run("talk", { ask: "both" });
     expect(s.status).toBe("failed");
-    expect(out(s, "check_round")).toBe("set the variable ask to round or question");
+    expect(out(s, "check_round")).toBe("set the variable ask to round, question or suggest");
+  });
+
+  it("suggests criteria that name a rule or an example", async () => {
+    const s = await run("talk", { ask: "suggest", field: "criteria" });
+    expect(s.status).toBe("succeeded");
+    expect(checked(s)).toEqual({
+      field: "criteria",
+      suggestions: [
+        { text: "The export downloads a CSV file.", from: "R1" },
+        { text: "An empty report downloads a file with only the header.", from: "E1" },
+      ],
+    });
+  });
+
+  it("suggests one text for a text field", async () => {
+    const s = await run("talk", { ask: "suggest", field: "title" });
+    expect(s.status).toBe("succeeded");
+    expect(checked(s)).toEqual({ field: "title", suggestions: [{ text: "A suggested title" }] });
+  });
+
+  it("suggests an issue and a draft for depends on", async () => {
+    const s = await run("talk", { ask: "suggest", field: "dependsOn" });
+    expect(checked(s)).toEqual({ field: "dependsOn", suggestions: [{ issue: 12 }, { draft: "D1" }] });
+  });
+
+  it("fails for a suggestion without a known field", async () => {
+    const s = await run("talk", { ask: "suggest", field: "everything" });
+    expect(s.status).toBe("failed");
+    expect(out(s, "check_round")).toBe("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   });
 
   it("starts the CLI read-only and holds the talk only as {{task}}", async () => {
@@ -298,7 +327,7 @@ describe("refine-round definition", () => {
     expect(flow.one_per_repo).toBeUndefined();
     expect(flow.limits.max_cost_usd).toBe(3);
     expect(flow.defaults.timeout_sec).toBe(1800);
-    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round" });
+    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round", field: "" });
     for (const s of flow.steps) expect(s.description?.trim(), s.id).toBeTruthy();
   });
 
@@ -333,8 +362,20 @@ describe("refine-round definition", () => {
     ]) expect(round.prompt, s).toContain(s);
   });
 
-  it("holds exactly four placeholders, with the talk once between the markers", () => {
-    expect([...round.prompt.matchAll(/\{\{[^}]*\}\}/g)].map((m) => m[0]).sort()).toEqual(["{{steps.clone.output}}", "{{task}}", "{{vars.ask}}", "{{vars.github_repo}}"]);
+  it("pins the sentences of the suggest part", () => {
+    for (const s of [
+      "Never write an implementation plan",
+      "names it by its number (R1, E2)",
+      "says what can be observed",
+      "Open a file only to check a claim",
+      "Do not use them",
+      "Do not repeat a suggestion the person rejected; use the reason.",
+      "The field, when it is `suggest`: {{vars.field}}",
+    ]) expect(round.prompt, s).toContain(s);
+  });
+
+  it("holds exactly five placeholders, with the talk once between the markers", () => {
+    expect([...round.prompt.matchAll(/\{\{[^}]*\}\}/g)].map((m) => m[0]).sort()).toEqual(["{{steps.clone.output}}", "{{task}}", "{{vars.ask}}", "{{vars.field}}", "{{vars.github_repo}}"]);
     const lines = round.prompt.split("\n");
     const at = lines.indexOf("{{task}}");
     expect(lines.filter((l) => l === "{{task}}")).toHaveLength(1);
@@ -372,5 +413,77 @@ describe("refine-round definition", () => {
     expect(isRefinementFlow("refine-brief")).toBe(true);
     expect(isRefinementFlow("issue-plan")).toBe(false);
     expect(isRefinementFlow("refine-brief-2")).toBe(false);
+  });
+});
+
+describe("refine-round-check for suggestions", () => {
+  const tool = join(process.cwd(), "tools", "refine-round-check");
+  const check = (raw: unknown, field?: string) => {
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), FACTORY_OUT_ROUND: typeof raw === "string" ? raw : JSON.stringify(raw), FACTORY_VAR_ASK: "suggest" };
+    delete env.FACTORY_VAR_FIELD;
+    if (field !== undefined) env.FACTORY_VAR_FIELD = field;
+    const r = spawnSync(process.execPath, [tool], { env, encoding: "utf8" });
+    return { status: r.status, stdout: r.stdout.trim(), json: () => JSON.parse(r.stdout) };
+  };
+  const fails = (raw: unknown, field: string | undefined, sentence: string) => {
+    const r = check(raw, field);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe(sentence);
+  };
+
+  it("prints a good suggestion with known keys only", () => {
+    const r = check({ suggestions: [{ text: " A title ", extra: 1 }], other: true }, "title");
+    expect(r.status).toBe(0);
+    expect(r.json()).toEqual({ field: "title", suggestions: [{ text: "A title" }] });
+  });
+
+  it("lets an empty list pass", () => {
+    expect(check({ suggestions: [] }, "who").json()).toEqual({ field: "who", suggestions: [] });
+    expect(check({}, "who").json()).toEqual({ field: "who", suggestions: [] });
+  });
+
+  it("checks the field", () => {
+    const sentence = "set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes";
+    fails({ suggestions: [] }, undefined, sentence);
+    fails({ suggestions: [] }, "body", sentence);
+  });
+
+  it.each([
+    ["questions", { questions: [{}], suggestions: [] }, "the architect's answer has questions or proposals, but only suggestions were asked for"],
+    ["proposals", { proposals: [{}], suggestions: [] }, "the architect's answer has questions or proposals, but only suggestions were asked for"],
+    ["a suggestions that is no list", { suggestions: "x" }, "suggestions is not a list"],
+    ["a string item", { suggestions: ["x"] }, "suggestion 1 is not an object"],
+    ["no text", { suggestions: [{ text: " " }] }, "suggestion 1 has no text"],
+  ])("fails for %s", (_n, raw, sentence) => fails(raw, "what", sentence));
+
+  it("fails for a criterion without a rule or an example, and the sentence holds no text", () => {
+    fails({ suggestions: [{ text: "SECRET words", from: "X1" }] }, "criteria", "suggestion 1 does not name a rule or an example");
+    fails({ suggestions: [{ text: "SECRET words" }] }, "criteria", "suggestion 1 does not name a rule or an example");
+  });
+
+  it("keeps the first one for a text field and the first 10 for the lists, without checking the rest", () => {
+    expect(check({ suggestions: [{ text: "a" }, { text: "b" }, 5] }, "notes").json().suggestions).toEqual([{ text: "a" }]);
+    const items = Array.from({ length: 11 }, (_, i) => ({ text: `c${i}`, from: `R${i + 1}` }));
+    expect(check({ suggestions: [...items.slice(0, 10), 5] }, "criteria").json().suggestions).toHaveLength(10);
+    const issues = Array.from({ length: 11 }, (_, i) => ({ issue: i + 1 }));
+    expect(check({ suggestions: [...issues.slice(0, 10), "x"] }, "dependsOn").json().suggestions).toHaveLength(10);
+  });
+
+  it("cuts texts at their limits, a title on one line", () => {
+    const text = (f: string, n: number, extra: Record<string, unknown> = {}) => check({ suggestions: [{ text: "x".repeat(n), ...extra }] }, f).json().suggestions[0].text.length;
+    expect(text("title", 200)).toBe(120);
+    expect(text("who", 600)).toBe(500);
+    expect(text("what", 600)).toBe(500);
+    expect(text("why", 600)).toBe(500);
+    expect(text("criteria", 600, { from: "R1" })).toBe(500);
+    expect(text("outOfScope", 6000)).toBe(5000);
+    expect(text("notes", 6000)).toBe(5000);
+    expect(check({ suggestions: [{ text: "one\ntwo\tthree" }] }, "title").json().suggestions[0].text).toBe("one two three");
+  });
+
+  it("leaves out depends-on items that are not an issue number or a draft", () => {
+    const r = check({ suggestions: [{ issue: 0 }, { issue: 1.5 }, { issue: "3" }, { draft: "x" }, { draft: "D2" }, { issue: 7, draft: "D1" }, {}] }, "dependsOn");
+    expect(r.json().suggestions).toEqual([{ draft: "D2" }, { issue: 7 }]);
+    expect(check({ suggestions: [{ draft: "D2" }] }, "dependsOn").json().suggestions).toEqual([{ draft: "D2" }]);
   });
 });

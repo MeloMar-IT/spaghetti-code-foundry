@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { RefinementError } from "./errors.js";
-import { HAS_CONTROL, chars, cut } from "./talk.js";
+import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
 // ---- limits (characters are counted as code points) ------------------------------------------------
 
@@ -16,7 +16,18 @@ export const DEPENDS_MAX = 20;
 export const SOURCES = ["typed", "accepted", "accepted-edited"] as const;
 export type Source = (typeof SOURCES)[number];
 
-export const DRAFT_LOG_KINDS = ["draft-added", "draft-removed", "epic-set", "epic-cleared"] as const;
+/** At most this many suggestions wait per draft; for criteria and depends on at most this many come from one run. */
+export const SUGGESTIONS_MAX = 20;
+export const SUGGEST_LIST_MAX = 10;
+/** The newest rejected suggestions a draft keeps (for the next suggestion runs of the session). */
+export const REJECTED_MAX = 30;
+export const REASON_MAX = 300;
+
+/** The fields of a draft the architect can suggest text for. */
+export const SUGGEST_FIELDS = ["title", "who", "what", "why", "criteria", "outOfScope", "dependsOn", "notes"] as const;
+export type SuggestField = (typeof SUGGEST_FIELDS)[number];
+
+export const DRAFT_LOG_KINDS = ["draft-added", "draft-removed", "epic-set", "epic-cleared", "suggestion-asked", "architect-suggested", "suggestion-accepted", "suggestion-rejected"] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
 export const isDraftKind = (what: string): boolean => (DRAFT_LOG_KINDS as readonly string[]).includes(what);
 
@@ -36,12 +47,26 @@ const text = (max: number, oneLine = false) =>
     .refine((t) => (oneLine ? !LINE_BREAK.test(t) && !TITLE_CONTROL.test(t) : !HAS_CONTROL.test(t)));
 const field = (max: number, oneLine = false) => z.object({ text: text(max, oneLine), from: z.enum(SOURCES) }).strict();
 
-const CriterionSchema = z.object({ id: z.uuid(), text: text(CRITERION_MAX), from: z.enum(SOURCES) }).strict();
+/** `tie`: the id of the rule or example of the map that a criterion comes from. */
+const CriterionSchema = z.object({ id: z.uuid(), text: text(CRITERION_MAX), from: z.enum(SOURCES), tie: z.uuid().optional() }).strict();
 const IssueNumber = z.number().int().min(1);
 const DependsSchema = z
   .object({ id: z.uuid(), issue: IssueNumber.optional(), draft: z.uuid().optional(), from: z.enum(SOURCES) })
   .strict()
   .refine((d) => (d.issue === undefined) !== (d.draft === undefined));
+
+const SuggestionSchema = z
+  .object({ id: z.uuid(), field: z.enum(SUGGEST_FIELDS), text: text(LONG_TEXT_MAX).optional(), tie: z.uuid().optional(), issue: IssueNumber.optional(), draft: z.uuid().optional() })
+  .strict()
+  .superRefine((x, ctx) => {
+    const fail = () => ctx.addIssue({ code: "custom", message: "invalid" });
+    if (x.field === "dependsOn") {
+      if (x.text !== undefined || x.tie !== undefined || (x.issue === undefined) === (x.draft === undefined)) fail();
+    } else if (x.text === undefined || x.issue !== undefined || x.draft !== undefined || (x.field === "criteria") !== (x.tie !== undefined)) fail();
+  });
+const RejectedSchema = z.object({ field: z.enum(SUGGEST_FIELDS), text: text(LONG_TEXT_MAX), reason: text(REASON_MAX).optional() }).strict();
+export type Suggestion = z.infer<typeof SuggestionSchema>;
+export type Rejected = z.infer<typeof RejectedSchema>;
 
 const DraftSchema = z
   .object({
@@ -54,6 +79,8 @@ const DraftSchema = z
     outOfScope: field(LONG_TEXT_MAX).optional(),
     dependsOn: z.array(DependsSchema).max(DEPENDS_MAX),
     notes: field(LONG_TEXT_MAX).optional(),
+    suggestions: z.array(SuggestionSchema).max(SUGGESTIONS_MAX).optional(),
+    rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
@@ -84,6 +111,11 @@ export const DraftsSchema = z
     drafts.forEach((d, i) =>
       d.dependsOn.forEach((x, j) => {
         if (x.draft !== undefined && !ids.has(x.draft)) ctx.addIssue({ code: "custom", message: "no such draft", path: [i, "dependsOn", j, "draft"] });
+      }),
+    );
+    drafts.forEach((d, i) =>
+      d.suggestions?.forEach((x, j) => {
+        if (x.draft !== undefined && !ids.has(x.draft)) ctx.addIssue({ code: "custom", message: "no such draft", path: [i, "suggestions", j, "draft"] });
       }),
     );
   });
@@ -148,7 +180,7 @@ function readCriteria(v: unknown, old: Criterion[]): Criterion[] {
     const prev = known(item, old, seen, "criterion");
     const t = checkText(item.text, "criterion", CRITERION_MAX, false);
     if (!t) continue;
-    out.push(prev && prev.text === t ? prev : { id: prev?.id ?? randomUUID(), text: t, from: prev ? changed(prev.from) : "typed" });
+    out.push(prev && prev.text === t ? prev : { id: prev?.id ?? randomUUID(), text: t, from: prev ? changed(prev.from) : "typed", ...(prev?.tie ? { tie: prev.tie } : {}) });
   }
   if (out.length > CRITERIA_MAX) throw new RefinementError("limit", `at most ${CRITERIA_MAX} acceptance criteria`);
   return out;
@@ -225,7 +257,12 @@ export function saveTyped(st: DraftState, draftId: string, input: unknown): Draf
 export function dropDraft(st: DraftState, draftId: string): DraftChange {
   const d = st.drafts.find((x) => x.id === draftId);
   if (!d) throw new RefinementError("not-found", "no such story draft");
-  const drafts = st.drafts.filter((x) => x !== d).map((x) => (x.dependsOn.some((y) => y.draft === draftId) ? { ...x, dependsOn: x.dependsOn.filter((y) => y.draft !== draftId) } : x));
+  const drafts = st.drafts
+    .filter((x) => x !== d)
+    .map((x) => {
+      if (!x.dependsOn.some((y) => y.draft === draftId) && !x.suggestions?.some((y) => y.draft === draftId)) return x;
+      return withSuggestions({ ...x, dependsOn: x.dependsOn.filter((y) => y.draft !== draftId) }, (x.suggestions ?? []).filter((y) => y.draft !== draftId));
+    });
   return { ...st, drafts, line: { what: "draft-removed", ...(d.title ? { detail: d.title.text } : {}) } };
 }
 
@@ -240,9 +277,151 @@ export function changeEpic(st: DraftState, input: unknown): DraftChange | undefi
   return n === st.epic ? undefined : { ...st, epic: n, line: { what: "epic-set", detail: cut(`#${n}`, DRAFT_TITLE_MAX) } };
 }
 
+// ---- suggestions of the architect ------------------------------------------------------------------
+
+/** The draft with these waiting suggestions; the key is not there when none wait. */
+function withSuggestions(d: Draft, list: Suggestion[]): Draft {
+  const { suggestions: _gone, ...rest } = d;
+  return list.length ? { ...rest, suggestions: list } : rest;
+}
+
+/** The ids behind the numbers (R1, E2, D3) of the task of a suggestion run. */
+export type SuggestRefs = Record<string, string>;
+
+/** True when every tie of a criterion or a suggestion names a rule or an example of the map. */
+export function tiesOk(drafts: Draft[], talk?: Talk): boolean {
+  const known = new Set([...(talk?.map.rules ?? []), ...(talk?.map.examples ?? [])].map((e) => e.id));
+  return drafts.every((d) => d.criteria.every((c) => !c.tie || known.has(c.tie)) && (d.suggestions ?? []).every((x) => !x.tie || known.has(x.tie)));
+}
+
+/** A rule or example is removed from the map: criteria lose their tie, and waiting suggestions from it go. */
+export function untie(drafts: Draft[], entryId: string): Draft[] {
+  return drafts.map((d) => {
+    if (!d.criteria.some((c) => c.tie === entryId) && !d.suggestions?.some((x) => x.tie === entryId)) return d;
+    const criteria = d.criteria.map((c) => {
+      const { tie, ...rest } = c;
+      return tie === entryId ? rest : c;
+    });
+    return withSuggestions({ ...d, criteria }, (d.suggestions ?? []).filter((x) => x.tie !== entryId));
+  });
+}
+
+const FIELD_OF = new Map<string, (typeof TEXT_FIELDS)[number]>(TEXT_FIELDS.map((f) => [f[0], f]));
+
+const keysAre = (o: Record<string, unknown>, ...keys: string[]) => Object.keys(o).length === keys.length && keys.every((k) => k in o);
+
+/**
+ * The end of a suggestion run: the checked answer `{ field, suggestions }` becomes the waiting suggestions of `field` (the
+ * waiting ones of that field are replaced; at most SUGGESTIONS_MAX wait per draft). Items that name a rule, an example or a draft
+ * that is not there are left out. Throws bad-draft for a wrong form; undefined when the draft is gone.
+ */
+export function addSuggested(st: DraftState, talk: Talk | undefined, draftId: string, field: SuggestField, output: unknown, refs: SuggestRefs): DraftChange | undefined {
+  const d = st.drafts.find((x) => x.id === draftId);
+  if (!d) return undefined;
+  if (!isObject(output) || !keysAre(output, "field", "suggestions") || output.field !== field || !Array.isArray(output.suggestions)) throw bad("the suggestions have the wrong form");
+  const items: unknown[] = output.suggestions;
+  const list = field === "criteria" || field === "dependsOn";
+  if (items.length > (list ? SUGGEST_LIST_MAX : 1)) throw bad("too many suggestions");
+  const out: Suggestion[] = [];
+  const taken = new Set(d.dependsOn.map((x) => (x.issue !== undefined ? `i${x.issue}` : `d${x.draft}`)));
+  for (const item of items) {
+    if (!isObject(item)) throw bad("a suggestion is not an object");
+    if (field === "dependsOn") {
+      if (keysAre(item, "issue")) {
+        if (typeof item.issue !== "number" || !Number.isInteger(item.issue) || item.issue < 1 || item.issue > Number.MAX_SAFE_INTEGER) throw bad("an issue number is a whole number from 1");
+        if (!taken.has(`i${item.issue}`)) out.push({ id: randomUUID(), field, issue: item.issue });
+        taken.add(`i${item.issue}`);
+      } else if (keysAre(item, "draft") && typeof item.draft === "string" && /^D\d+$/.test(item.draft)) {
+        const id = refs[item.draft];
+        if (id !== undefined && id !== d.id && st.drafts.some((x) => x.id === id) && !taken.has(`d${id}`)) out.push({ id: randomUUID(), field, draft: id });
+        if (id !== undefined) taken.add(`d${id}`);
+      } else throw bad("a depends-on suggestion is an issue number or a draft");
+    } else if (field === "criteria") {
+      if (!keysAre(item, "text", "from") || typeof item.from !== "string" || !/^[RE]\d+$/.test(item.from)) throw bad("a criterion names the rule or example it comes from");
+      const t = checkText(item.text, "criterion", CRITERION_MAX, false);
+      if (!t) throw bad("a criterion needs a text");
+      const id = refs[item.from];
+      const entries = talk?.map[item.from.startsWith("R") ? MAP_KEY.rule : MAP_KEY.example] ?? [];
+      if (id !== undefined && entries.some((e) => e.id === id)) out.push({ id: randomUUID(), field, text: t, tie: id });
+    } else {
+      const [, label, max, oneLineOnly] = FIELD_OF.get(field)!;
+      if (!keysAre(item, "text")) throw bad("a suggestion has a text and nothing else");
+      const t = checkText(item.text, label, max, oneLineOnly);
+      if (!t) throw bad("a suggestion needs a text");
+      out.push({ id: randomUUID(), field, text: t });
+    }
+  }
+  const others = (d.suggestions ?? []).filter((x) => x.field !== field);
+  const next = withSuggestions(d, [...others, ...out.slice(0, SUGGESTIONS_MAX - others.length)]);
+  return { ...st, drafts: st.drafts.map((x) => (x === d ? next : x)), line: { what: "architect-suggested", detail: field } };
+}
+
+function findSuggestion(st: DraftState, draftId: string, sid: string): { d: Draft; x: Suggestion } {
+  const d = st.drafts.find((y) => y.id === draftId);
+  if (!d) throw new RefinementError("not-found", "no such story draft");
+  const x = d.suggestions?.find((y) => y.id === sid);
+  if (!x) throw new RefinementError("not-found", "no such suggestion");
+  return { d, x };
+}
+
+/** What a suggestion says, for the list of rejected ones. */
+function suggestedText(x: Suggestion, st: DraftState): string {
+  if (x.text !== undefined) return x.text;
+  if (x.issue !== undefined) return `#${x.issue}`;
+  const other = st.drafts.find((y) => y.id === x.draft);
+  return other?.title ? oneLine(other.title.text) : "another draft";
+}
+
+/**
+ * The person takes a suggestion into the draft: as it is (`accepted`) or with their own text (`accepted-edited`, text fields and
+ * criteria only). A text field is replaced, a list gets one more item; the suggestion is gone after that.
+ */
+export function acceptSuggestion(st: DraftState, draftId: string, sid: string, input: unknown): DraftChange {
+  const { d, x } = findSuggestion(st, draftId, sid);
+  if (!isObject(input)) throw bad("send an object, empty or with the text to use");
+  const rest = (d.suggestions ?? []).filter((y) => y !== x);
+  const line = { what: "suggestion-accepted" as const, detail: x.field };
+  const done = (next: Draft): DraftChange => ({ ...st, drafts: st.drafts.map((y) => (y === d ? withSuggestions(next, rest) : y)), line });
+  if (x.field === "dependsOn") {
+    if (input.text !== undefined) throw bad("a depends-on suggestion cannot be edited; accept or reject it");
+    if (d.dependsOn.some((y) => (x.issue !== undefined ? y.issue === x.issue : y.draft === x.draft))) return done(d);
+    if (d.dependsOn.length >= DEPENDS_MAX) throw new RefinementError("limit", `at most ${DEPENDS_MAX} depends-on items`);
+    if (x.draft !== undefined && !st.drafts.some((y) => y.id === x.draft)) throw new RefinementError("not-found", "no such draft in this session");
+    return done({ ...d, dependsOn: [...d.dependsOn, { id: randomUUID(), ...(x.issue !== undefined ? { issue: x.issue } : { draft: x.draft! }), from: "accepted" }] });
+  }
+  const edited = input.text !== undefined;
+  const spec = FIELD_OF.get(x.field);
+  const [label, max, oneLineOnly]: [string, number, boolean] = spec ? [spec[1], spec[2], spec[3]] : ["criterion", CRITERION_MAX, false];
+  const t = edited ? checkText(input.text, label, max, oneLineOnly) : x.text!;
+  if (!t) throw bad(`the ${label} cannot be empty`);
+  const from: Source = edited ? "accepted-edited" : "accepted";
+  if (x.field === "criteria") {
+    if (d.criteria.length >= CRITERIA_MAX) throw new RefinementError("limit", `at most ${CRITERIA_MAX} acceptance criteria`);
+    return done({ ...d, criteria: [...d.criteria, { id: randomUUID(), text: t, from, ...(x.tie ? { tie: x.tie } : {}) }] });
+  }
+  return done({ ...d, [x.field]: { text: t, from } });
+}
+
+/** The person turns a suggestion down, with a reason or without. It is kept with the draft (the newest REJECTED_MAX). */
+export function rejectSuggestion(st: DraftState, draftId: string, sid: string, input: unknown): DraftChange {
+  const { d, x } = findSuggestion(st, draftId, sid);
+  const raw = isObject(input) ? input.reason : undefined;
+  let reason: string | undefined;
+  if (raw !== undefined && raw !== null) {
+    const badText = (m: string) => new RefinementError("bad-text", m);
+    if (typeof raw !== "string") throw badText("the reason must be text");
+    reason = raw.replace(/\r\n/g, "\n").trim();
+    if (chars(reason) > REASON_MAX) throw badText(`the reason can have at most ${REASON_MAX} characters`);
+    if (HAS_CONTROL.test(reason)) throw badText("the reason has characters that are not allowed");
+  }
+  const kept: Rejected = { field: x.field, text: suggestedText(x, st), ...(reason ? { reason } : {}) };
+  const next: Draft = { ...withSuggestions(d, (d.suggestions ?? []).filter((y) => y !== x)), rejected: [...(d.rejected ?? []), kept].slice(-REJECTED_MAX) };
+  return { ...st, drafts: st.drafts.map((y) => (y === d ? next : y)), line: { what: "suggestion-rejected", detail: x.field } };
+}
+
 // ---- the story as text -----------------------------------------------------------------------------
 
-const oneLine = (t: string): string => t.replace(new RegExp(`\\s*[\\n${LS_PS}]\\s*`, "g"), " ");
+export const oneLine = (t: string): string => t.replace(new RegExp(`\\s*[\\n${LS_PS}]\\s*`, "g"), " ");
 
 /** The draft as Markdown in the project's story format: only the person's text and fixed words. */
 export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }): { title: string; body: string } {

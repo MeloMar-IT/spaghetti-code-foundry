@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
-// Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }) and $FACTORY_VAR_ASK
-// (`round`, the default, or `question`).
+// Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
+// (`round`, the default, `question` or `suggest`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
+// criteria, outOfScope, dependsOn or notes).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
+// For `suggest` it prints { "field": …, "suggestions": [ … ] }: the first suggestion for a text field, the first 10 for
+// criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
 const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20;
 const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
 const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
@@ -46,9 +49,40 @@ function checkProposal(p, n) {
   return { list: p.list, text };
 }
 
-function check(raw, ask) {
+const FIELDS = ["title", "who", "what", "why", "criteria", "outOfScope", "dependsOn", "notes"];
+// The limit of a text, with whether it must stay on one line.
+const TEXT_LIMITS = { title: [120, true], who: [500], what: [500], why: [500], criteria: [500], outOfScope: [5000], notes: [5000] };
+
+function checkSuggestions(obj, field) {
+  if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only suggestions were asked for");
+  if (obj.suggestions !== undefined && !Array.isArray(obj.suggestions)) bad("suggestions is not a list");
+  const items = (obj.suggestions ?? []).slice(0, field === "criteria" || field === "dependsOn" ? 10 : 1);
+  const out = [];
+  items.forEach((x, i) => {
+    const n = i + 1;
+    if (!isObject(x)) bad(`suggestion ${n} is not an object`);
+    if (field === "dependsOn") {
+      if (Number.isSafeInteger(x.issue) && x.issue >= 1) out.push({ issue: x.issue });
+      else if (typeof x.draft === "string" && /^D\d+$/.test(x.draft)) out.push({ draft: x.draft });
+      return;
+    }
+    const [max, oneLine] = TEXT_LIMITS[field];
+    let text = clean(x.text);
+    if (oneLine) text = text.replace(/[\t\n]+/g, " ").trim();
+    text = cut(text, max);
+    if (!text) bad(`suggestion ${n} has no text`);
+    if (field === "criteria") {
+      if (typeof x.from !== "string" || !/^[RE]\d+$/.test(x.from)) bad(`suggestion ${n} does not name a rule or an example`);
+      out.push({ text, from: x.from });
+    } else out.push({ text });
+  });
+  return { field, suggestions: out };
+}
+
+function check(raw, ask, field) {
   const kind = ask || "round";
-  if (kind !== "round" && kind !== "question") bad("set the variable ask to round or question");
+  if (kind !== "round" && kind !== "question" && kind !== "suggest") bad("set the variable ask to round, question or suggest");
+  if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
   try {
@@ -57,6 +91,7 @@ function check(raw, ask) {
     obj = undefined;
   }
   if (!isObject(obj)) bad("the architect's answer is not a JSON object");
+  if (kind === "suggest") return checkSuggestions(obj, field);
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
     const answer = cut(clean(obj.answer), ANSWER_MAX);
@@ -72,7 +107,7 @@ function check(raw, ask) {
 }
 
 try {
-  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK)));
+  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD)));
 } catch (e) {
   console.log(e instanceof Bad ? e.message : "the architect's answer could not be checked");
   process.exitCode = 1; // not process.exit(): let stdout drain
