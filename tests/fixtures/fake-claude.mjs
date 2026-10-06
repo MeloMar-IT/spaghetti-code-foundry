@@ -8,6 +8,7 @@
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
 // For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
+// For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -89,7 +90,18 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
       : field === "dependsOn"
         ? [{ issue: 12 }, { draft: "D1" }]
         : [{ text: `A suggested ${field}` }];
-  const round = prompt.includes("What is asked of you now: review")
+  const firstIssue = existsSync("issues.md") ? /^=== ISSUE #(\d+) ===$/m.exec(readFileSync("issues.md", "utf8"))?.[1] : undefined;
+  const round = prompt.includes("What is asked of you now: impact")
+    ? {
+        areas: [{ area: "README.md", files: ["README.md"], basis: "found", why: found }],
+        dependsOn: [],
+        dependents: [],
+        risks: [{ kind: "users", basis: "estimate", text: "People see a new button." }],
+        size: { size: "small", files: 2, lines: 40, why: "One page and its test." },
+        overlaps: firstIssue ? [{ issue: Number(firstIssue), areas: ["README.md"], basis: "found", why: "It changes the same file." }] : [],
+        sensitive: [],
+      }
+    : prompt.includes("What is asked of you now: review")
     ? { remarks: [{ field: "criteria", item: "C1", kind: "uncheckable", text: "Nobody can tell when this is met." }, { field: "what", kind: "how", text: "This says how to build it." }] }
     : prompt.includes("What is asked of you now: suggest")
     ? { field, suggestions }
@@ -185,4 +197,5 @@ emit({
   num_turns: 1,
   ...(denials.length ? { permission_denials: denials } : {}),
 });
-process.exit(isError ? 1 : 0);
+// Not process.exit(): a large answer written to a pipe must drain first.
+process.exitCode = isError ? 1 : 0;

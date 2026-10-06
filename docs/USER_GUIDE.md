@@ -2683,10 +2683,10 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact]
 ```
 
-**What it reads.** The code of the repository only (the `develop` branch when there is one, else the default branch). The open issues are not read again: what the talk says about the backlog is what the architect knows of it.
+**What it reads.** The code of the repository (the `develop` branch when there is one, else the default branch). Only for `ask=impact` the step `list_issues` also reads the newest 50 open issues (titles, texts and labels, no comments) into `issues.md`; for every other ask it reads nothing and prints one line saying so. Then the open issues are not read: what the talk says about the backlog is what the architect knows of it.
 
 **`ask=round` (the default).** The answer is one JSON object. `questions` has at most 5 entries, the most important first. Each has a `view` (`need`, `build` or `test`), a `text`, a `why`, 2 to 4 `options` (each with a `text` and a `tradeoff`) and `recommended`, the position of the recommended option counted from 1. In the first round there is at least one question from each view. `proposals` has at most 20 entries for the lists of the story: a `list` (`rule`, `example` or `open`) and a `text`, from the answers the talk marks as new. `done` is one sentence; it is required when there are no questions, because the architect has nothing important left to ask.
 
@@ -2696,9 +2696,20 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 
 **`ask=review`.** The answer is `{ "remarks": [ … ] }`. Each remark is `{ "field": "…", "item": "C1", "kind": "…", "text": "…" }`: `field` is `title`, `who`, `what`, `why`, `criteria` or `outOfScope`; `item` (a criterion number) only for `criteria`; `kind` is `uncheckable`, `vague`, `contradiction`, `how` or `plan`. The architect only points out: no questions, no proposals, no new text and no plan. The check prints `{ "remarks": [ … ] }`: the first 20, each text on one line, cut at 300 characters, in at most two sentences (more fails with one plain sentence, without text of the answer).
 
+**`ask=impact`.** The architect says what a draft touches, how risky it is and how big it is. The answer is one JSON object; every statement has a `basis`, `found` (read in a file or an issue) or `estimate`:
+
+- `areas` (at most 15): `{ area, files, basis, why }`. `area` is a directory or file path, as in the `AREAS:` line of a build plan; `files` are at most 8 files read. An area marked `found` without a file becomes `estimate`.
+- `dependsOn` and `dependents` (at most 10 each): `{ issue }` or `{ draft: "D1" }`, with `basis` and `why`.
+- `risks` (at most 12): `{ kind, basis, text }`. `kind` is `data`, `security`, `compatibility` or `users`; `text` is one sentence.
+- `size`: `{ size, files, lines, why }`. `files` is the number of files changed (all files); `lines` is the lines of new or changed production code (tests and docs do not count). Both are whole-number estimates. `size` is `small` (at most 5 files and 200 lines), `large` (more than 15 files or 800 lines) or `medium`; the check sets the word from the numbers.
+- `overlaps` (at most 20): `{ issue, areas, basis, why }`, an open issue that touches the same areas. The issue must be in `issues.md` and the areas must be among the answer's areas. Every overlap is `estimate`, whatever the architect wrote.
+- `sensitive` (at most 5): `{ topic, basis, why }`. `topic` is `sign-in`, `permissions`, `secrets`, `credentials` or `user-data`.
+
+The architect gives no implementation plan, no questions, no proposals, no suggestions and no remarks; the check fails the run when the answer has those lists. It also fails, with one plain sentence that holds no text of the answer, when a text names a number of hours, days or weeks, when a sentence limit is passed (a `why` is at most two sentences), or when the form is wrong. Lists are cut at their limits.
+
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 
-**When it fails.** The run fails with one plain sentence when the answer is not JSON of this form, or when a question has no `why`, fewer than 2 or more than 4 options, an option without a trade-off, a `recommended` that is not one of its options or a `view` outside the three; also when there are no questions and no `done`, or when `ask` is not `round` or `question`. There is no second try.
+**When it fails.** The run fails with one plain sentence when the answer is not JSON of this form, or when a question has no `why`, fewer than 2 or more than 4 options, an option without a trade-off, a `recommended` that is not one of its options or a `view` outside the three; also when there are no questions and no `done`, or when `ask` is not `round`, `question`, `suggest`, `review` or `impact`. There is no second try.
 
 **It only reads, and whose access it uses.** As the brief: the tools `Read`, `Glob` and `Grep`, nothing is written to GitHub, and the talk is never put into a shell command. In a run the server started for a refinement session, only the clone uses the token you stored under **My repositories**; the architect and `check_round` never get it. The clone step asks for repository access (`repo_access`), so it follows the same rules as the clone of the brief, also in a run by hand.
 
