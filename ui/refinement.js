@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { draftSection } from "./refinement-draft.js";
 import { kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
 /** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. Later steps add the others. */
@@ -260,7 +261,11 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
   const mine = ++generation;
   stopPoll();
   const current = () => mine === generation && onPage();
-  const reload = () => renderRefinement(main, { admin, id }).catch((e) => toast(errorText(e), "error"));
+  // A reload draws a new page; the cleanup the app holds must reach that page, so navigation always ends the current one.
+  let reloaded;
+  const reload = () => renderRefinement(main, { admin, id }).then((c) => {
+    reloaded = c;
+  }, (e) => toast(errorText(e), "error"));
   const restore = (btn, sid) =>
     whileBusy(btn, async () => {
       try {
@@ -271,7 +276,10 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
       }
       await reload();
     });
+  let leaveDrafts = () => {};
   const cleanup = () => {
+    if (reloaded) return reloaded();
+    leaveDrafts(); // text that waits for its timer is sent now
     generation++;
     stopPoll();
   };
@@ -287,6 +295,10 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
       return cleanup;
     }
     if (!current()) return () => {};
+    const upper = h("div");
+    const lower = h("div");
+    let shownUpper = null;
+    let shownLower = null;
     let shown = "";
     let draws = 0; // counts the pages drawn: a poll that began before one is out of date
     const show = (next) => {
@@ -312,16 +324,33 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         if (before === draws) poll = setTimeout(tick, POLL_MS); // the page stays; the next round asks again
         return;
       }
-      if (current() && before === draws) show(next);
+      if (!current() || before !== draws) return;
+      // A change is on its way: this answer may show its state before its own answer does. Ask again later.
+      if (active) poll = setTimeout(tick, POLL_MS);
+      else show(next);
     };
-    let sending = false; // one change at a time
+    let sending = false; // one button change at a time
+    // Changes go to the server one after the other: a change waits for the one in flight; with none in flight it starts at once.
+    let active = 0;
+    let tail = Promise.resolve();
+    const inTurn = (call) => {
+      const run = active ? tail.then(call) : call();
+      active++;
+      tail = Promise.resolve(run).catch(() => {}).finally(() => active--);
+      return run;
+    };
+    // The answer is shown inside the turn, so the next change sees it.
+    const save = (call) => inTurn(async () => {
+      const next = await call();
+      if (next && current()) show(next);
+      return next;
+    });
     const send = async (btn, call) => {
       if (sending || btn.disabled) return false;
       sending = true;
       btn.disabled = true;
       try {
-        const next = await call();
-        if (current()) show(next);
+        await save(call);
         return true;
       } catch (e) {
         toast(errorText(e), "error");
@@ -359,7 +388,12 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         } }, "Drop"));
       }
       if (!open && s.mine) buttons.push(h("button", { class: "small", onClick: (e) => restore(e.currentTarget, s.id) }, "Restore"));
-      mount(main,
+      // The page has three parts: what is above the drafts, the drafts, the log. A part is drawn again only when it changed.
+      const { drafts: _drafts, epic: _epic, log: _log, updated: _updated, ...rest } = s;
+      const upperKey = JSON.stringify(rest);
+      if (upperKey !== shownUpper) {
+        shownUpper = upperKey;
+        mount(upper,
         h("a", { href: "#/refinement" }, "← All sessions"),
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
@@ -370,14 +404,19 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
         ...briefSection(s, ask),
         ...talkSection(s, { send, errorText, line: kindOf(s.architect) === "brief" ? null : statusLine(architectStatus(s.architect)) }),
-        h("h2", {}, "Story drafts"),
-        s.draftsHidden ? h("p", { class: "muted" }, "The story drafts are not shown while the repository is not in My repositories.")
-          : s.drafts?.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.preview?.title || "Untitled draft"))))
-          : h("p", { class: "muted" }, "No story drafts yet."),
-        h("h2", {}, "Log"),
-        h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+        );
+      }
+      sections.update(s);
+      const lowerKey = JSON.stringify(s.log);
+      if (lowerKey !== shownLower) {
+        shownLower = lowerKey;
+        mount(lower, h("h2", {}, "Log"), h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
+      }
     };
+    const sections = draftSection({ id, save, send, errorText });
+    leaveDrafts = sections.leave;
     show(s);
+    mount(main, upper, sections.node, lower); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 

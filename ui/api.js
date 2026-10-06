@@ -4,13 +4,14 @@ export const setCsrf = (t) => {
   csrf = t || "";
 };
 
-async function req(method, url, body) {
+/** `stay`: a 401 does not reload the page (a typing save must not throw the typed text away). */
+async function req(method, url, body, stay = false) {
   const headers = body ? { "content-type": "application/json" } : {};
   if (method !== "GET" && csrf) headers["x-csrf-token"] = csrf;
   const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   // the session ended (expired, revoked, password changed): start again at the sign-in page
-  if (r.status === 401 && !url.startsWith("/api/session")) location.reload();
+  if (r.status === 401 && !stay && !url.startsWith("/api/session")) location.reload();
   if (!r.ok) throw Object.assign(new Error(data.error || `${r.status} ${r.statusText}`), { status: r.status });
   return data;
 }
@@ -84,6 +85,10 @@ export const api = {
   rejectProposal: (id, pid) => req("POST", `/api/refinement/${enc(id)}/proposals/${enc(pid)}/reject`, {}),
   changeMapEntry: (id, eid, text) => req("PUT", `/api/refinement/${enc(id)}/map/${enc(eid)}`, { text }),
   removeMapEntry: (id, eid) => req("DELETE", `/api/refinement/${enc(id)}/map/${enc(eid)}`),
+  addDraft: (id) => req("POST", `/api/refinement/${enc(id)}/drafts`, {}),
+  saveDraft: (id, did, body) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}`, body, true),
+  removeDraft: (id, did) => req("DELETE", `/api/refinement/${enc(id)}/drafts/${enc(did)}`),
+  setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
   saveConfig: (config) => req("PUT", "/api/config", config),
