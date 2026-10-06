@@ -123,12 +123,22 @@ export interface ImpactRefs {
   known?: KnownAreas;
 }
 
-type Marked = Pick<Draft, "title" | "who" | "what" | "why" | "criteria" | "outOfScope" | "dependsOn">;
+type Marked = Pick<Draft, "title" | "who" | "what" | "why" | "criteria" | "outOfScope" | "dependsOn" | "notes">;
 
-/** A fingerprint of what the view is about: the texts, the criteria (id and text, in order), out of scope and depends-on. Not the notes. */
+/** A fingerprint of what the view is about: the texts, the criteria (id and text, in order), out of scope and depends-on and the notes (the architect reads them too). */
 export function draftMark(d: Marked): string {
+  return markOf(d, true);
+}
+
+/** The fingerprint of earlier versions (no notes): views stored with it stay fresh until the draft changes in another way. */
+export function legacyDraftMark(d: Marked): string {
+  return markOf(d, false);
+}
+
+function markOf(d: Marked, withNotes: boolean): string {
   const targets = d.dependsOn.map((x) => (x.issue !== undefined ? `#${x.issue}` : (x.draft ?? ""))).sort();
   const parts = [d.title?.text ?? "", d.who?.text ?? "", d.what?.text ?? "", d.why?.text ?? "", d.criteria.map((c) => [c.id, c.text]), d.outOfScope?.text ?? "", targets];
+  if (withNotes) parts.push(d.notes?.text ?? "");
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
@@ -270,6 +280,6 @@ export function impactView(d: Draft, drafts: Draft[], others: Pick<Draft, "id" |
     size: { ...size, basis: "estimate" },
     fit: fitOf(size, limits),
     ...(planReview ? { planReview } : {}),
-    ...(draftMark(d) !== mark ? { outOfDate: true as const } : {}),
+    ...(draftMark(d) !== mark && legacyDraftMark(d) !== mark ?{ outOfDate: true as const } : {}),
   };
 }

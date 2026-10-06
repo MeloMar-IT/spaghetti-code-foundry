@@ -130,6 +130,8 @@ export const api = {
   suggestField: (id, did, field) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggest`, { field }, true),
   acceptSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/accept`, body, true),
   reviewDraft: (id, did) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review`, {}, true),
+  askImpact: (id, did) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/impact`, {}, true),
+  setReviewLabel: (id, did, add) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review-label`, { add: Boolean(add) }, true),
   moveToNotes: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/move-to-notes`, body, true),
   rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),

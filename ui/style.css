@@ -436,6 +436,9 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .drafts .suggest .entry > button, .drafts .entry > small { margin-left: 6px; }
 .drafts .remarks, .drafts .review { display: grid; gap: 4px; justify-items: start; }
 .drafts .remarks:empty, .drafts .review:empty { display: none; }
+.drafts .impact { display: grid; gap: 6px; justify-items: start; }
+.drafts .impact:empty { display: none; }
+.drafts .impact .pill, .drafts .impact li > small { margin: 0 6px; }
 .drafts .remark { font-size: 12.5px; color: var(--muted); }
 .drafts .remark > small { margin-left: 6px; }
 .drafts li.entry { flex-wrap: wrap; }

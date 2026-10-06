@@ -162,6 +162,9 @@ describe("impact", () => {
     await impact(id, did);
     await idle(id);
     await call(ann, "PUT", url(id, `drafts/${did}`), { notes: "Keep it small" });
+    expect((await draftOf(id)).impact.outOfDate).toBe(true);
+    await impact(id, did);
+    await idle(id);
     expect((await draftOf(id)).impact.outOfDate).toBeUndefined();
     await call(ann, "PUT", url(id, `drafts/${did}`), { why: "to know" });
     expect((await draftOf(id)).impact.outOfDate).toBe(true);
