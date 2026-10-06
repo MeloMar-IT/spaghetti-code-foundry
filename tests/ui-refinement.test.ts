@@ -276,6 +276,29 @@ describe("the session page", () => {
     expect(text).toContain("Ann started the session");
     expect(walk(main()).some((e) => e.tag === "a" && e.textContent === "← All sessions")).toBe(true);
   });
+  it("lists the story drafts by their title", async () => {
+    sessions = [session({ drafts: [{ id: "d1", preview: { title: "Export", body: "x" } }, { id: "d2", preview: { title: "", body: "y" } }] })];
+    await showPage();
+    const text = main().textContent;
+    expect(text).toContain("Export");
+    expect(text).toContain("Untitled draft");
+    expect(text).not.toContain("No story drafts yet.");
+  });
+  it("says so when the story drafts are hidden", async () => {
+    const s = session({ draftsHidden: true }) as any;
+    delete s.drafts;
+    sessions = [s];
+    await showPage();
+    expect(main().textContent).toContain("The story drafts are not shown while the repository is not in My repositories.");
+  });
+  it("writes the log lines of the drafts", () => {
+    expect(ui.logText({ what: "draft-added", who: "Ann" })).toBe("Ann added a story draft");
+    expect(ui.logText({ what: "draft-removed", who: "Ann" })).toBe("Ann removed a story draft");
+    expect(ui.logText({ what: "draft-removed", who: "Ann", detail: "Export" })).toBe('Ann removed a story draft: "Export"');
+    expect(ui.logText({ what: "epic-set", who: "Ann", detail: "#73" })).toBe("Ann set the Epic to #73");
+    expect(ui.logText({ what: "epic-set", who: "Ann" })).toBe("Ann set the Epic");
+    expect(ui.logText({ what: "epic-cleared", who: "Ann" })).toBe("Ann cleared the Epic");
+  });
   it("follows the rules for the buttons", async () => {
     sessions = [session()];
     await showPage();

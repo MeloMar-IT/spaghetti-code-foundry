@@ -1325,17 +1325,18 @@ describe("watcher", () => {
       const manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: (l) => lines.push(l) });
       manager.sync();
       try {
-        for (let i = 0; i < 100 && manager.statuses().some((s) => !s.status?.lastTick); i++) await new Promise((r) => setTimeout(r, 100));
+        // Wait for what must happen, not for a fixed time: on a busy machine (several test runs at once)
+        // the checks and the shared comment writer can take a minute. A fast machine does not wait longer.
+        for (let i = 0; i < 900 && manager.statuses().some((s) => !s.status?.lastTick); i++) await new Promise((r) => setTimeout(r, 100));
         await settle();
-        // The comment is written by a shared writer after the checks end: on a busy machine it can come later than `settle` waits.
-        for (let i = 0; i < 100 && !gh.statusComments().some((c) => c.issue === 5); i++) await new Promise((r) => setTimeout(r, 100));
+        for (let i = 0; i < 900 && !gh.statusComments().some((c) => c.issue === 5); i++) await new Promise((r) => setTimeout(r, 100));
         await settle(); // and a second, wrong comment would show up by now
         expect(gh.statusComments().filter((c) => c.issue === 5)).toHaveLength(1);
         expect(JSON.parse(readFileSync(join(process.env.FACTORY_HOME!, "status-comments.json"), "utf8"))).toMatchObject({ "acme/app": { a: [5], b: [5] } });
       } finally {
         manager.stopAll();
       }
-    });
+    }, 240_000);
 
     it("is not written or read when status_comment is off", async () => {
       issues([3, "factory:done"]);

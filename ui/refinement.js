@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
-/** The states of a refinement session, in words. Later steps move a session along; for now only Drop and Restore change it. */
+/** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. Later steps add the others. */
 export const STATE_LABELS = {
   exploring: "Exploring",
   drafting: "Drafting",
@@ -38,6 +38,10 @@ export function logText(entry) {
   if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
   if (entry.what === "architect-brief") return "The architect wrote the context brief";
   if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
+  if (entry.what === "draft-added") return `${who} added a story draft`;
+  if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
+  if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
+  if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
   return talkLogText(entry) || `${who}: ${entry.what}`;
 }
 
@@ -367,7 +371,9 @@ export async function renderRefinement(main, { admin = false, id } = {}) {
         ...briefSection(s, ask),
         ...talkSection(s, { send, errorText, line: kindOf(s.architect) === "brief" ? null : statusLine(architectStatus(s.architect)) }),
         h("h2", {}, "Story drafts"),
-        s.drafts.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.title ?? "Draft")))) : h("p", { class: "muted" }, "No story drafts yet."),
+        s.draftsHidden ? h("p", { class: "muted" }, "The story drafts are not shown while the repository is not in My repositories.")
+          : s.drafts?.length ? h("ul", {}, s.drafts.map((d) => h("li", {}, String(d?.preview?.title || "Untitled draft"))))
+          : h("p", { class: "muted" }, "No story drafts yet."),
         h("h2", {}, "Log"),
         h("ul", { class: "log" }, s.log.map((l) => h("li", {}, `${timeAgo(l.at)} — ${logText(l)}`))));
     };

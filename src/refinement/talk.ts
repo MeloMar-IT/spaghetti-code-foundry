@@ -37,7 +37,7 @@ export const TALK_LOG_KINDS = ["question", "answered", "open-added", "entry-acce
 export const isTalkKind = (what: string): boolean => (TALK_LOG_KINDS as readonly string[]).includes(what);
 
 const CONTROL_IN_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
-const HAS_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+export const HAS_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 const RUN_ID_FORM = /^[\w-]+$/;
 
 export const chars = (s: string): number => [...s].length;
