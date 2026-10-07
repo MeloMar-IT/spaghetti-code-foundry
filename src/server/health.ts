@@ -8,6 +8,7 @@ import { loadGuard } from "../monitor/guard.js";
 import { activeMutes, muteFor } from "../monitor/mutes.js";
 import { findingState } from "../monitor/state.js";
 import { runOrigin } from "../your-turn.js";
+import { cachedSkillRegistry } from "../skills/registry.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
@@ -26,10 +27,15 @@ export interface Health {
   monitorFindings?: { open: number; total: number; /** The findings file cannot be read. */ unreadable?: true };
   /** "An update is waiting" or why self-update does nothing. Not a problem: it does not change `ok`. */
   update?: UpdateView["update"];
+  /** Problems with the skill folders: labels and package folder names, never paths. At most 20 are listed. Absent when there are none. */
+  skillProblems?: { source: string; root: string; package?: string; reason: string }[];
+  /** How many skill problems are not listed (`scf skills` lists all). */
+  skillProblemsMore?: number;
 }
 
 const RUNS = { label: "Runs page", url: "#/runs" };
 const MAX_FAILURES = 5;
+const MAX_SKILL_PROBLEMS = 20;
 /** "11:52", "3:50pm (Europe/Amsterdam)", "the next check": the only shapes of `until` a limit may carry. */
 const RESET_TIME = /^(?:the next check|\d{1,2}(?::\d{2})?\s?(?:am|pm)?(?: \([A-Za-z_]+(?:\/[A-Za-z_+-]+)*\))?)$/i;
 const ended = (r: RunSummary) => Date.parse(r.finishedAt ?? r.startedAt);
@@ -140,14 +146,23 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   }
   const repos = [...lastOk].map(([repo, ok]) => (ok ? { repo, lastOk: ok } : { repo }));
 
+  const reg = cachedSkillRegistry(cfg.skills, t, undefined, { repo: ctx.opts.repo });
+  // Root problems come first (the sort is stable), so the cap never hides a named root behind package errors.
+  const rootLevel = (k: string) => (k === "invalid-package" || k === "duplicate" ? 1 : 0);
+  const skillAll = [...reg.problems].sort((a, b) => rootLevel(a.kind) - rootLevel(b.kind)).map((p) => ({ source: p.source, root: p.label, ...(p.package ? { package: p.package } : {}), reason: p.reason.slice(0, 300) }));
+  const skillProblems = skillAll.slice(0, MAX_SKILL_PROBLEMS);
+
   const list = problems.map(safe);
+  const count = list.length + skillAll.length;
   const self = ctx.selfUpdate?.view();
   const monitorFindings = findingsCount(cfg.monitor.report_to);
   return {
-    ok: list.length === 0,
-    summary: list.length === 0 ? "All good" : list.length === 1 ? "1 problem" : `${list.length} problems`,
+    ok: count === 0,
+    summary: count === 0 ? "All good" : count === 1 ? "1 problem" : `${count} problems`,
     problems: list,
     repos,
+    ...(skillProblems.length ? { skillProblems } : {}),
+    ...(skillAll.length > skillProblems.length ? { skillProblemsMore: skillAll.length - skillProblems.length } : {}),
     ...(monitorFindings ? { monitorFindings } : {}),
     ...(self?.version ? { version: self.version } : {}),
     ...(self?.update ? { update: self.update } : {}),

@@ -74,7 +74,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/app.js:253` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
 | `ui/app.js:274` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
 | `ui/app.js:295` | confirm | Run without a task description? | Run (inside the Run dialog) |
-| `ui/health.js:44` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
+| `ui/health.js:49` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
 | `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |

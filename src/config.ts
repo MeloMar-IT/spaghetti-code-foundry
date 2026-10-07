@@ -363,6 +363,26 @@ export const ConfigSchema = z
     watchers: z.array(WatcherSchema).default([]),
     /** Thresholds of the monitor watcher. */
     monitor: MonitorSchema.prefault({}),
+    /** Where approved skill packages are read from. Personal agent folders (.claude, .codex) are never scanned. */
+    skills: z
+      .object({
+        /** Scan the skills shipped with the Foundry. */
+        builtin: z.boolean().default(true),
+        /** Extra administrator-managed folders (absolute). <data folder>/skills is always scanned. */
+        roots: z
+          .array(
+            z
+              .string()
+              .refine((p) => isAbsolute(p), "must be an absolute path")
+              .refine((p) => !p.split(/[\\/]/).some((s) => s === ".claude" || s === ".codex"), "personal agent folders are never scanned"),
+          )
+          .max(20)
+          .default([]),
+        /** Also read <repo>/.claude-factory/skills. Off: repository skills are never loaded. */
+        repository: z.boolean().default(false),
+      })
+      .strict()
+      .prefault({}),
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,
   })
@@ -378,6 +398,7 @@ export const ConfigSchema = z
 export type WatcherConfig = z.infer<typeof WatcherSchema> & { repoId?: string; ownerId?: string };
 export type Config = Omit<z.infer<typeof ConfigSchema>, "watchers"> & { watchers: WatcherConfig[] };
 export type ServerConfig = z.infer<typeof ServerSchema>;
+export type SkillsConfig = Config["skills"];
 export type SelfUpdateConfig = z.infer<typeof SelfUpdateSchema>;
 export type MonitorConfig = z.infer<typeof MonitorSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;

@@ -19,11 +19,16 @@ export function renderHealth(el, health, { onCancel } = {}) {
   el.setAttribute("class", health.ok ? "health ok" : "health bad");
   const problems = health.problems ?? [];
   const repos = health.repos ?? [];
+  const skills = health.skillProblems ?? [];
   mount(el,
     h("b", {}, health.summary),
     problems.length ? h("ul", { class: "holds" }, problems.map((n) => h("li", {},
       nextParts(n, { status: false }),
       n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
+    skills.length ? h("ul", { class: "holds" }, [
+      ...skills.map((p) => h("li", {}, `Skills (${p.root}${p.package ? " / " + p.package : ""}): ${p.reason}`)),
+      health.skillProblemsMore > 0 ? h("li", {}, `and ${health.skillProblemsMore} more skill problem${health.skillProblemsMore === 1 ? "" : "s"}: run "scf skills" to see all`) : null,
+    ]) : null,
     health.monitorFindings ? h("a", { class: "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,
     health.version || health.update ? h("span", { class: "health-version muted" },

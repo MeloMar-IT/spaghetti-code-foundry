@@ -10,6 +10,7 @@ import { saveGuard } from "../src/monitor/guard.js";
 import { nextStep } from "../src/next-step.js";
 import { toHold } from "../src/queue/watcher.js";
 import { health } from "../src/server/health.js";
+import { clearSkillRegistryCache } from "../src/skills/registry.js";
 import type { ApiContext } from "../src/server/server.js";
 
 const NOW = new Date("2026-10-01T12:00:00Z");
@@ -63,6 +64,62 @@ const ctxOf = (s: Setup = {}): ApiContext => {
   } as unknown as ApiContext;
 };
 const kinds = (h: ReturnType<typeof health>) => h.problems.map((p) => p.kind);
+
+describe("health(): skills", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    clearSkillRegistryCache();
+  });
+  const tmpDir = () => {
+    const d = mkdtempSync(join(tmpdir(), "health-skills-"));
+    dirs.push(d);
+    return d;
+  };
+
+  it("adds nothing by default", () => {
+    const h = health(ctxOf(), NOW);
+    expect(h.ok).toBe(true);
+    expect("skillProblems" in h).toBe(false);
+    expect("skillProblemsMore" in h).toBe(false);
+  });
+
+  it("a missing configured root is a problem, with a label and no path", () => {
+    const missing = join(tmpDir(), "nope");
+    const h = health(ctxOf({ config: { skills: { roots: [missing] } } }), NOW);
+    expect(h.ok).toBe(false);
+    expect(h.summary).toBe("1 problem");
+    expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[0]" });
+    expect(JSON.stringify(h)).not.toContain(missing);
+  });
+
+  it("an invalid package names its folder; the list is capped and the rest is counted", () => {
+    const root = tmpDir();
+    for (let i = 0; i < 25; i++) mkdirSync(join(root, `bad${String(i).padStart(2, "0")}`));
+    const h = health(ctxOf({ config: { skills: { roots: [root] } } }), NOW);
+    expect(h.summary).toBe("25 problems");
+    expect(h.skillProblems).toHaveLength(20);
+    expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[0]", package: "bad00" });
+    expect(h.skillProblemsMore).toBe(5);
+  });
+
+  it("a missing root after a noisy root is still named", () => {
+    const noisy = tmpDir();
+    for (let i = 0; i < 25; i++) mkdirSync(join(noisy, `bad${String(i).padStart(2, "0")}`));
+    const h = health(ctxOf({ config: { skills: { roots: [noisy, join(tmpDir(), "nope")] } } }), NOW);
+    expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[1]" });
+    expect(h.skillProblems).toHaveLength(20);
+  });
+
+  it("covers an enabled repository source", () => {
+    const repo = tmpDir();
+    mkdirSync(join(repo, ".claude-factory", "skills", "broken"), { recursive: true });
+    const ctx = ctxOf({ config: { skills: { repository: true } } });
+    (ctx as unknown as { opts: { repo: string } }).opts.repo = repo;
+    const h = health(ctx, NOW);
+    expect(h.skillProblems).toMatchObject([{ source: "repository", package: "broken" }]);
+  });
+});
 
 describe("health(): version and update", () => {
   it("shows the version and the update line, and they are not problems", () => {

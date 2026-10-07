@@ -201,6 +201,8 @@ A line under the top bar of every page says **All good**, or the number of probl
 
 The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
+Problems with skill folders (see [Skill sources](#skill-sources)) count as problems too: one line names the source (for example `administrator`) and the package folder, never a path. `GET /api/health` lists at most 20 as `skillProblems` (`source`, `root`, optional `package`, `reason`) and the rest as `skillProblemsMore`; `scf skills` lists all of them with full paths.
+
 When the monitor has stored findings, the line also links to the [Problems page](#the-problems-page):
 "N open findings of the monitor", or "Findings of the monitor (none open)". It does not change
 **All good**. In `GET /api/health` this is `monitorFindings` (`open`, `total`, and `unreadable`
@@ -2228,6 +2230,24 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 
 **What comes later.** Pages for users (starting runs).
 
+### Skill sources
+
+The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). Nothing uses the list yet.
+
+```yaml
+skills:
+  builtin: true        # skills shipped with the Foundry (default: true)
+  roots: []            # more administrator folders, absolute paths (default: none)
+  repository: false    # also read <repo>/.claude-factory/skills (default: false)
+```
+
+- **Sources, highest first:** `<data folder>/skills`, then each entry of `roots` in order, then the built-in skills, then the repository's skills (only when `repository: true`).
+- **Same id and version twice:** the one from the higher source is kept. The other is dropped and reported as a duplicate.
+- **Same id, other version:** the highest source wins and its version is the active one. The other versions stay in the list, marked as shadowed.
+- **Problems are never silent:** a missing, unreadable or refused folder, an invalid package and a symlinked package are each named in health and in `scf skills`.
+- **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
+- **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
+
 ### Access from other computers
 
 By default the Foundry answers only on the Mac it runs on. Colleagues can reach it from their own
@@ -2438,6 +2458,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
+| `scf skills [--repo dir]` | List approved skill packages, notes and problems with full paths; exits 1 when there are problems |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
