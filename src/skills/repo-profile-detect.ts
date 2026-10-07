@@ -33,6 +33,10 @@ const ex = (re: RegExp, s: string): Match | null => re.exec(s) as Match | null;
 const baseName = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const lines = (text: string) => text.split(/\r?\n/).filter((l) => l.length <= MAX_LINE);
 
+const NUM_VERSION = "[~^<>=]{0,3}v?\\d[0-9A-Za-z.*+-]{0,60}";
+// Plain versions, common dist-tags and workspace/catalog references; URLs, VCS forms and credentials never match.
+const SAFE_VERSION = new RegExp(`^(?:\\*|${NUM_VERSION}|latest|next|beta|alpha|canary|rc|stable|dev|workspace:(?:\\*|[~^]?|${NUM_VERSION})|catalog:[A-Za-z0-9_-]{0,40})$`);
+
 function dep(file: string, name: string, version: string | undefined, section: string): RawFinding | undefined {
   const n = cleanToken(name);
   if (!n) return undefined;
@@ -43,7 +47,7 @@ function dep(file: string, name: string, version: string | undefined, section: s
     reason: `declared in ${section} of ${file}`,
   };
   const v = version === undefined ? undefined : cleanToken(version);
-  if (v) f.value = v;
+  if (v && SAFE_VERSION.test(v)) f.value = v; // a URL, host or user:secret is not a version: keep the dependency, drop the value
   return f;
 }
 
@@ -285,7 +289,8 @@ const NO_TEST = /no test specified/;
 
 function cmd(name: string, value: string | undefined, detector: string, reason: string, path: string): RawFinding {
   const f: RawFinding = { kind: "command", name, detector, reason, path };
-  const v = value === undefined ? undefined : cleanToken(value, true);
+  // A command that carries a URL, address or credential is kept without its text.
+  const v = value === undefined || /:\/\/|@/.test(value) ? undefined : cleanToken(value, true);
   if (v) f.value = v;
   return f;
 }
