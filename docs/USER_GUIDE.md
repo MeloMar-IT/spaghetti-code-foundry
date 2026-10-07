@@ -2054,16 +2054,18 @@ to these rules:
 - Never `eval` or `sh -c` a value users fill in. Do not publish `test_cmd` or `agent_env` as an
   input.
 - For users' repositories use `workspace: empty` and clone in a `repo_access` step. `worktree` is a
-  branch of the server's own folder: all runs share its git folder, branches and settings, so use
-  it only when every user may see that code and each other's work. `inplace` is refused for users.
+  branch of the server's own folder, so it is refused for users, like `inplace`. Only admins can
+  run those flows.
 - Give agent steps only the tools they need. The task and the issue text are untrusted
   instructions.
 - Keep secrets out of `vars`. Hidden variables are not secret from the run itself.
 
 The flow editor refuses `{{vars}}` in a shell `run` and `agent_env` as an input when you save a
 flow that has a user input. `from` on resume is for admins only; a user gets 403. A user's run of an
-`inplace` flow fails before any step, the flow is not listed for users, and a user gets 403 for its
-diff. A user's run without `github_repo` keeps its learnings in a file of its own account. What is
+`inplace` or `worktree` flow fails before any step ("This flow works in a branch of the server's
+folder, so only an admin can run it." for `worktree`), the flow is not listed for users, and starting
+it gives 403. A user also gets 403 for the diff of an `inplace` run. The server's own git calls for
+a workspace ignore hooks, `fsmonitor` and the global git settings. A user's run without `github_repo` keeps its learnings in a file of its own account. What is
 protected and what is still open is in `docs/THREAT_MODEL.md`.
 
 **After an upgrade.** Existing accounts with the role `user` lose access to everything but Refinement, Runs and My repositories.

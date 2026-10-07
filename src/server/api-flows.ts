@@ -29,7 +29,7 @@ export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg
         for (const f of publishedFlows(opts.repo)) {
           try {
             const flow = parseFlow(readFileSync(f.path, "utf8"), f.path);
-            if (flow.workspace === "inplace") continue; // users cannot start a flow that works in the server's folder
+            if (flow.workspace !== "empty") continue; // users cannot start a flow that works in the server's folder or a branch of it
             out.push(userFlow(f.name, flow, effectiveVars(flow, resolve(opts.repo))));
           } catch {
             // A flow that no longer parses is left out.

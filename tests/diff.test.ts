@@ -1,15 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runDiff } from "../src/engine/diff.js";
-import { prepareWorkspace } from "../src/engine/workspace.js";
+import { prepareWorkspace, repoRoot } from "../src/engine/workspace.js";
 import type { RunSummary } from "../src/engine/state.js";
 
 let tmp: string;
 const saved: Record<string, string | undefined> = {};
-const KEYS = ["HOME", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1", "GIT_EXTERNAL_DIFF"];
+const KEYS = ["HOME", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1", "GIT_EXTERNAL_DIFF", "GIT_DIR"];
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "diff-test-"));
@@ -229,5 +229,68 @@ describe("the time limit", () => {
     const slow = slowGit();
     expect(() => runDiff(summary(dir, { baseSha: "abc" }), { gitBin: slow.bin, budgetMs: 0 })).toThrow(/too long/);
     expect(slow.lines()).toBe(0);
+  });
+});
+
+describe("prepareWorkspace does not run anything from the repository's hooks or the machine", () => {
+  it("a post-checkout hook and core.fsmonitor of the repository", () => {
+    const dir = repoWithCommit();
+    const m1 = join(tmp, "m-hook");
+    const m2 = join(tmp, "m-fsmonitor");
+    const hook = join(dir, ".git", "hooks", "post-checkout");
+    writeFileSync(hook, `#!/bin/sh\ntouch '${m1}'\n`);
+    chmodSync(hook, 0o755);
+    git(dir, "config", "core.fsmonitor", trap("fs.sh", m2));
+    const ws = prepareWorkspace("worktree", dir, join(tmp, "run"), "run-1");
+    expect(existsSync(m1)).toBe(false);
+    expect(existsSync(m2)).toBe(false);
+    expect(ws.branch).toBe("factory/run-1");
+    expect(existsSync(join(ws.workdir, "a.txt"))).toBe(true);
+    // control: a plain worktree add does run the hook
+    git(dir, "worktree", "add", "-b", "other", join(tmp, "plain"), "HEAD");
+    expect(existsSync(m1)).toBe(true);
+  });
+
+  it("the machine's settings and the server's environment", () => {
+    const dir = repoWithCommit();
+    writeFileSync(join(dir, ".gitattributes"), "*.txt filter=leak\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "attrs");
+    const other = join(tmp, "other");
+    mkdirSync(other);
+    git(other, "init", "-q", "-b", "main");
+    const m3 = join(tmp, "m-home");
+    const m4 = join(tmp, "m-env");
+    const home = join(tmp, "home");
+    mkdirSync(home);
+    writeFileSync(join(home, ".gitconfig"), `[filter "leak"]\n\tsmudge = ${trap("home.sh", m3, true)}\n`);
+    process.env.HOME = home;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "filter.leak.smudge";
+    process.env.GIT_CONFIG_VALUE_0 = trap("env.sh", m4, true);
+    process.env.GIT_DIR = join(other, ".git");
+    const ws = prepareWorkspace("worktree", dir, join(tmp, "run"), "run-1");
+    expect(existsSync(m3)).toBe(false);
+    expect(existsSync(m4)).toBe(false);
+    expect(readFileSync(join(ws.workdir, "a.txt"), "utf8")).toBe("one\n");
+    const { GIT_DIR: _drop, ...plain } = process.env;
+    expect(execFileSync("git", ["-C", dir, "branch", "--list", "factory/run-1"], { encoding: "utf8", env: plain }).trim()).toContain("factory/run-1");
+    expect(execFileSync("git", ["-C", other, "branch", "--list", "factory/run-1"], { encoding: "utf8", env: plain }).trim()).toBe("");
+    // control: without the clean environment the environment's filter does run
+    execFileSync("git", ["worktree", "add", "-b", "ctl", join(tmp, "ctl"), "HEAD"], { cwd: dir, env: plain, stdio: "ignore" });
+    expect(existsSync(m4)).toBe(true);
+  });
+
+  it("repoRoot finds the repository in a hostile environment", () => {
+    const dir = repoWithCommit();
+    mkdirSync(join(dir, "sub"));
+    process.env.GIT_DIR = join(tmp, "nowhere");
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "core.bare";
+    process.env.GIT_CONFIG_VALUE_0 = "true";
+    expect(repoRoot(join(dir, "sub"))).toBe(realpathSync(dir));
+    const outside = join(tmp, "outside");
+    mkdirSync(outside);
+    expect(repoRoot(outside)).toBeUndefined();
   });
 });

@@ -30,6 +30,10 @@ account that runs the server. Give a user account only to people you would give 
 - SR-5: a user's run of an `inplace` flow never runs a step (`src/engine/runner.ts`, `src/engine/isolation.ts`); the start, the flow list and the diff refuse it (`src/server/api-runs.ts`, `src/server/api-flows.ts`).
 - SR-6: a user's run without `github_repo` has its own learnings file, so one user's lessons do not reach another user's prompt.
 
+**Fixed in #303.**
+- A user's run of a `worktree` flow never runs a step and never calls `git worktree add`; it fails with "This flow works in a branch of the server's folder, so only an admin can run it." This holds on start, resume, approve, reject, answer and the queue, like `inplace` (`src/engine/runner.ts`, `src/engine/isolation.ts`). `POST /api/runs` answers 403 and the flow is not listed for users (`src/server/api-runs.ts`, `src/server/api-flows.ts`).
+- The server's git calls for a workspace (`prepareWorkspace`, `repoRoot` in `src/engine/workspace.ts`) run with a clean environment and `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so a hook or `fsmonitor` setting in the repository does not run.
+
 **Still open.**
 - A run is not held by the operating system yet (SR-O1): give a user account only to people you would give an admin account.
 - Files in the data folder that every step can write (SR-O7).

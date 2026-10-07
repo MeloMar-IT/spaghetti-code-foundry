@@ -263,9 +263,9 @@ the first two problems when you save; the rest is up to you.
   `BASH_ENV` for agent steps. Also do not publish `test_cmd` as an input, and never `eval` or
   `sh -c` a value users fill in.
 - For users' repositories use `workspace: empty` and clone in a `repo_access` step. `worktree` is a
-  branch of the server's own folder: all runs share its git folder, branches and settings, so use
-  it only when every user may see that code and each other's work. `inplace` is refused for users:
-  the API answers 403, the flow is not listed, and a user's run of it fails before any step.
+  branch of the server's own folder, so it is refused for users, like `inplace`: the API answers
+  403, the flow is not listed, and a user's run of it fails before any step. Only admins (and runs
+  without an owner) can use `worktree` and `inplace`.
 - Give agent steps only the tools they need. The task and the issue text are untrusted
   instructions.
 - Keep secrets out of `vars`. Hidden variables are not secret from the run itself.

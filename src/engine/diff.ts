@@ -20,8 +20,8 @@ export interface DiffOptions {
   budgetMs?: number;
 }
 
-/** The only settings a git call of the diff gets: nothing from the server's environment or the machine's git files. */
-function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+/** The only settings a git call of the server gets: nothing from the server's environment or the machine's git files. */
+export function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", ...extra };
   for (const k of ["PATH", "HOME", "TMPDIR"]) if (process.env[k] !== undefined) env[k] = process.env[k];
   return env;

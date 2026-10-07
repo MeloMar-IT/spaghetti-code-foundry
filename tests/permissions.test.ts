@@ -491,27 +491,22 @@ describe("starting a run as a user", () => {
     expect(run).toMatchObject({ owner: ann.user.id, source: "ui", vars: { github_repo: "ACME/App" } });
   });
 
-  it("runs a flow without github_repo in the server's folder, with the folder's variables", async () => {
+  it("a user's run of an empty flow does not read the folder's variables", async () => {
     mkdirSync(join(repo, ".claude-factory"), { recursive: true });
     writeFileSync(confFile(), "vars:\n  test_cmd: 'true'\n");
     try {
-      const r = await start(ann, { flow: "wt", task: "t", vars: { github_repo: "acme/app" } });
+      const r = await start(ann, { flow: "plain", task: "t" });
       expect(r.status).toBe(201);
       const { runId } = r.json() as { runId: string };
       await ctx.scheduler.wait(runId);
       const run = runJson(runId);
       expect(run.repo).toBe(repo);
-      expect(run.vars.test_cmd).toBe("true");
       expect(run.owner).toBe(ann.user.id);
+      expect(run.vars.test_cmd).toBeUndefined();
 
       writeFileSync(confFile(), "vars:\n  github_repo: other/repo\n");
-      const none = await start(ann, { flow: "wt" });
-      expect([none.status, none.error()]).toEqual([403, 'set the var "github_repo" to one of your repositories']);
-      const given = await start(ann, { flow: "wt", vars: { github_repo: "acme/app" } });
-      expect(given.status).toBe(201);
-      const id = (given.json() as { runId: string }).runId;
-      await ctx.scheduler.wait(id);
-      expect(runJson(id).vars.github_repo).toBe("acme/app");
+      expect((await start(ann, { flow: "plain" })).status).toBe(201);
+      expect((await start(ann, { flow: "wt", vars: { github_repo: "acme/app" } })).status).toBe(403);
     } finally {
       rmSync(confFile(), { force: true });
     }
@@ -519,7 +514,7 @@ describe("starting a run as a user", () => {
 
   it("checks every flow of the user's list in the same way", async () => {
     const list = (await call(ann, "GET", "/api/flows")).json() as { name: string; fields: { name: string }[] }[];
-    expect(list.map((f) => f.name)).toEqual(expect.arrayContaining(["walk", "plain", "wt", "withrepo"]));
+    expect(list.map((f) => f.name)).toEqual(expect.arrayContaining(["walk", "plain", "withrepo"]));
     for (const { name, fields } of list) {
       const r = await start(ann, { flow: name, vars: { github_repo: "nobody/none" } });
       const message = fields.some((f) => f.name === "github_repo") ? '"nobody/none" is not one of your repositories' : 'you cannot set the var "github_repo"';
@@ -677,6 +672,7 @@ describe("published flows", () => {
 
   it("lists and starts a copy of a built-in flow once the admin publishes it", async () => {
     const flow = parse(readFileSync(resolve("tests/fixtures/flows/feature.yaml"), "utf8")); // a plain flow (retired from flows/)
+    flow.workspace = "empty"; // users cannot start a worktree flow
     flow.publish = { enabled: true, name: "Build a feature" };
     expect((await put(stringify(flow))).status).toBe(200);
     try {
@@ -865,6 +861,23 @@ describe("security review", () => {
     for (const [who, path] of [[ann, "/api/flows"], [admin, "/api/flows?published=1"]] as const) {
       const list = (await call(who, "GET", path)).json() as { name: string }[];
       expect(list.map((f) => f.name)).not.toContain("ip");
+      expect(list.map((f) => f.name)).toContain("walk");
+    }
+  });
+
+  it("a flow that works in a branch of the server's folder is not for users", async () => {
+    expect((await call(admin, "PUT", "/api/flows/wtx", { yaml: QUICK("wtx", "", "worktree"), scope: "repo" })).status).toBe(200);
+    const r = await start(ann, { flow: "wtx" });
+    expect([r.status, r.error()]).toEqual([403, "this flow works in a branch of the server's folder; only an admin can start it"]);
+    expect((await start(admin, { flow: "wtx", likeUser: true })).status).toBe(403);
+    const ok = await start(admin, { flow: "wtx" });
+    expect(ok.status).toBe(201);
+    const { runId } = ok.json() as { runId: string };
+    await ctx.scheduler.wait(runId);
+    expect(runJson(runId)).toMatchObject({ status: "succeeded", branch: expect.stringMatching(/^factory\//) });
+    for (const [who, path] of [[ann, "/api/flows"], [admin, "/api/flows?published=1"]] as const) {
+      const list = (await call(who, "GET", path)).json() as { name: string }[];
+      expect(list.map((f) => f.name)).not.toContain("wtx");
       expect(list.map((f) => f.name)).toContain("walk");
     }
   });
