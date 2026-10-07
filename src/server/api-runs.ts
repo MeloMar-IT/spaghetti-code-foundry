@@ -126,6 +126,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       }
       if (!isPublished(flow) || isRefinementFlow(flow.name)) throw new HttpError(404, "flow not found");
       if (flow.workspace === "inplace") throw new HttpError(403, "this flow works directly in the server's folder; only an admin can start it");
+      if (flow.workspace === "worktree") throw new HttpError(403, "this flow works in a branch of the server's folder; only an admin can start it");
       repo = resolve(opts.repo);
       if (!existsSync(repo)) throw new HttpError(400, "the server's folder was not found");
       // The folder's own settings are read now and kept with the job; the user may fill in the published inputs only.

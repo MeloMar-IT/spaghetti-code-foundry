@@ -25,7 +25,7 @@ import {
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
-import { INPLACE_REFUSED, stepIsolated, userAccount } from "./isolation.js";
+import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { removeSignInDir } from "./repo-access.js";
 import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
@@ -99,9 +99,11 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const runId = opts.runId ?? newRunId();
   const runDir = join(opts.runsDir, runId);
 
-  const vars = opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
+  const refused = workspaceRefused(flow.workspace, owner);
+  // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
+  const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const summary: RunSummary = {
     runId,
     flow: flow.name,
@@ -124,6 +126,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     saveRun(summary);
   });
   opts.onUpdate?.(summary);
+  if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
 
   try {
     requireRedaction(); // before the workspace is made: output cannot be hidden when the stored secrets are unreadable
@@ -180,10 +183,9 @@ async function drive(
     appendLiveLog(summary.runDir, line);
     opts.log?.(line);
   };
-  // a user's run in the server's own folder never runs a step (start, resume, approve, reject, answer and the queue all pass here)
-  if (summary.flowDef?.workspace === "inplace" && userAccount(summary.owner)) {
-    return finish(summary, opts, config, { outcome: "failed", reason: INPLACE_REFUSED, next: summary.state.next, lastOutput: "" });
-  }
+  // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
+  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
+  if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
   hideKeyVars(providerKeyVars(config));
