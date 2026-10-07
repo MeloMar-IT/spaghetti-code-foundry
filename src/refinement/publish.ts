@@ -47,6 +47,50 @@ const titleOf = (d: Draft): string => (d.title ? oneLine(d.title.text) : "…");
 /** The drafts a draft depends on (ids of drafts of the same list only). */
 const draftDeps = (d: Draft, ids: ReadonlySet<string>): string[] => d.dependsOn.flatMap((x) => (x.draft !== undefined && ids.has(x.draft) ? [x.draft] : []));
 
+/** A split original that still holds criteria: they are in no part, so no issue will carry them. */
+export interface LeftBehind {
+  draft: string;
+  title: string;
+  criteria: number;
+}
+
+/**
+ * The drafts that can become issues: a draft with `splitInto` is left out, and a draft that depends on it depends on each of its parts
+ * instead (in the order of `splitInto`), never on itself and none twice. Only for the plan and the publish call; never stored.
+ */
+export function withoutSplits(drafts: readonly Draft[]): Draft[] {
+  const parts = new Map(drafts.flatMap((d) => (d.splitInto ? [[d.id, d.splitInto] as const] : [])));
+  if (!parts.size) return [...drafts];
+  const ids = new Set(drafts.map((d) => d.id));
+  return drafts
+    .filter((d) => !d.splitInto)
+    .map((d) => {
+      if (!d.dependsOn.some((x) => x.draft !== undefined && parts.has(x.draft))) return d;
+      const taken = new Set<string>();
+      const next: Draft["dependsOn"] = [];
+      for (const x of d.dependsOn) {
+        if (x.draft === undefined) {
+          next.push(x);
+          continue;
+        }
+        const targets = parts.get(x.draft);
+        const candidates = targets ? targets.map((p) => ({ ...x, draft: p })) : [x];
+        for (const c of candidates) {
+          const target = c.draft;
+          if (target === undefined || target === d.id || !ids.has(target) || taken.has(target)) continue;
+          taken.add(target);
+          next.push(c);
+        }
+      }
+      return { ...d, dependsOn: next };
+    });
+}
+
+/** The split originals that still hold criteria, in session order. */
+export function leftBehind(drafts: readonly Draft[]): LeftBehind[] {
+  return drafts.flatMap((d) => (d.splitInto && d.criteria.length ? [{ draft: d.id, title: titleOf(d), criteria: d.criteria.length }] : []));
+}
+
 /**
  * The order the issues are created in: a draft comes after the drafts it depends on; otherwise the order of the session stays (of the drafts
  * that can be placed, always the first of the session). Drafts that depend on each other in a circle, and the ones waiting on them, come last in session order.
@@ -104,11 +148,13 @@ function inCircle(drafts: readonly Draft[]): Set<string> {
 }
 
 /**
- * The plan of a session: one item per draft in the order they would be created, and the ids that would be created. Readiness is worked
- * out now with `isReady` and the list given; the stored state of the session is not used. A ready draft that depends on a draft that is
- * neither ready nor on GitHub is not offered.
+ * The plan of a session: one item per draft that is not split, in the order they would be created, and the ids that would be created.
+ * Readiness is worked out now with `isReady` and the list given; the stored state of the session is not used. A ready draft that depends
+ * on a draft that is neither ready nor on GitHub is not offered. `leftBehind` names split originals that still hold criteria.
  */
-export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: string[] } {
+export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: string[]; leftBehind: LeftBehind[] } {
+  const left = leftBehind(s.drafts);
+  s = { ...s, drafts: withoutSplits(s.drafts) };
   const order = publishOrder(s.drafts);
   const ids = new Set(s.drafts.map((d) => d.id));
   const byId = new Map(s.drafts.map((d) => [d.id, d]));
@@ -157,7 +203,7 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
     const issue = o.onGithub.get(d.id);
     return { n: i + 1, draft: d.id, title, body, state, ...(reason !== undefined ? { reason } : {}), ...(state === "on-github" && issue !== undefined ? { issue } : {}), dependsOn, labels };
   });
-  return { items, willCreate: items.filter((x) => x.state === "ready").map((x) => x.draft) };
+  return { items, willCreate: items.filter((x) => x.state === "ready").map((x) => x.draft), leftBehind: left };
 }
 
 // ---- the hidden marker -----------------------------------------------------------------------------

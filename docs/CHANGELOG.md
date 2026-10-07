@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement 7c-4 — the publish plan leaves out split originals and shows what stays behind (#318).
+  - **Behaviour.** `GET /api/refinement/:id/publish` has no item for a draft with `splitInto`. A draft that depended on a split original now depends on each of its parts (in `dependsOn`, in the issue text and in the order), never on itself and none twice. A part blocked by a part that is not ready is named as before. Nothing is stored: the expanded dependencies exist only in the plan and in the publish call.
+  - **API.** The answer has `leftBehind: [{ draft, title, criteria }]` for split originals that still hold criteria; the key is absent when there are none.
+  - **Code.** New `withoutSplits` and `leftBehind` in `src/refinement/publish.ts`; `planOf` and the publish call use them.
 - Skills foundation 2 — discover approved skill sources and build the registry (#167).
   - **Behaviour.** New config key `skills` (`builtin` default on, `roots` default empty, `repository` default off; unknown keys are refused). Roots must be absolute and cannot have a `.claude` or `.codex` segment. The registry reads `<data folder>/skills`, then `roots` in order, then the built-in skills, then (only when enabled) `<repo>/.claude-factory/skills`. Only packages that pass the SkillPackage schema are listed, keyed by `id@version`. The same key in a lower source is dropped as a `duplicate`. One version per id is active (from the highest source); other versions stay listed with `shadowedBy`. Missing, unreadable, not-a-folder and refused roots, invalid packages and symlinked packages become problems; the scan does not throw. Personal folders (`~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `.claude`/`.codex` segments, and symlinks into them) are never scanned. Limits: 500 folders per root; 1000 packages or 64 MiB of files in all.
   - **Health.** `GET /api/health` has optional `skillProblems` (`source`, `root` label, `package`, `reason`; no paths; at most 20) and `skillProblemsMore`. Skill problems count in `ok` and `summary`, and the health line shows them.

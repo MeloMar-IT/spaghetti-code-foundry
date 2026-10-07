@@ -559,7 +559,7 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
   order, and the original keeps `splitInto` (the part ids) while each part has `part: { of, hint? }`. Order is by
   position: a part may depend only on an earlier part, never on a later one or on its original (`partOrderProblem`,
   checked by the schema, `saveTyped` and `acceptSuggestion`). A draft with `splitInto` is never ready and is never
-  published; a part cannot be split again; a published draft cannot be split. The import rule: `draft-parts.ts` may
+  published: the plan and the publish call use `withoutSplits` (`publish.ts`), which drops the original and points drafts that depended on it at each of its parts, in memory only, and `leftBehind` reports originals that still hold criteria; a part cannot be split again; a published draft cannot be split. The import rule: `draft-parts.ts` may
   import values from `draft.ts` and `draft-split.ts`, but `draft-split.ts` imports only types from `draft.ts`.
 - **Multi-user completion:** separate watchers per repository, runs with the repository's own
   credentials, fair-use limits.

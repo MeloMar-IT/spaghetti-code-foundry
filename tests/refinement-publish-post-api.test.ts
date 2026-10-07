@@ -120,6 +120,31 @@ describe("publishing", () => {
     expect(audit()).toMatchObject([{ target: id, detail: "acme/app #101", by: ann.user.id }]);
   });
 
+  it("writes the numbers of the parts for a draft that depended on a split original, and makes no issue for the original", async () => {
+    setRepoReady(annRepo().id, { items: LIST2 });
+    const id = await session();
+    const o = await addDraft(id, { ...FULL, title: "Original story", criteria: [{ text: "It exports a file" }, { text: "It has a header" }] }, false);
+    const x = await addDraft(id, { ...FULL, title: "Report page" }, false);
+    expect((await call(ann, "PUT", url(id, `drafts/${x}`), { dependsOn: [{ draft: o }] })).status).toBe(200);
+    const c = (await call(ann, "GET", `/api/refinement/${id}`)).json().drafts.find((d: any) => d.id === o).criteria.map((k: any) => k.id);
+    const body = { parts: [{ title: "First", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn: [1] }], unplaced: [] };
+    const r = await call(ann, "POST", url(id, `drafts/${o}/split/confirm`), body);
+    expect(r.status).toBe(201);
+    const parts = r.json().drafts.filter((d: any) => d.part).map((d: any) => d.id) as string[];
+    for (const p of parts) await call(ann, "PUT", url(id, `drafts/${p}`), { who: FULL.who, what: FULL.what, why: FULL.why, outOfScope: FULL.outOfScope });
+    for (const d of [...parts, x]) expect((await call(ann, "POST", url(id, `drafts/${d}/ready-check`))).status).toBe(200);
+    const done = await publish(id);
+    expect(done.status).toBe(200);
+    expect(done.json().state).toBe("published");
+    expect(stored(id).state).toBe("published");
+    const made = gh.createdBodies();
+    expect(made.map((m) => m.title)).toEqual(["First", "Second", "Report page"]);
+    expect(made[2]!.body).toContain("- #101");
+    expect(made[2]!.body).toContain("- #102");
+    expect(made[2]!.body).not.toContain("new issue");
+    expect(made[2]!.body).not.toContain("Original story");
+  });
+
   it("takes an empty body as no choices: every ready draft is created with no labels", async () => {
     const { id } = await withDraft();
     await addDraft(id, { ...FULL, title: "Second" });

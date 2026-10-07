@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { preview, type Draft } from "../src/refinement/draft.js";
 import { isReady, notReadyReason } from "../src/refinement/draft-ready.js";
 import { RefinementError } from "../src/refinement/errors.js";
-import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
+import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
 import type { ReadyItem } from "../src/refinement/ready-list.js";
 
 const LIST: ReadyItem[] = [{ id: "out-of-scope", text: "it says what is out of scope" }];
@@ -147,6 +147,104 @@ describe("planOf", () => {
     expect(plan([mk(1, { ready: true, addReviewLabel: true })], { buildLabel: "Factory_go", reviewLabel: "factory_GO" }).items[0]!.labels).toEqual(["Factory_go"]);
     expect(plan([mk(1, { ready: true })]).items[0]!.labels).toEqual([]);
     expect(plan([mk(1, { ready: true })], { buildLabel: "Factory_go", onGithub: new Map([[uid(1), 3]]) }).items[0]!.labels).toEqual([]);
+  });
+});
+
+/** Original `o` split into parts `p`: the original keeps no criteria unless `over` gives some. */
+function splitOf(o: number, p: number[], over: Partial<Draft> = {}): Draft[] {
+  return [mk(o, { splitInto: p.map(uid), criteria: [], ...over }), ...p.map((n) => mk(n, { part: { of: uid(o) } }))];
+}
+
+describe("withoutSplits", () => {
+  it("returns the same drafts without a split", () => {
+    const d = [mk(1), mk(2)];
+    const r = withoutSplits(d);
+    expect(r).toEqual(d);
+    expect(r[0]).toBe(d[0]);
+  });
+  it("leaves out the original and keeps the session order", () => {
+    expect(ids(withoutSplits([mk(5), ...splitOf(1, [2, 3]), mk(4)]))).toEqual([uid(5), uid(2), uid(3), uid(4)]);
+  });
+  it("gives a dependant one item per part, with the id and from of the replaced item", () => {
+    const x = mk(9, { dependsOn: [issueDep(7), { ...dep(1), from: "accepted" as const }] });
+    const r = withoutSplits([...splitOf(1, [2, 3]), x]).find((d) => d.id === uid(9))!;
+    expect(r.dependsOn).toEqual([issueDep(7), { id: uid(201), draft: uid(2), from: "accepted" }, { id: uid(201), draft: uid(3), from: "accepted" }]);
+  });
+  it("names no draft twice", () => {
+    for (const dependsOn of [[dep(2), dep(1)], [dep(1), dep(2)]]) {
+      const r = withoutSplits([...splitOf(1, [2, 3]), mk(9, { dependsOn })]).find((d) => d.id === uid(9))!;
+      expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(2), uid(3)]);
+    }
+  });
+  it("never makes a part depend on itself", () => {
+    const parts = splitOf(1, [2, 3]);
+    parts[1] = mk(2, { part: { of: uid(1) }, dependsOn: [dep(1)] });
+    const r = withoutSplits(parts).find((d) => d.id === uid(2))!;
+    expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(3)]);
+  });
+  it("expands two originals", () => {
+    const r = withoutSplits([...splitOf(1, [2, 3]), ...splitOf(4, [5, 6]), mk(9, { dependsOn: [dep(1), dep(4)] })]).at(-1)!;
+    expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(2), uid(3), uid(5), uid(6)]);
+  });
+  it("does not change its input", () => {
+    const drafts = [...splitOf(1, [2, 3]), mk(9, { dependsOn: [dep(1)] })];
+    const before = JSON.stringify(drafts);
+    withoutSplits(drafts);
+    expect(JSON.stringify(drafts)).toBe(before);
+    expect(drafts[3]!.dependsOn[0]!.draft).toBe(uid(1));
+  });
+});
+
+describe("leftBehind", () => {
+  it("is empty without a split, and for an original without criteria", () => {
+    expect(leftBehind([mk(1)])).toEqual([]);
+    expect(leftBehind(splitOf(1, [2, 3]))).toEqual([]);
+  });
+  it("names an original with criteria, in session order", () => {
+    const two = [{ id: uid(501), text: "a", from: "typed" as const }, { id: uid(502), text: "b", from: "typed" as const }];
+    const untitled = splitOf(4, [5, 6], { criteria: [two[0]!] });
+    delete untitled[0]!.title;
+    expect(leftBehind([...splitOf(1, [2, 3], { criteria: two }), ...untitled])).toEqual([
+      { draft: uid(1), title: "Story 1", criteria: 2 },
+      { draft: uid(4), title: "…", criteria: 1 },
+    ]);
+  });
+});
+
+describe("planOf with splits", () => {
+  const parts = () => [...splitOf(1, [2, 3]).slice(0, 1), mk(2, { ready: true, part: { of: uid(1) } }), mk(3, { ready: true, part: { of: uid(1) }, dependsOn: [dep(2)] })];
+  it("has no item for the original and numbers the rest", () => {
+    const r = plan([...parts(), mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    expect(r.items.map((i) => [i.n, i.draft])).toEqual([[1, uid(2)], [2, uid(3)], [3, uid(9)]]);
+    expect(r.willCreate).toEqual([uid(2), uid(3), uid(9)]);
+    expect(r.leftBehind).toEqual([]);
+    const x = r.items[2]!;
+    expect(x.dependsOn).toEqual([{ item: 1, title: "Story 2" }, { item: 2, title: "Story 3" }]);
+    expect(x.body).toContain("- new issue 1: Story 2");
+    expect(x.body).toContain("- new issue 2: Story 3");
+    expect(x.body).not.toContain("Story 1");
+  });
+  it("uses the issue number of a part on GitHub", () => {
+    const x = plan([...parts(), mk(9, { ready: true, dependsOn: [dep(1)] })], { onGithub: new Map([[uid(2), 12]]) }).items.find((i) => i.draft === uid(9))!;
+    expect(x.dependsOn[0]).toEqual({ issue: 12 });
+    expect(x.body).toContain("- #12");
+  });
+  it("names the part that is not ready, never the original", () => {
+    const d = parts();
+    d[1] = mk(2, { part: { of: uid(1) } });
+    const r = plan([...d, mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    expect(r.items.find((i) => i.draft === uid(3))!.reason).toBe('it depends on "Story 2", which is not ready');
+    expect(r.items.find((i) => i.draft === uid(9))!.reason).toMatch(/depends on "Story [23]"/);
+  });
+  it("finds a circle through a split", () => {
+    const d = parts();
+    d[1] = mk(2, { ready: true, part: { of: uid(1) }, dependsOn: [dep(9)] });
+    const r = plan([...d, mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    for (const n of [2, 9]) expect(r.items.find((i) => i.draft === uid(n))).toMatchObject({ state: "not-ready", reason: "it depends on itself through other drafts" });
+  });
+  it("reports what stays behind", () => {
+    expect(plan(splitOf(1, [2, 3], { title: { text: "Story O", from: "typed" } })).leftBehind).toEqual([]);
+    expect(plan(splitOf(1, [2, 3], { title: { text: "Story O", from: "typed" }, criteria: [{ id: uid(501), text: "a", from: "typed" }] })).leftBehind).toEqual([{ draft: uid(1), title: "Story O", criteria: 1 }]);
   });
 });
 
