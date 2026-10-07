@@ -557,6 +557,29 @@ describe("runNextStep", () => {
     expect(a.where.url).toBe("#/runs/r0");
     expect(runNextStep(run({ status: "stopped" }), { queued: {} }).kind).toBe("queued");
   });
+  it("a queued run held by a user limit says so; a lock wins, and the limit wins over a bug story", () => {
+    const stopped = run({ status: "stopped" });
+    expect(runNextStep(stopped, { queued: { limit: "per_day" } }).kind).toBe("user_limit");
+    expect(runNextStep(stopped, { queued: { limit: "concurrent", waitingFor: "r0" } }).kind).toBe("one_at_a_time");
+    expect(runNextStep(stopped, { queued: { limit: "concurrent", behindPriority: true } }).kind).toBe("user_limit");
+  });
+  it("user_limit has four wordings, with no number and no money", () => {
+    const base = { repo: "acme/app", issue: 7, title: "T", runId: "r1" };
+    const cases: [boolean, "per_day" | "concurrent", string, string | undefined][] = [
+      [true, "per_day", "waiting — your limit for today is reached", "tomorrow"],
+      [true, "concurrent", "waiting — your limit of runs at the same time is reached", undefined],
+      [false, "per_day", "waiting — the owner's limit of runs per day", "tomorrow"],
+      [false, "concurrent", "waiting — the owner's limit of runs at the same time", undefined],
+    ];
+    for (const [forUser, userLimit, status, until] of cases) {
+      const n = nextStep("user_limit", base, { forUser, userLimit });
+      expect(n.status).toBe(status);
+      expect(n.until).toBe(until);
+      expect(n.who).toBe("A time limit");
+      for (const t of [n.status, n.help, n.why, n.text]) expect(t).not.toMatch(/\d|\$/);
+    }
+    expect(nextStep("user_limit", base, { forUser: true, userLimit: "per_day" }).text).toContain("Your limit for today is reached");
+  });
   it("a queued resume behind a bug story says so, unless it waits for a lock", () => {
     expect(runNextStep(run({ status: "stopped" }), { queued: { behindPriority: true } }).kind).toBe("bug_first");
     expect(runNextStep(run({ status: "stopped" }), { queued: { behindPriority: true, waitingFor: "r0" } }).kind).toBe("one_at_a_time");

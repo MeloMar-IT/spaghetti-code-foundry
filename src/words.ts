@@ -16,6 +16,8 @@ export interface WordFacts {
   signedOut?: boolean;
   /** `usage_limit`: the AI service could not be reached. */
   unreachable?: boolean;
+  /** `user_limit`: the limit of runs per day (else the limit of runs at the same time). */
+  perDay?: boolean;
 }
 
 interface Words {
@@ -60,6 +62,18 @@ const GLOSSARY: Record<NextKind, Words> = {
   daily_budget: {
     status: (f) => (f.user ? "paused — the administrator's limit was reached" : "paused — daily budget"),
     help: (f) => (f.user ? "The administrator's limit for today is reached. Nothing to do — it goes on tomorrow." : "Today's budget is used up. Nothing to do — it goes on tomorrow."),
+  },
+  user_limit: {
+    status: (f) => (f.user
+      ? (f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
+      : (f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
+    help: (f) => (f.user
+      ? (f.perDay
+        ? "You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow."
+        : "As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends.")
+      : (f.perDay
+        ? "The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page."
+        : "As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page.")),
   },
   checking: { status: "checking for questions", help: "The Foundry reads the new issues and looks for questions only you can answer. Nothing to do — an issue without questions starts after the check." },
   starting: { status: "starting soon", help: "Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself." },

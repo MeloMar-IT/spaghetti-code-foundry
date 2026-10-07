@@ -440,6 +440,10 @@ Every status in the app has a **?** that shows the two sentences from this table
 | in develop (ships with the 17:00 release) | The work is finished and waits for the 17:00 release. Nothing to do now — the release pull request then brings it to main. |
 | waiting for #88 | It needs #88 to be done first. Nothing to do — it starts by itself after that. |
 | waiting for another run | Only one run at a time works here, and another run is active. Nothing to do — it starts when that run is finished. |
+| waiting — your limit for today is reached | You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow. |
+| waiting — your limit of runs at the same time is reached | As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends. |
+| waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
+| waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
 | paused — usage limit | The usage limit of the AI account is reached. Nothing to do — the Foundry tries again after the limit resets. |
@@ -1638,7 +1642,7 @@ marked "(you)".
   apply to every account, admins too; an account's own value wins over the default. The Limits
   column shows each account's effective limits and marks its own values with "(own)". Clear a field
   in the account's dialog and the default applies again. Deleting an account removes its own
-  limits. **Limits are only stored and shown for now; nothing is enforced yet.** Only admins can
+  limits. **Runs at the same time and runs per day are enforced; the daily budget is not enforced yet.** A job over a limit waits in the queue and starts by itself when the limit allows; the queue and the run page say which limit it is. Free slots are shared between users: the next slot goes to the user with the fewest working runs, then to the user whose last start is oldest. Only new runs count for "runs per day" (local day); resuming, answering or approving a run does not. Architect runs of a refinement session count for "at the same time" but not for "runs per day". Runs of a watcher count for the watcher's owner. Runs without an owner (the command line) are not limited in the queue, but a run that falls to the first admin counts for that admin, so an admin who uses the command line may need to raise their own limits. Lowering a limit does not stop working runs; nothing new starts until usage is below it. Only admins can
   see or change them, and no answer to a user contains them. Each change writes a `limits-change`
   line to the audit log with the account (or "defaults") and the field names, not the amounts.
   Without a `limits.json` in the data folder, everything is "no limit".
@@ -2129,7 +2133,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |
 | `GET /api/users` | yes | no | list the accounts |
-| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (stored and shown only; not enforced yet) |
+| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (runs at the same time and runs per day are enforced; the daily budget is not enforced yet) |
 | `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
 | `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token |
 | `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |

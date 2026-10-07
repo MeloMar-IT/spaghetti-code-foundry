@@ -79,7 +79,7 @@ export const RULES: Rule[] = [
   r("POST", "credentials", "yes", "store a credential"),
   r("DELETE", "credentials/:id", "yes", "remove a credential"),
   r("GET", "users", "no", "list the accounts"),
-  r("GET", "users/limits", "no", "the default limits for all accounts and the overrides per account (stored and shown only; not enforced yet)"),
+  r("GET", "users/limits", "no", "the default limits for all accounts and the overrides per account (runs at the same time and runs per day are enforced; the daily budget is not enforced yet)"),
   r("PUT", "users/limits", "no", "set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one)"),
   r("POST", "users", "no", "add an account without a password; the answer has its one-time set-password token"),
   r("PUT", "users/:id", "no", "change the name, e-mail or role of an account"),
