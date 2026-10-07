@@ -142,6 +142,8 @@ export const api = {
   setReviewLabel: (id, did, add) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review-label`, { add: Boolean(add) }, true),
   moveToNotes: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/move-to-notes`, body, true),
   rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),
+  publishPlan: (id) => req("GET", `/api/refinement/${enc(id)}/publish`),
+  publish: (id, body) => req("POST", `/api/refinement/${enc(id)}/publish`, body),
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
