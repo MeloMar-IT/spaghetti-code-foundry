@@ -10,7 +10,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed";
+  | "superseded" | "bug_first" | "issue_closed" | "user_limit";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -96,6 +96,8 @@ export interface NextData {
   reason?: string;
   blockers?: BlockerInfo[];
   blockingRun?: string;
+  /** `user_limit`: which per-user limit holds the job. */
+  userLimit?: "concurrent" | "per_day";
   /** The pull request the release waits for. */
   pr?: { number: number; url?: string };
   maxPerTick?: number;
@@ -212,7 +214,7 @@ function blockerClause(b: BlockerInfo): string {
     case "queued": case "one_at_a_time": case "starting": case "checking": return "which is queued";
     case "area_lock": return "which waits for a code area";
     case "bug_first": return "which waits for a bug story";
-    case "usage_limit": case "daily_budget": return "which is paused by a limit";
+    case "usage_limit": case "daily_budget": case "user_limit": return "which is paused by a limit";
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
     case "issue_closed": return "which is closed";
     case "failed": return "which failed";
@@ -509,6 +511,19 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       w = runWhere ?? WATCHERS;
       break;
     }
+    case "user_limit": {
+      who = "A time limit";
+      const perDay = d.userLimit === "per_day";
+      if (perDay) until = "tomorrow";
+      if (d.forUser) {
+        why = perDay ? "Your limit for today is reached" : "Your limit of runs at the same time is reached";
+        say = perDay ? "nothing to do, it starts tomorrow" : "nothing to do, it starts when one of your runs ends";
+      } else {
+        why = perDay ? "The owner's limit of runs per day is reached" : "The owner's limit of runs at the same time is reached";
+        say = perDay ? "nothing to do, it starts tomorrow" : "nothing to do, it starts when one of the owner's runs ends";
+      }
+      break;
+    }
     case "bug_first":
       who = "Another story";
       why = "It waits: a bug story goes first"; say = "nothing to do, it continues by itself";
@@ -560,7 +575,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, limit, signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -659,7 +674,7 @@ function stoppedStep(reason: string | undefined): string | undefined {
 
 export interface RunNextOptions extends NextData {
   /** Pending-job info from Scheduler.queue(). */
-  queued?: { waitingFor?: string; behindPriority?: boolean };
+  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" };
   title?: string;
 }
 
@@ -675,7 +690,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
   const make = (k: NextKind, extra: NextData = {}) => nextStep(k, base, { ...d, ...extra });
   const reason = run.reason ?? "";
 
-  if (o.queued) return o.queued.waitingFor ? make("one_at_a_time", { blockingRun: o.queued.waitingFor }) : make(o.queued.behindPriority ? "bug_first" : "queued");
+  if (o.queued) return o.queued.waitingFor ? make("one_at_a_time", { blockingRun: o.queued.waitingFor }) : o.queued.limit ? make("user_limit", { userLimit: o.queued.limit }) : make(o.queued.behindPriority ? "bug_first" : "queued");
   if (o.superseded && run.status !== "running" && run.status !== "succeeded") return make("superseded");
   if (o.issueClosed && issue !== undefined && run.status !== "running" && run.status !== "succeeded" && !runClosedIssue(run)) return make("issue_closed", { issueUrl: o.issueUrl ?? gh });
   switch (run.status) {

@@ -127,7 +127,7 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
       const runRecord = (r: RunSummary): NextStep => {
         const pj = pending.find((p) => p.runId === r.runId);
         const rec = runNextStep(r, {
-          queued: pj && { waitingFor: pj.waitingFor, behindPriority: pj.behindPriority }, watched: true, failedLabel: v.failedLabel, title,
+          queued: pj && { waitingFor: pj.waitingFor, behindPriority: pj.behindPriority, limit: pj.limit }, watched: true, failedLabel: v.failedLabel, title,
           areaWait: v.areaWait?.(r), releaseAt: r.status === "succeeded" ? v.releaseAt?.(r) : undefined, forUser: true,
         });
         if (pj || r.status === "running" || r.status === "waiting") {
@@ -153,7 +153,7 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
       if (t || live || hold || releases) {
         const next = live && !run && !job
           ? nextStep("running", base, data) // a run that just started has no file yet
-          : issueRecord({ base, data, run, live, queuedJob: job, hold: hold && holdRecord(hold), done: t?.done, nextOf: runRecord }).next;
+          : issueRecord({ base, data: job ? { ...data, forUser: true } : data, run, live, queuedJob: job, hold: hold && holdRecord(hold), done: t?.done, nextOf: runRecord }).next;
         cand = { issue: n, body: statusBody(next, issueUrl), create: !!t, urgent: needsYou(next), final: false, rank: issueRank(live, !!t?.done) };
       } else {
         const finished = run?.status === "succeeded" && run.history.at(-1)?.id !== "create_split";

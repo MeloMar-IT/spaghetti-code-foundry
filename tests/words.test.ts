@@ -8,8 +8,8 @@ const BANNED = ["hold", "precheck", "area lock", "jump_only"];
 const EXPLAIN = "how risky it is to create the smaller issues without you looking, 0–100";
 
 describe("glossary", () => {
-  it("has 29 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(29);
+  it("has 30 distinct kinds", () => {
+    expect(new Set(KINDS).size).toBe(30);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
@@ -26,6 +26,10 @@ describe("glossary", () => {
     ["area_lock", {}, "waiting for another run in the same code"],
     ["usage_limit", {}, "paused — usage limit"],
     ["daily_budget", {}, "paused — daily budget"],
+    ["user_limit", { user: true, perDay: true }, "waiting — your limit for today is reached"],
+    ["user_limit", { user: true }, "waiting — your limit of runs at the same time is reached"],
+    ["user_limit", { perDay: true }, "waiting — the owner's limit of runs per day"],
+    ["user_limit", {}, "waiting — the owner's limit of runs at the same time"],
     ["checking", {}, "checking for questions"],
     ["starting", {}, "starting soon"],
     ["bug_first", {}, "waiting — a bug story goes first"],
@@ -53,7 +57,7 @@ describe("glossary", () => {
   });
 
   it("has two sentences of help for every kind", () => {
-    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }] as WordFacts[]) {
+    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }, { user: true }, { perDay: true }, { user: true, perDay: true }] as WordFacts[]) {
       for (const k of KINDS) expect(statusHelp(k, facts), k).toMatch(/^[^.!?]+[.!?] [^.!?]+[.!?]$/);
     }
   });
@@ -80,7 +84,7 @@ describe("user guide", () => {
     expect(guide).toContain("Words the Foundry uses");
     expect(guide).toContain(EXPLAIN);
     for (const k of KINDS) {
-      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : [{ blockers: [88] }];
+      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }] : [{ blockers: [88] }];
       for (const f of all) {
         expect(guide, statusName(k, f)).toContain(`| ${statusName(k, f)} |`);
         expect(guide, statusHelp(k, f)).toContain(statusHelp(k, f));

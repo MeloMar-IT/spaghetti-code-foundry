@@ -32,6 +32,7 @@ import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
 import { getRepo, listAllRepos } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
+import { effectiveLimits } from "../auth/limits.js";
 import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers, removeOrphanWatchers, repoWatchersMtime } from "../repos/watchers.js";
 import { getUser } from "../auth/users.js";
 import { moveConfigWatchers } from "../repos/migrate-watchers.js";
@@ -155,6 +156,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     config: () => effective,
     queueFile: join(process.env.FACTORY_HOME ?? FACTORY_HOME, "queue.json"),
     accountActive,
+    userLimits: (id) => effectiveLimits(id, log),
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);

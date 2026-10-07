@@ -183,6 +183,15 @@ One scheduler for all runs:
 
 - A fixed number of **slots** (`concurrency`).
 - **Locks**: a flow can ask for one run at a time per repository.
+- **Fair use**: with `userLimits` and `startedToday` set (the server passes `effectiveLimits`), a
+  user never has more runs active than `maxConcurrent`, and new runs wait once `maxRunsPerDay` are
+  started today. `pump()` picks the next job: priority block first, then the owner with the fewest
+  active runs, then the owner whose last start is oldest (kept in memory), then queue order, and
+  re-evaluates after every start. Jobs without an owner are not limited and form one group.
+  Resumes count for `maxConcurrent` only. Today's count comes from `src/queue/usage.ts` (run
+  briefs, by run id) plus runs started in the current pump. `queue()` marks waiting entries with
+  `limit` (`concurrent` or `per_day`); the status kind `user_limit` shows it without numbers, and
+  `queue-stalled` ignores such jobs. The CLI and evals pass no options, so they have no limits.
 - A persistent queue file, so queued work survives a restart.
 - Runs that were active when the server stopped are marked *interrupted* and continued.
 - When a run ends, the watchers of its repository check at once, so the next story does not

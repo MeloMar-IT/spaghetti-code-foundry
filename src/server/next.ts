@@ -153,7 +153,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     const state = queued ? undefined : runIssueState(run);
     const rec = runNextStep(run, {
       issueClosed: state === "closed",
-      queued: queued ? { waitingFor: queued.waitingFor, behindPriority: queued.behindPriority } : undefined,
+      queued: queued ? { waitingFor: queued.waitingFor, behindPriority: queued.behindPriority, limit: queued.limit } : undefined,
       superseded: superseded && !answerHere,
       answerHere,
       watched: !!w,
@@ -191,9 +191,9 @@ type Queue = ReturnType<ApiContext["scheduler"]["queue"]>;
 export type PendingJob = Queue["pending"][number];
 
 /** The record of a queued job that has no run yet. */
-export function jobNext(p: PendingJob): NextStep {
+export function jobNext(p: PendingJob, forUser = false): NextStep {
   const issue = p.issue && /^\d+$/.test(p.issue) ? Number(p.issue) : undefined;
-  return nextStep(p.waitingFor ? "one_at_a_time" : p.behindPriority ? "bug_first" : "queued", { repo: p.githubRepo ?? p.repo, issue, title: (p.task ?? "").split("\n")[0], runId: p.runId }, { blockingRun: p.waitingFor });
+  return nextStep(p.waitingFor ? "one_at_a_time" : p.limit ? "user_limit" : p.behindPriority ? "bug_first" : "queued", { repo: p.githubRepo ?? p.repo, issue, title: (p.task ?? "").split("\n")[0], runId: p.runId }, { blockingRun: p.waitingFor, userLimit: p.limit, forUser });
 }
 
 const watcherError = (repo: string, reason: string): NextStep => nextStep("watcher_error", { repo }, { reason });
@@ -237,7 +237,7 @@ export function queueWithNext(ctx: ApiContext, forUser = false): Omit<Queue, "pe
   return { ...q, pending: q.pending.map((p) => {
     const run = ctx.scheduler.get(p.runId);
     const ownerName = who?.(p.runId).ownerName;
-    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p)), ...(ownerName ? { ownerName } : {}) };
+    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p, forUser)), ...(ownerName ? { ownerName } : {}) };
   }) };
 }
 

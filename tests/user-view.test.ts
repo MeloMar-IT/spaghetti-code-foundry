@@ -577,3 +577,45 @@ describe("errors a user gets", () => {
     expect(readFileSync(resolve("src/server/server.ts"), "utf8")).toContain("movedText(moved, admin)");
   });
 });
+
+describe("a run held by a user limit", () => {
+  let s: Srv;
+  let admin: TestSession;
+  let ann: TestSession;
+  let held: string;
+
+  beforeAll(async () => {
+    s = await boot(prepare(), { accountSweepMs: 3_600_000 });
+    admin = await signInAs(s.base);
+    ann = await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
+    expect((await call(s, admin, "PUT", "/api/flows/leaky", { yaml: LEAKY, scope: "repo" })).status).toBe(200);
+    expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxConcurrent: 7, maxRunsPerDay: 1 })).status).toBe(200);
+    const first = await call(s, ann, "POST", "/api/runs", { flow: "leaky", task: "one" });
+    expect(first.status).toBe(201);
+    held = (await call(s, ann, "POST", "/api/runs", { flow: "leaky", task: "two" })).json().runId;
+  });
+  afterAll(() => {
+    for (const q of [...s.ctx.scheduler.queue().pending, ...s.ctx.scheduler.queue().active]) s.ctx.scheduler.cancel(q.runId);
+  });
+
+  it("tells the user why it waits, without a number", async () => {
+    const q = await call(s, ann, "GET", "/api/queue");
+    const mine = q.json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.next.kind).toBe("user_limit");
+    expect(mine.next.status).toBe("waiting — your limit for today is reached");
+    expect("limit" in mine).toBe(false);
+    expect(q.text).not.toMatch(/maxRunsPerDay|maxConcurrent|"limit"|"7"/);
+    expect(mine.next.text).not.toMatch(/\d/);
+  });
+
+  it("tells the admin which limit it is", async () => {
+    const mine = (await call(s, admin, "GET", "/api/queue")).json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.limit).toBe("per_day");
+    expect(mine.next.status).toBe("waiting — the owner's limit of runs per day");
+  });
+
+  it("starts the held run at once when the admin raises the limit", async () => {
+    expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxRunsPerDay: 5 })).status).toBe(200);
+    expect(s.ctx.scheduler.isQueued(held)).toBe(false);
+  });
+});

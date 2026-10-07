@@ -228,8 +228,8 @@ const queueStalled: Detector = {
   run({ now, asleep, config, queue, lastStart, wokeAt }) {
     if (asleep || !lastStart) return [];
     const free = queue.concurrency - queue.active.length;
-    // A job with `waitingFor` waits for a lock on purpose; the others could start now.
-    const ready = queue.pending.filter((p) => !p.waitingFor);
+    // A job with `waitingFor` waits for a lock on purpose, and one with `limit` for a limit of its owner; the others could start now.
+    const ready = queue.pending.filter((p) => !p.waitingFor && !p.limit);
     if (free <= 0 || !ready.length) return [];
     const queued = Math.min(...ready.map((p) => num(p.enqueuedAt)));
     const since = Math.max(num(lastStart), queued, num(wokeAt));
