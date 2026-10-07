@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
-import { ownDir, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
+import { installDir, ownDir, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
 import { spawnTarget } from "../src/steps/process.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
@@ -137,6 +137,71 @@ describe("sandboxProfile", () => {
     expect(t).not.toContain('"/usr/bin"');
     expect(t).not.toContain("relative");
     expect(t).not.toContain('(allow file-read* (subpath "/Users/mac"))'); // a program whose folder is the home
+  });
+});
+
+describe("sandboxProfile for an agent step", () => {
+  const writes = (t: string) => lines(t).filter((l) => l.startsWith("(allow file-write*"));
+
+  it("workspaceReadOnly writes only in home and tmp of the run folder, and still denies the server's files", () => {
+    const text = sandboxProfile({ ...base, workspaceReadOnly: true }, same);
+    expect(writes(text)).toEqual([
+      '(allow file-write* (subpath "/Users/mac/.data/runs/r1/home"))',
+      '(allow file-write* (subpath "/Users/mac/.data/runs/r1/tmp"))',
+      '(allow file-write* (literal "/dev/null"))',
+      '(allow file-write* (literal "/dev/tty"))',
+      '(allow file-write* (literal "/dev/dtracehelper"))',
+    ]);
+    expect(text).toContain("(deny file-write*)");
+    expect(text).toContain('(deny file-write* (literal "/Users/mac/.data/runs/r1/run.json")');
+    expect(text).toContain("(deny file-link)");
+  });
+
+  it("an agent program that is a link under the home is readable by name, by real path and with its install folder", () => {
+    const real = (p: string) => (p === "/Users/mac/.local/bin/claude" ? "/Users/mac/.local/lib/node_modules/@anthropic-ai/claude-code/cli.js" : p);
+    const text = sandboxProfile({ ...base, agentProgram: "/Users/mac/.local/bin/claude" }, real);
+    expect(text).toContain('(allow file-read* (literal "/Users/mac/.local/bin/claude"))');
+    expect(text).toContain('(allow file-read* (literal "/Users/mac/.local/lib/node_modules/@anthropic-ai/claude-code/cli.js"))');
+    expect(text).toContain('(allow file-read* (subpath "/Users/mac/.local/lib/node_modules/@anthropic-ai/claude-code"))');
+    expect(text).toContain('(allow file-read-metadata (literal "/Users/mac/.local/bin"))');
+    const lastDeny = Math.max(...lines(text).map((l, i) => (l.startsWith("(deny file-read*") ? i : -1)));
+    expect(at(text, 'literal "/Users/mac/.local/bin/claude"')).toBeGreaterThan(at(text, lines(text)[lastDeny]!));
+  });
+
+  it("without an agent program the profile is the one built today", () => {
+    const text = sandboxProfile(base, same);
+    expect(text).not.toContain(".app/");
+    expect(text).not.toContain("node_modules");
+    expect(sandboxProfile({ ...base, agentProgram: undefined }, same)).toBe(text);
+  });
+
+  // The read rules in order, the last match wins (what sandbox-exec does).
+  const readable = (text: string, path: string): boolean => {
+    let ok = true;
+    for (const l of lines(text)) {
+      const m = /^\((allow|deny) file-read\* \((subpath|literal) "(.*)"\)\)$/.exec(l);
+      if (!m) continue;
+      const hit = m[2] === "literal" ? path === m[3] : path === m[3] || path.startsWith(`${m[3]}/`);
+      if (hit) ok = m[1] === "allow";
+    }
+    return ok;
+  };
+
+  it("no read rule for an agent program opens the agents' settings or login", () => {
+    for (const prog of ["/Users/mac/.claude/local/claude", "/Users/mac/.claude/claude", "/Users/mac/.codex/bin/codex"]) {
+      const text = sandboxProfile({ ...base, agentProgram: prog, programs: [prog] }, same);
+      for (const secret of ["/Users/mac/.claude/settings.json", "/Users/mac/.claude/.credentials.json", "/Users/mac/.codex/config.toml", "/Users/mac/.codex/auth.json"]) {
+        expect(readable(text, secret), `${prog} opens ${secret}`).toBe(false);
+      }
+      expect(readable(text, prog), prog).toBe(true);
+    }
+  });
+
+  it("installDir finds an .app, a node_modules package or nothing", () => {
+    expect(installDir("/Applications/ChatGPT.app/Contents/Resources/codex")).toBe("/Applications/ChatGPT.app");
+    expect(installDir("/u/node_modules/@anthropic-ai/claude-code/cli.js")).toBe("/u/node_modules/@anthropic-ai/claude-code");
+    expect(installDir("/u/node_modules/pkg/bin/x")).toBe("/u/node_modules/pkg");
+    expect(installDir("/u/bin/claude")).toBeUndefined();
   });
 });
 

@@ -1,12 +1,16 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ClaudeStep } from "../flow/schema.js";
-import { runClaude } from "../steps/claude.js";
-import { runCodex, type CodexSandbox } from "../steps/codex.js";
+import { resolveClaudeBin, runClaude } from "../steps/claude.js";
+import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
+import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, resolveTarget, type Target } from "./targets.js";
+import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
 
 const WRITE_TOOL = /^(Edit|Write|MultiEdit|NotebookEdit|Bash)\b/;
 
@@ -22,28 +26,85 @@ export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean)
 
 type Iso = { who: CommitIdentity };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined): Promise<StepResult> {
+/** A step result; `final` is a refusal that no other try can change (no key for a boxed step). */
+type Ran = StepResult & { final?: boolean };
+
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
   try {
+    const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
+    // A boxed step signs in by the server's token variable only: a key a flow brings in `agent_env` is ignored.
+    const dropped = boxed ? dropLoginVars(extra, providerKeyVars(engine.config)) : [];
+    if (dropped.length) engine.log(`    · agent_env: ${dropped.join(", ")} ignored — a user's run signs in with the server's key only`);
     let env: Record<string, string | undefined> = iso
-      ? { ...base, ...agentEnv(scope.ctx.vars.agent_env, true), ...isolationEnv(base, engine.config, ghDir!, iso.who) }
-      : { ...base, ...(await engine.botEnv()), ...agentEnv(scope.ctx.vars.agent_env) };
+      ? { ...base, ...extra, ...isolationEnv(base, engine.config, ghDir!, iso.who) }
+      : { ...base, ...(await engine.botEnv()), ...extra };
     // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
     const short = shortEnvRun(engine.summary.owner);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, Boolean(iso), short);
+    if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, iso ? tokenVarNames(engine.config) : []) };
+    let profile: string | undefined;
+    let bin: string | undefined;
+    if (boxed) {
+      const missing = missingAgentKey(t, env);
+      if (missing) {
+        engine.accessFailed = true;
+        return { ok: false, output: missing, error: missing, final: true };
+      }
+      // private agent folders in the run folder, set by the server (the admin's are not inherited)
+      const runDir = engine.summary.runDir;
+      Object.assign(env, sandboxHomeEnv(runDir), agentHomeEnv(runDir), codexKeyEnv(t, env));
+      // the learnings folder is made here: the step may write the file but not move or remove its folder
+      if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
+      // a Codex read-only step keeps the workspace read-only: Codex's own sandbox is off, so the profile holds it
+      const readOnly = t.agent === "codex" && codexSandbox(step, scope, agentSandboxed(step, scope, engine)) === "read-only";
+      // the exact program the step will start (also one under the home, like the Claude desktop app's): the profile opens it, and runClaude/runCodex get the same path
+      bin = t.agent === "codex" ? (engine.codexBin ?? resolveCodexBin()) : (engine.claudeBin ?? resolveClaudeBin());
+      profile = sandboxProfile(
+        stepSandboxPaths({
+          runDir,
+          learnings: env.FACTORY_LEARNINGS_FILE ?? "",
+          ghDir,
+          claudeBin: t.agent === "codex" ? engine.claudeBin : bin,
+          codexBin: t.agent === "codex" ? bin : engine.codexBin,
+          agentBin: bin,
+          userRead: engine.config.sandbox.user_read,
+          workspaceReadOnly: readOnly,
+        }),
+      );
+    }
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
 }
 
-async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, isolated: boolean, short = false): Promise<StepResult> {
+/** Does the flow ask for the agent's own sandbox on this step? */
+function agentSandboxed(step: ClaudeStep, scope: Scope, engine: Engine): boolean {
+  return step.sandbox ?? scope.flow.sandbox.claude ?? engine.config.sandbox.claude ?? false;
+}
+
+interface WithOptions {
+  isolated: boolean;
+  short: boolean;
+  /** Held by the OS sandbox profile: the agent's own sandbox is off. */
+  boxed: boolean;
+  profile?: string;
+  /** The program a boxed step starts (the one the profile opens). */
+  bin?: string;
+}
+
+async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<StepResult> {
+  const { isolated, short, boxed, profile, bin } = o;
   const { ctx, flow } = scope;
   const d = flow.defaults;
   const local = LOCAL_KINDS.includes(t.provider.kind);
-  const sandboxed = step.sandbox ?? flow.sandbox.claude ?? engine.config.sandbox.claude ?? false;
+  const asked = agentSandboxed(step, scope, engine);
+  // profiles may not nest: the outer profile holds a boxed step, so the agent's own sandbox is off
+  const sandboxed = boxed ? false : asked;
+  if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
   const effort = step.effort ?? d.effort;
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
   const prevAgent = String(prev?.agent || "claude").split(":")[0];
@@ -67,11 +128,12 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       ...common,
       env,
       cleanEnv: short,
-      codexBin: engine.codexBin,
+      codexBin: bin ?? engine.codexBin,
       model: t.model,
       localProvider: local ? t.provider.kind : undefined,
       localBaseUrl: local && t.provider.base_url !== builtinUrl ? t.provider.base_url : undefined,
-      sandbox: codexSandbox(step, scope, sandboxed),
+      sandboxProfile: profile,
+      sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
       effort,
     });
     const p = t.provider.price;
@@ -83,9 +145,10 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const caps = t.free || !engine.config.cost_limits ? [] : [step.max_budget_usd ?? d.max_budget_usd, engine.remainingBudget()].filter((n): n is number => n !== undefined);
   const r = await runClaude({
     ...common,
-    env: { ...env, ...claudeProviderEnv(t, isolated ? tokenVarNames(engine.config) : []) },
+    env,
     cleanEnv: short,
-    claudeBin: engine.claudeBin,
+    sandboxProfile: profile,
+    claudeBin: bin ?? engine.claudeBin,
     model: t.model,
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
     allowedTools: step.allowed_tools ?? d.allowed_tools,
@@ -121,6 +184,13 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     engine.accessFailed = true;
     return { ok: false, output: iso.refused, error: iso.refused };
   }
+  // A user's run is held by an OS sandbox profile (the same refusal and setting as a shell step).
+  const sb = sandboxedRun(engine.summary.owner, config);
+  if (typeof sb === "object") {
+    engine.accessFailed = true;
+    return { ok: false, output: sb.refused, error: sb.refused };
+  }
+  const boxed = sb === "on";
   let target: Target;
   try {
     target = engine.budgetFallback ?? resolveTarget(step, scope.flow, config, scope.visits[step.id] ?? 1);
@@ -134,8 +204,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   for (;;) {
     tried.add(target.label);
-    const r = await runOn(target, step, scope, engine, logFile, timeoutMs, iso);
-    if (r.ok || engine.signal?.aborted) return { ...r, ...tries() };
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed);
+    if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {
@@ -147,6 +217,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     // Signed out: pause like a usage limit (the run is tried again by itself) instead of failing.
     if (isAuthError(r.error, r.output)) {
+      // A boxed step has no login of the Mac to renew: the server's key is missing or wrong, and the run ends here.
+      if (boxed && !LOCAL_KINDS.includes(target.provider.kind)) {
+        engine.accessFailed = true;
+        return { ...r, ...tries(), error: noAgentKey(agentKeyNames(target)) };
+      }
       const cli = target.agent === "codex" ? 'run "codex login"' : 'run "claude" in a terminal and type /login';
       return { ...r, ...tries(), limited: true, error: `signed out — the ${target.agent === "codex" ? "Codex" : "Claude Code"} login has expired. Sign in again: ${cli}. The run continues by itself after that.` };
     }

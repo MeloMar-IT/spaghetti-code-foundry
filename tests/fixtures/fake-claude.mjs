@@ -11,8 +11,21 @@
 // For "What is asked of you now: ready" it answers every item under "## The items to judge" (lines "- <id>: …") as met, about the "what".
 // For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+// Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+
+const probeRead = (p) => (statSync(p).isDirectory() ? readdirSync(p).length : readFileSync(p).length);
+const CHILD_READ = 'const fs=require("fs");const p=process.argv[1];console.log(fs.statSync(p).isDirectory()?fs.readdirSync(p).length:fs.readFileSync(p).length)';
+const CHILD_WRITE = 'require("fs").writeFileSync(process.argv[1],process.argv[2])';
+function child(code, ...a) {
+  try {
+    return execFileSync(process.execPath, ["-e", code, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (e) {
+    process.stderr.write(`child failed: ${e.stderr || e.message}\n`);
+    process.exit(1);
+  }
+}
 
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
@@ -37,6 +50,14 @@ for (const line of prompt.split("\n")) {
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];
   if (line === "SHOWGH") result = `gh_token=${ghSeen}`;
+  // "READ <path>" lists a folder or reads a file and answers "read ok <path> <count>" (never the content); an error is not caught.
+  // "CHILD READ <path>" and "CHILD WRITE <path> <text>" do the same in a child `node -e` process; a failing child fails this fake with its stderr.
+  const rd = noTools ? null : line.match(/^READ (.*)$/);
+  if (rd) shown.push(`read ok ${rd[1]} ${probeRead(rd[1])}`);
+  const cr = noTools ? null : line.match(/^CHILD READ (.*)$/);
+  if (cr) shown.push(`read ok ${cr[1]} ${child(CHILD_READ, cr[1])}`);
+  const cw = noTools ? null : line.match(/^CHILD WRITE (\S+) (.*)$/);
+  if (cw) child(CHILD_WRITE, cw[1], cw[2]);
   // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));

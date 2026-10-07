@@ -22,6 +22,7 @@ import {
   type Scope,
   type StepResult,
 } from "./execute.js";
+import { freeWhenBoxed } from "../agents/boxed.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
@@ -413,7 +414,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       overUser = l !== undefined && l <= 0;
     }
     if (costsMoney && (overRun || overDay || overUser) && !engine.budgetFallback) {
-      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free)[0] : undefined;
+      // in a user's boxed run only a local model is free: Codex there is paid by key
+      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free && (sandboxedRun(summary.owner, config) !== "on" || freeWhenBoxed(t)))[0] : undefined;
       if (free) {
         engine.budgetFallback = free;
         engine.log(`⚠ ${overRun ? "run" : overDay ? "daily" : "the owner's daily"} budget reached — agent steps continue on ${free.label}`);
