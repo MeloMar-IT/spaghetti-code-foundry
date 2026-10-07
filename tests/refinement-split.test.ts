@@ -4,13 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
 import { draftMark } from "../src/refinement/draft-impact.js";
-import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, ownWay, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
+import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, SPLIT_READ_ONLY, confirmRefusal, ownWay, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
 import { OWN_WAY_HEADING, splitOf, splitText } from "../src/refinement/split-text.js";
 import {
   END_BAD_FORM,
   RefinementError,
+  acceptSuggestionOf,
   addDraft,
   checkRefinements,
+  confirmSplitOf,
   createSession,
   endArchitectRun,
   getSession,
@@ -252,6 +254,300 @@ describe("ownWay and splitRefusal", () => {
     expect(splitRefusal({ criteria: [] })).toMatch(/at least 2/);
     expect(splitRefusal({ criteria: [{ id: "a", text: "x" }] })).toMatch(/at least 2/);
     expect(splitRefusal({ criteria: [{ id: "a", text: "x" }, { id: "b", text: "y" }] })).toBeUndefined();
+  });
+});
+
+// ---- confirming a split -----------------------------------------------------------------------------
+
+const confirm = (id: string, did: string, body: unknown) => confirmSplitOf(ann, id, did, body, T);
+const ids = (id: string, did: string) => draft(id, did).criteria.map((c) => c.id);
+/** The plan of way 0 in the form of the body. */
+const planOf = (id: string, did: string, over: Record<string, unknown> = {}) => {
+  const [c1, c2, c3] = ids(id, did);
+  return {
+    way: 0,
+    parts: [
+      { title: "First part", sentence: "Do First part.", criteria: [c1, c2], dependsOn: [] },
+      { title: "Second part", sentence: "Do Second part.", criteria: [c3], dependsOn: [1] },
+    ],
+    unplaced: [],
+    ...over,
+  };
+};
+const edit = (fn: (f: any) => void) => {
+  const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+  fn(f);
+  writeFileSync(refinementsPath(), JSON.stringify(f));
+};
+const message = (fn: () => unknown) => {
+  try {
+    fn();
+  } catch (e) {
+    return (e as Error).message;
+  }
+  return undefined;
+};
+const pt = (over: Record<string, unknown> = {}) => ({ title: "T", criteria: [] as unknown[], dependsOn: [] as unknown[], ...over });
+
+describe("confirming a split", () => {
+  it("makes a draft per part, keeps the original, and marks the sources of a way", () => {
+    const { id, did } = setup();
+    split(id, did);
+    const orig = draft(id, did);
+    const s = confirm(id, did, planOf(id, did));
+    expect(s.drafts).toHaveLength(3);
+    const [o, p1, p2] = s.drafts;
+    expect(o!.id).toBe(did);
+    expect(o!.criteria).toEqual([]);
+    expect(o!.split).toBeUndefined();
+    expect(o!.splitInto).toEqual([p1!.id, p2!.id]);
+    expect(p1!.title).toEqual({ text: "First part", from: "accepted" });
+    expect(p1!.criteria).toEqual(orig.criteria.slice(0, 2));
+    expect(p2!.criteria).toEqual(orig.criteria.slice(2));
+    expect(p1!.outOfScope).toEqual(orig.outOfScope);
+    expect(p1!.who).toBeUndefined();
+    expect(p1!.what).toBeUndefined();
+    expect(p1!.why).toBeUndefined();
+    expect(p1!.part).toEqual({ of: did, hint: "Do First part." });
+    expect(p2!.dependsOn).toEqual([{ id: expect.any(String), draft: p1!.id, from: "accepted" }]);
+    expect(s.log.at(-1)).toMatchObject({ what: "draft-split", detail: "2" });
+    expect(s.architect).toBeUndefined();
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("marks edited titles and links, parts beyond the way, and typed plans", () => {
+    const { id, did } = setup();
+    split(id, did);
+    const [c1, c2, c3] = ids(id, did);
+    const s = confirm(id, did, { way: 1, parts: [pt({ title: "Rules!", criteria: [c1] }), pt({ title: "Export", criteria: [c2] }), pt({ title: "Extra", dependsOn: [1, 2] })], unplaced: [c3] });
+    const [o, a, b, c] = s.drafts;
+    expect(a!.title!.from).toBe("accepted-edited");
+    expect(b!.title!.from).toBe("accepted");
+    expect(c!.title!.from).toBe("accepted-edited");
+    expect(c!.dependsOn.map((x) => x.from)).toEqual(["accepted-edited", "accepted-edited"]);
+    expect(a!.part).toEqual({ of: did });
+    expect(o!.criteria.map((x) => x.id)).toEqual([c3]);
+    const t = setup();
+    split(t.id, t.did);
+    const typed = confirm(t.id, t.did, planOf(t.id, t.did, { way: undefined }));
+    expect(typed.drafts[1]!.title!.from).toBe("typed");
+    expect(typed.drafts[2]!.dependsOn[0]!.from).toBe("typed");
+  });
+
+  it("keeps the old order of unplaced criteria", () => {
+    const { id, did } = setup([{ text: "a" }, { text: "b" }, { text: "c" }]);
+    const [c1, c2, c3] = ids(id, did);
+    const s = confirm(id, did, { parts: [pt({ criteria: [c2] }), pt()], unplaced: [c3, c1] });
+    expect(s.drafts[0]!.criteria.map((c) => c.id)).toEqual([c1, c3]);
+  });
+
+  it("gives the first part the dependencies of the original", () => {
+    const { id, did } = setup();
+    const other = addDraft(ann, id, T).drafts[1]!.id;
+    saveDraft(ann, id, did, { dependsOn: [{ issue: 7 }, { draft: other }] }, T);
+    const orig = draft(id, did);
+    const s = confirm(id, did, planOf(id, did, { way: undefined }));
+    const p1 = s.drafts[2]!;
+    expect(p1.dependsOn.map((x) => [x.issue, x.draft, x.from])).toEqual(orig.dependsOn.map((x) => [x.issue, x.draft, x.from]));
+    expect(p1.dependsOn.some((x) => orig.dependsOn.some((y) => y.id === x.id))).toBe(false);
+    expect(draft(id, did).dependsOn).toEqual(orig.dependsOn);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("works for a draft with one or no criterion", () => {
+    const one = setup([{ text: "only" }]);
+    const [c] = ids(one.id, one.did);
+    expect(confirm(one.id, one.did, { parts: [pt({ criteria: [c] }), pt()], unplaced: [] }).drafts).toHaveLength(3);
+    const none = setup([]);
+    expect(confirm(none.id, none.did, { parts: [pt(), pt()], unplaced: [] }).drafts).toHaveLength(3);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("refuses a wrong plan and leaves the file as it was", () => {
+    const { id, did } = setup();
+    split(id, did);
+    const ok = planOf(id, did);
+    const [c1, c2, c3] = ids(id, did);
+    const refuse = (body: unknown, msg: string | RegExp, kind = "bad-draft") => {
+      const before = readFileSync(refinementsPath(), "utf8");
+      let err: unknown;
+      try {
+        confirm(id, did, body);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(RefinementError);
+      expect((err as RefinementError).code).toBe(kind);
+      expect((err as Error).message).toMatch(msg);
+      expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+    };
+    const rest = { unplaced: [c1, c2, c3] };
+    for (const parts of [undefined, "x", [pt()], Array.from({ length: 7 }, () => pt()), [pt(), 5]]) refuse({ ...rest, parts }, /^a split has 2 to 6 parts$/);
+    for (const title of ["", "  ", undefined, 5]) refuse({ ...rest, parts: [pt({ title }), pt()] }, /^each part needs a title$/);
+    refuse({ ...rest, parts: [pt({ title: "a\nb" }), pt()] }, /one line/);
+    refuse({ ...rest, parts: [pt({ title: "x".repeat(121) }), pt()] }, /at most 120/);
+    refuse({ parts: [pt(), pt()] }, /unplaced must be a list/);
+    refuse({ ...rest, unplaced: "x", parts: [pt(), pt()] }, /unplaced must be a list/);
+    for (const w of [2, 3, -1, 1.5, "0", null]) refuse({ ...ok, way: w }, /^no such way; ask for ways to split again$/);
+    for (const dependsOn of [[3], [0], ["1"]]) refuse({ ...rest, parts: [pt(), pt({ dependsOn })] }, /^no such part$/);
+    refuse({ ...rest, parts: [pt(), pt({ dependsOn: [2] })] }, /^a part cannot depend on itself$/);
+    refuse({ ...rest, parts: [pt({ dependsOn: [2] }), pt()] }, /^a part cannot depend on a later part$/);
+    refuse({ ...rest, parts: [pt(), pt(), pt({ dependsOn: [1, 1] })] }, /twice/);
+    const stranger = "99999999-9999-4999-8999-999999999999";
+    refuse({ ...ok, parts: [{ ...ok.parts[0], criteria: [stranger, c2] }, ok.parts[1]] }, /^a criterion of the plan is not in this draft$/);
+    refuse({ ...ok, parts: [{ ...ok.parts[0], criteria: [5, c2] }, ok.parts[1]] }, /^a criterion of the plan is not in this draft$/);
+    refuse({ ...ok, parts: [{ ...ok.parts[0], criteria: [c1, c2, c3] }, ok.parts[1]] }, '"It is logged"');
+    refuse({ ...ok, unplaced: [c1] }, 'a criterion is in the plan twice: "It is fast"');
+    refuse({ ...ok, parts: [{ ...ok.parts[0], criteria: [c1] }, ok.parts[1]] }, 'a criterion is missing from the plan: "It exports a file"');
+    refuse([], /send the plan as an object/);
+  });
+
+  it("shows a long criterion on one line, cut to 60 characters", () => {
+    const { id, did } = setup([{ text: `${"a".repeat(30)}\n${"b".repeat(50)}` }, { text: "two" }]);
+    const [, c2] = ids(id, did);
+    const msg = message(() => confirm(id, did, { parts: [pt({ criteria: [c2] }), pt()], unplaced: [] }));
+    expect(msg).toBe(`a criterion is missing from the plan: "${"a".repeat(30)} ${"b".repeat(29)}"`);
+  });
+
+  it("refuses more than 20 drafts", () => {
+    const { id, did } = setup();
+    for (let i = 0; i < 18; i++) addDraft(ann, id, T);
+    expect(getSession(id)!.drafts).toHaveLength(19);
+    const body = { parts: [pt({ criteria: ids(id, did) }), pt()], unplaced: [] };
+    expect(code(() => confirm(id, did, body))).toBe("limit");
+    expect(message(() => confirm(id, did, body))).toBe("at most 20 story drafts");
+  });
+
+  it("refuses a split draft, a part, a published draft and an unknown draft", () => {
+    const { id, did } = setup();
+    const s = confirm(id, did, planOf(id, did, { way: undefined }));
+    const part = s.drafts[1]!.id;
+    expect(code(() => confirm(id, did, {}))).toBe("bad-state");
+    expect(message(() => confirm(id, did, {}))).toBe(SPLIT_READ_ONLY);
+    expect(message(() => confirm(id, part, {}))).toBe("a part of a split cannot be split again");
+    expect(code(() => confirm(id, "nope", {}))).toBe("not-found");
+    expect(splitRefusal(draft(id, did))).toBe(SPLIT_READ_ONLY);
+    expect(splitRefusal(draft(id, part))).toBe("a part of a split cannot be split again");
+    const other = setup();
+    edit((f) => (f.sessions[1].drafts[0].published = 12));
+    expect(message(() => confirm(other.id, other.did, {}))).toBe("a published draft cannot be split");
+    expect(splitRefusal(draft(other.id, other.did))).toBe("a published draft cannot be split");
+    expect(confirmRefusal({ splitInto: undefined, part: undefined, published: undefined })).toBeUndefined();
+  });
+
+  it("makes a late split run fail, and the file stays valid", () => {
+    const { id, did } = setup();
+    setArchitectRun(ann, id, "late-1", { kind: "split", draft: did });
+    const refs = refsOf(id, did);
+    confirm(id, did, planOf(id, did, { way: undefined }));
+    expect(endArchitectRun(id, "late-1", { split: ANSWER(), refs }).architect?.failed).toBe(END_NO_SPLIT_DRAFT);
+    expect(draft(id, did).split).toBeUndefined();
+    expect(() => checkRefinements()).not.toThrow();
+    const b = setup();
+    setArchitectRun(ann, b.id, "late-2", { kind: "split", draft: b.did });
+    const refs2 = refsOf(b.id, b.did);
+    edit((f) => (f.sessions[1].drafts[0].published = 3));
+    expect(endArchitectRun(b.id, "late-2", { split: ANSWER(), refs: refs2 }).architect?.failed).toBe(END_NO_SPLIT_DRAFT);
+    expect(draft(b.id, b.did).split).toBeUndefined();
+    expect(() => checkRefinements()).not.toThrow();
+  });
+});
+
+describe("removing and editing the drafts of a split", () => {
+  it("shrinks splitInto, removes the key, and frees the original", () => {
+    const { id, did } = setup();
+    const [, p1, p2] = confirm(id, did, planOf(id, did, { way: undefined })).drafts;
+    const after = removeDraft(ann, id, p1!.id, T);
+    expect(after.drafts[0]!.splitInto).toEqual([p2!.id]);
+    expect(after.drafts[1]!.dependsOn).toEqual([]);
+    const last = removeDraft(ann, id, p2!.id, T);
+    expect("splitInto" in last.drafts[0]!).toBe(false);
+    expect(splitRefusal(draft(id, did))).toMatch(/at least 2/);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("strips part from the parts when the original is removed", () => {
+    const { id, did } = setup();
+    confirm(id, did, planOf(id, did, { way: undefined }));
+    const after = removeDraft(ann, id, did, T);
+    expect(after.drafts).toHaveLength(2);
+    expect(after.drafts.every((d) => !("part" in d))).toBe(true);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("does not remove a published part while the original is there", () => {
+    const { id, did } = setup();
+    const p2 = confirm(id, did, planOf(id, did, { way: undefined })).drafts[2]!.id;
+    edit((f) => (f.sessions[0].drafts[2].published = 9));
+    expect(code(() => removeDraft(ann, id, p2, T))).toBe("bad-state");
+    removeDraft(ann, id, did, T);
+    expect(code(() => removeDraft(ann, id, p2, T))).toBeUndefined();
+  });
+
+  it("refuses a part that depends on a later part or on its original", () => {
+    const { id, did } = setup();
+    const [, p1, p2] = confirm(id, did, planOf(id, did, { way: undefined })).drafts;
+    expect(message(() => saveDraft(ann, id, p1!.id, { dependsOn: [{ draft: p2!.id }] }, T))).toBe("a part cannot depend on a later part");
+    expect(message(() => saveDraft(ann, id, p2!.id, { dependsOn: [{ draft: did }] }, T))).toBe("a part cannot depend on the draft it was split from");
+    expect(code(() => saveDraft(ann, id, p2!.id, { dependsOn: [{ draft: p1!.id }] }, T))).toBeUndefined();
+    const sid = "22222222-2222-4222-8222-222222222222";
+    for (const target of [p2!.id, did]) {
+      edit((f) => (f.sessions[0].drafts[1].suggestions = [{ id: sid, field: "dependsOn", draft: target }]));
+      expect(code(() => acceptSuggestionOf(ann, id, p1!.id, sid, {}, T))).toBe("bad-draft");
+    }
+  });
+});
+
+describe("loading splits", () => {
+  const OTHER = "33333333-3333-4333-8333-333333333333";
+  const broken = (fn: (drafts: any[]) => void) => {
+    const { id, did } = setup();
+    confirm(id, did, planOf(id, did, { way: undefined }));
+    edit((f) => fn(f.sessions[0].drafts));
+    expect(() => checkRefinements()).toThrow();
+    rmSync(refinementsPath(), { force: true });
+  };
+
+  it("refuses broken pairs", () => {
+    broken((d) => (d[0].splitInto[0] = OTHER));
+    broken((d) => delete d[1].part);
+    broken((d) => delete d[0].splitInto);
+    broken((d) => (d[2].part.of = d[1].id));
+    broken((d) => (d[0].splitInto = []));
+    broken((d) => (d[0].splitInto = Array.from({ length: 7 }, (_, i) => `4444444${i}-4444-4444-8444-444444444444`)));
+    broken((d) => (d[1].part.extra = 1));
+    broken((d) => (d[0].splitInto = [d[1].id, d[1].id]));
+  });
+
+  it("refuses a part that depends on a later part or on its original", () => {
+    broken((d) => d[1].dependsOn.push({ id: OTHER, draft: d[2].id, from: "typed" }));
+    broken((d) => d[2].dependsOn.push({ id: OTHER, draft: d[0].id, from: "typed" }));
+  });
+
+  it("refuses a split draft that is a part or published", () => {
+    broken((d) => (d[0].published = 5));
+    broken((d) => (d[0].part = { of: d[0].id }));
+  });
+
+  it("loads split next to splitInto, and a file from before this change", () => {
+    const { id, did } = setup();
+    const before = getSession(id)!;
+    split(id, did);
+    const ways = JSON.parse(readFileSync(refinementsPath(), "utf8")).sessions[0].drafts[0].split;
+    confirm(id, did, planOf(id, did));
+    edit((f) => (f.sessions[0].drafts[0].split = ways));
+    expect(() => checkRefinements()).not.toThrow();
+    edit((f) => {
+      const s = f.sessions[0];
+      s.drafts = [s.drafts[0]];
+      delete s.drafts[0].split;
+      delete s.drafts[0].splitInto;
+      s.drafts[0].criteria = before.drafts[0]!.criteria;
+      s.log = s.log.filter((l: any) => !["split-asked", "architect-split", "draft-split"].includes(l.what));
+      s.updated = before.updated;
+    });
+    expect(() => checkRefinements()).not.toThrow();
+    expect(getSession(id)).toEqual(before);
   });
 });
 

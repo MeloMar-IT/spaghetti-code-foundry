@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { preview, sentenceCount, type Draft } from "../src/refinement/draft.js";
-import { acceptedLines, acceptedView, checkReady, isReady, readinessView } from "../src/refinement/draft-ready.js";
+import { acceptedLines, acceptedView, checkReady, isReady, notReadyReason, readinessView } from "../src/refinement/draft-ready.js";
 import { DEFAULT_READY, type ReadyItem } from "../src/refinement/ready-list.js";
 import {
   LOG_LIMIT,
@@ -16,6 +16,7 @@ import {
   changeEntry,
   checkReadyOf,
   checkRefinements,
+  confirmSplitOf,
   correctReadyState,
   createSession,
   dropSession,
@@ -253,6 +254,28 @@ describe("becoming ready", () => {
     accept(id, did, "out-of-scope");
     expect(isReady(draft(id, did), LIST2)).toBe(true);
     expect(getSession(id)!.state).toBe("ready");
+  });
+
+  it("a split draft is never ready, and the session follows its parts", () => {
+    live = list = LIST2;
+    const { id, did } = setup();
+    check(id, did);
+    expect(isReady(draft(id, did), LIST2)).toBe(true);
+    const c = draft(id, did).criteria[0]!.id;
+    const s = confirmSplitOf(ann, id, did, { parts: [{ title: "A", criteria: [c], dependsOn: [] }, { title: "B", criteria: [], dependsOn: [] }], unplaced: [] }, T);
+    const [orig, a, b] = s.drafts;
+    expect(isReady(orig!, LIST2)).toBe(false);
+    expect(notReadyReason(orig!, LIST2)).toBe("it is split; its parts are published instead");
+    expect(s.state).toBe("drafting");
+    saveDraft(ann, id, a!.id, { outOfScope: "Printing" }, T);
+    saveDraft(ann, id, b!.id, { outOfScope: "Printing" }, T);
+    check(id, a!.id);
+    check(id, b!.id);
+    expect(getSession(id)!.state).toBe("ready");
+    removeDraft(ann, id, a!.id, T);
+    removeDraft(ann, id, b!.id, T);
+    removeDraft(ann, id, did, T);
+    expect(getSession(id)!.state).toBe("exploring");
   });
 });
 

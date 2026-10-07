@@ -555,6 +555,12 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
   keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
+  A split is confirmed by `confirmSplit` in `src/refinement/draft-parts.ts`: the parts are new drafts appended in plan
+  order, and the original keeps `splitInto` (the part ids) while each part has `part: { of, hint? }`. Order is by
+  position: a part may depend only on an earlier part, never on a later one or on its original (`partOrderProblem`,
+  checked by the schema, `saveTyped` and `acceptSuggestion`). A draft with `splitInto` is never ready and is never
+  published; a part cannot be split again; a published draft cannot be split. The import rule: `draft-parts.ts` may
+  import values from `draft.ts` and `draft-split.ts`, but `draft-split.ts` imports only types from `draft.ts`.
 - **Multi-user completion:** separate watchers per repository, runs with the repository's own
   credentials, fair-use limits.
 - **Later:** e-mail, per-user agent accounts, more than one machine.
