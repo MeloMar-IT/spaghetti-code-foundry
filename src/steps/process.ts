@@ -28,6 +28,15 @@ export interface ProcessOptions {
   ownGroup?: boolean;
   /** Start from nothing instead of the server's environment: only `env` is passed (a user's run, see short-env.ts). */
   cleanEnv?: boolean;
+  /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
+  sandboxProfile?: string;
+}
+
+export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+
+/** What is really started: the command itself, or the command inside the given sandbox profile. */
+export function spawnTarget(cmd: string, args: string[], profile?: string): { cmd: string; args: string[] } {
+  return profile === undefined ? { cmd, args } : { cmd: SANDBOX_EXEC, args: ["-p", profile, cmd, ...args] };
 }
 
 /**
@@ -69,7 +78,8 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     }
     const log = createWriteStream(opts.logFile, { flags: "a" });
     let logError: NodeJS.ErrnoException | undefined;
-    const child = spawn(cmd, args, {
+    const target = spawnTarget(cmd, args, opts.sandboxProfile);
+    const child = spawn(target.cmd, target.args, {
       cwd: opts.cwd,
       env: mergeEnv(opts.env, opts.cleanEnv),
       stdio: ["pipe", "pipe", "pipe"],

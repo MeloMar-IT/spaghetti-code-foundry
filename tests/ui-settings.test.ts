@@ -143,6 +143,28 @@ describe("Settings → Safety", () => {
     await flush();
     expect(puts[0].hotfix_to_main).toBe(true);
   });
+
+  const sandboxBox = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("without the OS sandbox"))!.all("input")[0] as any;
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+
+  it("shows the OS sandbox box unchecked and saves 'off' when it is checked, keeping user_read and docker_image", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { sandbox: { docker_image: "node:22", user_runs: "required", user_read: ["/opt/node"] } });
+    expect(!!sandboxBox(main).checked).toBe(false);
+    sandboxBox(main).checked = true;
+    await save(main);
+    expect(puts[0].sandbox).toEqual({ docker_image: "node:22", user_runs: "off", user_read: ["/opt/node"] });
+  });
+
+  it("saves 'required' when the box is unchecked", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { sandbox: { user_runs: "off", user_read: [] } });
+    expect(!!sandboxBox(main).checked).toBe(true);
+    sandboxBox(main).checked = false;
+    await save(main);
+    expect(puts[0].sandbox.user_runs).toBe("required");
+  });
 });
 
 describe("Settings → Safety: self-update", () => {
