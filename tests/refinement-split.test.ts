@@ -18,6 +18,7 @@ import {
   confirmSplitOf,
   createSession,
   moveCriterionOf,
+  recordPublished,
   endArchitectRun,
   getSession,
   refinementsPath,
@@ -576,6 +577,16 @@ const confirmed = (over: Record<string, unknown> = {}) => {
   const s = confirm(id, did, planOf(id, did, over));
   return { id, did, p1: s.drafts[1]!.id, p2: s.drafts[2]!.id };
 };
+
+describe("recording a publication", () => {
+  it("refuses a split original and writes nothing", () => {
+    const { id, did } = confirmed();
+    const before = JSON.stringify(getSession(id));
+    expect(code(() => recordPublished(ann, id, did, { issue: 12, url: PUBLISHED.url }, T))).toBe("bad-state");
+    expect(draft(id, did).published).toBeUndefined();
+    expect(JSON.stringify(getSession(id))).toBe(before);
+  });
+});
 
 describe("moving a criterion", () => {
   it("moves the same object to the end of another part and logs it", () => {
