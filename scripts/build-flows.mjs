@@ -648,6 +648,30 @@ write("issue-plan", {
     'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?\n' +
       'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
   );
+  // Also: when this exact code (a clean tree) already passed these tests in another run, they are not run
+  // again — the tests before a change run on the develop the previous story just tested.
+  const testsRunReuse = [
+    'cmd="$FACTORY_VAR_TEST_CMD"',
+    'if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
+    'if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi',
+    'marker="{{run.dir}}/tests.marker"; touch "$marker"',
+    'passed_dir="{{run.dir}}/../../tested"; key=""',
+    'if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then key=$(printf \'%s\\n%s\\n\' "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" "$cmd" | shasum | cut -c1-40); fi',
+    'echo "\\$ $cmd"',
+    'if [ -n "$key" ] && [ -f "$passed_dir/$key" ]; then',
+    '  code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"',
+    '  echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"',
+    'else',
+    '  sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    '  ' + 'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
+    '  tail -150 "{{run.dir}}/tests.log"',
+    '  echo; echo "=== summary ==="',
+    '  { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
+    '  # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).',
+    '  if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi',
+    'fi',
+    'exit "$code"',
+  ].join("\n");
   const tests = (id, fixId, next) => [
     { id, type: "shell", timeout_sec: 3600, run: testsRun, on_failure: fixId, ...(next ? { on_success: next } : {}) },
     {
@@ -738,7 +762,7 @@ write("issue-plan", {
       run: 'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; ' + CLONE_ELSE + '\n"$FACTORY_TOOLS/daily-branch" prepare --wait-for-merge',
       routes: [{ if: "^WAIT:", goto: "wait_for_merge" }],
     },
-    { ...tests("baseline_tests", "baseline_failed")[0], run: testsRunRetry, description: "Tests must pass before we change anything (a failing run is tried once more)", on_failure: "baseline_failed" },
+    { ...tests("baseline_tests", "baseline_failed")[0], run: testsRunReuse, description: "Tests must pass before we change anything (a failing run is tried once more)", on_failure: "baseline_failed" },
     {
       id: "implement",
       type: "claude",
@@ -1513,7 +1537,7 @@ write("issue-plan", {
     type: "shell",
     timeout_sec: 3600,
     description: "The merged develop must pass the tests before it is pushed",
-    run: testsRunRetry,
+    run: testsRunReuse,
     on_success: "push_develop",
     on_failure: "fix_develop",
   };
@@ -1737,7 +1761,7 @@ write("issue-plan", {
       forbidden_paths: "", docs_required: "", union_merge_files: "", agent_env: "",
       risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", trigger_label: "",
       max_files: "15", max_code_lines: "800", delete_merged_branches: "yes", close_when_merged: "yes",
-      revise_above_risk: "75", review_twice_above_risk: "off",
+      revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes",
       hotfix_labels: "bug", hotfix_prefix: "hotfix/",
     },
     steps: gitflowSteps,

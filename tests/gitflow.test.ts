@@ -260,6 +260,33 @@ describe("gitflow pipeline", () => {
     expect(out).not.toContain("MOVED");
   });
 
+  it("does not run the tests again on code that already passed them: the next story starts on a tested develop", async () => {
+    issues(5);
+    const w = watcher();
+    await w.tick();
+    await settle();
+    const first = runOf("5")!;
+    expect(first.status).toBe("succeeded");
+    expect(first.history.find((h) => h.id === "baseline_tests")!.output).not.toContain("not run again");
+    // #5's merge result was tested and pushed; #6 starts from exactly that develop.
+    issues(6);
+    await w.tick();
+    await settle();
+    const second = runOf("6")!;
+    expect(second.status).toBe("succeeded");
+    const base = second.history.find((h) => h.id === "baseline_tests")!.output;
+    expect(base).toContain("not run again: this exact code already passed these tests");
+    expect(base).toContain("result: PASSED (already tested)");
+    // Its own change is new code: those tests do run.
+    expect(second.history.find((h) => h.id === "test_develop")!.output).not.toContain("not run again");
+
+    // Switched off: every test run happens.
+    issues(7);
+    await watcher({ reuse_test_results: "no" }).tick();
+    await settle();
+    expect(runOf("7")!.history.find((h) => h.id === "baseline_tests")!.output).not.toContain("not run again");
+  });
+
   it("does not lock docs or whole test folders", () => {
     const dir = mkdtempSync(join(tmpdir(), "lockign-"));
     writeFileSync(join(dir, "run.json"), JSON.stringify({ status: "running" }));

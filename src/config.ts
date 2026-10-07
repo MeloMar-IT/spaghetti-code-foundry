@@ -45,6 +45,11 @@ const watcherShape = {
      * which asks every owner decision up front). Issues it asks about wait for an answer.
      */
     precheck_flow: z.string().optional(),
+    /**
+     * issues: answer the Foundry's questions with its own recommendations (a `/defaults` comment on the
+     * issue) instead of waiting for a person. At most twice per issue; after that a person answers.
+     */
+    auto_defaults: z.boolean().default(false),
     /** issues: labels to remove when a run succeeds (e.g. the trigger label). */
     remove_on_done: z.array(z.string()).default([]),
     /** issues: post the failure reason and the failing step's output on the issue. */

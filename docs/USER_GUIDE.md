@@ -1131,6 +1131,7 @@ watchers:
 | `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are closed (or have a `dependency_done_labels` label) |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
+| `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
 | `pause_while_pr_open` | Start nothing while a PR from a branch with this prefix is open (for the older two-label pipeline) |
 | `comment_on_failure` | On by default: post the failure reason and output on the issue |
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
@@ -1393,6 +1394,10 @@ flowchart LR
   Each code change gets **one** Codex review. Set `review_twice_above_risk` to a number (for
   example `50`) to get a second review after a `[high]` finding or for stories riskier than that;
   the default is `off`.
+- **No test run twice on the same code.** The tests before a change and the tests after a merge are
+  skipped when exactly that code already passed them in another run — which is the normal case for
+  the tests before a change: the story starts from the `develop` the previous story just tested.
+  The log says "not run again". Set `reuse_test_results: no` to always run them.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.

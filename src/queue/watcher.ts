@@ -174,6 +174,10 @@ const firstMeta = (first?: { storyAt?: string }) => (first ? { priority: true, .
 const APPROVE_RE = /^\s*\/(approve|reject)\b[ \t]*(.*)$/im;
 
 /** Stopped for a reason that clears by itself: daily budget, or a `wait_*` step (e.g. waiting for a PR merge). */
+/** The hidden mark of a `/defaults` comment the watcher wrote itself (auto_defaults), and how many it writes per issue. */
+const AUTO_DEFAULTS_MARK = "<!-- spaghetti-code-foundry auto-defaults -->";
+const AUTO_DEFAULTS_MAX = 2;
+
 /** Stepped aside for a busy code area (stopped at wait_for_area): the run that holds the area. */
 export function steppedAsideFor(s: RunSummary): string | undefined {
   if (s.status !== "stopped" || !/stopped at step "(?:[\w-]+\/)*wait_for_area"/.test(s.reason ?? "")) return undefined;
@@ -401,6 +405,19 @@ export class Watcher {
     } catch {
       return true; // the holder's run is gone: its area is free
     }
+  }
+
+  /**
+   * auto_defaults: answer the open questions of an issue with the Foundry's own recommendations, by a
+   * `/defaults` comment (so the issue shows what happened). At most twice per issue: a planner that
+   * keeps asking needs a person. Returns whether the questions count as answered.
+   */
+  private async takeDefaults(n: number, comments: Comment[]): Promise<boolean> {
+    if (!this.cfg.auto_defaults) return false;
+    if (comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length >= AUTO_DEFAULTS_MAX) return false;
+    await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `/defaults\n\n— taken by the Foundry itself: this watcher answers questions with the recommendations. ${AUTO_DEFAULTS_MARK}`]);
+    this.act(`#${n} questions answered with the recommendations (auto_defaults)`);
+    return true;
   }
 
   private latestRuns(key: "issue" | "pr", anyFlow = false): Map<string, RunSummary> {
@@ -724,7 +741,7 @@ export class Watcher {
       if (status === this.L.needsInfo && !run) {
         const comments = await issueComments(this.repo, n);
         const answers = commentsAfter(comments, asked);
-        if (!answers.length) {
+        if (!answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
         }
@@ -878,9 +895,11 @@ export class Watcher {
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
         const comments = await issueComments(this.repo, n);
         const answers = commentsAfter(comments, asked);
-        if (answers.length && !overLimit(isFirst)) {
+        // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
+        const auto = !answers.length && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
+        if ((answers.length || auto) && !overLimit(isFirst)) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
-          this.resume(n, run.runId, `answered by @${answers[0]!.author.login}`, undefined, true, first);
+          this.resume(n, run.runId, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`, undefined, true, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;

@@ -90,17 +90,25 @@ steps:
     type: shell
     timeout_sec: 3600
     run: |-
-      git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      passed_dir="{{run.dir}}/../../tested"; key=""
+      if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then key=$(printf '%s\n%s\n' "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" "$cmd" | shasum | cut -c1-40); fi
       echo "\$ $cmd"
-      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
-      tail -150 "{{run.dir}}/tests.log"
-      echo; echo "=== summary ==="
-      { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      if [ -n "$key" ] && [ -f "$passed_dir/$key" ]; then
+        code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"
+        echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
+      else
+        sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+        tail -150 "{{run.dir}}/tests.log"
+        echo; echo "=== summary ==="
+        { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+        # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).
+        if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi
+      fi
       exit "$code"
     on_failure: baseline_failed
     description: Tests must pass before we change anything (a failing run is tried once more)
