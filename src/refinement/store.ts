@@ -700,6 +700,8 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
       if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
       const d = s.drafts.find((x) => x.id === draftId);
       if (!d) throw new RefinementError("not-found", "no such story draft");
+      // A split original is never published; its parts are.
+      if (d.splitInto) throw new RefinementError("bad-state", "a split draft is not published; its parts are");
       if (d.published) {
         if (d.published.issue === issue.issue) return undefined;
         throw new RefinementError("bad-state", `${onGithub(d)} already; it is not recorded as #${issue.issue}`);

@@ -129,7 +129,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     const untitled = planned.willCreate.find((did) => !byId.get(did)!.title);
     if (untitled !== undefined) throw new HttpError(409, `the story draft ${untitled} has no title; give every ready draft a title first, nothing was created`);
     if (planned.willCreate.length > logRoom(s)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
-    if (!planned.willCreate.length) return { repo: s.repo, created: [] as Made[], state: s.state };
+    if (!planned.willCreate.length) return { repo: s.repo, created: [] as Made[], state: s.state, ...(planned.leftBehind.length ? { leftBehind: planned.leftBehind } : {}) };
 
     let recent: RestIssue[];
     try {
@@ -167,7 +167,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
         }
       }
     }
-    return { repo: s.repo, created: done, state: getSession(id)?.state ?? s.state };
+    return { repo: s.repo, created: done, state: getSession(id)?.state ?? s.state, ...(planned.leftBehind.length ? { leftBehind: planned.leftBehind } : {}) };
     }
   } finally {
     endPublishing(id);
