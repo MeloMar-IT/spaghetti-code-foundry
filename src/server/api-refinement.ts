@@ -77,13 +77,26 @@ function guarded<T>(ctx: ApiContext, fn: () => T): T {
   try {
     return fn();
   } catch (e) {
-    if (e instanceof RefinementError) throw new HttpError(STATUS[e.code], e.message);
-    if (e instanceof HttpError) throw e;
-    const log = ctx.diagLog;
-    if (e instanceof StoreError) log?.(`refinement: ${basename(e.file)} ${e.kind}`);
-    else log?.(`refinement: unexpected ${e instanceof Error ? e.name : "error"}`);
-    throw new HttpError(500, INTERNAL);
+    throw mapped(ctx, e);
   }
+}
+
+/** The same for code that waits for something (a call to GitHub, say): everything that goes wrong is mapped the same way. */
+export async function guardedAsync<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw mapped(ctx, e);
+  }
+}
+
+function mapped(ctx: ApiContext, e: unknown): HttpError {
+  if (e instanceof RefinementError) return new HttpError(STATUS[e.code], e.message);
+  if (e instanceof HttpError) return e;
+  const log = ctx.diagLog;
+  if (e instanceof StoreError) log?.(`refinement: ${basename(e.file)} ${e.kind}`);
+  else log?.(`refinement: unexpected ${e instanceof Error ? e.name : "error"}`);
+  return new HttpError(500, INTERNAL);
 }
 
 const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog });
@@ -110,7 +123,7 @@ const flowVarsOf =
   };
 
 /** The build limits of the session's repository; never fails a read. */
-function limitsOf(ctx: ApiContext, s: Session): BuildLimits {
+export function limitsOf(ctx: ApiContext, s: Session): BuildLimits {
   try {
     return buildLimitsOf(s.repo, ctx.config().watchers, flowVarsOf(ctx.opts.repo), s.owner);
   } catch {

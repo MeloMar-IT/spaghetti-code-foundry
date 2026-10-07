@@ -392,3 +392,10 @@ export async function issueState(repo: string, issue: number, timeoutMs?: number
   if (!s) throw new Error(`GitHub did not report issue #${issue}`);
   return s;
 }
+
+/** The names of the labels of a repository (all pages). Rejects when GitHub cannot be reached or refuses. */
+export async function repoLabels(repo: string, timeoutMs?: number): Promise<string[]> {
+  // --jq prints one name per line, also over several pages (plain --paginate prints the arrays one after the other).
+  const out = await gh(["api", `repos/${repo}/labels?per_page=100`, "--paginate", "--jq", ".[].name"], undefined, timeoutMs);
+  return out.split("\n").map((l) => l.trim()).filter(Boolean);
+}

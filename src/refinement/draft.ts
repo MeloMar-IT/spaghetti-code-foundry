@@ -165,6 +165,8 @@ const DraftSchema = z
     addReviewLabel: z.literal(true).optional(),
     readiness: ReadinessSchema.optional(),
     acceptedAnyway: AcceptedSchema.optional(),
+    /** The number of the GitHub issue this draft became. Written by publishing (part 8b); the publish plan only reads it. */
+    published: IssueNumber.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
@@ -510,14 +512,20 @@ export function rejectSuggestion(st: DraftState, draftId: string, sid: string, i
 export const oneLine = (t: string): string => t.replace(new RegExp(`\\s*[\\n${LS_PS}]\\s*`, "g"), " ");
 
 /** The draft as Markdown in the project's story format: only the person's text and fixed words. */
-export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }, accepted: { text: string; reason: string }[] = []): { title: string; body: string } {
+export function preview(
+  d: Draft,
+  s: { drafts: Draft[]; epic?: number },
+  accepted: { text: string; reason: string }[] = [],
+  draftDep?: (other: Draft) => string,
+): { title: string; body: string } {
   const part = (f: Field | undefined) => (f ? oneLine(f.text) : "…");
   const why = part(d.why);
   const sentence = `As ${part(d.who)}, I want ${part(d.what)}, so that ${why}${/[.!?]$/.test(why) ? "" : "."}`;
   const deps = d.dependsOn.flatMap((x) => {
     if (x.issue !== undefined) return [`- #${x.issue}`];
     const other = s.drafts.find((o) => o.id === x.draft);
-    return other ? [`- ${other.title ? oneLine(other.title.text) : "…"} (draft)`] : [];
+    if (!other) return [];
+    return [draftDep ? `- ${draftDep(other)}` : `- ${other.title ? oneLine(other.title.text) : "…"} (draft)`];
   });
   const blocks = [
     ...(s.epic !== undefined ? [`**Epic:** #${s.epic}`] : []),

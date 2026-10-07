@@ -114,6 +114,8 @@ case "$all" in "api graphql"*)
   '
   exit $? ;;
 esac
+# "api repos/<o>/<n>/labels?…": the label names, one per line, from $FAKE_GH_LOG.labels (nothing when the file is not there).
+case "$all" in "api repos/"*"/labels?"*) cat "$FAKE_GH_LOG.labels" 2>/dev/null; exit 0 ;; esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")

@@ -141,6 +141,7 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/drafts/:did/suggestions/:sid/accept", "yes", "accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft"),
   r("POST", "refinement/:id/drafts/:did/suggestions/:sid/reject", "yes", "reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed"),
   r("PUT", "refinement/:id/epic", "yes", "set or clear the Epic of your refinement session"),
+  r("GET", "refinement/:id/publish", "yes", "read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies; it reads the labels from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403)"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */

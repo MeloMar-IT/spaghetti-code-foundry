@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WatcherSchema, type WatcherConfig } from "../src/config.js";
-import { buildLimitsOf, type LoadFlowVars } from "../src/refinement/build-limits.js";
+import { buildLabelOf, buildLimitsOf, type LoadFlowVars } from "../src/refinement/build-limits.js";
 
 const GITFLOW = { max_files: "15", max_code_lines: "800", review_plan_label: "Factory_review_plan" };
 const flows: Record<string, Record<string, string>> = { "issue-gitflow": GITFLOW, "issue-deliver": { review_plan_label: "Deliver_review" }, "other-flow": { max_files: "5", max_code_lines: "50" } };
@@ -62,5 +62,29 @@ describe("buildLimitsOf", () => {
     it("takes the first of two own watchers", () => {
       expect(buildLimitsOf("acme/app", [mine, mine2], load, "ann").maxFiles).toBe(3);
     });
+  });
+});
+
+describe("buildLabelOf", () => {
+  it("is undefined for no watcher, a disabled one, another repository or a watcher that is not for issues", () => {
+    expect(buildLabelOf("acme/app", [])).toBeUndefined();
+    expect(buildLabelOf("acme/app", [w({ enabled: false })])).toBeUndefined();
+    expect(buildLabelOf("acme/app", [w({ github_repo: "acme/other" })])).toBeUndefined();
+    expect(buildLabelOf("acme/app", [w({ source: "schedule", task: "x" })])).toBeUndefined();
+  });
+  it("gives the default and a custom label", () => {
+    expect(buildLabelOf("acme/app", [w()])).toBe("claude-factory");
+    expect(buildLabelOf("Acme/App.git", [w({ label: "Factory_go" })])).toBe("Factory_go");
+  });
+  it("skips a watcher that is not for issues and takes the next one", () => {
+    expect(buildLabelOf("acme/app", [w({ source: "schedule", task: "x" }), w({ id: "w2", label: "second" })])).toBe("second");
+  });
+  it("takes the own stored watcher, then config.yaml, then any other", () => {
+    const theirs = w({ id: "t", label: "theirs" }, { ownerId: "bob", repoId: "r2" });
+    const config = w({ id: "c", label: "config" });
+    const mine = w({ id: "m", label: "mine" }, { ownerId: "ann", repoId: "r1" });
+    expect(buildLabelOf("acme/app", [theirs, config, mine], "ann")).toBe("mine");
+    expect(buildLabelOf("acme/app", [theirs, config], "ann")).toBe("config");
+    expect(buildLabelOf("acme/app", [theirs], "ann")).toBe("theirs");
   });
 });
