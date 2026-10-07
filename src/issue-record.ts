@@ -11,7 +11,7 @@ export interface IssueRecordInput {
   /** The issue's run is running or queued. */
   live: boolean;
   /** A queued job of the issue (used when it has no run file yet). */
-  queuedJob?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" };
+  queuedJob?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" };
   /** The watcher's record for the issue (why it is not started, a question, a closed issue …). */
   hold?: NextStep;
   /** The issue carries the done label. */

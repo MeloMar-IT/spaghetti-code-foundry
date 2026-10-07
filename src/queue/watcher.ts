@@ -1,6 +1,6 @@
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { loadRun, spentToday, type RunSummary } from "../engine/state.js";
+import { isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
@@ -182,7 +182,7 @@ export function steppedAsideFor(s: RunSummary): string | undefined {
 }
 
 function isPaused(s: RunSummary): boolean {
-  return /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
+  return isUserBudgetStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
 }
 
 /** Usage limits reset after a while; try a limited run again at most every 30 minutes. */
@@ -427,6 +427,22 @@ export class Watcher {
     return cap === undefined || spentToday(this.d.runsDir) < cap;
   }
 
+  /** The account whose limits this watcher's work counts for (the same rule as queue()). */
+  private ownerAccount(): string | undefined {
+    return this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
+  }
+
+  /** False when the owner's daily budget is used up. True without an owner or a cap. */
+  private budgetLeftFor(owner?: string): boolean {
+    if (!owner) return true;
+    const cap = this.d.scheduler.userDailyBudget(owner);
+    return cap === undefined || spentTodayBy(this.d.runsDir, owner) < cap;
+  }
+
+  private ownerBudgetLeft(): boolean {
+    return this.budgetLeftFor(this.ownerAccount());
+  }
+
   /** Newest runs this watcher's repo has with var `key` set (newest first). */
   private runsWith(key: string): RunSummary[] {
     return this.d.scheduler.list(1000).filter((s) => s.vars?.github_repo === this.repo && s.vars[key]);
@@ -448,7 +464,7 @@ export class Watcher {
       seen.add(r.workflowName);
       if (r.conclusion !== "failure" || handled.has(String(r.databaseId))) continue;
       const lockKey = `${this.repo}#ci:${r.workflowName}`;
-      if (this.d.scheduler.isLocked(lockKey) || started >= this.cfg.max_per_tick || !this.budgetLeft()) continue;
+      if (this.d.scheduler.isLocked(lockKey) || started >= this.cfg.max_per_tick || !this.budgetLeft() || !this.ownerBudgetLeft()) continue;
       const { flow } = loadFlow(this.flowName(), this.d.repo);
       const runId = this.queue({
         kind: "run", flow, repo: this.d.repo,
@@ -475,7 +491,7 @@ export class Watcher {
       if (last && Date.now() - new Date(last.startedAt).getTime() < every * 0.95) return;
     }
     const lockKey = `${this.repo}#chore:${this.cfg.id}`;
-    if (this.d.scheduler.isLocked(lockKey) || !this.budgetLeft()) return;
+    if (this.d.scheduler.isLocked(lockKey) || !this.budgetLeft() || !this.ownerBudgetLeft()) return;
     const { flow } = loadFlow(this.flowName(), this.d.repo);
     const runId = this.queue({
       kind: "run", flow, repo: this.d.repo, task: this.cfg.task ?? "",
@@ -643,6 +659,7 @@ export class Watcher {
     const runs = this.latestRuns("issue");
     let olderIdx: Map<string, string> | undefined;
     const budgetLeft = this.budgetLeft();
+    const ownerLeft = this.ownerBudgetLeft();
     let started = 0;
     let firstStarted = 0; // bug stories started or queued in this check
     // Code areas bug stories wait for: the runs that hold them (of this watcher, and of other watchers of this repository).
@@ -788,6 +805,7 @@ export class Watcher {
         }
         if (paused) { holds.push(this.held("release", issue, { pr: paused })); continue; }
         if (!budgetLeft) { holds.push(this.held("daily_budget", issue)); continue; }
+        if (!ownerLeft) { holds.push(this.held("user_limit", issue, { userLimit: "budget" })); continue; }
         if (overLimit(isFirst)) { holds.push(limited(issue)); continue; }
         alive();
         // It ran before: GitHub's issue list can lag behind (a just-failed or just-finished issue still
@@ -803,8 +821,9 @@ export class Watcher {
         // Reconcile: the label says working but nothing is running (restart, crash, budget pause).
         const resumable = run.status === "cancelled" || /interrupted/.test(run.reason ?? "") ||
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
+          (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
-          (run.status === "stopped" && isPaused(run) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
         const lateAnswers = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo
           ? commentsAfter(await issueComments(this.repo, n), asked) : [];
         const lateDecision = !resumable && run.status === "waiting" ? await this.findDecision(run.runId, await issueComments(this.repo, n)) : undefined;
@@ -814,7 +833,7 @@ export class Watcher {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now", undefined, false, first);
+          this.resume(n, run.runId, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now", undefined, false, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -845,7 +864,7 @@ export class Watcher {
         } else if (!resumable) {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
           const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run), retired: flowRetired(run) });
-          if (["usage_limit", "daily_budget", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
+          if (["usage_limit", "daily_budget", "user_limit", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
         } else {
           // Resumable, but max_per_tick is used up: only the per-check limit is in the way.
           holds.push(limited(issue, run.runId));
@@ -956,7 +975,7 @@ export class Watcher {
 
   /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
   private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void) {
-    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "starting", "bug_first", "one_at_a_time"];
+    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "user_limit", "starting", "bug_first", "one_at_a_time"];
     const pending = this.d.scheduler.queue().pending;
     for (const issue of issues) {
       const n = issue.number;
@@ -1036,6 +1055,7 @@ export class Watcher {
     const hold = (kind: NextKind) => { for (const i of list) holds.push(this.held(kind, i)); };
     if (this.d.scheduler.isLocked(lockKey)) return hold("checking");
     if (!budgetLeft) return hold("daily_budget");
+    if (!this.ownerBudgetLeft()) { for (const i of list) holds.push(this.held("user_limit", i, { userLimit: "budget" })); return; }
     const { flow } = loadFlow(this.cfg.precheck_flow!, this.d.repo);
     const nums = list.map((i) => i.number);
     const runId = this.queue({

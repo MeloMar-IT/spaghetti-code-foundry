@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { learningsFile, resumeRun, runFlow } from "../src/engine/runner.js";
 import { dockerCommand } from "../src/engine/guards.js";
-import { liveLogFile, saveRun } from "../src/engine/state.js";
+import { USER_BUDGET_REASON, liveLogFile, saveRun } from "../src/engine/state.js";
 import { mirrorEnvPrefixes, withScfAliases } from "../src/engine/template.js";
 import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { notifyRun } from "../src/notify.js";
@@ -369,6 +369,87 @@ steps:
     expect(s.status).toBe("stopped");
     expect(s.reason).toMatch(/daily budget/);
     expect(s.state.next).toBe("b");
+  });
+
+  describe("the daily budget of the owner", () => {
+    const two = `
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: one}
+  - {id: b, type: claude, prompt: two}
+`;
+    // an account's run needs a commit identity: the bot's
+    const baseConfig = (over: Record<string, unknown> = {}): Config => ConfigSchema.parse({ protected_branches: [], bot: { name: "Bot", email: "bot@example.com" }, ...over });
+    const mine = (cap: () => number | undefined, config = baseConfig()) =>
+      runFlow(parseFlow(two), { task: "t", repo, runsDir, claudeBin, config, owner: "u1", userDailyBudget: cap });
+
+    it("stops before the next agent step, with no amount in the reason", async () => {
+      const s = await mine(() => 0.01);
+      expect(s.reason).toBe(USER_BUDGET_REASON);
+      expect(s.status).toBe("stopped");
+      expect(s.reason).not.toContain("$");
+      expect(s.state.next).toBe("b");
+      expect(s.history).toHaveLength(1);
+      expect(runNextStep(s).kind).toBe("user_limit");
+    });
+
+    it("still runs shell steps and stops at the next agent step", async () => {
+      const s = await runFlow(parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: one}
+  - {id: sh, type: shell, run: "echo posted"}
+  - {id: c, type: claude, prompt: three}
+`), { task: "t", repo, runsDir, claudeBin, config: baseConfig(), owner: "u1", userDailyBudget: () => 0.01 });
+      expect(s.status).toBe("stopped");
+      expect(s.history.map((h) => h.id)).toEqual(["a", "sh"]);
+      expect(s.state.next).toBe("c");
+    });
+
+    it("an approval step still runs; the agent step after it is where the run stops", async () => {
+      const flow = parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: one}
+  - {id: gate, type: approval, message: "Go?"}
+  - {id: c, type: claude, prompt: three}
+`);
+      const s = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config: baseConfig(), owner: "u1", userDailyBudget: () => 0.01 });
+      expect(s.status).toBe("waiting");
+      const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: baseConfig(), userDailyBudget: () => 0.01, decision: { approved: true, by: "x" } });
+      expect(r.status).toBe("stopped");
+      expect(r.reason).toBe(USER_BUDGET_REASON);
+      expect(r.state.next).toBe("c");
+    });
+
+    it("is off with cost_limits: false", async () => {
+      const s = await mine(() => 0.01, baseConfig({ cost_limits: false }));
+      expect(s.status).toBe("succeeded");
+    });
+
+    it("without a cap, or when the callback throws, nothing changes", async () => {
+      expect((await mine(() => undefined)).status).toBe("succeeded");
+      expect((await mine(() => { throw new Error("x"); })).status).toBe("succeeded");
+    });
+
+    it("a run without an owner is not under the cap", async () => {
+      const s = await runFlow(parseFlow(two), { task: "t", repo, runsDir, claudeBin, config: baseConfig(), userDailyBudget: () => 0.01 });
+      expect(s.status).toBe("succeeded");
+    });
+
+    it("the global budget wins when both are reached", async () => {
+      const s = await mine(() => 0.01, baseConfig({ daily_budget_usd: 0.01 }));
+      expect(s.reason).toMatch(/daily budget/);
+    });
+
+    it("can be resumed with a higher cap", async () => {
+      const s = await mine(() => 0.01);
+      const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: baseConfig(), userDailyBudget: () => 5 });
+      expect(r.status).toBe("succeeded");
+    });
   });
 });
 

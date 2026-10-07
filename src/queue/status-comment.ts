@@ -11,7 +11,7 @@ import type { Scheduler } from "./scheduler.js";
 import type { Hold, TrackedIssue } from "./watcher.js";
 
 /** Kinds whose record for a watcher holds the administrator's wording: a comment on GitHub builds them again for a user. */
-const LIMITED: readonly NextKind[] = ["daily_budget", "usage_limit", "failed"];
+const LIMITED: readonly NextKind[] = ["daily_budget", "usage_limit", "failed", "user_limit"];
 
 export const STATUS_NOTE = "_This comment is kept up to date by the Spaghetti Code Foundry. It is edited, never posted again. Other comments are history._";
 
@@ -145,7 +145,8 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
           const rec = runRecord(hr);
           if (rec.kind === h.next.kind) return rec;
         }
-        return nextStep(h.next.kind, { ...base, runId: h.next.runId }, { ...data, failedLabel: v.failedLabel, forUser: true, cause: h.next.cause });
+        // a watcher only makes a user_limit hold for the daily budget
+        return nextStep(h.next.kind, { ...base, runId: h.next.runId }, { ...data, failedLabel: v.failedLabel, forUser: true, cause: h.next.cause, userLimit: h.next.kind === "user_limit" ? "budget" : undefined });
       };
 
       const releases = run?.status === "succeeded" && !!v.releaseAt?.(run);

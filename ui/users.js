@@ -337,7 +337,7 @@ const defaultLimitsDialog = (_u, { limits }) => {
   const form = limitsForm(current, () => "no limit");
   return callDialog({
     title: "Default limits",
-    body: [para("These apply to every account, admins too, unless the account has its own. Empty means no limit. Runs at the same time and runs per day are enforced; the daily budget is not enforced yet."), ...form.nodes],
+    body: [para("These apply to every account, admins too, unless the account has its own. Empty means no limit. All three are enforced; the daily budget needs cost limits to be on in Settings."), ...form.nodes],
     label: "Save",
     prepare: limitsPrepare(form, current, (patch) => api.saveDefaultLimits(patch)),
   });

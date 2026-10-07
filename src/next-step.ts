@@ -1,6 +1,6 @@
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
-import type { RunSummary } from "./engine/state.js";
+import { isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
 import { statusHelp, statusName } from "./words.js";
 
@@ -97,7 +97,9 @@ export interface NextData {
   blockers?: BlockerInfo[];
   blockingRun?: string;
   /** `user_limit`: which per-user limit holds the job. */
-  userLimit?: "concurrent" | "per_day";
+  userLimit?: "concurrent" | "per_day" | "budget";
+  /** `user_limit` budget: the amount, for an administrator only. */
+  budgetUsd?: number;
   /** The pull request the release waits for. */
   pr?: { number: number; url?: string };
   maxPerTick?: number;
@@ -515,7 +517,11 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "A time limit";
       const perDay = d.userLimit === "per_day";
       if (perDay) until = "tomorrow";
-      if (d.forUser) {
+      if (d.userLimit === "budget") {
+        until = "tomorrow";
+        say = "nothing to do, it goes on tomorrow";
+        why = d.forUser ? "Your limit for today is reached" : `The owner's daily budget${d.budgetUsd !== undefined ? ` of $${d.budgetUsd}` : ""} is used up`;
+      } else if (d.forUser) {
         why = perDay ? "Your limit for today is reached" : "Your limit of runs at the same time is reached";
         say = perDay ? "nothing to do, it starts tomorrow" : "nothing to do, it starts when one of your runs ends";
       } else {
@@ -575,7 +581,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -674,7 +680,7 @@ function stoppedStep(reason: string | undefined): string | undefined {
 
 export interface RunNextOptions extends NextData {
   /** Pending-job info from Scheduler.queue(). */
-  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" };
+  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" };
   title?: string;
 }
 
@@ -708,6 +714,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     case "stopped": {
       // A retired run is not continued by a limit, a answer or a release: only an interruption keeps its own record.
       if (d.retired && !/interrupted/.test(reason)) return make("stopped");
+      if (isUserBudgetStop(reason)) return make("user_limit", { userLimit: "budget" });
       if (/daily budget/.test(reason)) return make("daily_budget");
       if (/usage limit reached|signed out —/.test(reason)) return make("usage_limit", { unreachable: !/signed out —/.test(reason) && !!run.history?.at(-1)?.unreachable });
       if (/interrupted/.test(reason)) return make("interrupted");

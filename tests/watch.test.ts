@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { BOT_MARKER, BOT_MARKERS, commentsAfter, isBot } from "../src/github.js";
-import { loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
+import { USER_BUDGET_REASON, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { issueStatesDir, knownIssueState, readIssueStates, saveIssueStates } from "../src/issue-states.js";
 import { WatcherManager } from "../src/queue/watchers.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -838,6 +838,77 @@ describe("watcher", () => {
     await capped.tick();
     expect(capped.status.holds).toMatchObject([{ issue: 8, next: { kind: "daily_budget", until: "tomorrow" } }]);
     expect(capped.status.holds![0]!.reason).not.toContain("$");
+  });
+
+  describe("the owner's daily budget", () => {
+    const OWNER = "acct-1";
+    /** A scheduler with a daily budget for OWNER, and a watcher of a repository owned by OWNER. */
+    const owned = (cap: number | undefined, over: Record<string, unknown> = {}, cfgOver: Record<string, unknown> = {}) => {
+      const sch = new Scheduler({
+        runsDir: join(gh.tmp, "runs"), config: () => ({ ...config, ...cfgOver }), claudeBin,
+        userLimits: () => (cap === undefined ? {} : { dailyBudgetUsd: cap }),
+      });
+      const base = watcher(over);
+      const w = new Watcher({ ...base.cfg, repoId: "r1", ownerId: OWNER }, { scheduler: sch, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (l) => lines.push(l) });
+      return { sch, w };
+    };
+    /** Runs issue 8 to the end, then makes it a costed run of OWNER. */
+    const spend = async (over: Record<string, unknown> = {}) => {
+      issues([8]);
+      await watcher().tick();
+      await settle();
+      const s = loadRun(join(gh.tmp, "runs"), runFor("8").runId)!;
+      Object.assign(s, { owner: OWNER, totalCostUsd: 1, ...over });
+      saveRun(s);
+    };
+
+    it("holds a new issue: no run, no label, and no amount in the hold", async () => {
+      await spend();
+      const { sch, w } = owned(0.01);
+      issues([9]);
+      await w.tick();
+      expect(w.status.holds).toMatchObject([{ issue: 9, next: { kind: "user_limit", until: "tomorrow" } }]);
+      expect(w.status.holds![0]!.reason).not.toContain("$");
+      expect(sch.queue().pending).toHaveLength(0);
+      expect(sch.list().filter((s) => s.vars.issue === "9")).toHaveLength(0);
+      expect(gh.ghLog()).not.toMatch(/issue edit 9 /);
+    });
+
+    it("starts the issue when cost limits are off", async () => {
+      await spend();
+      const { sch, w } = owned(0.01, {}, { cost_limits: false });
+      issues([9]);
+      await w.tick();
+      await sch.idle();
+      expect(sch.list().filter((s) => s.vars.issue === "9")).toHaveLength(1);
+    });
+
+    it("keeps the working label of a run stopped by the budget, shows the hold, and resumes when the cap is raised", async () => {
+      await spend({ status: "stopped", reason: USER_BUDGET_REASON, finishedAt: new Date().toISOString() });
+      issues([8, "factory:working"]);
+      const capped = owned(0.01);
+      const before = gh.ghLog().length;
+      await capped.w.tick();
+      expect(capped.w.status.holds).toMatchObject([{ issue: 8, next: { kind: "user_limit", until: "tomorrow" } }]);
+      expect(capped.sch.queue().pending).toHaveLength(0);
+      expect(gh.ghLog().slice(before)).not.toMatch(/issue edit 8 /);
+      const raised = owned(50);
+      await raised.w.tick();
+      expect(lines.join("\n")).toContain("the owner's limit allows it again");
+      await raised.sch.idle();
+    });
+
+    it("starts no scheduled chore and no CI fix", async () => {
+      await spend();
+      const chore = owned(0.01, { id: "chore", source: "schedule", every: "1h", task: "Update deps" });
+      await chore.w.tick();
+      expect(chore.sch.list().filter((s) => s.flow === "chore")).toHaveLength(0);
+      process.env.FAKE_GH_RUNS = JSON.stringify([{ databaseId: 7, workflowName: "CI", status: "completed", conclusion: "failure", headSha: "abc7def0", url: "https://ci/7" }]);
+      const ci = owned(0.01, { id: "ci", source: "ci-failures" });
+      await ci.w.tick();
+      expect(ci.sch.list().filter((s) => s.flow === "ci-fix")).toHaveLength(0);
+      expect(ci.sch.queue().pending).toHaveLength(0);
+    });
   });
 
   it("holds carry the time they wait since", async () => {

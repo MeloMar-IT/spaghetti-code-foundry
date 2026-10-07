@@ -4,7 +4,7 @@ import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, 
 import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
 import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
-import { saveRun, type RunSummary } from "../engine/state.js";
+import { isUserBudgetStop, saveRun, type RunSummary } from "../engine/state.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { z } from "zod";
 import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../flow/usage.js";
@@ -102,6 +102,7 @@ export function architectReason(run: Pick<RunSummary, "status" | "reason">): str
 /** Why a read is paused, in plain words. */
 export function pausedReason(run: Pick<RunSummary, "reason" | "history">): string {
   const raw = run.reason ?? "";
+  if (isUserBudgetStop(raw)) return "Your limit for today is reached; ask again tomorrow";
   if (/daily budget/.test(raw)) return "The administrator's limit for today was reached; ask again tomorrow";
   if (/^signed out —/.test(raw)) return "The Foundry is signed out of its AI account; ask the administrator, then ask again";
   if (run.history?.at(-1)?.unreachable) return "The AI service could not be reached; ask again later";

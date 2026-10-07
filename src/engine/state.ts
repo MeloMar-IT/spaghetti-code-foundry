@@ -261,3 +261,26 @@ export function spentToday(runsDir: string, now = new Date()): number {
   }
   return total;
 }
+
+/** The stop reason of a run that reached its owner's daily budget. It carries no amount: it reaches users. */
+export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
+export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "");
+
+/** Total spend of the runs of one account that started today (same day rule, 500-run window and early break as spentToday). */
+export function spentTodayBy(runsDir: string, owner: string, now = new Date()): number {
+  const day = now.toDateString();
+  let total = 0;
+  for (const id of listRunIds(runsDir).slice(0, 500)) {
+    let s: RunSummary | undefined;
+    try {
+      s = loadRun(runsDir, id);
+    } catch {
+      continue;
+    }
+    if (!s) continue;
+    if (new Date(s.startedAt).toDateString() === day) {
+      if (s.owner === owner && Number.isFinite(s.totalCostUsd)) total += s.totalCostUsd;
+    } else if (new Date(s.startedAt) < new Date(now.getTime() - 2 * 86_400_000)) break; // sorted newest first
+  }
+  return total;
+}

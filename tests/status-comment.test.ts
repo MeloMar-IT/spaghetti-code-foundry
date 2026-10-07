@@ -179,6 +179,14 @@ describe("statusTargets", () => {
     }
   });
 
+  it("says a user limit hold of a watcher as the user's limit for today, with no word about money", () => {
+    const hold = holdOf(nextStep("user_limit", base, { ...data, userLimit: "budget" }));
+    const t = only(statusTargets(REPO, [view({ tracked: [t7()], holds: [hold] })], new Map(), true));
+    expect(t.body.toLowerCase()).toContain("your limit for today is reached");
+    expect(t.body.toLowerCase()).not.toContain("budget");
+    expect(t.body).not.toContain("$");
+  });
+
   it("says what the reader must do and writes it first", () => {
     const hold = holdOf(nextStep("questions", base, { ...data, questions: 2 }));
     const t = only(statusTargets(REPO, [view({ tracked: [t7()], holds: [hold] })], new Map(), true));

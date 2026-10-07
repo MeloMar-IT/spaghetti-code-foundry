@@ -106,6 +106,13 @@ describe("explainFailure", () => {
       const run = failed();
       await none(run, cfg({ daily_budget_usd: 1 }));
     });
+    it("when the owner's daily budget is used up", async () => {
+      const other = join(runsDir, "other");
+      mkdirSync(other);
+      saveRun({ ...failed(), runId: "other", runDir: other, totalCostUsd: 5, owner: "u1" });
+      rmSync(join(runsDir, "r1", "logs"), { recursive: true, force: true });
+      await none({ ...failed(), owner: "u1" }, cfg(), { userDailyBudget: () => 1 });
+    });
     it("when the run cap is reached or less than a cent is left", async () => {
       const capped = (spent: number) => failed({ flowDef: { ...failed().flowDef, limits: { max_cost_usd: 1 } }, totalCostUsd: spent });
       await none(capped(1));
@@ -126,6 +133,14 @@ describe("explainFailure", () => {
     const off = failed({ flowDef: { ...failed().flowDef, limits: { max_cost_usd: 1 } }, totalCostUsd: 2 });
     const r = await ask(off, cfg({ cost_limits: false }));
     expect(r!.note!.why).not.toContain("--max-budget-usd");
+  });
+
+  it("is capped by what the owner has left of their daily budget", async () => {
+    process.env.FAKE_EXPLAIN = "ARGS";
+    const run = failed({ owner: "u1", totalCostUsd: 0.97 });
+    expect((await ask(run, cfg(), { userDailyBudget: () => 1 }))!.note!.why).toContain("--max-budget-usd 0.03");
+    // a throwing callback, or another owner's cap, means no cap
+    expect((await ask(run, cfg(), { userDailyBudget: () => { throw new Error("x"); } }))!.note!.why).not.toContain("--max-budget-usd 0.03");
   });
 
   it("never throws: a model error, an answer without WHY, a missing program", async () => {

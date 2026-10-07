@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUser } from "../src/auth/users.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -21,7 +21,7 @@ steps:
   - {id: a, type: shell, run: 'while [ ! -e "${dir}/$FACTORY_RUN_ID" ]; do sleep 0.05; done'}
 `);
 
-type Limits = { maxConcurrent?: number; maxRunsPerDay?: number };
+type Limits = { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };
 const REFINE = "refinement 7d2b0c1e-0000-4000-8000-00000000000";
 
 describe("scheduler fair use", () => {
@@ -305,6 +305,96 @@ describe("scheduler fair use", () => {
     expect(pending().map((p) => p.source)).toEqual(["a2"]);
     await finish("a1");
     expect(active()).toEqual(["a2"]);
+  });
+
+  describe("daily budget", () => {
+    it("holds a job of an account whose budget is used up, starts the others, and starts it when the spend drops", () => {
+      let spent = 5;
+      mk({ spentTodayBy: () => spent });
+      limits[A] = { dailyBudgetUsd: 1 };
+      concurrency = 5;
+      s.submit(job(), { source: "a0", owner: A });
+      s.submit(job(), { source: "b0", owner: B });
+      expect(active()).toEqual(["b0"]);
+      expect(pending()[0]!.limit).toBe("budget");
+      spent = 0;
+      s.recheck();
+      expect(active().sort()).toEqual(["a0", "b0"]);
+    });
+
+    it("holds a resume job of the account too", async () => {
+      let spent = 0;
+      mk({ spentTodayBy: () => spent });
+      concurrency = 1;
+      s.submit(job(PLAIN), { source: "old", owner: A });
+      await waitFor(() => s.queue().active.length === 0 && s.list().length === 1);
+      const runId = s.list()[0]!.runId;
+      concurrency = 3;
+      limits[A] = { dailyBudgetUsd: 1 };
+      spent = 5;
+      s.submit({ kind: "resume", runId }, { source: "resume" });
+      expect(pending().map((p) => [p.runId, p.limit])).toEqual([[runId, "budget"]]);
+    });
+
+    it("is not held when cost limits are off, or without a cap", () => {
+      limits[A] = { dailyBudgetUsd: 1 };
+      concurrency = 5;
+      s = new Scheduler({ runsDir: join(tmp, "runs"), config: () => ({ ...cfg(), cost_limits: false }), userLimits: (id) => limits[id] ?? {}, spentTodayBy: () => 5 });
+      s.submit(job(), { source: "a0", owner: A });
+      expect(active()).toEqual(["a0"]);
+    });
+
+    it("never holds a job without an owner, and the engine does not apply the first admin's cap to it", async () => {
+      limits[A] = { dailyBudgetUsd: 0.001 };
+      concurrency = 5;
+      mk({ spentTodayBy: () => 5, claudeBin: join(process.cwd(), "tests/fixtures/fake-claude.mjs") });
+      const two = parseFlow(`name: two
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: one}
+  - {id: b, type: claude, prompt: two}
+`);
+      const runId = s.submit({ kind: "run", flow: two, task: "t", repo: tmp, vars: {} }, { source: "cli" });
+      expect(pending()).toEqual([]);
+      await waitFor(() => !s.isActive(runId) && s.get(runId)?.status === "succeeded");
+      expect(s.get(runId)!.owner).toBe(A);
+    });
+
+    it("starts the next day (the day rule reads the run files)", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        const day = new Date(2026, 9, 7, 12, 0, 0);
+        vi.setSystemTime(day);
+        const dir = join(tmp, "runs", "20261007-100000-aaaa");
+        mkdirSync(dir);
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ runId: "20261007-100000-aaaa", startedAt: day.toISOString(), totalCostUsd: 3, owner: A }));
+        mk();
+        limits[A] = { dailyBudgetUsd: 1 };
+        concurrency = 5;
+        s.submit(job(), { source: "a0", owner: A });
+        expect(active()).toEqual([]);
+        expect(pending()[0]!.limit).toBe("budget");
+        vi.setSystemTime(new Date(2026, 9, 8, 0, 5, 0));
+        s.recheck();
+        expect(active()).toEqual(["a0"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("userDailyBudget is undefined for 0, NaN, a throwing source and no source", () => {
+      mk();
+      limits[A] = { dailyBudgetUsd: 0 };
+      expect(s.userDailyBudget(A)).toBeUndefined();
+      limits[A] = { dailyBudgetUsd: Number.NaN };
+      expect(s.userDailyBudget(A)).toBeUndefined();
+      limits[A] = { dailyBudgetUsd: 2.5 };
+      expect(s.userDailyBudget(A)).toBe(2.5);
+      const throwing = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, userLimits: () => { throw new Error("x"); } });
+      expect(throwing.userDailyBudget(A)).toBeUndefined();
+      const none = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg });
+      expect(none.userDailyBudget(A)).toBeUndefined();
+    });
   });
 
   it("has no limit field and no limits without the options", () => {

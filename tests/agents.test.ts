@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { codexSandbox } from "../src/agents/run.js";
 import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
+import { liveLogFile } from "../src/engine/state.js";
 import { readTranscript } from "../src/engine/transcript.js";
 import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -320,6 +321,22 @@ steps:
     // Resuming keeps honouring it.
     const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, from: "b", config: cfg({ router: { fallback: ["codex"] } }) });
     expect(r.history.at(-1)!.agent).toBe("codex:openai");
+  });
+
+  it("continues on a free fallback when the owner's daily budget is used up", async () => {
+    const s = await runFlow(parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+`), {
+      task: "t", repo, runsDir, claudeBin, owner: "u1", userDailyBudget: () => 0.005,
+      config: cfg({ bot: { name: "Bot", email: "bot@example.com" }, router: { fallback: ["codex"] } }),
+    });
+    expect(s.status).toBe("succeeded");
+    expect(s.history.map((h) => h.agent)).toEqual(["claude:anthropic", "codex:openai"]);
+    expect(readFileSync(liveLogFile(s.runDir), "utf8")).toMatch(/the owner's daily budget reached — agent steps continue on/);
   });
 
   it("does not resume a session across agents", async () => {

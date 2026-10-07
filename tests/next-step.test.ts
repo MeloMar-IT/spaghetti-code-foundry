@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WatcherSchema } from "../src/config.js";
-import type { RunSummary } from "../src/engine/state.js";
+import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
 import type { RunNextOptions } from "../src/next-step.js";
 import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
@@ -579,6 +579,20 @@ describe("runNextStep", () => {
       for (const t of [n.status, n.help, n.why, n.text]) expect(t).not.toMatch(/\d|\$/);
     }
     expect(nextStep("user_limit", base, { forUser: true, userLimit: "per_day" }).text).toContain("Your limit for today is reached");
+  });
+  it("a run stopped by the owner's daily budget is a user_limit, with no amount for a user", () => {
+    const stopped = run({ status: "stopped", reason: USER_BUDGET_REASON });
+    expect(runNextStep(stopped).kind).toBe("user_limit");
+    const user = runNextStep(stopped, { forUser: true, budgetUsd: 5 });
+    expect(user.status).toBe("waiting — your limit for today is reached");
+    expect(user.until).toBe("tomorrow");
+    for (const t of [user.status, user.help, user.why, user.text]) expect(t).not.toMatch(/\$|budget|\d/i);
+    const admin = runNextStep(stopped, { budgetUsd: 5 });
+    expect(admin.why).toBe("The owner's daily budget of $5 is used up");
+    expect(admin.status).toBe("waiting — the owner's daily budget");
+    expect(runNextStep(stopped).why).toBe("The owner's daily budget is used up");
+    // a queued job with the same limit says the same
+    expect(runNextStep(run({ status: "stopped" }), { queued: { limit: "budget" }, forUser: true }).status).toBe("waiting — your limit for today is reached");
   });
   it("a queued resume behind a bug story says so, unless it waits for a lock", () => {
     expect(runNextStep(run({ status: "stopped" }), { queued: { behindPriority: true } }).kind).toBe("bug_first");
