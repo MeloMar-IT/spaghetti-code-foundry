@@ -111,6 +111,15 @@ const markOf = (d: Draft, item: ReadyItem): Accepted | undefined => (item.rule =
  */
 export const isReady = (d: Draft, list: readonly ReadyItem[]): boolean => d.readiness !== undefined && list.every((item) => (resultOf(d, item) ? resultOf(d, item)!.result === "met" || markOf(d, item) !== undefined : false));
 
+/** Why a draft is not ready for this list, as a short sentence; undefined exactly when `isReady(d, list)` is true. */
+export function notReadyReason(d: Draft, list: readonly ReadyItem[]): string | undefined {
+  if (isReady(d, list)) return undefined;
+  if (!d.readiness) return "it has no readiness check yet";
+  if (list.some((item) => !resultOf(d, item))) return "the Definition of Ready changed since the check; check readiness again";
+  const n = list.filter((item) => resultOf(d, item)!.result !== "met" && markOf(d, item) === undefined).length;
+  return `${n === 1 ? "1 item" : `${n} items`} of the Definition of Ready ${n === 1 ? "is" : "are"} not met`;
+}
+
 /** The check for the view: only the items of the list as it is now; `stale` when an item has no result (new or reworded since). */
 export function readinessView(d: Draft, list: readonly ReadyItem[]): { at: string; items: Readiness["items"]; stale?: true } | undefined {
   if (!d.readiness) return undefined;
