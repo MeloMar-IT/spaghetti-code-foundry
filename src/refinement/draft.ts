@@ -3,7 +3,7 @@ import { z } from "zod";
 import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import { ImpactSchema } from "./draft-impact.js";
-import { SplitSchema } from "./draft-split.js";
+import { SPLIT_TEXT_MAX, SplitSchema, partOrderProblem } from "./draft-split.js";
 import { READY_MAX, READY_TEXT_MAX } from "./ready-list.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
@@ -59,6 +59,8 @@ export const DRAFT_LOG_KINDS = [
   "architect-impact",
   "split-asked",
   "architect-split",
+  "draft-split",
+  "criterion-moved",
   "moved-to-notes",
   "ready-checked",
   "ready-asked",
@@ -170,6 +172,10 @@ const DraftSchema = z
     review: ReviewSchema.optional(),
     impact: ImpactSchema.optional(),
     split: SplitSchema.optional(),
+    /** The parts this draft was split into, in plan order. The draft stays as a record; it is never ready and never published. */
+    splitInto: z.array(z.uuid()).min(1).max(6).optional(),
+    /** Set on a part: the draft it was split from and the one-sentence hint of the plan. */
+    part: z.object({ of: z.uuid(), hint: text(SPLIT_TEXT_MAX, true).optional() }).strict().optional(),
     addReviewLabel: z.literal(true).optional(),
     readiness: ReadinessSchema.optional(),
     acceptedAnyway: AcceptedSchema.optional(),
@@ -193,6 +199,12 @@ const DraftSchema = z
       targets.add(key);
       if (x.draft === d.id) ctx.addIssue({ code: "custom", message: "itself", path: ["dependsOn", i, "draft"] });
     });
+    if (d.splitInto) {
+      if (new Set(d.splitInto).size !== d.splitInto.length || d.splitInto.includes(d.id)) dup(["splitInto"]);
+      // A split original is a record: not a part itself, and never published.
+      if (d.part || d.published !== undefined) ctx.addIssue({ code: "custom", message: "a split draft is no part and is not published", path: ["splitInto"] });
+    }
+    if (d.part?.of === d.id) ctx.addIssue({ code: "custom", message: "itself", path: ["part", "of"] });
   });
 
 export const DraftsSchema = z
@@ -214,6 +226,15 @@ export const DraftsSchema = z
         if (x.draft !== undefined && !ids.has(x.draft)) ctx.addIssue({ code: "custom", message: "no such draft", path: [i, "suggestions", j, "draft"] });
       }),
     );
+    const byId = new Map(drafts.map((d) => [d.id, d]));
+    drafts.forEach((d, i) => {
+      d.splitInto?.forEach((id, j) => {
+        if (byId.get(id)?.part?.of !== d.id) ctx.addIssue({ code: "custom", message: "no such part", path: [i, "splitInto", j] });
+      });
+      if (d.part && !byId.get(d.part.of)?.splitInto?.includes(d.id)) ctx.addIssue({ code: "custom", message: "no such split", path: [i, "part", "of"] });
+      const why = partOrderProblem(d, drafts);
+      if (why) ctx.addIssue({ code: "custom", message: why, path: [i, "dependsOn"] });
+    });
   });
 export const EpicSchema = IssueNumber.max(Number.MAX_SAFE_INTEGER);
 
@@ -347,16 +368,28 @@ export function saveTyped(st: DraftState, draftId: string, input: unknown): Draf
   if (input.criteria !== undefined) next.criteria = readCriteria(input.criteria, d.criteria);
   if (input.dependsOn !== undefined) next.dependsOn = readDepends(input.dependsOn, d.dependsOn, d.id, new Set(st.drafts.map((x) => x.id)));
   if (JSON.stringify(next) === JSON.stringify(d)) return undefined;
+  const why = partOrderProblem(next, st.drafts);
+  if (why) throw bad(why);
   return { ...st, drafts: st.drafts.map((x) => (x === d ? next : x)) };
 }
 
-/** Removes a draft, and it from the depends-on lists of the others. */
+/** Removes a draft, and it from the depends-on lists of the others. A split keeps `splitInto` and `part` in step. */
 export function dropDraft(st: DraftState, draftId: string): DraftChange {
   const d = st.drafts.find((x) => x.id === draftId);
   if (!d) throw new RefinementError("not-found", "no such story draft");
+  if (d.part && d.published !== undefined) throw new RefinementError("bad-state", "this part is on GitHub; it cannot be removed");
   const drafts = st.drafts
     .filter((x) => x !== d)
     .map((x) => {
+      if (x.splitInto?.includes(draftId)) {
+        const { splitInto: _old, ...rest } = x;
+        const left = x.splitInto.filter((id) => id !== draftId);
+        x = left.length ? { ...rest, splitInto: left } : rest;
+      }
+      if (x.part?.of === draftId) {
+        const { part: _gone, ...rest } = x;
+        x = rest;
+      }
       if (!x.dependsOn.some((y) => y.draft === draftId) && !x.suggestions?.some((y) => y.draft === draftId)) return x;
       return withSuggestions({ ...x, dependsOn: x.dependsOn.filter((y) => y.draft !== draftId) }, (x.suggestions ?? []).filter((y) => y.draft !== draftId));
     });
@@ -484,7 +517,10 @@ export function acceptSuggestion(st: DraftState, draftId: string, sid: string, i
     if (d.dependsOn.some((y) => (x.issue !== undefined ? y.issue === x.issue : y.draft === x.draft))) return done(d);
     if (d.dependsOn.length >= DEPENDS_MAX) throw new RefinementError("limit", `at most ${DEPENDS_MAX} depends-on items`);
     if (x.draft !== undefined && !st.drafts.some((y) => y.id === x.draft)) throw new RefinementError("not-found", "no such draft in this session");
-    return done({ ...d, dependsOn: [...d.dependsOn, { id: randomUUID(), ...(x.issue !== undefined ? { issue: x.issue } : { draft: x.draft! }), from: "accepted" }] });
+    const next: Draft = { ...d, dependsOn: [...d.dependsOn, { id: randomUUID(), ...(x.issue !== undefined ? { issue: x.issue } : { draft: x.draft! }), from: "accepted" }] };
+    const why = partOrderProblem(next, st.drafts);
+    if (why) throw bad(why);
+    return done(next);
   }
   const edited = input.text !== undefined;
   const spec = FIELD_OF.get(x.field);

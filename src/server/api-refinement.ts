@@ -26,6 +26,7 @@ import {
   acceptSuggestionOf,
   addDraft,
   checkReadyOf,
+  confirmSplitOf,
   correctReadyState,
   removeAcceptedOf,
   answerQuestion,
@@ -146,7 +147,7 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
   const accepted = acceptedView(d, list);
   return {
     ...rest,
-    state: isReady(d, list) ? "ready" : "drafting",
+    state: d.splitInto ? "split" : isReady(d, list) ? "ready" : "drafting",
     preview: preview(d, s, acceptedLines(d, list)),
     remarks: draftRemarks(d),
     ...(review ? { review } : {}),
@@ -334,6 +335,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 6 && seg[2] === "drafts" && seg[4] === "split" && seg[5] === "confirm" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 201, guarded(ctx, () => view(ctx, settled(confirmSplitOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
     // The body is optional: without one there is no own way. A body that is there must be JSON.
     const body = await readOptionalJson(req);

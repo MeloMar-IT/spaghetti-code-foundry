@@ -283,3 +283,107 @@ describe("split", () => {
     expect(s.log.find((l: any) => l.what === "architect-split").detail).toBeUndefined();
   });
 });
+
+describe("confirming a split", () => {
+  const confirm = (id: string, did: string, body?: unknown, who = ann) => call(who, "POST", url(id, `drafts/${did}/split/confirm`), body);
+  const plan = async (id: string) => {
+    const c = (await draftOf(id)).criteria.map((x: any) => x.id);
+    return { parts: [{ title: "First", sentence: "Do first.", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn: [1] }], unplaced: [] };
+  };
+  const publish = async (id: string, index: number) => {
+    started!.close();
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    f.sessions.find((s: any) => s.id === id).drafts[index].published = 42;
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+    started = await startServer(opts());
+    await get(id);
+  };
+
+  it("answers 201, adds the parts, marks the original as split and starts no run", async () => {
+    const { id, did } = await withDraft();
+    const before = (await get(id)).architect;
+    const r = await confirm(id, did, await plan(id));
+    expect(r.status).toBe(201);
+    const s = r.json();
+    expect(s.drafts).toHaveLength(3);
+    expect(s.drafts[0]).toMatchObject({ id: did, state: "split", splitInto: [s.drafts[1].id, s.drafts[2].id] });
+    expect(s.drafts[1]).toMatchObject({ state: "drafting", part: { of: did, hint: "Do first." } });
+    expect(s.drafts[2].dependsOn[0].draft).toBe(s.drafts[1].id);
+    expect(s.architect).toEqual(before);
+    expect(whats(s).at(-1)).toBe("draft-split");
+  });
+
+  it("answers 400 for a bad plan", async () => {
+    const { id, did } = await withDraft();
+    const ok = await plan(id);
+    const msg = async (body: unknown) => {
+      const r = await confirm(id, did, body);
+      expect(r.status).toBe(400);
+      return r.error();
+    };
+    expect(await msg({ ...ok, parts: [ok.parts[0]] })).toBe("a split has 2 to 6 parts");
+    expect(await msg({ ...ok, parts: [{ ...ok.parts[0], title: "" }, ok.parts[1]] })).toBe("each part needs a title");
+    expect(await msg({ parts: ok.parts })).toMatch(/unplaced/);
+    expect(await msg({ ...ok, way: 0 })).toBe("no such way; ask for ways to split again");
+    expect(await msg({ ...ok, parts: [ok.parts[0], { ...ok.parts[1], dependsOn: [5] }] })).toBe("no such part");
+    expect(await msg({ ...ok, unplaced: [ok.parts[0].criteria[0]] })).toBe('a criterion is in the plan twice: "It exports a file"');
+    expect((await call(ann, "POST", url(id, `drafts/${did}/split/confirm`), "x", { "content-type": "text/plain" })).status).toBe(415);
+    expect((await get(id)).drafts).toHaveLength(1);
+  });
+
+  it("answers 409 for a split draft, a part and a published draft, also when asking for ways", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    for (const [target, why] of [
+      [did, "this draft is split; its parts are worked on instead"],
+      [s.drafts[1].id, "a part of a split cannot be split again"],
+    ] as const) {
+      const c = await confirm(id, target, {});
+      expect(c.status).toBe(409);
+      expect(c.error()).toBe(why);
+      const a = await split(id, target);
+      expect(a.status).toBe(409);
+      expect(a.error()).toBe(why);
+    }
+    const p = await withDraft();
+    await publish(p.id, 0);
+    expect((await confirm(p.id, p.did, {})).error()).toBe("a published draft cannot be split");
+    expect((await split(p.id, p.did)).status).toBe(409);
+  });
+
+  it("is for the owner only, and needs an existing draft and session", async () => {
+    const { id, did } = await withDraft();
+    const body = await plan(id);
+    expect((await confirm(id, did, body, bob)).status).toBe(404);
+    expect((await confirm(id, did, body, admin)).status).toBe(403);
+    expect((await confirm(id, "00000000-0000-4000-8000-000000000000", body)).status).toBe(404);
+  });
+
+  it("removes a published part only after its original is gone, and strips part from the parts", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    await publish(id, 2);
+    expect((await call(ann, "DELETE", url(id, `drafts/${s.drafts[2].id}`))).status).toBe(409);
+    const r = await call(ann, "DELETE", url(id, `drafts/${did}`));
+    expect(r.status).toBe(200);
+    expect(r.json().drafts.every((d: any) => d.part === undefined)).toBe(true);
+  });
+
+  it("refuses a link from a part to a later part", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    const r = await call(ann, "PUT", url(id, `drafts/${s.drafts[1].id}`), { dependsOn: [{ draft: s.drafts[2].id }] });
+    expect(r.status).toBe(400);
+    expect(r.error()).toBe("a part cannot depend on a later part");
+  });
+
+  it("fails a split run that is still running when the plan is confirmed", async () => {
+    const { id, did } = await withDraft();
+    process.env.FAKE_GH_SLEEP = "2";
+    await split(id, did);
+    expect((await confirm(id, did, await plan(id))).status).toBe(201);
+    delete process.env.FAKE_GH_SLEEP;
+    expect((await failed(id)).architect.reason).toBe(END_NO_SPLIT_DRAFT);
+    expect((await call(ann, "GET", `/api/refinement/${id}`)).status).toBe(200);
+  });
+});
