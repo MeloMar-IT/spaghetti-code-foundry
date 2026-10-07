@@ -22,6 +22,7 @@ import {
   type Scope,
   type StepResult,
 } from "./execute.js";
+import { freeWhenBoxed } from "../agents/boxed.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
@@ -395,7 +396,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     // Shell and approval steps cost nothing, so they still run (e.g. posting what was already paid for).
     const costsMoney = step.type !== "shell" && step.type !== "approval";
     if (costsMoney && (overRun || overDay) && !engine.budgetFallback) {
-      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free)[0] : undefined;
+      // in a user's boxed run only a local model is free: Codex there is paid by key
+      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free && (sandboxedRun(summary.owner, config) !== "on" || freeWhenBoxed(t)))[0] : undefined;
       if (free) {
         engine.budgetFallback = free;
         engine.log(`⚠ ${overRun ? "run" : "daily"} budget reached — agent steps continue on ${free.label}`);

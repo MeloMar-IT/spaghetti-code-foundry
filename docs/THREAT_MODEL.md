@@ -14,8 +14,7 @@ covered by pattern search only, not read line by line.
 - **Another machine on the network.** Can reach the server's port if the server listens beyond
   localhost.
 
-**Read this first.** Shell steps of a user's run are held by a macOS sandbox profile (#304); agent steps are not held yet (SR-O1). An agent step works as the Mac
-account that runs the server. Give a user account only to people you would give an admin account.
+**Read this first.** Shell steps and agent steps of a user's run are held by a macOS sandbox profile (#304, #305). SR-O1 is fixed in #302. A step cannot read the Mac account's files, the Keychain or the agent login, and agent steps sign in by a token variable of the server only. This holds on macOS only, with `sandbox.user_runs: required` (default), and `sandbox-exec` is a deprecated tool. With `sandbox.user_runs: off` (or `SCF_USER_SANDBOX=off`) nothing is held, and an admin's run is never held. The limits that remain are under "OS sandbox for steps of a user's run". Still give a user account only to people you trust with the token the server sets for the agents.
 
 ## User isolation
 
@@ -35,22 +34,31 @@ account that runs the server. Give a user account only to people you would give 
 - The server's git calls for a workspace (`prepareWorkspace`, `repoRoot` in `src/engine/workspace.ts`) run with a clean environment and `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so a hook or `fsmonitor` setting in the repository does not run.
 
 **Still open.**
-- Agent steps are not held by the operating system yet (SR-O1): give a user account only to people you would give an admin account.
+- SR-O1 is fixed in #302; the limits that remain are under "OS sandbox for steps of a user's run".
 - Files in the data folder that every step can write (SR-O7).
 
-## OS sandbox for shell steps
+## OS sandbox for steps of a user's run
 
-Every shell step of a user's run starts under `/usr/bin/sandbox-exec` with a profile made for that step (`src/engine/os-sandbox.ts`). Agent steps are not held yet.
+Every shell step and every Claude or Codex step of a user's run starts under `/usr/bin/sandbox-exec` with a profile made for that step (`src/engine/os-sandbox.ts`, `src/agents/run.ts`, `src/agents/boxed.ts`). Whatever the agent starts is held too.
 - **Reads denied:** the Mac account's home, the data folder, the runs folder and the server's temp folder. Allowed again: the run's own folder, tools, hooks, lock folder, the step's `gh` folder, the folders of `node`, `git`, `claude` and `codex`, and `sandbox.user_read`.
 - **Writes** only in the run's folder (not `run.json`, `live.log`, `logs/`), `<runDir>/tmp`, the learnings file, the lock folder and the step's `gh` folder.
 - **Also denied:** Keychain lookups (`com.apple.SecurityServer`, `com.apple.securityd`), hard links and clones, unix sockets, `lsopen`, Apple events and launchd job creation. A step cannot call `docker` itself; steps with `sandbox: true` and an image are started by the server.
 - **Refusal:** with `sandbox.user_runs: required` (default) a user's run does not start where no sandbox works. `sandbox.user_runs: off` or `SCF_USER_SANDBOX=off` switches it off.
+- **Agent steps (#305):**
+  - The agent's own sandbox is off, because profiles do not nest. Claude gets no `--settings` sandbox entry (one log line when the flow asked for it). Codex gets `sandbox_mode="danger-full-access"`. A Codex step that would have been `read-only` (plan, review) gets a profile that writes only in `<runDir>/home` and `<runDir>/tmp`.
+  - Each run has private agent folders, `CLAUDE_CONFIG_DIR=<runDir>/home/.claude` and `CODEX_HOME=<runDir>/home/.codex`, set by the server. They start empty, so the admin's settings, MCP servers, skills and `config.toml` do not reach the run. A later step can still resume a session.
+  - Sign-in is by token variable only. Claude on `anthropic` needs `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`. Codex on `openai` needs `OPENAI_API_KEY` or `CODEX_API_KEY` (a lone `OPENAI_API_KEY` is also passed as `CODEX_API_KEY`). An `anthropic-compatible` provider needs its `api_key_env`. Local providers need none. Without one the step is refused at once, with no fallback try. A signed-out or 401 answer gives the same sentence. A key in a flow's `agent_env` is ignored.
+  - The agent program and its install folder are readable; the agent folders in the Mac account's home are not.
 - **Area locks:** a running run has a marker in the lock folder, so `tools/area-lock` need not read other runs' `run.json`.
 
 **Limits.**
+- macOS only. Where no sandbox works, a user's run is refused (or, with the setting off, not held). `sandbox-exec` is marked deprecated by Apple.
 - The lock folder and the hooks folder (`hooks/allow/<token>`) are readable by every user's run.
 - `ssh` can still be called, but without keys.
-- `sandbox-exec` is marked deprecated by Apple.
+- The token is visible to the agent's shell tool, which can send it over the open network.
+- A Codex read-only step is held by the outer profile only, not by Codex.
+- Docker steps (`sandbox: true` with an image) are held by the container, not by the profile.
+- The real `claude` and `codex` were not run in the tests, only the fake agents. Before release, check by hand on a Mac that the real `claude` (with `CLAUDE_CODE_OAUTH_TOKEN`) and `codex` (with an API key) finish a step inside the profile. Result: not recorded yet.
 - The network is open: a step can send what it may read to any host.
 - Profiles do not nest: `sandbox-exec` started inside a sandboxed step fails.
 - With the setting off, and for admin runs, nothing is held.
@@ -72,7 +80,7 @@ Every shell step of a user's run starts under `/usr/bin/sandbox-exec` with a pro
 - SR-3: `agent_env` cannot be an input, so a user cannot set `NODE_OPTIONS`, `DYLD_*` or `BASH_ENV` for agent steps.
 
 **Still open.**
-- An agent step works as the Mac account and can read its files and Keychain (SR-O1). Shell steps of a user's run cannot (see "OS sandbox for shell steps").
+- The Mac account's agent login, files and Keychain are out of reach of a user's run (SR-O1, fixed in #302). The server's token variable is visible to the agent's shell tool (see "OS sandbox for steps of a user's run").
 - Global redaction uses every account's secrets on every answer. It is not only protection: a short token such as a common word is replaced in everyone's answers and confirms a guess of another account's secret (SR-O10).
 - The Slack webhook is shown to admins, and `GET /api/since` uses the server's login (SR-O9).
 - The agent's own provider key is still visible to the agent's shell tool unless the agent CLI hides it (left open from SR-O2).
@@ -152,7 +160,7 @@ nothing twice.
 
 | Id | Severity | Finding | Issue |
 |---|---|---|---|
-| SR-O1 | High | Agent steps are not held by the operating system. Shell steps of a user's run are held since #304 (see "OS sandbox for shell steps") | #304 (shell steps); agent steps next |
+| SR-O1 | Fixed | Agent steps were not held by the operating system. Fixed in #302 (shell steps in #304, agent steps in #305). Limits: macOS only and a deprecated tool; the token is visible to the agent's shell tool; the lock and hooks folders can be read; Codex read-only steps are held by the outer profile only; Docker steps are held by the container; with `sandbox.user_runs: off` nothing is held; the real CLIs were not run in tests | #302 |
 | SR-O2 | Fixed | The steps of a user's run saw the server's whole environment. Fixed in #300; what stays open is listed under "Credential leakage" | #300 |
 | SR-O3 | Fixed | Any user could connect any repository the GitHub App is installed on. Fixed in #301: each account has a list of app repositories, an admin is not limited, and existing connections are marked, not cut off | #301 |
 | SR-O4 | Medium | Any commenter's answer resumes a needs-info run (`src/github.ts:273-279`), and all comments reach the agent | not filed yet |

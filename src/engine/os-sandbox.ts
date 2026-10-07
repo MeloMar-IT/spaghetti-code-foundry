@@ -8,7 +8,7 @@ import { TOOLS_DIR as TOOLS } from "./guards.js";
 import { userAccount } from "./isolation.js";
 
 /**
- * Holds a shell step of a user's run in a generated `sandbox-exec` profile (macOS): it cannot read other runs, the data folder,
+ * Holds a step (shell or agent) of a user's run in a generated `sandbox-exec` profile (macOS): it cannot read other runs, the data folder,
  * the Mac account's home or the Keychain, and it can write only in its own run folder. The profile allows everything first
  * and then denies; the last matching rule wins, so the order of the lines below is what the profile means.
  */
@@ -70,6 +70,10 @@ export interface SandboxPaths {
   programs?: string[];
   /** Paths from `sandbox.user_read`. */
   userRead?: string[];
+  /** The one agent program of an agent step: it and its install folder are readable, whatever the home rules say. */
+  agentProgram?: string;
+  /** Writes only in `<runDir>/home` and `<runDir>/tmp` (a read-only Codex step): the workspace stays as it is. */
+  workspaceReadOnly?: boolean;
 }
 
 type Real = (p: string) => string;
@@ -97,6 +101,22 @@ function quote(p: string): string {
 
 const within = (p: string, root: string): boolean => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 
+/**
+ * The folder an agent program needs next to itself: the `.app` bundle, or the `node_modules/<package>` folder
+ * (also `@scope/package`). A plain binary has none.
+ */
+export function installDir(realBin: string): string | undefined {
+  const parts = realBin.split(sep);
+  const app = parts.findIndex((x) => x.endsWith(".app") && x.length > 4);
+  if (app > 0) return parts.slice(0, app + 1).join(sep) || sep;
+  const nm = parts.lastIndexOf("node_modules");
+  if (nm >= 0) {
+    const len = parts[nm + 1]?.startsWith("@") ? 2 : 1;
+    if (parts.length > nm + 1 + len) return parts.slice(0, nm + 1 + len).join(sep);
+  }
+  return undefined;
+}
+
 /** The profile text for one step. Pure: `real` is `realpathSync` unless a test gives another. */
 export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): string {
   const home = deepReal(paths.home, real);
@@ -111,16 +131,22 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   const temp = paths.temp ? deepReal(paths.temp, real) : undefined;
   const ghDir = paths.ghDir ? deepReal(paths.ghDir, real) : undefined;
 
+  // the agents' own folders hold their login and settings: no program rule may open them
+  const secretDirs = [join(home, ".claude"), join(home, ".codex")];
+  const opensSecrets = (d: string) => secretDirs.some((x) => within(x, d));
   const programDirs = (paths.programs ?? [])
     .filter((p) => isAbsolute(p))
     .map((p) => dirname(deepReal(p, real)))
-    .filter((d) => d !== home && within(d, home));
+    .filter((d) => d !== home && within(d, home) && !opensSecrets(d));
+  const agent = paths.agentProgram && isAbsolute(paths.agentProgram) ? paths.agentProgram : undefined;
+  const agentReal = agent ? deepReal(agent, real) : undefined;
+  const agentInstall = agentReal ? installDir(agentReal) : undefined;
   const extra = (paths.userRead ?? []).filter((p) => isAbsolute(p)).map((p) => deepReal(p, real));
-  const readFirst = [...new Set([...extra, ...programDirs])];
+  const readFirst = [...new Set([...extra, ...programDirs, ...(agentInstall && !opensSecrets(agentInstall) ? [agentInstall] : [])])];
 
   const denied = [home, data, runs, ...(temp ? [temp] : [])];
   const subpathReads = [runDir, tools, hooks, lockDir, ...(ghDir ? [ghDir] : [])];
-  const literalReads = [learnings, join(data, "known_hosts")];
+  const literalReads = [learnings, join(data, "known_hosts"), ...new Set([agent ? namedReal(agent, real) : undefined, agentReal].filter((p): p is string => Boolean(p)))];
 
   // A process needs the metadata of each folder above an allowed path that lies under a denied folder.
   const parents = new Set<string>();
@@ -140,9 +166,10 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   for (const p of parents) out.push(`(allow file-read-metadata (literal ${quote(p)}))`);
   // writes
   out.push("(deny file-write*)");
-  for (const p of [runDir, runTmp, lockDir, ...(ghDir ? [ghDir] : [])]) out.push(`(allow file-write* (subpath ${quote(p)}))`);
+  const writable = paths.workspaceReadOnly ? [join(runDir, "home"), runTmp] : [runDir, runTmp, lockDir, ...(ghDir ? [ghDir] : [])];
+  for (const p of writable) out.push(`(allow file-write* (subpath ${quote(p)}))`);
   // only the learnings file: its folder is made by the server before the step and cannot be moved or removed by the step
-  out.push(`(allow file-write* (literal ${quote(learnings)}))`);
+  if (!paths.workspaceReadOnly) out.push(`(allow file-write* (literal ${quote(learnings)}))`);
   for (const p of WRITABLE_DEVICES) out.push(`(allow file-write* (literal ${quote(p)}))`);
   // what the server alone writes
   out.push(`(deny file-write* (literal ${quote(join(runDir, "run.json"))}) (literal ${quote(join(runDir, "live.log"))}) (subpath ${quote(join(runDir, "logs"))}))`);
@@ -170,7 +197,7 @@ function onPath(name: string, path = process.env.PATH ?? ""): string | undefined
 }
 
 /** The profile paths of one step of a run (see the notes in `sandboxProfile`). */
-export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[] }): SandboxPaths {
+export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean }): SandboxPaths {
   const data = process.env.FACTORY_HOME ?? FACTORY_HOME;
   const programs = [process.execPath, onPath("git"), o.claudeBin ? (isAbsolute(o.claudeBin) ? o.claudeBin : onPath(o.claudeBin)) : onPath("claude"), o.codexBin ? (isAbsolute(o.codexBin) ? o.codexBin : onPath(o.codexBin)) : onPath("codex")];
   return {
@@ -186,6 +213,8 @@ export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?:
     ghDir: o.ghDir,
     programs: programs.filter((p): p is string => Boolean(p)),
     userRead: o.userRead,
+    ...(o.agentBin ? { agentProgram: isAbsolute(o.agentBin) ? o.agentBin : onPath(o.agentBin) } : {}),
+    ...(o.workspaceReadOnly ? { workspaceReadOnly: true } : {}),
   };
 }
 

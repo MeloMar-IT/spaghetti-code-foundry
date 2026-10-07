@@ -44,6 +44,8 @@ export interface CodexRunOptions {
   env?: NodeJS.ProcessEnv;
   /** Pass only `env`, nothing of the server's environment. */
   cleanEnv?: boolean;
+  /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
+  sandboxProfile?: string;
   onProgress?: (msg: string) => void;
 }
 
@@ -120,6 +122,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
       cwd: o.cwd,
       env,
       cleanEnv: o.cleanEnv,
+      sandboxProfile: o.sandboxProfile,
       stdin: prompt,
       timeoutMs: o.timeoutMs,
       signal: o.signal,

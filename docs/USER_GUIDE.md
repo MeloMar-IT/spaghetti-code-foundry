@@ -1860,7 +1860,7 @@ show as "n runs ahead of you", without ids.
   - **After the upgrade,** a flow that relied on an inherited variable such as `JAVA_HOME` or `NVM_DIR` in a user's run needs that name added.
   - **Hidden in output.** The values of the provider key variables named in the config (`api_key_env`) are hidden in logs, live output and API answers. A value shorter than 8 characters is not hidden; the server logs a line when it finds one.
   - **The limit.** The agent's own key is still visible to the agent's shell tool unless the agent program hides it.
-- **OS sandbox for shell steps.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log` or `logs/`), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Agent steps are not held yet. Admin runs are unchanged.
+- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log` or `logs/`), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
   - **Settings.** Tick **Allow user runs without the OS sandbox** (`sandbox.user_runs: off`) to run user runs without it. If no sandbox works (not macOS, or `sandbox-exec` fails) and the box is not ticked, a user's run does not start: "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings." The server variable `SCF_USER_SANDBOX=off` (or `FACTORY_USER_SANDBOX=off`) does the same.
   - **Extra read paths.** `sandbox.user_read` in `config.yaml` lists up to 50 paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
 - **The limit.** Agent steps are **not in an operating-system sandbox** yet, and neither are runs with the sandbox switched off. For them, this is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. A Codex agent still loads the account's Codex settings (`~/.codex/config.toml`); on a server with users, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
@@ -2057,10 +2057,15 @@ with, even if you save a new version while it waits, and the run page shows "Flo
 you edit a flow file by hand, raise the number yourself.
 
 **Trust.** Roles limit the API and the pages. They do not fully limit what a run can do. The
-server's GitHub login is not put into a user's run. But the run still works as your Mac account,
-so it can read that account's files and Keychain, and so it can still reach the login. Give a user
-account only to people you would give an admin account. A run is not held by the operating system
-yet (SR-O1 in `docs/THREAT_MODEL.md`). To switch user runs off, change the rule `POST runs` to
+server's GitHub login is not put into a user's run. On macOS, every step of a user's run, shell and
+agent, is held by a sandbox profile: it cannot read your Mac account's files, the Keychain or the
+agent login, and it writes only in its own run folder. Agent steps sign in by a token variable you
+set for the server: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` for
+Claude; `OPENAI_API_KEY` or `CODEX_API_KEY` for Codex; the provider's `api_key_env` for a compatible
+provider. A local model needs none. Without one the step is refused. Each run has its own empty
+agent folders, so your agent settings, MCP servers and skills do not reach it. The agent's shell tool
+can see the token. The limits are in `docs/THREAT_MODEL.md` (SR-O1): macOS only, and with
+`sandbox.user_runs: off` nothing is held. To switch user runs off, change the rule `POST runs` to
 `no` in `src/server/permissions.ts`.
 
 **Security rules for published flows.** A published flow is code that users steer with text. Keep
