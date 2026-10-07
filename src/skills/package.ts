@@ -235,7 +235,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
 }
 
 /** Read a regular file without following a link: open with O_NOFOLLOW, check the open descriptor, read from it. */
-function readRegular(path: string, limit: number): Uint8Array | "link" | "other" | "large" {
+export function readRegular(path: string, limit: number): Uint8Array | "link" | "other" | "large" {
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
