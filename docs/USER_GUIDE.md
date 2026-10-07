@@ -2872,7 +2872,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact] [--var ask=split]
 ```
 
 **What it reads.** The code of the repository (the `develop` branch when there is one, else the default branch). Only for `ask=impact` the step `list_issues` also reads the newest 50 open issues (titles, texts and labels, no comments) into `issues.md`; for every other ask it reads nothing and prints one line saying so. Then the open issues are not read: what the talk says about the backlog is what the architect knows of it.
@@ -2895,6 +2895,16 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 - `sensitive` (at most 5): `{ topic, basis, why }`. `topic` is `sign-in`, `permissions`, `secrets`, `credentials` or `user-data`.
 
 The architect gives no implementation plan, no questions, no proposals, no suggestions and no remarks; the check fails the run when the answer has those lists. It also fails, with one plain sentence that holds no text of the answer, when a text names a number of hours, days or weeks, when a sentence limit is passed (a `why` is at most two sentences), or when the form is wrong. Lists are cut at their limits.
+
+**`ask=split`.** The architect proposes ways to split a draft that is too big. The task is the talk with the draft; the check counts the criteria from its part `## The draft to split`, under `### Acceptance criteria`, as lines `- C1: …`, `- C2: …` (other C lines in the talk do not count). The answer is `{ "ways": [ … ] }` with 1 to 3 ways. Each way has:
+
+- `cut`: `step` (a step in the user's path), `interface`, `data` (a kind of data), `rule` or `spike` (a small investigation first). No two ways use the same cut.
+- `stories`: 2 to 6, in build order. Each has a `title` (one line, at most 120 characters), a `sentence` (one sentence, at most 300), `criteria` (C numbers) and `dependsOn` (numbers of earlier stories of the same way, counted from 1).
+- `first`: one sentence that says what the first story already delivers to a user.
+- `unplaced`: the C numbers that fit no story. Every C number of the draft is in exactly one story or in `unplaced`.
+- `warnings`: `{ "kind": "layer", "story": 2, "why": "…" }` when a story delivers nothing a user can see or check, and `{ "kind": "same-code", "stories": [1, 2], "why": "…" }` when two stories touch the same code so heavily that they cannot be built at the same time.
+
+When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. Only the flow exists so far: no page or server route asks for a split yet.
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 
