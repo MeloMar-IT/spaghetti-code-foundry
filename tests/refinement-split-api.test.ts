@@ -392,3 +392,125 @@ describe("confirming a split", () => {
     expect((await call(ann, "GET", `/api/refinement/${id}`)).status).toBe(200);
   });
 });
+
+describe("moving a criterion of a split", () => {
+  const confirm = (id: string, did: string, body?: unknown) => call(ann, "POST", url(id, `drafts/${did}/split/confirm`), body);
+  const move = (id: string, did: string, cid: string, body?: unknown, who = ann) => call(who, "POST", url(id, `drafts/${did}/criteria/${cid}/move`), body);
+  const UNKNOWN = "00000000-0000-4000-8000-000000000000";
+  const plan = async (id: string, dependsOn: number[] = [1]) => {
+    const c = (await draftOf(id)).criteria.map((x: any) => x.id);
+    return { parts: [{ title: "First", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn }], unplaced: [] };
+  };
+  const split2 = async (dependsOn?: number[]) => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id, dependsOn))).json();
+    return { id, did, p1: s.drafts[1], p2: s.drafts[2] };
+  };
+  /** Stops the server, changes the file and starts it again. */
+  const rewrite = async (id: string, fn: (s: any) => void) => {
+    started!.close();
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    fn(f.sessions.find((s: any) => s.id === id));
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+    started = await startServer(opts());
+    await get(id);
+  };
+
+  it("answers 200, moves the criterion to the end of the target and logs it", async () => {
+    const { id, p1, p2 } = await split2();
+    const c = p1.criteria[0];
+    const r = await move(id, p1.id, c.id, { to: p2.id });
+    expect(r.status).toBe(200);
+    const s = r.json();
+    expect(s.drafts[1].criteria).toEqual([]);
+    expect(s.drafts[2].criteria.at(-1)).toEqual(c);
+    expect(whats(s).at(-1)).toBe("criterion-moved");
+    expect(s.log.at(-1).detail).toBe(c.text);
+  });
+
+  it("moves between the original and a part, and shows a layer warning only while a part is empty", async () => {
+    const { id, did, p1, p2 } = await split2();
+    expect((await draftOf(id)).partWarnings).toBeUndefined();
+    const c = p1.criteria[0];
+    const out = await move(id, p1.id, c.id, { to: did });
+    expect(out.status).toBe(200);
+    expect(out.json().drafts[0].criteria.map((x: any) => x.id)).toEqual([c.id]);
+    expect(out.json().drafts[0].partWarnings).toEqual([{ kind: "layer", part: p1.id, why: "This part has no acceptance criterion." }]);
+    expect(out.json().drafts[1].partWarnings).toBeUndefined();
+    expect(out.json().drafts[2].partWarnings).toBeUndefined();
+    const back = await move(id, did, c.id, { to: p1.id });
+    expect(back.status).toBe(200);
+    expect(back.json().drafts[0].partWarnings).toBeUndefined();
+    expect(back.json().drafts[0].splitInto).toEqual([p1.id, p2.id]);
+  });
+
+  it("shows a same-code warning for unrelated parts that touch the same code", async () => {
+    const { id, p1, p2 } = await split2([]);
+    const impact = (area: string) => ({
+      at: "2026-01-01T00:00:00.000Z",
+      mark: "0".repeat(64),
+      areas: [{ area, files: [], basis: "estimate", why: "It is touched." }],
+      dependsOn: [],
+      dependents: [],
+      risks: [],
+      size: { size: "small", files: 1, lines: 1, why: "It is small." },
+      overlaps: [],
+      sensitive: [],
+    });
+    await rewrite(id, (s) => {
+      s.drafts[1].impact = impact("src/a");
+      s.drafts[2].impact = impact("src/a/b");
+    });
+    expect((await draftOf(id)).partWarnings).toEqual([{ kind: "same-code", parts: [p1.id, p2.id], areas: ["src/a"], why: "Both parts touch the same code and neither depends on the other." }]);
+  });
+
+  it("answers 400 for a wrong body or a wrong target", async () => {
+    const { id, p1 } = await split2();
+    const c = p1.criteria[0].id;
+    const plain = (await call(ann, "POST", url(id, "drafts"), {})).json().drafts.at(-1).id;
+    for (const body of [{}, { to: 1 }]) {
+      const r = await move(id, p1.id, c, body);
+      expect(r.status).toBe(400);
+      expect(r.error()).toBe("send to: the draft to move the criterion to");
+    }
+    for (const to of [UNKNOWN, p1.id, plain]) {
+      const r = await move(id, p1.id, c, { to });
+      expect(r.status).toBe(400);
+      expect(r.error()).toBe("a criterion can only move between a split draft and its parts");
+    }
+  });
+
+  it("answers 404 for an unknown draft, criterion or session", async () => {
+    const { id, p1, p2 } = await split2();
+    expect((await move(id, UNKNOWN, UNKNOWN, { to: p2.id })).status).toBe(404);
+    expect((await move(id, p1.id, UNKNOWN, { to: p2.id })).status).toBe(404);
+    expect((await move(UNKNOWN, p1.id, p1.criteria[0].id, { to: p2.id })).status).toBe(404);
+  });
+
+  it("answers 400 for a full target", async () => {
+    const { id, p1, p2 } = await split2();
+    const full = Array.from({ length: 50 }, (_, i) => ({ text: `Criterion ${i}` }));
+    expect((await call(ann, "PUT", url(id, `drafts/${p2.id}`), { criteria: full })).status).toBe(200);
+    const r = await move(id, p1.id, p1.criteria[0].id, { to: p2.id });
+    expect(r.status).toBe(400);
+    expect(r.error()).toBe("at most 50 acceptance criteria");
+  });
+
+  it("answers 409 when the source or the target is on GitHub", async () => {
+    const { id, p1, p2 } = await split2();
+    await rewrite(id, (s) => (s.drafts[2].published = { issue: 42, url: "https://github.com/acme/app/issues/42", at: "2026-01-01T00:00:00.000Z" }));
+    for (const [from, to] of [[p1, p2], [p2, p1]]) {
+      const r = await move(id, from!.id, from!.criteria[0].id, { to: to!.id });
+      expect(r.status).toBe(409);
+      expect(r.error()).toMatch(/on GitHub as issue #42/);
+    }
+  });
+
+  it("is for the owner only", async () => {
+    const { id, p1, p2 } = await split2();
+    const c = p1.criteria[0].id;
+    expect((await move(id, p1.id, c, { to: p2.id }, bob)).status).toBe(404);
+    expect((await move(id, p1.id, c, { to: p2.id }, admin)).status).toBe(403);
+    expect((await draftOf(id, 1)).criteria).toHaveLength(1);
+  });
+});

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { DRAFT_LIMIT, DRAFT_TITLE_MAX, bad, checkText, isObject, oneLine, type Draft, type DraftChange, type DraftState, type Source } from "./draft.js";
+import { CRITERIA_MAX, DRAFT_LIMIT, DRAFT_TITLE_MAX, bad, checkText, isObject, oneLine, type Draft, type DraftChange, type DraftState, type Source } from "./draft.js";
+import { IMPACT_OVERLAP_AREAS_MAX, areaOverlaps } from "./draft-impact.js";
 import { SPLIT_MAX, SPLIT_TEXT_MAX, confirmRefusal } from "./draft-split.js";
 import { RefinementError } from "./errors.js";
 import { cut } from "./talk.js";
 
-// This file may import values from draft.ts and draft-split.ts (draft-split.ts takes only types from draft.ts).
+// This file may import values from draft.ts, draft-split.ts and draft-impact.ts (both take only types from draft.ts).
 
 /** A criterion in a message of the plan: its stored text on one line, cut to this many characters. */
 export const PLAN_TEXT_MAX = 60;
@@ -91,4 +92,68 @@ export function confirmSplit(st: DraftState, draftId: string, input: unknown): D
   const { split: _split, ...rest } = d;
   const original: Draft = { ...rest, criteria: d.criteria.filter((c) => unplacedSet.has(c.id)), splitInto: ids };
   return { ...st, drafts: [...st.drafts.map((x) => (x === d ? original : x)), ...parted], line: { what: "draft-split", detail: String(plan.length) } };
+}
+
+const FAMILY_ONLY = "a criterion can only move between a split draft and its parts";
+const NO_CRITERION = "This part has no acceptance criterion.";
+const SAME_CODE = "Both parts touch the same code and neither depends on the other.";
+
+/**
+ * Moves one criterion (the same object) to the end of another draft of the same split: the original or one of its parts.
+ * This is the one change allowed on a split original. A draft that is on GitHub is refused, as source and as target.
+ */
+export function moveCriterion(st: DraftState, draftId: string, criterionId: string, input: unknown): DraftChange {
+  const d = st.drafts.find((x) => x.id === draftId);
+  if (!d) throw new RefinementError("not-found", "no such story draft");
+  if (!isObject(input) || typeof input.to !== "string") throw bad("send to: the draft to move the criterion to");
+  const family = (x: Draft) => (x.splitInto ? x.id : x.part?.of);
+  const t = st.drafts.find((x) => x.id === input.to);
+  if (!t || t === d || family(d) === undefined || family(t) !== family(d)) throw bad(FAMILY_ONLY);
+  const c = d.criteria.find((x) => x.id === criterionId);
+  if (!c) throw new RefinementError("not-found", "no such criterion in this draft");
+  const held = [d, t].find((x) => x.published);
+  if (held?.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${held.published.issue}; it cannot be changed here`);
+  if (t.criteria.length >= CRITERIA_MAX) throw new RefinementError("limit", `at most ${CRITERIA_MAX} acceptance criteria`);
+  return {
+    ...st,
+    drafts: st.drafts.map((x) => (x === d ? { ...d, criteria: d.criteria.filter((y) => y !== c) } : x === t ? { ...t, criteria: [...t.criteria, c] } : x)),
+    line: { what: "criterion-moved", detail: oneLine(c.text) },
+  };
+}
+
+export type PartWarning =
+  | { kind: "layer"; part: string; why: string }
+  | { kind: "same-code"; parts: [string, string]; areas: string[]; why: string };
+
+/** Warnings about the parts of a split original, worked out from the stored drafts: an empty part, and two unrelated parts on the same code. */
+export function partWarnings(d: Draft, drafts: readonly Draft[]): PartWarning[] {
+  if (!d.splitInto) return [];
+  const ids = new Set(d.splitInto);
+  const parts = d.splitInto.map((id) => drafts.find((x) => x.id === id)).filter((x): x is Draft => x !== undefined);
+  const out: PartWarning[] = parts.filter((p) => p.criteria.length === 0).map((p) => ({ kind: "layer", part: p.id, why: NO_CRITERION }));
+  const byId = new Map(parts.map((p) => [p.id, p]));
+  const reaches = (from: Draft, to: Draft): boolean => {
+    const seen = new Set<string>();
+    const walk = (x: Draft): boolean => {
+      for (const l of x.dependsOn) {
+        if (l.draft === undefined || !ids.has(l.draft) || seen.has(l.draft)) continue;
+        if (l.draft === to.id) return true;
+        seen.add(l.draft);
+        const n = byId.get(l.draft);
+        if (n && walk(n)) return true;
+      }
+      return false;
+    };
+    return walk(from);
+  };
+  for (let i = 0; i < parts.length; i++) {
+    for (let j = i + 1; j < parts.length; j++) {
+      const a = parts[i]!;
+      const b = parts[j]!;
+      const other = (b.impact?.areas ?? []).map((x) => x.area);
+      const areas = [...new Set((a.impact?.areas ?? []).map((x) => x.area))].filter((x) => other.some((y) => areaOverlaps(x, y))).slice(0, IMPACT_OVERLAP_AREAS_MAX);
+      if (areas.length > 0 && !reaches(a, b) && !reaches(b, a)) out.push({ kind: "same-code", parts: [a.id, b.id], areas, why: SAME_CODE });
+    }
+  }
+  return out;
 }

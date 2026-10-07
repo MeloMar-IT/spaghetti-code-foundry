@@ -9,6 +9,7 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
+import { partWarnings } from "../refinement/draft-parts.js";
 import { splitView } from "../refinement/draft-split.js";
 import { otherDrafts } from "../refinement/known-areas.js";
 import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
@@ -27,6 +28,7 @@ import {
   addDraft,
   checkReadyOf,
   confirmSplitOf,
+  moveCriterionOf,
   correctReadyState,
   removeAcceptedOf,
   answerQuestion,
@@ -145,6 +147,7 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
   const split = splitView(d);
   const readiness = readinessView(d, list);
   const accepted = acceptedView(d, list);
+  const warnings = partWarnings(d, s.drafts);
   return {
     ...rest,
     state: d.splitInto ? "split" : isReady(d, list) ? "ready" : "drafting",
@@ -153,6 +156,7 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
     ...(review ? { review } : {}),
     ...(impact ? { impact } : {}),
     ...(split ? { split } : {}),
+    ...(warnings.length ? { partWarnings: warnings } : {}),
     ...(readiness ? { readiness } : {}),
     ...(accepted.length ? { acceptedAnyway: accepted } : {}),
   };
@@ -338,6 +342,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 6 && seg[2] === "drafts" && seg[4] === "split" && seg[5] === "confirm" && method === "POST") {
     const body = await readJson(req);
     return send(res, 201, guarded(ctx, () => view(ctx, settled(confirmSplitOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "criteria" && seg[6] === "move" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(moveCriterionOf(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
     // The body is optional: without one there is no own way. A body that is there must be JSON.

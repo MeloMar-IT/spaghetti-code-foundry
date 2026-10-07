@@ -216,7 +216,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/drafts/:did/suggest": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggest`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/split": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split`, body: {}, user: 404, admin: 404 },
-  "POST refinement/:id/drafts/:did/split/confirm": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split/confirm`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/criteria/:cid/move": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/criteria/${UNKNOWN}/move`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/split/confirm":{ path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split/confirm`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/impact": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/impact`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/drafts/:did/review-label": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review-label`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
@@ -265,6 +266,7 @@ describe("the table", () => {
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "impact"])?.path).toBe("refinement/:id/drafts/:did/impact");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "split"])?.path).toBe("refinement/:id/drafts/:did/split");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "criteria", "0002", "move"])?.path).toBe("refinement/:id/drafts/:did/criteria/:cid/move");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "split", "confirm"])?.path).toBe("refinement/:id/drafts/:did/split/confirm");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
     expect(findRule("PUT", ["refinement", "0000", "drafts", "0001", "review-label"])?.path).toBe("refinement/:id/drafts/:did/review-label");
