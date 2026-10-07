@@ -14,6 +14,7 @@ export const TALK_FIRST_LINE = {
   review: "This is the talk of a refinement session. What is asked: a review of a story draft.",
   impact: "This is the talk of a refinement session. What is asked: the architect's view of a story draft.",
   ready: "This is the talk of a refinement session. What is asked: a judgment of the readiness of a story draft.",
+  split: "This is the talk of a refinement session. What is asked: ways to split a story draft.",
 } as const;
 export type TalkKind = "round" | "question";
 

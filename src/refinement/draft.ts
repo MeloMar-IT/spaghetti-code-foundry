@@ -3,6 +3,7 @@ import { z } from "zod";
 import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import { ImpactSchema } from "./draft-impact.js";
+import { SplitSchema } from "./draft-split.js";
 import { READY_MAX, READY_TEXT_MAX } from "./ready-list.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
@@ -56,6 +57,8 @@ export const DRAFT_LOG_KINDS = [
   "architect-reviewed",
   "impact-asked",
   "architect-impact",
+  "split-asked",
+  "architect-split",
   "moved-to-notes",
   "ready-checked",
   "ready-asked",
@@ -162,6 +165,7 @@ const DraftSchema = z
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
     review: ReviewSchema.optional(),
     impact: ImpactSchema.optional(),
+    split: SplitSchema.optional(),
     addReviewLabel: z.literal(true).optional(),
     readiness: ReadinessSchema.optional(),
     acceptedAnyway: AcceptedSchema.optional(),
