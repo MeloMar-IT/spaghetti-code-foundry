@@ -49,7 +49,7 @@ Read from the code at commit `27479e3`, with the routes in `inventory.md`, the d
 ### F7 Monitoring is in three places
 **Structural**
 
-- **Where:** Problems (`ui/problems.js`), the health bar (`ui/health.js:27`, link to `#/problems`) and the monitor card on Watchers (`ui/admin.js:38-46`, `monitorLists` from `ui/monitor.js`).
+- **Where:** Problems (`ui/problems.js`), the health bar (`ui/health.js:32`, link to `#/problems`) and the monitor card on Watchers (`ui/admin.js:38-46`, `monitorLists` from `ui/monitor.js`).
 - **Evidence:** The monitor can be switched on or off from the Watchers card (`admin.js:46`) and from Problems (`problems.js:88`). Findings are listed on Problems and counted in the health bar. Mutes are managed in `ui/monitor.js`, used by both.
 - **Proposal:** One Monitor page with state, findings and mutes. The health bar links to it; the Watchers page shows watchers only.
 
@@ -78,7 +78,7 @@ Read from the code at commit `27479e3`, with the routes in `inventory.md`, the d
 **Structural**
 
 - **Where:** Native `confirm`/`prompt` (24 calls), `modal` (23 call sites), and the wrappers `callDialog`, `confirmDialog`, `decisionDialog`, `withDialog`, `openDetail` (see `dialogs.md`).
-- **Evidence:** Approve and reject use native `prompt()` on the admin run page (`ui/runs.js:244-245`) but `decisionDialog` on the user display (`ui/user/runs.js:94`) and a panel on Your turn (`turn-act.js`). Cancel uses `confirm` at `ui/runs.js:258` and `ui/health.js:44` but `confirmDialog` on the user display (`ui/user/runs.js:430`). Native dialogs cannot show a server error and cannot be styled.
+- **Evidence:** Approve and reject use native `prompt()` on the admin run page (`ui/runs.js:244-245`) but `decisionDialog` on the user display (`ui/user/runs.js:94`) and a panel on Your turn (`turn-act.js`). Cancel uses `confirm` at `ui/runs.js:258` and `ui/health.js:49` but `confirmDialog` on the user display (`ui/user/runs.js:430`). Native dialogs cannot show a server error and cannot be styled.
 - **Proposal:** One confirm helper and one decision helper over `modal`; move the 24 native calls onto them in #249.
 
 ### F12 Inline styles are spread over 22 files

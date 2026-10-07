@@ -54,6 +54,19 @@ describe("renderHealth", () => {
     expect(e.all("button")).toHaveLength(0);
   });
 
+  it("lists skill problems with the label and reason, and counts the rest", () => {
+    const e = el();
+    ui.renderHealth(e, { ...good, ok: false, summary: "3 problems", skillProblems: [{ source: "admin", root: "skills.roots[0]", package: "x", reason: "bad version" }, { source: "admin", root: "built-in", reason: "ENOENT" }], skillProblemsMore: 1 });
+    const items = e.all("li");
+    expect(items).toHaveLength(3);
+    expect(items[0]!.textContent).toBe("Skills (skills.roots[0] / x): bad version");
+    expect(items[1]!.textContent).toBe("Skills (built-in): ENOENT");
+    expect(items[2]!.textContent).toContain("1 more skill problem");
+    const plain = el();
+    ui.renderHealth(plain, good);
+    expect(plain.all("ul")).toHaveLength(0);
+  });
+
   it("lists each problem with its action, reason and link", () => {
     const e = el();
     ui.renderHealth(e, bad);

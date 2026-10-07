@@ -11,6 +11,7 @@ import { getUser } from "./auth/users.js";
 import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
 import { FORCE_HINT, gateRun } from "./run-gate.js";
 import { listBlocks } from "./flow/blocks.js";
+import { discoverSkills } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
 import { loadConfig, WatcherSchema } from "./config.js";
@@ -40,6 +41,7 @@ Usage:
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
+  scf skills [--repo <dir>]                      List approved skill packages and skill folder problems
   scf validate <flow|file.yaml>                  Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
@@ -254,6 +256,17 @@ async function main(argv: string[]): Promise<number> {
         process.stdout.write(`${b.id.padEnd(16)} ${label}  [${b.scope}]\n`);
       }
       return 0;
+    }
+
+    case "skills": {
+      const reg = discoverSkills(loadConfig().skills, { repo });
+      for (const s of reg.skills) process.stdout.write(`${s.id.padEnd(24)} ${s.version}  [${s.label}]${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}\n`);
+      for (const n of reg.notes) process.stdout.write(`NOTE ${n.text}\n`);
+      for (const p of reg.problems) {
+        const root = reg.sources.find((r) => r.label === p.label)?.root ?? p.root;
+        process.stdout.write(`PROBLEM ${p.label} ${root}${p.package ? "/" + p.package : ""}: ${p.reason}\n`);
+      }
+      return reg.problems.length ? 1 : 0;
     }
 
     case "flow-guide": {
