@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-role="admin" data-theme="auto" data-width="wide" data-state="data" data-alt="a" data-alts="a b c" data-states="data empty loading error problem">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shell — SCF prototype</title>
+<link rel="stylesheet" href="proto.css">
+<script src="proto.js" defer></script>
+</head>
+<body class="page-index">
+<div class="frame">
+<div class="app">
+<header class="top">
+  <button class="icon menu-btn" data-drawer aria-label="Menu">☰</button>
+  <span class="brand">SCF</span>
+  <button class="search" data-open="cmd">Search runs, repositories, actions <kbd>⌘K</kbd></button>
+  <button class="btn" data-open="start">Start work</button>
+  <button class="icon" data-open="activity">Activity<span class="badge">2</span></button>
+  <button class="icon" data-open="account">Account</button>
+</header>
+<nav class="side" aria-label="Main">
+  <a href="home.html"><i>⌂</i><span class="label">Home</span></a>
+  <a href="board.html" data-only-role="admin"><i>▥</i><span class="label">Board</span></a>
+  <a href="runs.html"><i>≡</i><span class="label">Runs</span></a>
+  <a href="repositories.html"><i>◫</i><span class="label">Repositories</span></a>
+  <a href="#refinement"><i>✎</i><span class="label">Refinement</span></a>
+  <a href="#flows" data-only-role="admin"><i>⑂</i><span class="label">Flows</span></a>
+  <a href="admin.html" data-only-role="admin"><i>⚙</i><span class="label">Administration</span></a>
+</nav>
+<div class="main-wrap">
+<div class="health ok" data-only-role="admin" data-only-state="data empty loading">All good <button class="btn small" data-open="healthp">Details</button></div>
+<main class="main">
+<section class="view" data-only-state="data problem">
+<header class="head"><div><h1>Shell</h1><p class="muted">Alternatives S1, S2 and S3 around one page list.</p></div><div class="actions"><a class="btn primary" href="home.html">Open Home</a></div></header>
+<div class="health bad" data-only-state="problem" data-only-role="admin"><b>2 problems</b> The daily budget is used up. The issue of <span class="repo">example/app</span> was closed on GitHub but its run is still busy. <button class="btn small danger">Cancel run</button></div>
+<p class="muted" data-only-alt="a">S1: sidebar with labels; search and actions in the top bar.</p>
+<p class="muted" data-only-alt="b">S2: icon rail; labels show only as a tooltip.</p>
+<p class="muted" data-only-alt="c">S3: top tabs, no sidebar.</p>
+<div class="card"><b>Pages</b>
+  <ul>
+    <li><a href="home.html">Home</a> — what needs you first. H1 list, H2 split.</li>
+    <li><a href="board.html" data-only-role="admin">Board</a> — task states. B1 columns, B2 list.</li>
+    <li><a href="runs.html">Runs</a> — find a run. L1 table, L2 cards.</li>
+    <li><a href="run.html?run=failed">Run</a> — one run. R1 tabs, R2 split. Sub-switch: run.</li>
+    <li><a href="repositories.html">Repositories</a> — add and manage. P1 table, P2 cards.</li>
+    <li><a href="admin.html" data-only-role="admin">Administration</a> — users and settings. A1 sections, A2 one page.</li>
+  </ul>
+</div>
+<div class="card"><b>How to use the switches</b>
+  <p>Use the switch bar at the top: <b>Alternative</b> a, b (and c on this page), Role, Theme, Width and State. Narrow shows the menu button; the sidebar opens as a drawer.</p>
+  <p class="muted">Try ⌘K, Ctrl+K or / for command search. Activity opens the activity panel, Account the account menu.</p>
+</div>
+<div class="card"><b>Documents</b>
+  <p><span class="mono">prototypes.md</span>, <span class="mono">walkthroughs.md</span> and <span class="mono">decisions.md</span> are in the folder above this one.</p>
+</div>
+</section>
+<section class="view" data-only-state="empty">
+<header class="head"><div><h1>Shell</h1><p class="muted">Nothing runs and nothing waits.</p></div></header>
+<div class="empty"><h2>Nothing to do yet</h2><p>Start work to see it here.</p><button class="btn primary" data-open="start">Start work</button></div>
+</section>
+<section class="view" data-only-state="loading">
+<header class="head"><div><h1>Shell</h1><p class="muted">Loading.</p></div></header>
+<div class="loading" aria-busy="true"><div class="bar"></div><div class="bar"></div><div class="bar short"></div></div>
+</section>
+<section class="view" data-only-state="error">
+<header class="head"><div><h1>Shell</h1><p class="muted">The server did not answer.</p></div></header>
+<div class="error"><b>The Foundry server does not answer. Check that it is still running.</b><br><button class="btn">Retry</button></div>
+</section>
+</main>
+</div>
+</div>
+<div class="panel menu" id="account" hidden>
+  <button class="small close" data-close>Close</button>
+  <p><b>Ana</b> <span class="muted">ana@example.test</span></p>
+  <p class="muted"><span data-only-role="admin">Role: admin</span><span data-only-role="user">Role: user</span></p>
+  <ul><li><a href="#password">Change password</a></li><li><a href="#signout">Sign out</a></li></ul>
+</div>
+<div class="panel cmd" id="cmd" hidden>
+  <button class="small close" data-close>Close</button>
+  <input autofocus placeholder="Type to search runs, repositories, actions">
+  <ul>
+    <li><a href="runs.html">Runs</a></li>
+    <li><a href="run.html?run=failed">Run: Rename the config keys (failed)</a></li>
+    <li><a href="repositories.html">Repositories</a></li>
+    <li><a href="board.html" data-only-role="admin">Board</a></li>
+    <li><a href="#start" data-open="start">Action: Start work</a></li>
+  </ul>
+</div>
+<div class="panel side-panel" id="start" hidden>
+  <button class="small close" data-close>Close</button>
+  <h2>Start work</h2>
+  <label class="field"><span>What should be done?</span><textarea autofocus placeholder="Describe the task"></textarea></label>
+  <label class="field"><span>Repository</span><select><option>example/app</option><option>example/site</option></select></label>
+  <a class="btn primary" href="run.html?run=running">Start</a>
+</div>
+<div class="panel side-panel" id="activity" hidden>
+  <button class="small close" data-close>Close</button>
+  <h2>Activity</h2>
+  <p class="muted">What changed since you last looked.</p>
+  <div class="since" data-only-role="admin">
+    <h3>Done</h3><p>Speed up the search page <a href="run.html?run=done">open</a></p>
+    <h3>On develop</h3><p>Fix the date parser</p>
+    <h3>Released</h3><p>Nothing</p>
+    <h3>Failed</h3><p>Rename the config keys <a href="run.html?run=failed">open</a></p>
+    <h3>Waiting</h3><p>Add retry to the uploader <a href="home.html">review</a></p>
+    <h3>Notes</h3><p class="muted">The monitor has no new findings.</p>
+    <button class="btn small">Dismiss</button>
+  </div>
+  <div data-only-role="user">
+    <h3>Your runs</h3>
+    <p>Add retry to the uploader waits for you. <a href="home.html">Review</a></p>
+    <p>Rename the config keys failed. <a href="run.html?run=failed">See what failed</a></p>
+  </div>
+</div>
+<div class="panel side-panel" id="healthp" hidden>
+  <button class="small close" data-close>Close</button>
+  <div class="health ok" data-only-role="admin">Server health: all good</div>
+  <p data-only-role="admin">Version <span class="mono">3da81e3</span>, 2026-10-07. An update is waiting.</p>
+  <p data-only-role="admin">Last check of <span class="repo">example/app</span>: 2 min ago. Monitor findings: 0 open of 3.</p>
+</div>
+</div>
+</body>
+</html>
