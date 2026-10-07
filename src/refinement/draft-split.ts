@@ -91,7 +91,7 @@ export function ownWay(input: unknown): string | undefined {
   return t;
 }
 
-/** Why this draft cannot be split, or undefined. More reasons (already split, published) are added here when those states exist. */
+/** Why this draft cannot be split, or undefined. A published draft is refused before this, in `askArchitect`; more reasons (already split) are added here when that state exists. */
 export function splitRefusal(d: Pick<Draft, "criteria">): string | undefined {
   if (d.criteria.length < SPLIT_MIN_CRITERIA) return `a draft needs at least ${SPLIT_MIN_CRITERIA} acceptance criteria to be split`;
   return undefined;

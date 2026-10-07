@@ -20,6 +20,8 @@ import { splitOf, splitText } from "./split-text.js";
 import {
   END_BAD_FORM,
   END_NO_DRAFT,
+  END_ON_GITHUB,
+  isPublishing,
   END_NO_READY_DRAFT,
   END_NO_REVIEW_DRAFT,
   LOG_LIMIT,
@@ -314,6 +316,14 @@ export function settleSession(deps: ArchitectDeps, id: string): Session | undefi
   return endArchitectRun(id, runId, end) ?? getSession(id);
 }
 
+/** True when the session's run is queued or active, or is not marked failed and not paused (as settled: call settleSession first). */
+export function architectWorking(deps: ArchitectDeps, s: Pick<Session, "architect">): boolean {
+  const a = s.architect;
+  if (!a) return false;
+  if (live(deps, a.runId)) return true;
+  return a.failed === undefined && statusOf(deps, a.runId) !== "stopped";
+}
+
 /** The state of the architect for a session (as settled: call settleSession first). Never throws. */
 export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">): ArchitectView {
   const a = s.architect;
@@ -368,6 +378,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   if (found.owner !== actor.id) throw actor.admin ? new RefinementError("not-owner", "only the owner can ask the architect") : new RefinementError("not-found", "no such refinement session");
   if (found.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
   if (!ownsRepo(found.owner, found.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+  if (isPublishing(id)) throw busy("this session is being published; try again in a moment");
   const field = ask.field as SuggestField;
   if (kind === "suggest" && !(SUGGEST_FIELDS as readonly unknown[]).includes(ask.field)) throw new RefinementError("bad-draft", `the field is ${SUGGEST_FIELDS.join(", ")}`);
   const own = kind === "split" ? ownWay(ask.own) : undefined;
@@ -392,15 +403,16 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   if (cur && cur.failed === undefined) {
     const paused = statusOf(deps, cur.runId) === "stopped";
     const pausedKind = cur.kind ?? "brief";
-    if (paused && (pausedKind === "suggest" || pausedKind === "review" || pausedKind === "impact" || pausedKind === "ready" || pausedKind === "split") && !s.drafts.some((d) => d.id === cur.draft)) {
-      // The draft is gone: the paused suggestion or review could never be stored. The paused run is cancelled, so it does not stay paused for good.
+    if (paused && (pausedKind === "suggest" || pausedKind === "review" || pausedKind === "impact" || pausedKind === "ready" || pausedKind === "split") && (!s.drafts.some((d) => d.id === cur.draft) || s.drafts.some((d) => d.id === cur.draft && d.published))) {
+      // The draft is gone or is on GitHub: the paused suggestion or review could never be stored. The paused run is cancelled, so it does not stay paused for good.
+      const gone = !s.drafts.some((d) => d.id === cur.draft);
       try {
         const old = runOf(deps, cur.runId);
         if (old) saveRun({ ...old, status: "cancelled", reason: "cancelled by user", waiting: undefined, finishedAt: new Date().toISOString() });
       } catch {
         deps.log?.("refinement: the paused run could not be saved as cancelled");
       }
-      endArchitectRun(s.id, cur.runId, { failed: noDraft(pausedKind) });
+      endArchitectRun(s.id, cur.runId, { failed: gone ? noDraft(pausedKind) : END_ON_GITHUB });
       s = getSession(id) ?? s;
     } else if (paused && (pausedKind !== kind || (kind === "suggest" && (cur.draft !== ask.draft || cur.field !== field)) || ((kind === "review" || kind === "impact" || kind === "ready" || kind === "split") && cur.draft !== ask.draft))) {
       throw busy(`the architect paused while ${DOING[pausedKind]} for this session; ask that again first`);
@@ -459,6 +471,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
     if (talk.asked.length >= ASKED_LIMIT) throw new RefinementError("limit", `at most ${ASKED_LIMIT} own questions are kept`);
   }
   const draft = kind === "suggest" || kind === "review" || kind === "impact" || kind === "ready" || kind === "split" ? s.drafts.find((d) => d.id === ask.draft) : undefined;
+  if (draft?.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${draft.published.issue}; it cannot be changed here`);
   let unsure: { id: string; text: string }[] = [];
   if (kind === "ready") {
     if (!s.brief) throw new RefinementError("bad-state", "ask the architect to look at the code first");

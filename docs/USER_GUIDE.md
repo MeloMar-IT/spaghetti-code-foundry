@@ -1731,6 +1731,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `run-start` | A run is started | run id | |
 | `run-cancel`, `run-approve`, `run-reject`, `run-resume` | A run is cancelled, approved, rejected or resumed (a cancel that cancelled nothing writes no line) | run id | |
 | `run-answer` | An answer to the questions of a run was accepted (a refused call writes no line; the text is never logged) | run id | |
+| `refinement-publish` | Ready drafts of a refinement session were published | session id | repository and issue numbers |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
 | `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
@@ -2212,6 +2213,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
 | `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again (an admin who is not the owner: 403) |
 | `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
 | `POST /api/refinement/:id/drafts/:did/split` | yes | yes | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
 | `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
@@ -2661,7 +2663,7 @@ The folder of your clone can keep its name.
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
-**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. Later steps add the others.
+**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
 **The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
@@ -2797,6 +2799,14 @@ When the run ends, the checked ways (see `ask=split` below) are stored with the 
 - The preview shows the section **Accepted anyway** as the server wrote it.
 - The part and its buttons show only where the draft fields show. Elsewhere (another account's session as an admin, a dropped session) the results show as text without buttons.
 - The log tells a check asked for, the architect's judgement, an item accepted anyway and a reason removed, in words. The Context brief part does not show the line of a readiness run. A readiness run for a draft that is not open shows its line at the top of Story drafts.
+
+**Publishing.** `POST /api/refinement/:id/publish` creates GitHub issues for the ready drafts, with the repository's sign-in. The body is optional: `{ "drafts": [ { "id": "<draft id>", "labels": ["…"], "startBuilding": false } ] }`. Without `drafts`, every ready draft is created with no extra labels. Only the owner may publish (an admin who is not the owner: 403). The answer lists the issues it made or found, with numbers and links.
+- **Order and numbers.** A draft is created after the drafts it depends on, so its "Depends on" lines use the real issue numbers (`- #101`), not "new issue". A draft that has an issue is never created again.
+- **Labels.** Chosen labels must exist in the repository and are sent in its spelling. The build label is added only when `startBuilding` is true, and needs a watcher on the repository (else 400). The review label is added only for a draft with the review label choice on. You cannot choose the build or review label by hand (400). One unknown label refuses the whole call before anything is created.
+- **Title.** A draft needs a title. If a ready draft has none, the call is refused (409) and nothing is created.
+- **The hidden marker.** Each issue body ends with a hidden line naming the session and the draft. If a call fails halfway, **publish again**: drafts that have an issue are skipped, and an issue made before the answer was lost is found by its marker and taken over, with its text and labels unchanged. After a timeout, wait a moment before you try again: GitHub's list of issues can lag a few seconds, and an issue not listed yet would be created twice. Only the newest 100 issues are searched.
+- **While it runs.** The session cannot be changed while it is being published (409, "try again in a moment"); this includes rename, drop and architect calls. Publish waits (409) while an architect run of the session is queued or running; a paused run does not block it. A second publish at the same time gets 409. A session whose log is full cannot be published.
+- **Afterwards.** A published draft shows `published: { issue, url, at }` and the log has `draft-published`. It cannot be changed any more: edits, ready checks, the review label, suggestions and architect calls on it give 409 naming the issue. While a draft is published, the Epic cannot be changed, a map entry that the draft is tied to cannot be removed, and a draft that a published draft still names cannot be removed. Other drafts work as before. Editing after publishing comes later.
 
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 

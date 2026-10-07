@@ -197,8 +197,9 @@ export function removeAccepted(st: DraftState, draftId: string, itemId: string, 
 const contentKey = (d: Draft): string =>
   JSON.stringify([d.title?.text, d.who?.text, d.what?.text, d.why?.text, d.criteria.map((c) => c.text), d.outOfScope?.text, d.dependsOn.map((x) => [x.issue, x.draft]), d.notes?.text]);
 
+/** A draft that is on GitHub keeps its check: it is the record of what was published. */
 const dropReadiness = (d: Draft): Draft => {
-  if (!d.readiness) return d;
+  if (!d.readiness || d.published) return d;
   const { readiness: _gone, ...rest } = d;
   return rest;
 };

@@ -1,4 +1,7 @@
-import { oneLine, preview, type Draft } from "./draft.js";
+import { createHash } from "node:crypto";
+import { BOT_MARKER } from "../github.js";
+import { bad, isObject, oneLine, preview, type Draft } from "./draft.js";
+import { chars } from "./talk.js";
 import { acceptedLines, notReadyReason } from "./draft-ready.js";
 import type { ReadyItem } from "./ready-list.js";
 
@@ -155,4 +158,119 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
     return { n: i + 1, draft: d.id, title, body, state, ...(reason !== undefined ? { reason } : {}), ...(state === "on-github" && issue !== undefined ? { issue } : {}), dependsOn, labels };
   });
   return { items, willCreate: items.filter((x) => x.state === "ready").map((x) => x.draft) };
+}
+
+// ---- the hidden marker -----------------------------------------------------------------------------
+
+/** The hash a marker holds: of the session and the draft, so that the ids themselves are not written to GitHub. */
+export const refinedHash = (sessionId: string, draftId: string): string => createHash("sha256").update(`refined\n${sessionId}\n${draftId}`).digest("hex");
+
+/** The last line of every issue the Foundry makes from a draft: it tells a retry that the issue exists already. */
+export const refinedMarker = (sessionId: string, draftId: string): string => `${BOT_MARKER} refined=${refinedHash(sessionId, draftId)} -->`;
+
+const MARKER_LINE = new RegExp(`^${BOT_MARKER} refined=([0-9a-f]{64}) -->$`);
+
+/** The hash of the marker in an issue text; only when the last non-empty line, trimmed, is exactly a marker. */
+export function refinedHashIn(body: unknown): string | undefined {
+  if (typeof body !== "string") return undefined;
+  const last = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1);
+  return last === undefined ? undefined : MARKER_LINE.exec(last)?.[1];
+}
+
+/** Of issues as GitHub lists them: the one made from this draft (the lowest number when more carry the marker), or undefined. */
+export function issueWithMarker<T extends { number: number; body?: string | null }>(issues: readonly T[], sessionId: string, draftId: string): T | undefined {
+  const hash = refinedHash(sessionId, draftId);
+  return issues.filter((i) => Number.isSafeInteger(i.number) && i.number >= 1 && refinedHashIn(i.body) === hash).sort((a, b) => a.number - b.number)[0];
+}
+
+/** The link stored for an issue: the one GitHub reported when it is the link of this repository and number; else the link built from them. */
+export function issueUrl(repo: string, issue: number, reported: unknown): string {
+  const own = `https://github.com/${repo}/issues/${issue}`;
+  return typeof reported === "string" && reported.toLowerCase() === own.toLowerCase() ? reported : own;
+}
+
+// ---- what the person chose -------------------------------------------------------------------------
+
+export interface PublishChoice {
+  labels: string[];
+  startBuilding: boolean;
+}
+
+const LABELS_MAX = 20;
+const LABEL_MAX = 50;
+const NO_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+/**
+ * The request body `{ drafts: [{ draft, labels?, startBuilding? }] }`, checked, as a choice for each draft named. A missing `drafts` is
+ * no choice at all. Duplicate labels (any case) collapse to the first. Throws bad-draft for anything else.
+ */
+export function parsePublishInput(input: unknown, drafts: readonly Draft[]): Map<string, PublishChoice> {
+  const out = new Map<string, PublishChoice>();
+  if (!isObject(input)) throw bad("send an object, empty or with the choices for the drafts");
+  if (input.drafts === undefined) return out;
+  if (!Array.isArray(input.drafts)) throw bad("drafts must be a list");
+  for (const e of input.drafts as unknown[]) {
+    if (!isObject(e) || typeof e.draft !== "string") throw bad("each entry names a draft");
+    if (!drafts.some((d) => d.id === e.draft)) throw bad("no such story draft in this session");
+    if (out.has(e.draft)) throw bad("a draft is named twice");
+    const labels: string[] = [];
+    if (e.labels !== undefined) {
+      if (!Array.isArray(e.labels) || e.labels.length > LABELS_MAX) throw bad(`labels must be a list of at most ${LABELS_MAX} names`);
+      for (const raw of e.labels as unknown[]) {
+        if (typeof raw !== "string") throw bad("a label is text");
+        const l = raw.trim();
+        if (!l || chars(l) > LABEL_MAX) throw bad(`a label has 1 to ${LABEL_MAX} characters`);
+        if (NO_CONTROL.test(l)) throw bad("a label has characters that are not allowed");
+        if (!labels.some((x) => x.toLowerCase() === l.toLowerCase())) labels.push(l);
+      }
+    }
+    if (e.startBuilding !== undefined && typeof e.startBuilding !== "boolean") throw bad("startBuilding is true or false");
+    out.set(e.draft, { labels, startBuilding: e.startBuilding === true });
+  }
+  return out;
+}
+
+export type LabelRules = { repo: string; repoLabels: readonly string[]; buildLabel?: string; reviewLabel?: string };
+
+const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+const spelled = (o: LabelRules, name: string): string | undefined => o.repoLabels.find((l) => same(l, name));
+
+/**
+ * The labels a person chose, in the repository's spelling. Throws bad-draft for a label the repository does not have, for the build or the
+ * review label (they are not chosen by hand), and for `startBuilding` when there is no build label or the repository does not have it.
+ */
+export function chosenLabels(choice: PublishChoice | undefined, o: LabelRules): string[] {
+  if (!choice) return [];
+  if (choice.startBuilding) {
+    if (!o.buildLabel) throw bad("this repository has no enabled watcher for issues, so no label starts a build");
+    if (!spelled(o, o.buildLabel)) throw bad(`the build label "${o.buildLabel}" does not exist in ${o.repo}; create it first`);
+  }
+  return choice.labels.map((l) => {
+    if ((o.buildLabel && same(l, o.buildLabel)) || (o.reviewLabel && same(l, o.reviewLabel))) {
+      throw bad(`"${l}" is not chosen by hand: use startBuilding for the build label, and the review switch of the draft for the review label`);
+    }
+    const found = spelled(o, l);
+    if (!found) throw bad(`the label "${l}" does not exist in ${o.repo}`);
+    return found;
+  });
+}
+
+/** All labels a draft is created with: the chosen ones, the build label when asked, the review label when the draft asks for it. */
+export function labelsFor(choice: PublishChoice | undefined, d: Draft, o: LabelRules): string[] {
+  const labels = chosenLabels(choice, o);
+  const build = choice?.startBuilding === true && o.buildLabel ? [spelled(o, o.buildLabel)!] : [];
+  let review: string[] = [];
+  if (d.addReviewLabel) {
+    if (!o.reviewLabel) throw bad("a draft asks for the review label, but this repository has none");
+    const found = spelled(o, o.reviewLabel);
+    if (!found) throw bad(`the review label "${o.reviewLabel}" does not exist in ${o.repo}; create it first`);
+    // Where the review label is the build label, the draft needs the person to say that a build may start.
+    if (o.buildLabel && same(o.reviewLabel, o.buildLabel) && !choice?.startBuilding) throw bad("the review label is also the build label: set startBuilding for this draft, or switch the review label off");
+    review = [found];
+  }
+  return [...labels, ...build, ...review].filter((l, i, all) => all.findIndex((x) => same(x, l)) === i);
 }

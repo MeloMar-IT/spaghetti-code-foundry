@@ -225,6 +225,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/drafts/:did/suggestions/:sid/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/reject": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, body: {}, user: 404, admin: 404 },
   "GET refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
@@ -296,6 +297,7 @@ describe("the table", () => {
     expect(findRule("DELETE", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
     expect(findRule("PUT", ["refinement", "a", "epic"])?.path).toBe("refinement/:id/epic");
     expect(findRule("GET", ["refinement", "a", "publish"])?.path).toBe("refinement/:id/publish");
+    expect(findRule("POST", ["refinement", "a", "publish"])?.path).toBe("refinement/:id/publish");
     expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
 

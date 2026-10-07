@@ -157,7 +157,7 @@ describe("the plan", () => {
     const b = await addDraft(id, { ...FULL, title: "Done already" }, false);
     await dependOn(id, a, b);
     await call(ann, "POST", url(id, `drafts/${a}/ready-check`));
-    edit((f) => (f.sessions[0].drafts.find((d: any) => d.id === b).published = 12));
+    edit((f) => (f.sessions[0].drafts.find((d: any) => d.id === b).published = { issue: 12, url: "https://github.com/acme/app/issues/12", at: new Date().toISOString() }));
     const p = (await plan(id)).json();
     expect(p.items[0]).toMatchObject({ draft: b, state: "on-github", issue: 12, labels: [] });
     expect(p.items[1]).toMatchObject({ draft: a, state: "ready", dependsOn: [{ issue: 12 }] });

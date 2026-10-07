@@ -12,7 +12,7 @@ import { END_NO_SPLIT_DRAFT, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
-import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
@@ -235,11 +235,24 @@ export interface Actor {
   admin: boolean;
 }
 
+/** Sessions that are being published right now (in this server process). A person's change of such a session is refused. */
+const publishing = new Set<string>();
+/** Marks the session as being published; false when it is marked already. */
+export function beginPublishing(id: string): boolean {
+  if (publishing.has(id)) return false;
+  publishing.add(id);
+  return true;
+}
+export function endPublishing(id: string): void {
+  publishing.delete(id);
+}
+export const isPublishing = (id: string): boolean => publishing.has(id);
+
 /**
  * Finds the session for an actor, changes it under the lock and writes the file. Expired sessions are removed on the way.
- * `fn` returns the changed session, or undefined when nothing changes.
+ * `fn` returns the changed session, or undefined when nothing changes. Only the publisher (`publisher`) may change a session that is being published.
  */
-function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean, fn: (s: Session, at: string) => Session | undefined): Session {
+function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean, fn: (s: Session, at: string) => Session | undefined, publisher = false): Session {
   return withAuthLock(() => {
     const now = clock(opts);
     const file = read();
@@ -247,6 +260,7 @@ function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean,
     const cur = kept.find((s) => s.id === id);
     if (!cur || (cur.owner !== actor.id && !actor.admin)) throw new RefinementError("not-found", "no such refinement session");
     if (cur.owner !== actor.id && !mayAdmin) throw new RefinementError("not-owner", "only the owner can change this session");
+    if (!publisher && publishing.has(id)) throw new RefinementError("busy", "this session is being published; try again in a moment");
     const next = fn(cur, now.toISOString());
     if (!next && kept.length === file.sessions.length) return copy(cur);
     save(next ? kept.map((s) => (s === cur ? next : s)) : kept);
@@ -256,6 +270,9 @@ function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean,
 
 /** The log lines a run that is not over still needs for its end: kept free from every other change of the session. */
 const reservedFor = (s: Session): number => (s.architect && s.architect.failed === undefined ? architectLogRoom(s.architect.kind) - 1 : 0);
+
+/** How many more log lines the session can take before the slot kept for dropping (and for a run that is not over). */
+export const logRoom = (s: Session): number => LOG_LIMIT - 1 - reservedFor(s) - s.log.length;
 
 const room = (s: Session, last: number, keep = true) => {
   if (s.log.length + 1 > last - (keep ? reservedFor(s) : 0)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
@@ -344,6 +361,7 @@ export const END_NO_QUESTION = "The question of the person could not be found";
 export const END_NO_DRAFT = "The story draft for the suggestion could not be found";
 export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
 export const END_NO_READY_DRAFT = "The story draft for the readiness check could not be found";
+export const END_ON_GITHUB = "The story draft is on GitHub already";
 export const END_READY_CHANGED = "The draft changed while the architect judged it; check readiness again";
 
 export interface ArchitectAsk {
@@ -422,6 +440,8 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
       return { ...s, architect: { ...a, failed }, updated: at, log: a.failed === undefined ? logged(s, at, "architect-failed", failed) : s.log };
     };
     if ("failed" in end) return fail(end.failed);
+    // A draft that is on GitHub is not changed by the end of a run.
+    if (a.draft && s.drafts.find((d) => d.id === a.draft)?.published) return fail(END_ON_GITHUB);
     const { architect: _gone, ...rest } = s;
     if ("brief" in end) {
       const tooLong = end.brief.text.length > BRIEF_MAX;
@@ -479,7 +499,7 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
         const c = setJudged({ drafts: s.drafts, epic: s.epic }, s.talk, a.draft, end.judged, end.refs, list ?? readyListOf(undefined));
         if (!c) return fail(END_NO_READY_DRAFT);
         if (c === "changed") return fail(END_READY_CHANGED);
-        const state = list ? sessionState(s.state, s.drafts.length > 0, c.drafts, list) : s.state;
+        const state = stateOf(s.state, s.drafts.length > 0, c.drafts, list);
         return { ...rest, drafts: c.drafts, state, updated: at, log: logged(s, at, "architect-judged", c.line?.detail) };
       } catch (e) {
         if (!(e instanceof RefinementError)) throw e;
@@ -562,7 +582,10 @@ export const removeEntry = (actor: Actor, id: string, entryId: string, opts: Tal
   change(actor, id, opts, false, (s, at) => {
     mustBeOpen(s, opts);
     const next = withTalk(s, remove(s.talk ?? emptyTalk(), entryId), at, actor.id);
-    return { ...next, drafts: untie(next.drafts, entryId) };
+    const drafts = untie(next.drafts, entryId);
+    const held = next.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
+    if (held?.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${held.published.issue} is tied to this entry; it cannot be removed here`);
+    return { ...next, drafts };
   });
 
 /**
@@ -586,9 +609,33 @@ export function recordAsked(id: string, runId: string, asked: { question: string
 
 // ---- the story drafts ------------------------------------------------------------------------------
 
-function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState, x: { talk: Talk | undefined; list: readonly ReadyItem[]; at: string }) => DraftChange | undefined): Session {
+/** What a change of the drafts must check first: the draft it is about, the Epic, a new draft. */
+interface DraftGuard {
+  draft?: string;
+  epic?: true;
+  add?: true;
+}
+
+const onGithub = (d: Draft): string => `a story draft that is on GitHub as issue #${d.published?.issue}`;
+
+/**
+ * The state of a session with these drafts: `published` when every draft is on GitHub; else as `sessionState`, which looks only at the
+ * drafts that are not on GitHub. Without a list (the repository is not there) only the first rule applies.
+ */
+function stateOf(cur: SessionState, hadDrafts: boolean, drafts: Draft[], list: readonly ReadyItem[] | undefined): SessionState {
+  if (drafts.length && drafts.every((d) => d.published)) return "published";
+  if (!list) return cur;
+  return sessionState(cur, hadDrafts, drafts.filter((d) => !d.published), list);
+}
+
+function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState, x: { talk: Talk | undefined; list: readonly ReadyItem[]; at: string }) => DraftChange | undefined, guard: DraftGuard = {}): Session {
   return change(actor, id, opts, false, (s, at) => {
     mustBeOpen(s, opts);
+    if (guard.add && s.state === "published") throw new RefinementError("bad-state", "every story draft of this session is on GitHub; start a new session for more");
+    const target = guard.draft === undefined ? undefined : s.drafts.find((d) => d.id === guard.draft);
+    if (target?.published) throw new RefinementError("bad-state", `${onGithub(target)}; it cannot be changed here`);
+    const lock = guard.epic ? s.drafts.find((d) => d.published) : undefined;
+    if (lock) throw new RefinementError("bad-state", `${onGithub(lock)}; the Epic cannot be changed any more`);
     const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
     const before = { drafts: s.drafts, epic: s.epic };
     const c = fn(before, { talk: s.talk, list, at });
@@ -597,33 +644,67 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     const { epic: _epic, ...rest } = s;
     // A draft whose text changed has no check any more; the state follows the drafts (first draft, none left, all ready).
     const drafts = clearChanged(before, c);
-    const state = sessionState(s.state, s.drafts.length > 0, drafts, list);
+    // A draft that is on GitHub stays as it is, also when the change reaches it through another draft.
+    const held = s.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
+    if (held) throw new RefinementError("bad-state", `${onGithub(held)} would change by this; it cannot be done here`);
+    const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
     const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
     return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
 
-export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft);
-export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input));
-export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId));
+export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft, { add: true });
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input), { draft: draftId });
+export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
 export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input));
+  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input), { draft: draftId });
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input));
+  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input), { draft: draftId });
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
-export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input), { draft: draftId });
 export const setReviewLabelOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input));
-export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));
+  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input), { draft: draftId });
+export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input), { epic: true });
 
 // ---- the Definition of Ready -----------------------------------------------------------------------
 
 /** The person checks a draft against the Definition of Ready of the repository, by code: only `readiness` of the draft changes. */
-export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at));
+export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at), { draft: draftId });
 /** The person accepts an item of the list anyway, with a reason. */
 export const acceptAnywayOf = (actor: Actor, id: string, draftId: string, itemId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at));
-export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list));
+  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at), { draft: draftId });
+export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list), { draft: draftId });
+
+// ---- publishing ------------------------------------------------------------------------------------
+
+/**
+ * A story draft became a GitHub issue: remembers it, with the state and the log line, in one write. Runs while the session is marked as
+ * being published. It does not ask whether the repository is still there: the issue exists. Undefined (nothing written) when the draft has
+ * this issue already; `limit` (nothing written) when the log has no room for the line.
+ */
+export function recordPublished(actor: Actor, id: string, draftId: string, issue: { issue: number; url: string }, opts: TalkOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s, at) => {
+      if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
+      const d = s.drafts.find((x) => x.id === draftId);
+      if (!d) throw new RefinementError("not-found", "no such story draft");
+      if (d.published) {
+        if (d.published.issue === issue.issue) return undefined;
+        throw new RefinementError("bad-state", `${onGithub(d)} already; it is not recorded as #${issue.issue}`);
+      }
+      room(s, LOG_LIMIT - 1);
+      const drafts = s.drafts.map((x) => (x === d ? { ...x, published: { issue: issue.issue, url: issue.url, at } } : x));
+      const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+      const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
+      return { ...s, drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+    },
+    true,
+  );
+}
 
 /**
  * A read: the stored drafting/ready state is made right for the list as it is now (an admin may have changed the list). Writes
@@ -635,7 +716,7 @@ export function correctReadyState(id: string, opts: TalkOptions = {}): Session |
     if (s.state !== "drafting" && s.state !== "ready") return undefined;
     const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
     if (!list) return undefined;
-    const state = sessionState(s.state, s.drafts.length > 0, s.drafts, list);
+    const state = stateOf(s.state, s.drafts.length > 0, s.drafts, list);
     return state === s.state ? undefined : state;
   };
   const seen = getSession(id, opts);

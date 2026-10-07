@@ -65,6 +65,7 @@ export const DRAFT_LOG_KINDS = [
   "architect-judged",
   "ready-accepted",
   "ready-unaccepted",
+  "draft-published",
 ] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
 export const isDraftKind = (what: string): boolean => (DRAFT_LOG_KINDS as readonly string[]).includes(what);
@@ -88,6 +89,9 @@ const field = (max: number, oneLine = false) => z.object({ text: text(max, oneLi
 /** `tie`: the id of the rule or example of the map that a criterion comes from. */
 const CriterionSchema = z.object({ id: z.uuid(), text: text(CRITERION_MAX), from: z.enum(SOURCES), tie: z.uuid().optional() }).strict();
 const IssueNumber = z.number().int().min(1);
+/** The link of a GitHub issue: https://github.com/<owner>/<name>/issues/<n>. */
+export const ISSUE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*$/;
+const PublishedSchema = z.object({ issue: IssueNumber.max(Number.MAX_SAFE_INTEGER), url: z.string().max(300).regex(ISSUE_URL), at: z.iso.datetime() }).strict();
 const DependsSchema = z
   .object({ id: z.uuid(), issue: IssueNumber.optional(), draft: z.uuid().optional(), from: z.enum(SOURCES) })
   .strict()
@@ -169,8 +173,8 @@ const DraftSchema = z
     addReviewLabel: z.literal(true).optional(),
     readiness: ReadinessSchema.optional(),
     acceptedAnyway: AcceptedSchema.optional(),
-    /** The number of the GitHub issue this draft became. Written by publishing (part 8b); the publish plan only reads it. */
-    published: IssueNumber.optional(),
+    /** The GitHub issue this draft became. Written by publishing only; a draft that has it is not changed any more. */
+    published: PublishedSchema.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
@@ -213,6 +217,7 @@ export const DraftsSchema = z
   });
 export const EpicSchema = IssueNumber.max(Number.MAX_SAFE_INTEGER);
 
+export type Published = z.infer<typeof PublishedSchema>;
 export type Draft = z.infer<typeof DraftSchema>;
 export type Field = z.infer<ReturnType<typeof field>>;
 export type Criterion = z.infer<typeof CriterionSchema>;
