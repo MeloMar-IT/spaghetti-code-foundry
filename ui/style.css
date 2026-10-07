@@ -439,6 +439,13 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .drafts .impact { display: grid; gap: 6px; justify-items: start; }
 .drafts .impact:empty { display: none; }
 .drafts .impact .pill, .drafts .impact li > small { margin: 0 6px; }
+.drafts .ready { display: grid; gap: 6px; justify-items: start; }
+.drafts .ready:empty { display: none; }
+.drafts .ready ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.drafts .ready .pill, .drafts .ready li > small { margin: 0 6px; }
+.drafts .ready li > button { margin-left: 6px; }
+.pill.ready-met, .pill.state-ready { background: var(--ok-soft); color: var(--ok); }
+.pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
 .drafts .remark { font-size: 12.5px; color: var(--muted); }
 .drafts .remark > small { margin-left: 6px; }
 .drafts li.entry { flex-wrap: wrap; }

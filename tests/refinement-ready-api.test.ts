@@ -170,3 +170,27 @@ describe("the ready state", () => {
 });
 
 const whats = (s: any) => s.log.map((l: any) => l.what);
+
+describe("the list in the session view", () => {
+  it("is the default list, and the new list after the admin changed it", async () => {
+    const { id } = await withDraft();
+    const list = (await get(id)).readyList;
+    expect(list.map((i: any) => i.id)).toEqual(["value", "standalone", "checkable", "small", "no-open-questions", "out-of-scope", "no-plan"]);
+    expect(list.find((i: any) => i.id === "no-plan").rule).toBe("no-plan");
+    setRepoReady(annRepo().id, { items: LIST2 });
+    expect((await get(id)).readyList.map((i: any) => i.id)).toEqual(["out-of-scope", "no-open-questions"]);
+  });
+
+  it("is left out while the repository is gone, with drafts hidden or with no drafts", async () => {
+    const { id } = await withDraft();
+    const empty = (await call(ann, "POST", "/api/refinement", { repo: "acme/app", idea: "Another idea" })).json().id as string;
+    removeRepo(ann.user.id, annRepo().id);
+    const hidden = await get(id);
+    expect(hidden.draftsHidden).toBe(true);
+    expect(hidden).not.toHaveProperty("readyList");
+    const none = await get(empty);
+    expect(none.repoAvailable).toBe(false);
+    expect(none.draftsHidden).toBeUndefined();
+    expect(none).not.toHaveProperty("readyList");
+  });
+});
