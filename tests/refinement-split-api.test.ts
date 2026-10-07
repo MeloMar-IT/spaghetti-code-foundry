@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
-import { END_NO_SPLIT_DRAFT } from "../src/refinement/draft-split.js";
+import { END_NO_SPLIT_DRAFT, SPLIT_READ_ONLY } from "../src/refinement/draft-split.js";
 import { END_BAD_FORM, refinementsPath } from "../src/refinement/store.js";
 import { OWN_WAY_HEADING } from "../src/refinement/split-text.js";
 import { TALK_FIRST_LINE } from "../src/refinement/talk-text.js";
@@ -380,6 +380,69 @@ describe("confirming a split", () => {
     const r = await call(ann, "PUT", url(id, `drafts/${s.drafts[1].id}`), { dependsOn: [{ draft: s.drafts[2].id }] });
     expect(r.status).toBe(400);
     expect(r.error()).toBe("a part cannot depend on a later part");
+  });
+
+  it("answers 409 for every change of the original and writes nothing", async () => {
+    const { id, did } = await withDraft();
+    await confirm(id, did, await plan(id));
+    const before = readFileSync(refinementsPath(), "utf8");
+    const sid = "22222222-2222-4222-8222-222222222222";
+    const calls: [string, string, unknown?][] = [
+      ["PUT", `drafts/${did}`, { title: "X" }],
+      ["POST", `drafts/${did}/suggestions/${sid}/accept`, {}],
+      ["POST", `drafts/${did}/suggestions/${sid}/reject`, {}],
+      ["POST", `drafts/${did}/move-to-notes`, { field: "what" }],
+      ["PUT", `drafts/${did}/review-label`, {}],
+      ["POST", `drafts/${did}/ready-check`],
+      ["POST", `drafts/${did}/ready/value/accept`, { reason: "r" }],
+      ["DELETE", `drafts/${did}/ready/value/accept`],
+      ["POST", `drafts/${did}/suggest`, { field: "who" }],
+      ["POST", `drafts/${did}/review`],
+      ["POST", `drafts/${did}/impact`],
+    ];
+    for (const [method, path, body] of calls) {
+      const r = await call(ann, method, url(id, path), body);
+      expect([method, path, r.status, r.error()]).toEqual([method, path, 409, SPLIT_READ_ONLY]);
+    }
+    expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+    expect((await get(id)).architect.state).toBe("idle");
+  });
+
+  for (const [name, path, body] of [
+    ["review", "review", undefined],
+    ["impact", "impact", undefined],
+    ["suggest", "suggest", { field: "who" }],
+  ] as const) {
+    it(`ends a paused ${name} run whose draft was split, and does not block the next ask`, async () => {
+      const { id, did } = await withDraft({ title: "CLAUDE_LIMIT please", who: "an admin", what: "to export a report", why: "to share it", outOfScope: "Printing", criteria: TWO });
+      const first = await call(ann, "POST", url(id, `drafts/${did}/${path}`), body);
+      expect(first.status).toBe(202);
+      const runId = first.json().architect.runId;
+      await until(id, (s) => s.architect.state === "paused");
+      expect((await confirm(id, did, await plan(id))).status).toBe(201);
+      const again = await call(ann, "POST", url(id, `drafts/${did}/${path}`), body);
+      expect(again.status).toBe(409);
+      expect(again.error()).toBe(SPLIT_READ_ONLY);
+      expect((await get(id)).architect).toMatchObject({ state: "failed", reason: "The draft was split while the run was paused" });
+      expect(runJson(runId).status).toBe("cancelled");
+      expect(runJson(runId).resumes ?? 0).toBe(0);
+      expect((await call(ann, "POST", url(id, "architect"))).status).toBe(202);
+      await idle(id);
+    });
+  }
+
+  it("lets a part take a suggestion, a review and a readiness check", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    const part = s.drafts[1].id;
+    expect((await call(ann, "POST", url(id, `drafts/${part}/suggest`), { field: "who" })).status).toBe(202);
+    await idle(id);
+    expect((await call(ann, "POST", url(id, `drafts/${part}/review`))).status).toBe(202);
+    await idle(id);
+    const r = await call(ann, "POST", url(id, `drafts/${part}/ready-check`));
+    expect([200, 202]).toContain(r.status);
+    await until(id, (x) => x.architect.state === "idle" || x.architect.state === "failed");
+    expect((await draftOf(id, 1)).readiness).toBeDefined();
   });
 
   it("fails a split run that is still running when the plan is confirmed", async () => {

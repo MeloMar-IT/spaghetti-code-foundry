@@ -12,7 +12,7 @@ import type { Scheduler } from "../queue/scheduler.js";
 import { refinementSessionOf, userError } from "../server/user-view.js";
 import { SUGGESTIONS_MAX, SUGGEST_FIELDS, type SuggestField } from "./draft.js";
 import { END_NO_IMPACT_DRAFT } from "./draft-impact.js";
-import { END_NO_SPLIT_DRAFT, ownWay, splitRefusal } from "./draft-split.js";
+import { END_NO_SPLIT_DRAFT, END_SPLIT_PAUSED, SPLIT_READ_ONLY, ownWay, splitRefusal } from "./draft-split.js";
 import { readyMark, unsureByCode } from "./draft-ready.js";
 import { impactOf, impactText } from "./impact-text.js";
 import { knownAreas } from "./known-areas.js";
@@ -426,9 +426,10 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
         const now = d ? unsureByCode(d).map((i) => JSON.stringify([i.id, i.text])) : [];
         return !d || !refs || refs.mark !== readyMark(d, s!.talk, s!.drafts) || JSON.stringify(refs.items.map((i) => JSON.stringify(i))) !== JSON.stringify(now);
       };
-      // A paused split is resumed only while its draft can still be split.
-      if (kind === "split") {
-        const why = splitRefusal(s.drafts.find((x) => x.id === cur.draft) ?? { criteria: [] });
+      // A paused run for a draft is resumed only while the draft can still take its result: ways only while it can be split, the others only while it is not split.
+      if (kind === "split" || kind === "suggest" || kind === "review" || kind === "impact" || kind === "ready") {
+        const d = s.drafts.find((x) => x.id === cur.draft);
+        const why = kind === "split" ? splitRefusal(d ?? { criteria: [] }) : d?.splitInto ? SPLIT_READ_ONLY : undefined;
         if (why) {
           // The paused run could never be stored: it is cancelled, so it does not block the account for good.
           try {
@@ -436,7 +437,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
           } catch {
             deps.log?.("refinement: the paused run could not be saved as cancelled");
           }
-          endArchitectRun(s.id, cur.runId, { failed: "The draft could not be split any more while the run was paused" });
+          endArchitectRun(s.id, cur.runId, { failed: kind === "split" ? "The draft could not be split any more while the run was paused" : END_SPLIT_PAUSED });
           throw new RefinementError("bad-state", why);
         }
       }
@@ -472,6 +473,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   }
   const draft = kind === "suggest" || kind === "review" || kind === "impact" || kind === "ready" || kind === "split" ? s.drafts.find((d) => d.id === ask.draft) : undefined;
   if (draft?.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${draft.published.issue}; it cannot be changed here`);
+  if (draft?.splitInto && kind !== "split") throw new RefinementError("bad-state", SPLIT_READ_ONLY);
   let unsure: { id: string; text: string }[] = [];
   if (kind === "ready") {
     if (!s.brief) throw new RefinementError("bad-state", "ask the architect to look at the code first");
