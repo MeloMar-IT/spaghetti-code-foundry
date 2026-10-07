@@ -41,6 +41,7 @@ import {
   createSession,
   dropSession,
   getSession,
+  isPublishing,
   listSessions,
   purgeDropped,
   renameSession,
@@ -101,6 +102,7 @@ function mapped(ctx: ApiContext, e: unknown): HttpError {
 }
 
 const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog });
+export { deps as architectDeps };
 
 /** The GitHub repositories of an account, as the names a new session takes. */
 function githubNames(userId: string): string[] {
@@ -275,6 +277,8 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return send(res, 200, guarded(ctx, () => {
       // Cancel first: if the process stops after this, a retry of the drop still works and the read is already gone.
       const id = find(seg[1]!).id;
+      // A session that is being published is not dropped: refused before the run is cancelled, so a paused run stays paused.
+      if (isPublishing(id)) throw new RefinementError("busy", "this session is being published; try again in a moment");
       const runId = getSession(id)?.architect?.runId;
       if (stopArchitect(deps(ctx), id) && runId) auditAction(ctx.diagLog, user.id, "run-cancel", runId);
       dropSession(actor, id);

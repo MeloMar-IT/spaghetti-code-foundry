@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { preview, type Draft } from "../src/refinement/draft.js";
 import { isReady, notReadyReason } from "../src/refinement/draft-ready.js";
-import { issueText, planOf, publishOrder, type PlanInput } from "../src/refinement/publish.js";
+import { RefinementError } from "../src/refinement/errors.js";
+import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
 import type { ReadyItem } from "../src/refinement/ready-list.js";
 
 const LIST: ReadyItem[] = [{ id: "out-of-scope", text: "it says what is out of scope" }];
@@ -172,5 +173,110 @@ describe("issueText", () => {
     });
     d.readiness!.items.push({ id: "z", text: "z", result: "unsure", reason: "MARK-ARCHITECT", by: "architect", field: "what", about: "MARK-ABOUT" });
     expect(plan([d]).items[0]!.body).not.toMatch(/MARK-/);
+  });
+});
+
+const S = uid(900);
+const rules = (over: Partial<LabelRules> = {}): LabelRules => ({ repo: "acme/app", repoLabels: ["bug", "Factory_go", "Factory_review_plan", "Area:API"], buildLabel: "Factory_go", reviewLabel: "Factory_review_plan", ...over });
+const code = (fn: () => unknown) => {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof RefinementError ? e.code : e;
+  }
+  return undefined;
+};
+
+describe("the hidden marker", () => {
+  it("is read back from the last line only, and blank lines after it are fine", () => {
+    const m = refinedMarker(S, uid(1));
+    expect(refinedHashIn(`Text\n\n${m}`)).toBe(refinedHash(S, uid(1)));
+    expect(refinedHashIn(`Text\n\n  ${m}  \n\n\n`)).toBe(refinedHash(S, uid(1)));
+    expect(refinedHashIn(`${m}\nmore text`)).toBeUndefined();
+    expect(refinedHashIn(`before ${m}`)).toBeUndefined();
+    expect(refinedHashIn(`> ${m}`)).toBeUndefined();
+    expect(refinedHashIn(undefined)).toBeUndefined();
+    expect(refinedHashIn("")).toBeUndefined();
+    expect(refinedHash(S, uid(1))).not.toBe(refinedHash(S, uid(2)));
+    expect(m).not.toContain(S);
+  });
+
+  it("finds the issue of a draft: the lowest number, a safe number only", () => {
+    const m = refinedMarker(S, uid(1));
+    const list = [{ number: 30, body: m }, { number: 9, body: `x\n${m}` }, { number: 5, body: "no" }, { number: 0, body: m }, { number: 4, body: refinedMarker(S, uid(2)) }];
+    expect(issueWithMarker(list, S, uid(1))?.number).toBe(9);
+    expect(issueWithMarker(list, S, uid(3))).toBeUndefined();
+  });
+});
+
+describe("issueUrl", () => {
+  it("keeps the link of this repository and number, also in another case", () => {
+    expect(issueUrl("acme/app", 7, "https://github.com/acme/app/issues/7")).toBe("https://github.com/acme/app/issues/7");
+    expect(issueUrl("acme/app", 7, "https://github.com/Acme/App/issues/7")).toBe("https://github.com/Acme/App/issues/7");
+  });
+  it("builds the link from the repository and number for anything else", () => {
+    for (const bad of ["https://github.com/other/thing/issues/7", "https://github.com/acme/app/issues/8", "javascript:alert(1)", 7, undefined]) {
+      expect(issueUrl("acme/app", 7, bad)).toBe("https://github.com/acme/app/issues/7");
+    }
+  });
+});
+
+describe("parsePublishInput", () => {
+  const drafts = [mk(1), mk(2)];
+  it("gives no choices for a missing drafts, and fills the defaults", () => {
+    expect(parsePublishInput({}, drafts).size).toBe(0);
+    expect([...parsePublishInput({ drafts: [{ draft: uid(1) }] }, drafts)]).toEqual([[uid(1), { labels: [], startBuilding: false }]]);
+  });
+  it("trims labels and collapses duplicates of any case to the first", () => {
+    const c = parsePublishInput({ drafts: [{ draft: uid(1), labels: [" bug ", "BUG", "Area:API"], startBuilding: true }] }, drafts);
+    expect(c.get(uid(1))).toEqual({ labels: ["bug", "Area:API"], startBuilding: true });
+  });
+  it("refuses what is not allowed", () => {
+    const bad = (input: unknown) => code(() => parsePublishInput(input, drafts));
+    for (const input of [null, [], "x", { drafts: {} }, { drafts: [1] }, { drafts: [{}] }, { drafts: [{ draft: uid(9) }] }, { drafts: [{ draft: uid(1) }, { draft: uid(1) }] }]) expect(bad(input)).toBe("bad-draft");
+    for (const labels of ["x", [1], [""], ["  "], ["a".repeat(51)], ["a\nb"], Array.from({ length: 21 }, (_, i) => `l${i}`)]) {
+      expect(bad({ drafts: [{ draft: uid(1), labels }] })).toBe("bad-draft");
+    }
+    expect(bad({ drafts: [{ draft: uid(1), startBuilding: "yes" }] })).toBe("bad-draft");
+    expect(bad({ drafts: [{ draft: uid(1), labels: Array.from({ length: 20 }, (_, i) => `l${i}`) }] })).toBeUndefined();
+  });
+});
+
+describe("chosenLabels", () => {
+  const choice = (labels: string[] = [], startBuilding = false) => ({ labels, startBuilding });
+  it("gives the labels in the spelling of the repository, and needs no draft", () => {
+    expect(chosenLabels(undefined, rules())).toEqual([]);
+    expect(chosenLabels(choice(["area:api", "BUG"]), rules())).toEqual(["Area:API", "bug"]);
+  });
+  it("refuses a label the repository does not have", () => {
+    expect(code(() => chosenLabels(choice(["nope"]), rules()))).toBe("bad-draft");
+  });
+  it("refuses the build label and the review label as a chosen label", () => {
+    expect(code(() => chosenLabels(choice(["factory_go"]), rules()))).toBe("bad-draft");
+    expect(code(() => chosenLabels(choice(["Factory_review_plan"]), rules()))).toBe("bad-draft");
+  });
+  it("refuses startBuilding with no build label, or with one the repository does not have", () => {
+    expect(code(() => chosenLabels(choice([], true), rules({ buildLabel: undefined })))).toBe("bad-draft");
+    expect(code(() => chosenLabels(choice([], true), rules({ repoLabels: ["bug"] })))).toBe("bad-draft");
+    expect(chosenLabels(choice([], true), rules())).toEqual([]);
+  });
+});
+
+describe("labelsFor", () => {
+  const choice = (labels: string[] = [], startBuilding = false) => ({ labels, startBuilding });
+  it("adds the build label only with startBuilding, and the review label only for a draft that asks", () => {
+    expect(labelsFor(choice(["bug"]), mk(1), rules())).toEqual(["bug"]);
+    expect(labelsFor(choice(["bug"], true), mk(1), rules())).toEqual(["bug", "Factory_go"]);
+    expect(labelsFor(choice(), mk(1, { addReviewLabel: true }), rules())).toEqual(["Factory_review_plan"]);
+    expect(labelsFor(undefined, mk(1), rules())).toEqual([]);
+  });
+  it("refuses the review label when there is none or the repository does not have it", () => {
+    expect(code(() => labelsFor(choice(), mk(1, { addReviewLabel: true }), rules({ reviewLabel: undefined })))).toBe("bad-draft");
+    expect(code(() => labelsFor(choice(), mk(1, { addReviewLabel: true }), rules({ repoLabels: ["bug"] })))).toBe("bad-draft");
+  });
+  it("needs startBuilding when the review label is the build label, and sends the label once", () => {
+    const same = rules({ reviewLabel: "factory_go" });
+    expect(code(() => labelsFor(choice(), mk(1, { addReviewLabel: true }), same))).toBe("bad-draft");
+    expect(labelsFor(choice([], true), mk(1, { addReviewLabel: true }), same)).toEqual(["Factory_go"]);
   });
 });

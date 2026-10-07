@@ -132,6 +132,7 @@ export const RULES: Rule[] = [
   r("DELETE", "refinement/:id/drafts/:did", "yes", "remove a story draft from your refinement session"),
   r("POST", "refinement/:id/drafts/:did/suggest", "yes", "ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time)"),
   r("POST", "refinement/:id/drafts/:did/review", "yes", "ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes"),
+  r("POST", "refinement/:id/publish", "yes", "publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again (an admin who is not the owner: 403)"),
   r("PUT", "refinement/:id/drafts/:did/review-label", "yes", "choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub"),
   r("POST", "refinement/:id/drafts/:did/split", "yes", "ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes"),
   r("POST", "refinement/:id/drafts/:did/impact","yes", "ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes"),

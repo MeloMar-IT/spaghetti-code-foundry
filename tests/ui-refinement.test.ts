@@ -300,6 +300,8 @@ describe("the session page", () => {
   });
   it("writes the log lines of the drafts", () => {
     expect(ui.logText({ what: "draft-added", who: "Ann" })).toBe("Ann added a story draft");
+    expect(ui.logText({ what: "draft-published", who: "Ann" })).toBe("Ann published a story draft");
+    expect(ui.logText({ what: "draft-published", who: "Ann", detail: "#101 Export" })).toBe("Ann published a story draft: #101 Export");
     expect(ui.logText({ what: "draft-removed", who: "Ann" })).toBe("Ann removed a story draft");
     expect(ui.logText({ what: "draft-removed", who: "Ann", detail: "Export" })).toBe('Ann removed a story draft: "Export"');
     expect(ui.logText({ what: "epic-set", who: "Ann", detail: "#73" })).toBe("Ann set the Epic to #73");

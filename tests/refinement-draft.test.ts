@@ -5,7 +5,24 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { dependencies } from "../src/queue/deps.js";
 import { preview } from "../src/refinement/draft.js";
 import {
+  END_ON_GITHUB,
+  LOG_LIMIT,
   RefinementError,
+  beginPublishing,
+  checkReadyOf,
+  acceptAnywayOf,
+  acceptSuggestionOf,
+  endPublishing,
+  isPublishing,
+  moveToNotesOf,
+  recordPublished,
+  rejectSuggestionOf,
+  removeAcceptedOf,
+  removeEntry,
+  renameSession,
+  setReviewLabelOf,
+  type ArchitectAsk,
+  type ArchitectEnd,
   addDraft,
   checkRefinements,
   acceptProposal,
@@ -519,6 +536,178 @@ describe("the preview", () => {
     const b = add(id);
     save(id, a, { dependsOn: [{ draft: b }] });
     expect(preview(draft(id, a), getSession(id)!).body).toContain("- … (draft)");
+  });
+});
+
+describe("publishing", () => {
+  const PUB = { issue: 7, url: "https://github.com/acme/app/issues/7", at: "2026-10-07T10:00:00.000Z" };
+  const mark = (id: string, did: string, published: unknown = PUB) =>
+    edit((f) => (f.sessions.find((x: any) => x.id === id).drafts.find((d: any) => d.id === did).published = published));
+  const record = (id: string, did: string, n = 7) => recordPublished(ann, id, did, { issue: n, url: `https://github.com/acme/app/issues/${n}` }, T);
+  const ready = (id: string, did: string) => {
+    save(id, did, { title: "Export" });
+    edit((f) => (f.sessions.find((x: any) => x.id === id).drafts.find((d: any) => d.id === did).readiness = { at: PUB.at, items: [] }));
+  };
+
+  describe("recordPublished", () => {
+    it("sets the fields, the state and the log line in one write", () => {
+      const id = make();
+      const d = add(id);
+      save(id, d, { title: "Export" });
+      const s = record(id, d);
+      expect(s.drafts[0]!.published).toMatchObject({ issue: 7, url: "https://github.com/acme/app/issues/7" });
+      expect(s.state).toBe("published");
+      expect(s.log.at(-1)).toMatchObject({ what: "draft-published", by: ANN, detail: "#7 Export" });
+      ok();
+    });
+
+    it("writes nothing for the same number, and refuses another number", () => {
+      const id = make();
+      const d = add(id);
+      record(id, d);
+      const before = file();
+      record(id, d);
+      expect(file()).toBe(before);
+      expect(code(() => record(id, d, 8))).toBe("bad-state");
+      expect(msg(() => record(id, d, 8))).toContain("#7");
+      expect(file()).toBe(before);
+    });
+
+    it("refuses a gone draft and a dropped session", () => {
+      const id = make();
+      const d = add(id);
+      unchanged(() => recordPublished(ann, id, U, { issue: 1, url: "https://github.com/a/b/issues/1" }, T), "not-found");
+      dropSession(ann, id);
+      unchanged(() => record(id, d), "bad-state");
+    });
+
+    it("writes nothing when the log has no room", () => {
+      const id = make();
+      const d = add(id);
+      padLog(id, LOG_LIMIT - 1);
+      unchanged(() => record(id, d), "limit");
+      expect(draft(id, d).published).toBeUndefined();
+    });
+
+    it("makes the session published only when every draft has an issue", () => {
+      const id = make();
+      const a = add(id);
+      const b = add(id);
+      expect(record(id, a).state).toBe("drafting");
+      expect(record(id, b, 8).state).toBe("published");
+    });
+
+    it("does not ask whether the repository is still there", () => {
+      const id = make();
+      const d = add(id);
+      expect(recordPublished(ann, id, d, { issue: 7, url: PUB.url }, { repoOk: () => false, readyList: () => undefined }).drafts[0]!.published?.issue).toBe(7);
+    });
+  });
+
+  describe("the mark", () => {
+    it("is taken once, refuses a person's change, lets recordPublished through, and ends", () => {
+      const id = make();
+      const d = add(id);
+      expect(beginPublishing(id)).toBe(true);
+      expect(beginPublishing(id)).toBe(false);
+      expect(isPublishing(id)).toBe(true);
+      unchanged(() => save(id, d, { title: "x" }), "busy");
+      unchanged(() => renameSession(ann, id, "New"), "busy");
+      unchanged(() => dropSession(ann, id), "busy");
+      expect(record(id, d).drafts[0]!.published?.issue).toBe(7);
+      endPublishing(id);
+      expect(isPublishing(id)).toBe(false);
+      expect(renameSession(ann, id, "New").title).toBe("New");
+    });
+  });
+
+  describe("a draft that is on GitHub", () => {
+    it("refuses every change of it, naming the issue, and a new draft once the session is published", () => {
+      const id = make();
+      const d = add(id);
+      record(id, d);
+      const before = file();
+      for (const fn of [
+        () => save(id, d, { title: "x" }),
+        () => removeDraft(ann, id, d, T),
+        () => checkReadyOf(ann, id, d, T),
+        () => setReviewLabelOf(ann, id, d, { add: true }, T),
+        () => moveToNotesOf(ann, id, d, {}, T),
+        () => acceptAnywayOf(ann, id, d, "value", { reason: "r" }, T),
+        () => removeAcceptedOf(ann, id, d, "value", T),
+        () => acceptSuggestionOf(ann, id, d, U, {}, T),
+        () => rejectSuggestionOf(ann, id, d, U, {}, T),
+        () => setEpic(ann, id, { issue: 3 }, T),
+        () => addDraft(ann, id, T),
+      ]) {
+        expect(code(fn)).toBe("bad-state");
+      }
+      expect(msg(() => save(id, d, { title: "x" }))).toContain("#7");
+      expect(file()).toBe(before);
+    });
+
+    it("keeps its check when the open questions change, and clears the other draft's", () => {
+      const id = make();
+      const a = add(id);
+      const b = add(id);
+      ready(id, a);
+      ready(id, b);
+      mark(id, a);
+      recordRound(id, "run-1", { questions: [], proposals: [{ list: "open", text: "Who exports?" }], done: "Done." });
+      acceptProposal(ann, id, getSession(id)!.talk!.proposals[0]!.id, T);
+      expect(draft(id, a).readiness).toBeDefined();
+      expect(draft(id, b).readiness).toBeUndefined();
+    });
+
+    it("cannot lose its tie by removing the map entry, nor be reached through a removed draft", () => {
+      const id = make();
+      const a = add(id);
+      const b = add(id);
+      recordRound(id, "run-1", { questions: [], proposals: [{ list: "rule", text: "Only admins export." }], done: "Done." });
+      acceptProposal(ann, id, getSession(id)!.talk!.proposals[0]!.id, T);
+      const rule = getSession(id)!.talk!.map.rules[0]!.id;
+      edit((f) => {
+        const s = f.sessions.find((x: any) => x.id === id);
+        s.drafts[0].criteria = [{ id: uuid(1), text: "c", from: "typed", tie: rule }];
+        s.drafts[0].published = PUB;
+        s.drafts[0].suggestions = [{ id: uuid(2), field: "dependsOn", draft: b }];
+      });
+      unchanged(() => removeEntry(ann, id, rule, T), "bad-state");
+      expect(msg(() => removeEntry(ann, id, rule, T))).toContain("is tied to this entry");
+      unchanged(() => removeDraft(ann, id, b, T), "bad-state");
+      expect(draft(id, a).criteria[0]!.tie).toBe(rule);
+    });
+
+    it("keeps the end of a run out: marked failed, the draft unchanged", () => {
+      const ends: [ArchitectAsk, ArchitectEnd][] = [
+        [{ kind: "suggest", field: "what" }, { suggested: { field: "what", suggestions: [{ text: "x" }] } }],
+        [{ kind: "review" }, { reviewed: { remarks: [] } }],
+        [{ kind: "impact" }, { impact: {} }],
+        [{ kind: "split" }, { split: {} }],
+        [{ kind: "ready" }, { judged: { items: [] } }],
+      ];
+      for (const [ask, end] of ends) {
+        const id = make();
+        const d = add(id);
+        setArchitectRun(ann, id, "run-1", { ...ask, draft: d }, T);
+        mark(id, d);
+        const before = JSON.stringify(draft(id, d));
+        const s = endArchitectRun(id, "run-1", end, T)!;
+        expect(s.architect?.failed).toBe(END_ON_GITHUB);
+        expect(JSON.stringify(draft(id, d))).toBe(before);
+      }
+    });
+
+    it("loads from a file, and a file without it loads too", () => {
+      const id = make();
+      const d = add(id);
+      mark(id, d);
+      expect(draft(id, d).published?.issue).toBe(7);
+      edit((f) => delete f.sessions[0].drafts[0].published);
+      ok();
+      mark(id, d, 7);
+      expect(() => checkRefinements()).toThrow();
+    });
   });
 });
 
