@@ -2365,8 +2365,10 @@ themselves still pause runs; they continue by themselves when the limit resets.
 Spend today and over 30 days, success rate, **Needs a human** (the number of runs whose next
 move is yours — the same as **Needs you** on the Runs page), the **Waiting** card (every
 labelled issue that isn't being worked on: who has the next move, what to do, why, and a link;
-lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository,
+lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first, plus today's runs, runs active now and today's cost; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository (with today's runs and cost),
 the steps where runs fail most, and eval results.
+
+**By user and limits.** Where an account has limits (fair use), the card shows them next to the numbers, for example `2 / 5` for runs today against the limit. An account that has reached a limit (runs at the same time, runs per day, or cost per day) gets an **at limit** mark. Accounts that have limits or a run active now are listed even without runs in the last 30 days. A deleted account ("deleted user") has no limits and no mark. "Today" is the server's local day. Only admins get these numbers.
 
 **Your turn in numbers** shows how long items waited for you (last 30 days) and whether anything waited for you without being on Your turn:
 
