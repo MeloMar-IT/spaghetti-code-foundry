@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
 import { dropDraft } from "../src/refinement/draft.js";
 import { draftMark } from "../src/refinement/draft-impact.js";
-import { confirmSplit } from "../src/refinement/draft-parts.js";
+import { confirmSplit, moveCriterion, partWarnings } from "../src/refinement/draft-parts.js";
 import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, SPLIT_READ_ONLY, confirmRefusal, ownWay, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
 import { OWN_WAY_HEADING, splitOf, splitText } from "../src/refinement/split-text.js";
 import {
@@ -17,6 +17,7 @@ import {
   checkRefinements,
   confirmSplitOf,
   createSession,
+  moveCriterionOf,
   endArchitectRun,
   getSession,
   refinementsPath,
@@ -565,6 +566,191 @@ describe("loading splits", () => {
     });
     expect(() => checkRefinements()).not.toThrow();
     expect(getSession(id)).toEqual(before);
+  });
+});
+
+const move = (id: string, did: string, cid: string, body: unknown) => moveCriterionOf(ann, id, did, cid, body, T);
+const confirmed = (over: Record<string, unknown> = {}) => {
+  const { id, did } = setup();
+  split(id, did);
+  const s = confirm(id, did, planOf(id, did, over));
+  return { id, did, p1: s.drafts[1]!.id, p2: s.drafts[2]!.id };
+};
+
+describe("moving a criterion", () => {
+  it("moves the same object to the end of another part and logs it", () => {
+    const { id, p1, p2 } = confirmed();
+    const c = draft(id, p1).criteria[0]!;
+    const s = move(id, p1, c.id, { to: p2 });
+    expect(s.drafts.find((d) => d.id === p1)!.criteria).toHaveLength(1);
+    expect(draft(id, p2).criteria.at(-1)).toEqual(c);
+    expect(s.log.at(-1)).toMatchObject({ what: "criterion-moved", detail: c.text });
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("keeps the tie of a criterion", () => {
+    const st = { drafts: [{ id: "o", splitInto: ["a"], criteria: [], dependsOn: [] }, { id: "a", part: { of: "o" }, criteria: [{ id: "c", text: "T", from: "typed", tie: { x: 1 } }], dependsOn: [] }], log: [] } as any;
+    const out = moveCriterion(st, "a", "c", { to: "o" });
+    expect(out.drafts[0]!.criteria[0]).toBe(st.drafts[1].criteria[0]);
+  });
+
+  it("moves between the original and a part", () => {
+    const { id, did } = setup();
+    split(id, did);
+    const [c1, c2, c3] = ids(id, did);
+    const [s0] = [confirm(id, did, { way: 1, parts: [{ title: "Rules", criteria: [c1], dependsOn: [] }, { title: "Export", criteria: [c2], dependsOn: [] }], unplaced: [c3] })];
+    const p1 = s0.drafts[1]!.id;
+    move(id, did, c3!, { to: p1 });
+    expect(draft(id, p1).criteria.map((c) => c.id)).toEqual([c1, c3]);
+    expect(draft(id, did).criteria).toEqual([]);
+    expect(draft(id, did).splitInto).toBeDefined();
+    move(id, p1, c1!, { to: did });
+    expect(draft(id, did).criteria.map((c) => c.id)).toEqual([c1]);
+  });
+
+  it("logs one line cut to 120 characters", () => {
+    const { id, p1, p2 } = confirmed();
+    const text = `first line\nsecond ${"x".repeat(200)}`;
+    const c = draft(id, p1).criteria[0]!;
+    edit((f) => (f.sessions[0].drafts.find((d: any) => d.id === p1).criteria[0].text = text));
+    const s = move(id, p1, c.id, { to: p2 });
+    const detail = s.log.at(-1)!.detail!;
+    expect(detail).not.toContain("\n");
+    expect(detail.length).toBeLessThanOrEqual(120);
+  });
+
+  it("clears the readiness of both drafts only", () => {
+    const { id, p1, p2 } = confirmed();
+    const c = draft(id, p1).criteria[0]!;
+    const ready = { at: "2026-01-01T00:00:00.000Z", items: [] };
+    edit((f) => f.sessions[0].drafts.forEach((d: any) => (d.readiness = ready)));
+    const s = move(id, p1, c.id, { to: p2 });
+    expect(s.drafts.find((d) => d.id === p1)!.readiness).toBeUndefined();
+    expect(s.drafts.find((d) => d.id === p2)!.readiness).toBeUndefined();
+  });
+
+  it("refuses a target outside the split", () => {
+    const { id, did, p1 } = confirmed();
+    const plain = addDraft(ann, id, T).drafts.at(-1)!.id;
+    const c = draft(id, p1).criteria[0]!.id;
+    const text = "a criterion can only move between a split draft and its parts";
+    for (const to of ["nope", p1, plain]) {
+      expect(code(() => move(id, p1, c, { to }))).toBe("bad-draft");
+      expect(message(() => move(id, p1, c, { to }))).toBe(text);
+    }
+    expect(message(() => move(id, plain, c, { to: p1 }))).toBe(text);
+    void did;
+  });
+
+  it("refuses a bad body, an unknown draft and an unknown criterion", () => {
+    const { id, p1, p2 } = confirmed();
+    const c = draft(id, p1).criteria[0]!.id;
+    for (const body of [undefined, null, [], {}, { to: 5 }]) expect(message(() => move(id, p1, c, body))).toBe("send to: the draft to move the criterion to");
+    expect(code(() => move(id, "nope", c, { to: p2 }))).toBe("not-found");
+    expect(message(() => move(id, p1, "nope", { to: p2 }))).toBe("no such criterion in this draft");
+    expect(message(() => move(id, p1, draft(id, p2).criteria[0]!.id, { to: p2 }))).toBe("no such criterion in this draft");
+  });
+
+  it("refuses a full target", () => {
+    const { id, p1, p2 } = confirmed();
+    const c = draft(id, p1).criteria[0]!.id;
+    saveDraft(ann, id, p2, { criteria: Array.from({ length: 50 }, (_, i) => ({ text: `C ${i}` })) }, T);
+    const before = readFileSync(refinementsPath(), "utf8");
+    expect(code(() => move(id, p1, c, { to: p2 }))).toBe("limit");
+    expect(message(() => move(id, p1, c, { to: p2 }))).toBe("at most 50 acceptance criteria");
+    expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+  });
+
+  it("refuses a part on GitHub, as source and as target", () => {
+    const { id, p1, p2 } = confirmed();
+    edit((f) => (f.sessions[0].drafts.find((d: any) => d.id === p1).published = PUBLISHED));
+    const before = readFileSync(refinementsPath(), "utf8");
+    const c1 = draft(id, p1).criteria[0]!.id;
+    const c2 = draft(id, p2).criteria[0]!.id;
+    expect(code(() => move(id, p1, c1, { to: p2 }))).toBe("bad-state");
+    expect(message(() => move(id, p2, c2, { to: p1 }))).toMatch(/on GitHub as issue #12/);
+    expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+  });
+
+  it("the pure function refuses a published source", () => {
+    const st = { drafts: [{ id: "o", splitInto: ["a"], criteria: [], dependsOn: [] }, { id: "a", part: { of: "o" }, published: PUBLISHED, criteria: [{ id: "c", text: "T", from: "typed" }], dependsOn: [] }], log: [] } as any;
+    expect(() => moveCriterion(st, "a", "c", { to: "o" })).toThrow(/on GitHub/);
+  });
+});
+
+describe("warnings about the parts", () => {
+  const WHY = "Both parts touch the same code and neither depends on the other.";
+  const impact = (areas: string[]) => ({
+    at: "2026-01-01T00:00:00.000Z",
+    mark: "0".repeat(64),
+    areas: areas.map((area) => ({ area, files: [], basis: "estimate", why: "It is touched." })),
+    dependsOn: [],
+    dependents: [],
+    risks: [],
+    size: { size: "small", files: 1, lines: 1, why: "It is small." },
+    overlaps: [],
+    sensitive: [],
+  });
+  const put = (p: string, areas: string[]) => edit((f) => (f.sessions.flatMap((s: any) => s.drafts).find((d: any) => d.id === p).impact = impact(areas)));
+  const warn = (id: string, did: string) => partWarnings(draft(id, did), getSession(id)!.drafts);
+
+  it("has none for a fresh split or a draft that is not split", () => {
+    const { id, did, p1 } = confirmed();
+    expect(warn(id, did)).toEqual([]);
+    expect(warn(id, p1)).toEqual([]);
+  });
+
+  it("warns about a part without a criterion", () => {
+    const { id, did, p2 } = confirmed();
+    move(id, p2, draft(id, p2).criteria[0]!.id, { to: did });
+    expect(warn(id, did)).toEqual([{ kind: "layer", part: p2, why: "This part has no acceptance criterion." }]);
+  });
+
+  /** A split into `n` parts, one criterion each (the rest unplaced), where part k depends on the parts of `deps[k]`. */
+  const chain = (deps: number[][]) => {
+    const { id, did } = setup([{ text: "A" }, { text: "B" }, { text: "C" }]);
+    split(id, did);
+    const cs = ids(id, did);
+    const parts = deps.map((dependsOn, i) => ({ title: `P${i + 1}`, criteria: [cs[i]], dependsOn }));
+    const s = confirm(id, did, { parts, unplaced: cs.slice(deps.length) });
+    return { id, did, ps: s.drafts.slice(1).map((d) => d.id) };
+  };
+
+  it("warns about parts on the same code that do not depend on each other", () => {
+    const { id, did, ps } = chain([[], []]);
+    put(ps[0]!, ["src/a"]);
+    put(ps[1]!, ["src/a/b"]);
+    expect(warn(id, did)).toEqual([{ kind: "same-code", parts: [ps[0], ps[1]], areas: ["src/a"], why: WHY }]);
+  });
+
+  it("has no same-code warning when one part depends on the other, directly or through another part", () => {
+    const direct = chain([[], [1]]);
+    put(direct.ps[0]!, ["src/a"]);
+    put(direct.ps[1]!, ["src/a/b"]);
+    expect(warn(direct.id, direct.did)).toEqual([]);
+    const far = chain([[], [1], [2]]);
+    put(far.ps[0]!, ["src/a"]);
+    put(far.ps[2]!, ["src/a/b"]);
+    expect(warn(far.id, far.did)).toEqual([]);
+  });
+
+  it("has no same-code warning for areas that do not overlap or a part without impact", () => {
+    const { id, did, ps } = chain([[], []]);
+    put(ps[0]!, ["src/a"]);
+    expect(warn(id, did)).toEqual([]);
+    put(ps[1]!, ["src/ab"]);
+    expect(warn(id, did)).toEqual([]);
+  });
+
+  it("cuts the areas to 5 and puts layer warnings first", () => {
+    const { id, did, ps } = chain([[], []]);
+    const many = Array.from({ length: 7 }, (_, i) => `src/m${i}`);
+    put(ps[0]!, many);
+    put(ps[1]!, many);
+    move(id, ps[1]!, draft(id, ps[1]!).criteria[0]!.id, { to: did });
+    const w = warn(id, did);
+    expect(w.map((x) => x.kind)).toEqual(["layer", "same-code"]);
+    expect((w[1] as { areas: string[] }).areas).toEqual(many.slice(0, 5));
   });
 });
 
