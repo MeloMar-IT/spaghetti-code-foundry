@@ -9,6 +9,7 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
+import { splitView } from "../refinement/draft-split.js";
 import { otherDrafts } from "../refinement/known-areas.js";
 import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
@@ -45,7 +46,7 @@ import {
   renameSession,
   restoreSession,
 } from "../refinement/store.js";
-import { HttpError, readJson, send } from "./http.js";
+import { HttpError, readJson, readOptionalJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -120,11 +121,12 @@ function limitsOf(ctx: ApiContext, s: Session): BuildLimits {
 
 /** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
 const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) => (d: Draft) => {
-  const { review: _stored, impact: _impact, readiness: _readiness, acceptedAnyway: _accepted, ...rest } = d;
+  const { review: _stored, impact: _impact, split: _split, readiness: _readiness, acceptedAnyway: _accepted, ...rest } = d;
   const review = reviewView(d);
   // Drafts of the owner's other sessions are looked up only for an overlap with a draft that is not in this session.
   const outside = d.impact?.overlaps.some((o) => o.draft !== undefined && !s.drafts.some((x) => x.id === o.draft));
   const impact = impactView(d, s.drafts, outside ? otherDrafts(s) : [], limits);
+  const split = splitView(d);
   const readiness = readinessView(d, list);
   const accepted = acceptedView(d, list);
   return {
@@ -134,6 +136,7 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
     remarks: draftRemarks(d),
     ...(review ? { review } : {}),
     ...(impact ? { impact } : {}),
+    ...(split ? { split } : {}),
     ...(readiness ? { readiness } : {}),
     ...(accepted.length ? { acceptedAnyway: accepted } : {}),
   };
@@ -314,6 +317,11 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
+    // The body is optional: without one there is no own way. A body that is there must be JSON.
+    const body = await readOptionalJson(req);
+    return startRun({ kind: "split", draft: seg[3]!, own: body.own });
+  }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review-label" && method === "PUT") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(setReviewLabelOf(actor, seg[1]!, seg[3]!, body).id), user))), true;

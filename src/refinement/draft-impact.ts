@@ -22,8 +22,8 @@ const TOPICS = ["sign-in", "permissions", "secrets", "credentials", "user-data"]
 const LINE_BREAK = new RegExp(`[\\n${String.fromCharCode(0x2028, 0x2029)}]`);
 
 // The rules of tools/refine-round-check, so a forged or damaged answer cannot store what the tool would refuse.
-const TIME = /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozens?|half an?|a couple of|a few|several))[\s-]*(?:(?:man|person|working|work|business|calendar|elapsed|full|whole)[\s-]*)?(?:hours?|hrs?|days?|weeks?)\b/i;
-const sentences = (t: string): number => t.split(/(?<=[.!?]["'”’)\]]*)\s+/).filter(Boolean).length;
+export const TIME = /(?:\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozens?|half an?|a couple of|a few|several))[\s-]*(?:(?:man|person|working|work|business|calendar|elapsed|full|whole)[\s-]*)?(?:hours?|hrs?|days?|weeks?)\b/i;
+export const sentences = (t: string): number => t.split(/(?<=[.!?]["'”’)\]]*)\s+/).filter(Boolean).length;
 const sizeWord = (files: number, lines: number): (typeof SIZES)[number] => (files > 15 || lines > 800 ? "large" : files <= 5 && lines <= 200 ? "small" : "medium");
 const insideRepo = (p: string): boolean => !/^[/\\]|^[A-Za-z]:|(?:^|[/\\])\.\.(?:[/\\]|$)/.test(p);
 
