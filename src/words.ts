@@ -18,6 +18,8 @@ export interface WordFacts {
   unreachable?: boolean;
   /** `user_limit`: the limit of runs per day (else the limit of runs at the same time). */
   perDay?: boolean;
+  /** `user_limit`: the daily budget. */
+  budget?: boolean;
 }
 
 interface Words {
@@ -65,9 +67,13 @@ const GLOSSARY: Record<NextKind, Words> = {
   },
   user_limit: {
     status: (f) => (f.user
-      ? (f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
-      : (f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
-    help: (f) => (f.user
+      ? (f.budget || f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
+      : (f.budget ? "waiting — the owner's daily budget" : f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
+    help: (f) => (f.budget
+      ? (f.user
+        ? "The administrator's limit for today is reached. Nothing to do — it goes on by itself tomorrow."
+        : "The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page.")
+      : f.user
       ? (f.perDay
         ? "You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow."
         : "As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends.")

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stepLogFile } from "../engine/execute.js";
 import { buildHistory, runProgress, runTiming, withWaitLeft, type DurationHistory } from "../estimate.js";
-import { answerRoom, type RunSummary } from "../engine/state.js";
+import { answerRoom, isUserBudgetStop, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { runIssueState } from "../issue-states.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
@@ -137,6 +137,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
   };
   const waitLeft = waitLeftFor(ctx);
   const isRetired = retiredCheck();
+  const budgetOf = (id?: string) => (id ? ctx.scheduler.userDailyBudget(id) : undefined);
   return (run) => {
     const v = run.vars ?? {};
     const queued = pending.find((p) => p.runId === run.runId);
@@ -151,7 +152,12 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     // The same test as `canAnswer` (api-runs.ts): the answer box is on the user's run page only.
     const answerHere = forUser && !answerBlock(run, cfg.watchers) && answerRoom(run) > 0;
     const state = queued ? undefined : runIssueState(run);
+    // The amount is for an administrator only.
+    const budgetUsd = !forUser && (queued?.limit === "budget" || (!queued && run.status === "stopped" && isUserBudgetStop(run.reason)))
+      ? budgetOf(run.owner ?? ctx.scheduler.ownerOf(run.runId))
+      : undefined;
     const rec = runNextStep(run, {
+      budgetUsd,
       issueClosed: state === "closed",
       queued: queued ? { waitingFor: queued.waitingFor, behindPriority: queued.behindPriority, limit: queued.limit } : undefined,
       superseded: superseded && !answerHere,
@@ -172,7 +178,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     if (rec.kind === "issue_closed") return rec;
     // The watcher's hold for the same run and reason knows more (pull request, question count).
     // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run; so does a run that is answered on its page.
-    const hold = forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))
+    const hold = rec.kind === "user_limit" || forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))
       ? undefined
       : tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.runId === run.runId && (h.next.kind === rec.kind ||
         // "A bug story goes first" holds a stopped run that the watcher would resume: only while the run still is stopped.
@@ -191,9 +197,9 @@ type Queue = ReturnType<ApiContext["scheduler"]["queue"]>;
 export type PendingJob = Queue["pending"][number];
 
 /** The record of a queued job that has no run yet. */
-export function jobNext(p: PendingJob, forUser = false): NextStep {
+export function jobNext(p: PendingJob, forUser = false, budgetUsd?: number): NextStep {
   const issue = p.issue && /^\d+$/.test(p.issue) ? Number(p.issue) : undefined;
-  return nextStep(p.waitingFor ? "one_at_a_time" : p.limit ? "user_limit" : p.behindPriority ? "bug_first" : "queued", { repo: p.githubRepo ?? p.repo, issue, title: (p.task ?? "").split("\n")[0], runId: p.runId }, { blockingRun: p.waitingFor, userLimit: p.limit, forUser });
+  return nextStep(p.waitingFor ? "one_at_a_time" : p.limit ? "user_limit" : p.behindPriority ? "bug_first" : "queued", { repo: p.githubRepo ?? p.repo, issue, title: (p.task ?? "").split("\n")[0], runId: p.runId }, { blockingRun: p.waitingFor, userLimit: p.limit, forUser, budgetUsd });
 }
 
 const watcherError = (repo: string, reason: string): NextStep => nextStep("watcher_error", { repo }, { reason });
@@ -237,7 +243,7 @@ export function queueWithNext(ctx: ApiContext, forUser = false): Omit<Queue, "pe
   return { ...q, pending: q.pending.map((p) => {
     const run = ctx.scheduler.get(p.runId);
     const ownerName = who?.(p.runId).ownerName;
-    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p, forUser)), ...(ownerName ? { ownerName } : {}) };
+    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p, forUser, !forUser && p.limit === "budget" ? ctx.scheduler.userDailyBudget(who!(p.runId).owner ?? "") : undefined)), ...(ownerName ? { ownerName } : {}) };
   }) };
 }
 

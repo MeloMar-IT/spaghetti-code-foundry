@@ -443,6 +443,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — your limit for today is reached | You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow. |
 | waiting — your limit of runs at the same time is reached | As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends. |
 | waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
+| waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
@@ -1497,7 +1498,7 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 ![Settings](images/settings.png)
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
-it; paused runs continue the next day. Flows can also cap one run (`limits.max_cost_usd`).
+it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
 **Safety**
 
@@ -1652,7 +1653,7 @@ marked "(you)".
   apply to every account, admins too; an account's own value wins over the default. The Limits
   column shows each account's effective limits and marks its own values with "(own)". Clear a field
   in the account's dialog and the default applies again. Deleting an account removes its own
-  limits. **Runs at the same time and runs per day are enforced; the daily budget is not enforced yet.** A job over a limit waits in the queue and starts by itself when the limit allows; the queue and the run page say which limit it is. Free slots are shared between users: the next slot goes to the user with the fewest working runs, then to the user whose last start is oldest. Only new runs count for "runs per day" (local day); resuming, answering or approving a run does not. Architect runs of a refinement session count for "at the same time" but not for "runs per day". Runs of a watcher count for the watcher's owner. Runs without an owner (the command line) are not limited in the queue, but a run that falls to the first admin counts for that admin, so an admin who uses the command line may need to raise their own limits. Lowering a limit does not stop working runs; nothing new starts until usage is below it. Only admins can
+  limits. **All three limits are enforced.** A job over a limit waits in the queue and starts by itself when the limit allows; the queue and the run page say which limit it is. Free slots are shared between users: the next slot goes to the user with the fewest working runs, then to the user whose last start is oldest. Only new runs count for "runs per day" (local day); resuming, answering or approving a run does not. Architect runs of a refinement session count for "at the same time" but not for "runs per day". Runs of a watcher count for the watcher's owner. Runs without an owner (the command line) are not limited in the queue, but a run that falls to the first admin counts for that admin, so an admin who uses the command line may need to raise their own limits. The daily budget counts the cost of the user's runs that started today (local day). When it is reached, no new job of that user starts and a working run stops before its next agent step (shell and approval steps still run); it continues the next day, or when you raise the budget. A watcher starts no new work for that owner and holds the issue. The user sees "waiting — your limit for today is reached", with no amount; you see the amount. `cost_limits: false` turns the budget off, and the global `daily_budget_usd` still applies on top. Runs without an owner are only under the global budget. Lowering a limit does not stop working runs; nothing new starts until usage is below it. Only admins can
   see or change them, and no answer to a user contains them. Each change writes a `limits-change`
   line to the audit log with the account (or "defaults") and the field names, not the amounts.
   Without a `limits.json` in the data folder, everything is "no limit".
@@ -2145,7 +2146,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |
 | `GET /api/users` | yes | no | list the accounts |
-| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (runs at the same time and runs per day are enforced; the daily budget is not enforced yet) |
+| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (all three are enforced) |
 | `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
 | `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token |
 | `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |

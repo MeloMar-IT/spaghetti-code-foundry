@@ -27,7 +27,7 @@ import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { removeSignInDir } from "./repo-access.js";
-import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, spentTodayBy, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { prepareWorkspace } from "./workspace.js";
 
@@ -45,6 +45,8 @@ interface CommonOptions {
   onUpdate?: (summary: RunSummary) => void;
   /** Defaults to <data folder>/config.yaml. */
   config?: Config;
+  /** The daily budget of an account; without it only the global budget applies. */
+  userDailyBudget?: (owner: string) => number | undefined;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -226,6 +228,16 @@ async function drive(
 
   const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
   const dailyCap = config.cost_limits ? config.daily_budget_usd : undefined;
+  const userLeft = (): number | undefined => {
+    if (!config.cost_limits || !summary.owner || !opts.userDailyBudget) return undefined;
+    let cap: number | undefined;
+    try {
+      cap = opts.userDailyBudget(summary.owner);
+    } catch {
+      cap = undefined;
+    }
+    return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap - spentTodayBy(opts.runsDir, summary.owner) : undefined;
+  };
   const engine: Engine = {
     summary,
     config,
@@ -243,10 +255,11 @@ async function drive(
       const left = [
         runCap !== undefined ? runCap - summary.totalCostUsd : undefined,
         dailyCap !== undefined ? dailyCap - spentToday(opts.runsDir) : undefined,
+        userLeft(),
       ].filter((n): n is number => n !== undefined);
       return left.length ? Math.min(...left) : undefined;
     },
-    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir),
+    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft),
   };
 
   const scope: Scope = {
@@ -271,7 +284,7 @@ async function drive(
 
   let result: LoopResult;
   try {
-    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir);
+    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir, userLeft);
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
   }
@@ -329,7 +342,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
   opts.onUpdate?.(summary);
   if (r.outcome === "failed") {
     // One short model call for the cause; its note and cost are saved in a second update.
-    const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal }).catch(() => undefined);
+    const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal, userDailyBudget: opts.userDailyBudget }).catch(() => undefined);
     if (ex) {
       summary.totalCostUsd += ex.costUsd;
       if (ex.note) {
@@ -353,7 +366,7 @@ function resumePoint(step: Step, scope: Scope, engine: Engine): string {
   return mine.at(-2)?.id.slice(scope.prefix.length) ?? step.id;
 }
 
-async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string): Promise<LoopResult> {
+async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined): Promise<LoopResult> {
   const { flow, ctx, visits } = scope;
   const { summary, config } = engine;
   const steps = flow.steps;
@@ -382,13 +395,20 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     const overDay = config.cost_limits && config.daily_budget_usd !== undefined && spentToday(runsDir) >= config.daily_budget_usd;
     // Shell and approval steps cost nothing, so they still run (e.g. posting what was already paid for).
     const costsMoney = step.type !== "shell" && step.type !== "approval";
-    if (costsMoney && (overRun || overDay) && !engine.budgetFallback) {
+    let overUser = false;
+    if (costsMoney && !overRun && !overDay && !engine.budgetFallback) {
+      const l = userLeft();
+      overUser = l !== undefined && l <= 0;
+    }
+    if (costsMoney && (overRun || overDay || overUser) && !engine.budgetFallback) {
       const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free)[0] : undefined;
       if (free) {
         engine.budgetFallback = free;
-        engine.log(`⚠ ${overRun ? "run" : "daily"} budget reached — agent steps continue on ${free.label}`);
+        engine.log(`⚠ ${overRun ? "run" : overDay ? "daily" : "the owner's daily"} budget reached — agent steps continue on ${free.label}`);
       } else if (overRun) {
         return { outcome: "failed", reason: `run budget of $${runCap} reached`, ...here() };
+      } else if (!overDay) {
+        return { outcome: "stopped", reason: USER_BUDGET_REASON, ...here() };
       } else {
         return { outcome: "stopped", reason: `daily budget of $${config.daily_budget_usd} reached — resume tomorrow`, ...here() };
       }

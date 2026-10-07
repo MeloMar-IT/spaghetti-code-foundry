@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -60,7 +60,7 @@ interface Active {
 }
 
 /** Which per-user limit holds a job back. */
-export type UserLimit = "concurrent" | "per_day";
+export type UserLimit = "concurrent" | "per_day" | "budget";
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -71,7 +71,9 @@ export interface SchedulerOptions {
   /** False when the account is blocked or gone: the jobs it queued wait. Without it, no job is held. */
   accountActive?: (accountId: string) => boolean;
   /** The limits of an account. Without it, nobody is limited (CLI, evals). Runs already working are never stopped by a lower limit. */
-  userLimits?: (accountId: string) => { maxConcurrent?: number; maxRunsPerDay?: number };
+  userLimits?: (accountId: string) => { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };
+  /** Spend of an account's runs that started today. Default: read from the run files. */
+  spentTodayBy?: (accountId: string) => number;
   /** New runs of an account that started today. Default: counted from the run files. */
   startedToday?: (accountId: string) => number;
   onFinished?: (summary: RunSummary, job: QueuedJob) => void;
@@ -478,7 +480,21 @@ export class Scheduler {
       return accounts.get(q.runId);
     };
     const valid = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1;
-    const limits = new Map<string, { maxConcurrent?: number; maxRunsPerDay?: number }>();
+    const limits = new Map<string, { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number }>();
+    const spends = new Map<string, number>();
+    const spent = (acc: string): number => {
+      let v = spends.get(acc);
+      if (v === undefined) {
+        try {
+          v = this.o.spentTodayBy?.(acc) ?? spentTodayBy(this.o.runsDir, acc);
+        } catch {
+          v = 0;
+        }
+        if (!Number.isFinite(v)) v = 0;
+        spends.set(acc, v);
+      }
+      return v;
+    };
     const limitsOf = (acc: string) => {
       let l = limits.get(acc);
       if (!l) {
@@ -526,6 +542,8 @@ export class Scheduler {
       const l = limitsOf(acc);
       if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
       if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
+      const cap = this.userDailyBudget(acc);
+      if (cap !== undefined && spent(acc) >= cap) return "budget";
       return undefined;
     };
     const locked = (q: QueuedJob) => {
@@ -585,6 +603,17 @@ export class Scheduler {
     this.persist();
   }
 
+  /** The daily budget of an account, or undefined: no limits source, cost limits off, no valid value. Never throws. */
+  userDailyBudget(accountId: string): number | undefined {
+    try {
+      if (!this.o.userLimits || !this.o.config().cost_limits) return undefined;
+      const cap = this.o.userLimits(accountId)?.dailyBudgetUsd;
+      return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Looks again at what can start, e.g. after a limit changed. */
   recheck(): void {
     this.pump();
@@ -632,6 +661,8 @@ export class Scheduler {
         a.summary = structuredClone(summary);
         emit({ type: "update", summary: a.summary });
       },
+      // a job without an account falls to the first admin inside runFlow: it stays under the global budget only
+      userDailyBudget: this.o.userLimits && account ? (o: string) => this.userDailyBudget(o) : undefined,
     };
     const j = q.job;
     const promise =

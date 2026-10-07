@@ -22,6 +22,7 @@ export function boardFor(ctx: ApiContext, now = new Date()): Board {
   const c = collectNext(ctx, list);
   const q = ctx.scheduler.queue();
   const byRun = new Map(list.map((r) => [r.runId, r]));
+  const ownerOf = ownerInfo(ctx, list);
 
   const sources: BoardSource[] = [];
   const covered = new Map<string, number>(); // story → index of its source
@@ -82,9 +83,11 @@ export function boardFor(ctx: ApiContext, now = new Date()): Board {
     const key = `${p.githubRepo}#${n}`;
     if (ctx.scheduler.get(p.runId)) continue;
     const at = covered.get(key);
-    if (at === undefined) { covered.set(key, sources.length); sources.push({ next: jobNext(p), rank: 3, goesFirst: p.priority }); continue; }
+    // the board is an admin view: a budget hold names the amount
+    const budget = p.limit === "budget" ? ctx.scheduler.userDailyBudget(ownerOf(p.runId).owner ?? "") : undefined;
+    if (at === undefined) { covered.set(key, sources.length); sources.push({ next: jobNext(p, false, budget), rank: 3, goesFirst: p.priority }); continue; }
     if (takesOver(key, p.runId)) {
-      const next = jobNext(p);
+      const next = jobNext(p, false, budget);
       sources[at] = { next: { ...next, title: sources[at]!.next.title || next.title }, rank: 0, watcher: sources[at]!.watcher, goesFirst: sources[at]!.goesFirst };
     }
   }

@@ -30,6 +30,8 @@ describe("glossary", () => {
     ["user_limit", { user: true }, "waiting — your limit of runs at the same time is reached"],
     ["user_limit", { perDay: true }, "waiting — the owner's limit of runs per day"],
     ["user_limit", {}, "waiting — the owner's limit of runs at the same time"],
+    ["user_limit", { user: true, budget: true }, "waiting — your limit for today is reached"],
+    ["user_limit", { budget: true }, "waiting — the owner's daily budget"],
     ["checking", {}, "checking for questions"],
     ["starting", {}, "starting soon"],
     ["bug_first", {}, "waiting — a bug story goes first"],
@@ -57,7 +59,7 @@ describe("glossary", () => {
   });
 
   it("has two sentences of help for every kind", () => {
-    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }, { user: true }, { perDay: true }, { user: true, perDay: true }] as WordFacts[]) {
+    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }, { user: true }, { perDay: true }, { user: true, perDay: true }, { budget: true }, { user: true, budget: true }] as WordFacts[]) {
       for (const k of KINDS) expect(statusHelp(k, facts), k).toMatch(/^[^.!?]+[.!?] [^.!?]+[.!?]$/);
     }
   });
@@ -84,7 +86,7 @@ describe("user guide", () => {
     expect(guide).toContain("Words the Foundry uses");
     expect(guide).toContain(EXPLAIN);
     for (const k of KINDS) {
-      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }] : [{ blockers: [88] }];
+      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }] : [{ blockers: [88] }];
       for (const f of all) {
         expect(guide, statusName(k, f)).toContain(`| ${statusName(k, f)} |`);
         expect(guide, statusHelp(k, f)).toContain(statusHelp(k, f));
@@ -166,6 +168,7 @@ describe("words for a user", () => {
   const MONEY = /\$|budget|Settings|in the flow|Codex|claude/i;
   const facts: [NextKind, WordFacts, string][] = [
     ["daily_budget", { user: true }, "paused — the administrator's limit was reached"],
+    ["user_limit", { user: true, budget: true }, "waiting — your limit for today is reached"],
     ["failed", { user: true, limit: true }, "stopped — the administrator's limit was reached"],
     ["failed", { user: true }, "failed"],
     ["failed", { user: true, factory: true }, "failed"],

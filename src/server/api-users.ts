@@ -106,7 +106,7 @@ export const userRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     return send(res, 201, { user: view(ctx, r.user, 0, false), token: r.token, expires: r.expires }), true;
   }
 
-  // The scheduler enforces runs at the same time and runs per day (the budget is not enforced yet). An audit line names the fields, never the amounts.
+  // The scheduler enforces runs at the same time and runs per day. An audit line names the fields, never the amounts.
   const answer = (target: string, r: LimitsChange) => {
     if (r.changed.length) {
       auditAction(log, by, "limits-change", target, r.changed.join(", "));
