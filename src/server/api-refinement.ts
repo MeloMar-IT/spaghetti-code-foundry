@@ -161,6 +161,8 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     title: s.title,
     idea: s.idea,
     state: s.state,
+    // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
+    ...(repoAvailable ? { readyList: list } : {}),
     // Like the talk, the drafts are not shown while the repository is not theirs.
     ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s, limits, list)) }),
     ...(s.epic !== undefined ? { epic: s.epic } : {}),

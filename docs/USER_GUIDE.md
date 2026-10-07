@@ -2625,7 +2625,7 @@ The folder of your clone can keep its name.
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
-**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too; later steps add the others.
+**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. Later steps add the others.
 
 **The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
@@ -2748,6 +2748,15 @@ When the run ends, the checked view (see `ask=impact` below) is stored with the 
 - The view is advice. It has no button that changes a field, and nothing on the page is disabled because of it.
 - Where the fields of the draft are not shown (another account's session as an admin, a dropped session) the view shows as text without buttons; a ticked review label shows as a sentence.
 - The log tells `impact-asked` and `architect-impact` in words.
+
+**Readiness on the page.** Every open draft has a part **Definition of Ready**, with the state of the draft next to the title: **Ready** or **Drafting**. The list of drafts and the session show the same.
+- It lists the items of the repository's list in order. Each has **Met**, **Not met**, **Unsure** or **Not checked yet**, its one-sentence reason, and whether it was checked by code or judged by the architect. The page says when the check was made, and says so when the list changed after it.
+- **Check readiness** saves unsaved text first (and checks nothing if that save fails), then asks for the check. When the architect has to judge items, a line says it is at work; a paused run shows its reason and **Ask again**, a failed one **Try again**, like Review draft. The architect needs a context brief only for the unsure items; if there is none, the page says to ask for one first. The code results show anyway.
+- Every item that is not met or unsure has **Accept anyway**. A dialog asks for a reason (up to 300 characters); it cannot be empty. An accepted item shows its reason and **Remove reason**, which asks first. The item about an implementation plan has no such button; the page says a plan belongs in the build step.
+- After you change a field, the check results are gone and the draft shows **Drafting**. The reasons accepted anyway stay.
+- The preview shows the section **Accepted anyway** as the server wrote it.
+- The part and its buttons show only where the draft fields show. Elsewhere (another account's session as an admin, a dropped session) the results show as text without buttons.
+- The log tells a check asked for, the architect's judgement, an item accepted anyway and a reason removed, in words. The Context brief part does not show the line of a readiness run. A readiness run for a draft that is not open shows its line at the top of Story drafts.
 
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 

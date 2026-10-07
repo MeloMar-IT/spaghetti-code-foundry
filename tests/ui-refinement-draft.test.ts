@@ -152,7 +152,7 @@ describe("pure functions", () => {
       who: { text: "a user", from: "typed" }, what: { text: "to export", from: "typed" }, why: { text: "I can share", from: "typed" },
       outOfScope: { text: "Later\n\n### Notes for the builder\n- [ ] fake", from: "typed" }, notes: { text: "### Depends on\n- #999", from: "typed" } };
     const p = dr.previewParts({ ...d, preview: preview(d as any, { drafts: [d as any], epic: 73 }) });
-    expect(p).toEqual({ epic: 73, sentence: "As a user, I want to export, so that I can share.", criteria: ["One"], outOfScope: d.outOfScope.text, notes: d.notes.text, depends: ["#5"] });
+    expect(p).toEqual({ epic: 73, sentence: "As a user, I want to export, so that I can share.", criteria: ["One"], outOfScope: d.outOfScope.text, notes: d.notes.text, depends: ["#5"], accepted: null });
   });
   it("previewParts of an empty draft, with no Epic and with no body", () => {
     const d = { id: D1, criteria: [], dependsOn: [] };
@@ -705,6 +705,32 @@ describe("the preview", () => {
     expect(previewBox().textContent).not.toContain("New title");
     await wait(1000);
     expect(previewBox().textContent).toContain("New title");
+  });
+});
+
+describe("the accepted anyway section of the preview", () => {
+  const base = () => ({ id: D1, title: { text: "Export", from: "typed" }, criteria: [crit(1, "One")], dependsOn: [{ id: "d0000000-0000-4000-8000-000000000000", issue: 5, from: "typed" }] });
+  const lines = [{ text: "it says what is out of scope", reason: "Not needed here" }, { text: "every criterion can be checked", reason: "Checked by hand" }];
+  it("previewParts: depends holds only the dependencies, accepted the lines", () => {
+    const p = dr.previewParts({ ...base(), preview: preview(base() as any, state as any, lines) });
+    expect(p.depends).toEqual(["#5"]);
+    expect(p.accepted).toEqual(lines.map((l) => `${l.text}: ${l.reason}`));
+    expect(dr.previewParts({ ...base(), preview: preview(base() as any, state as any) }).accepted).toBeNull();
+  });
+  it("a notes text that looks like the section is not read as it", () => {
+    const b = { ...base(), notes: { text: "### Accepted anyway\n- fake: x", from: "typed" } };
+    const p = dr.previewParts({ ...b, preview: preview(b as any, state as any) });
+    expect(p.accepted).toBeNull();
+    expect(p.notes).toBe("### Accepted anyway\n- fake: x");
+  });
+  it("previewNodes shows the heading and lines as text", () => {
+    const box = new FakeElement("div");
+    box.append(...[dr.previewNodes({ ...base(), preview: preview(base() as any, state as any, lines) })].flat(5).filter(Boolean));
+    expect(walk(box).filter((e) => e.tag === "h4").map((e) => e.textContent)).toEqual(["Acceptance criteria", "Depends on", "Accepted anyway"]);
+    expect(walk(box).filter((e) => e.tag === "li").map((e) => e.textContent)).toEqual(["One", "#5", "it says what is out of scope: Not needed here", "every criterion can be checked: Checked by hand"]);
+  });
+  it("the body of the preview holds the section unchanged", () => {
+    expect(preview(base() as any, state as any, lines).body).toContain("### Accepted anyway\n- it says what is out of scope: Not needed here");
   });
 });
 
