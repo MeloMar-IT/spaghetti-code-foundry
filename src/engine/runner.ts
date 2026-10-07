@@ -26,7 +26,9 @@ import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
+import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
+import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
 import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { prepareWorkspace } from "./workspace.js";
@@ -186,6 +188,9 @@ async function drive(
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
+  // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it
+  const sandbox = sandboxedRun(summary.owner, config);
+  if (typeof sandbox === "object") return finish(summary, opts, config, { outcome: "failed", reason: sandbox.refused, next: summary.state.next, lastOutput: "" });
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
   hideKeyVars(providerKeyVars(config));
@@ -257,7 +262,8 @@ async function drive(
       workdir: summary.workdir!,
       run: { id: summary.runId, dir: summary.runDir, branch: summary.branch ?? "", history: "" },
       steps: summary.state.steps,
-      learnings: existsSync(lf) ? readFileSync(lf, "utf8") : "",
+      // a sandboxed step may have put a link or a pipe there: only a plain file is read
+      learnings: sandbox === "on" ? readPlainFile(lf) : existsSync(lf) ? readFileSync(lf, "utf8") : "",
     },
     visits: summary.state.visits,
     prefix: "",
@@ -269,11 +275,17 @@ async function drive(
     : `run ${summary.runId} · flow ${summary.flow} · ${summary.workdir}${summary.branch ? ` (branch ${summary.branch})` : ""}`);
   save();
 
+  // a marker for tools/area-lock: this run is running (a step may not read other runs' folders)
+  sweepRunning(opts.runsDir);
+  const marker = markRunning(summary.runId);
+  if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
   let result: LoopResult;
   try {
     result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir);
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
+  } finally {
+    unmarkRunning(summary.runId, marker);
   }
   return finish(summary, opts, config, result);
 }

@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
@@ -10,6 +11,7 @@ import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
+import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { shortEnv, shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
@@ -208,10 +210,25 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       let gone = true;
       let noGh = false;
       try {
+        // A shell step of a user's run is held in an OS sandbox (a step in a Docker image is held by the container).
+        const sb = sandboxedRun(engine.summary.owner, engine.config);
+        if (typeof sb === "object") throw new Error(sb.refused);
+        const boxed = short && wrapsStep(sb, step.sandbox ? image : undefined);
+        const stepEnvVars = short ? shortEnv(env, engine.config) : env;
+        let sandboxProfileText: string | undefined;
+        if (boxed) {
+          Object.assign(stepEnvVars, sandboxHomeEnv(runDir));
+          // the learnings folder is made here: the step may write the file but not move or remove its folder
+          if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
+          sandboxProfileText = sandboxProfile(
+            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read }),
+          );
+        }
         r = await runShell({
           command: render(step.run, ctx, SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
-          env: short ? shortEnv(env, engine.config) : env,
+          env: stepEnvVars,
+          sandboxProfile: sandboxProfileText,
           cleanEnv: short,
           logFile,
           timeoutMs,

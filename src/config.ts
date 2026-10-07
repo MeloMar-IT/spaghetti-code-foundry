@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
@@ -344,7 +344,17 @@ export const ConfigSchema = z
       .strict()
       .prefault({}),
     /** Defaults for flows that don't set their own sandbox. */
-    sandbox: z.object({ claude: z.boolean().optional(), docker_image: z.string().optional() }).strict().default({}),
+    sandbox: z
+      .object({
+        claude: z.boolean().optional(),
+        docker_image: z.string().optional(),
+        /** `required`: a shell step of a user's run is held in an OS sandbox, or the run is refused. `off`: allowed without it. */
+        user_runs: z.enum(["required", "off"]).default("required"),
+        /** Absolute paths a sandboxed shell step of a user's run may read, besides its own folder (for example a node folder under the home). */
+        user_read: z.array(z.string().refine((p) => isAbsolute(p), "must be an absolute path")).max(50).default([]),
+      })
+      .strict()
+      .default({ user_runs: "required", user_read: [] }),
     watchers: z.array(WatcherSchema).default([]),
     /** Thresholds of the monitor watcher. */
     monitor: MonitorSchema.prefault({}),

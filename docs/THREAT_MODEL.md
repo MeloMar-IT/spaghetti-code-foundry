@@ -14,7 +14,7 @@ covered by pattern search only, not read line by line.
 - **Another machine on the network.** Can reach the server's port if the server listens beyond
   localhost.
 
-**Read this first.** A run is not held by the operating system yet (SR-O1). A run works as the Mac
+**Read this first.** Shell steps of a user's run are held by a macOS sandbox profile (#304); agent steps are not held yet (SR-O1). An agent step works as the Mac
 account that runs the server. Give a user account only to people you would give an admin account.
 
 ## User isolation
@@ -35,8 +35,25 @@ account that runs the server. Give a user account only to people you would give 
 - The server's git calls for a workspace (`prepareWorkspace`, `repoRoot` in `src/engine/workspace.ts`) run with a clean environment and `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so a hook or `fsmonitor` setting in the repository does not run.
 
 **Still open.**
-- A run is not held by the operating system yet (SR-O1): give a user account only to people you would give an admin account.
+- Agent steps are not held by the operating system yet (SR-O1): give a user account only to people you would give an admin account.
 - Files in the data folder that every step can write (SR-O7).
+
+## OS sandbox for shell steps
+
+Every shell step of a user's run starts under `/usr/bin/sandbox-exec` with a profile made for that step (`src/engine/os-sandbox.ts`). Agent steps are not held yet.
+- **Reads denied:** the Mac account's home, the data folder, the runs folder and the server's temp folder. Allowed again: the run's own folder, tools, hooks, lock folder, the step's `gh` folder, the folders of `node`, `git`, `claude` and `codex`, and `sandbox.user_read`.
+- **Writes** only in the run's folder (not `run.json`, `live.log`, `logs/`), `<runDir>/tmp`, the learnings file, the lock folder and the step's `gh` folder.
+- **Also denied:** Keychain lookups (`com.apple.SecurityServer`, `com.apple.securityd`), hard links and clones, unix sockets, `lsopen`, Apple events and launchd job creation. A step cannot call `docker` itself; steps with `sandbox: true` and an image are started by the server.
+- **Refusal:** with `sandbox.user_runs: required` (default) a user's run does not start where no sandbox works. `sandbox.user_runs: off` or `SCF_USER_SANDBOX=off` switches it off.
+- **Area locks:** a running run has a marker in the lock folder, so `tools/area-lock` need not read other runs' `run.json`.
+
+**Limits.**
+- The lock folder and the hooks folder (`hooks/allow/<token>`) are readable by every user's run.
+- `ssh` can still be called, but without keys.
+- `sandbox-exec` is marked deprecated by Apple.
+- The network is open: a step can send what it may read to any host.
+- Profiles do not nest: `sandbox-exec` started inside a sandboxed step fails.
+- With the setting off, and for admin runs, nothing is held.
 
 ## Credential leakage (to agents, logs, other users)
 
@@ -55,7 +72,7 @@ account that runs the server. Give a user account only to people you would give 
 - SR-3: `agent_env` cannot be an input, so a user cannot set `NODE_OPTIONS`, `DYLD_*` or `BASH_ENV` for agent steps.
 
 **Still open.**
-- The run works as the Mac account and can read its files and Keychain (SR-O1).
+- An agent step works as the Mac account and can read its files and Keychain (SR-O1). Shell steps of a user's run cannot (see "OS sandbox for shell steps").
 - Global redaction uses every account's secrets on every answer. It is not only protection: a short token such as a common word is replaced in everyone's answers and confirms a guess of another account's secret (SR-O10).
 - The Slack webhook is shown to admins, and `GET /api/since` uses the server's login (SR-O9).
 - The agent's own provider key is still visible to the agent's shell tool unless the agent CLI hides it (left open from SR-O2).
@@ -135,7 +152,7 @@ nothing twice.
 
 | Id | Severity | Finding | Issue |
 |---|---|---|---|
-| SR-O1 | High | A run is not held by the operating system (issue "Platform 2d") | not filed yet |
+| SR-O1 | High | Agent steps are not held by the operating system. Shell steps of a user's run are held since #304 (see "OS sandbox for shell steps") | #304 (shell steps); agent steps next |
 | SR-O2 | Fixed | The steps of a user's run saw the server's whole environment. Fixed in #300; what stays open is listed under "Credential leakage" | #300 |
 | SR-O3 | Fixed | Any user could connect any repository the GitHub App is installed on. Fixed in #301: each account has a list of app repositories, an admin is not limited, and existing connections are marked, not cut off | #301 |
 | SR-O4 | Medium | Any commenter's answer resumes a needs-info run (`src/github.ts:273-279`), and all comments reach the agent | not filed yet |

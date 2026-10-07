@@ -266,6 +266,7 @@ export async function renderSettings(main) {
   const instId = input(c.github_app?.installation_id ?? "", { class: "mono" });
   const keyPath = input(c.github_app?.private_key_path ?? "", { class: "mono", placeholder: "/path/to/app.private-key.pem" });
   const sbxClaude = check(c.sandbox.claude, "Sandbox agents' shell commands by default");
+  const sbxOff = check(c.sandbox.user_runs === "off", "Allow user runs without the OS sandbox");
   const secrets = check(c.secret_scan !== false, "Block pushes that add secrets (API keys, tokens, private keys, .env files)");
   const hotfix = check(c.hotfix_to_main === true, "Hotfixes: build bug stories on a hotfix branch and merge them into main without a person (only the unchanged built-in issue-gitflow)");
   const sbxImage = input(c.sandbox.docker_image ?? "", { class: "mono", placeholder: "e.g. node:22" });
@@ -299,7 +300,7 @@ export async function renderSettings(main) {
       github_app: appId.value.trim()
         ? { app_id: appId.value.trim(), private_key_path: keyPath.value.trim(), slug: appSlug.value.trim() || undefined, installation_id: instId.value.trim() || undefined }
         : undefined,
-      sandbox: { claude: sbxClaude.el.checked || undefined, docker_image: sbxImage.value.trim() || undefined },
+      sandbox: { ...c.sandbox, claude: sbxClaude.el.checked || undefined, docker_image: sbxImage.value.trim() || undefined, user_runs: sbxOff.el.checked ? "off" : "required" },
     };
     try {
       await api.saveConfig(next);
@@ -335,6 +336,8 @@ export async function renderSettings(main) {
       selfUpdate.row,
       f("Repository the Foundry may update from", selfRepo, "owner/name. Updates come only when the checkout's origin is this repository. Needs one stop and start of the Foundry after upgrading."),
       sbxClaude.row,
+      sbxOff.row,
+      h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } }, "Off by default. Without the sandbox, a shell step of a user's run can read this Mac account's files."),
       f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted."),
       f("Keep the audit log for … days", auditDays, "1 to 3650. Older lines are removed when the server starts and once a day.")),
     section("Notifications",
