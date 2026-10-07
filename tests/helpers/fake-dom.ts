@@ -24,6 +24,7 @@ export class FakeElement extends FakeNode {
     super();
   }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  removeAttribute(k: string) { delete this.attrs[k]; }
   addEventListener(type: string, fn: Listener) { (this.listeners[type] ??= []).push(fn); }
   /** Calls the listeners of an event type (a submit, for example) with `event`. */
   fire(type: string, event: unknown = {}): void {

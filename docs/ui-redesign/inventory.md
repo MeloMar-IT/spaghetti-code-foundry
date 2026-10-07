@@ -15,7 +15,7 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
-| `#/your-turn` | Your turn | `ui/turn.js`, `ui/turn-act.js` | `renderYourTurn` | `your-turn.ts`, `turn-actions.ts`, `api-admin.ts` (tick) | admin display only | Answer, approve, reject or retry what waits for the owner | Show questions / Show plan / Retry (button per item) | Answers by dialog (5 kinds in `dialogs.md`); a second run list next to Runs; polls every 5 s (`turn.js:166`) and every 30 s for the badge (`turn.js:52`) |
+| `#/home` | Home | `ui/turn.js`, `ui/turn-act.js` | `renderYourTurn` | `your-turn.ts`, `turn-actions.ts`, `api-admin.ts` (tick) | admin display only | Answer, approve, reject or retry what waits for the owner | Show questions / Show plan / Retry (button per item) | Answers by dialog (5 kinds in `dialogs.md`); a second run list next to Runs; polls every 5 s (`turn.js:166`) and every 30 s for the badge (`turn.js:52`) |
 | `#/board` | Board | `ui/board.js` | `renderBoard(main, arg)` | `board.ts`, `api-admin.ts` (tick) | admin display only | See where every story of one repository is | Pick a repository, then read the columns | Status shown here again (see F1); polls every 5 s (`board.js:156`) |
 | `#/board/:id` | — | `ui/board.js` | `renderBoard(main, arg)` | `board.ts` | admin display only | Same board for the repository in the address | Read the columns | Same module as the list; the repository id is the only difference |
 | `#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | both displays | Find or start a refinement session | New session | Shares the renderer with the user display via `{ admin }`; 9 buttons in one module |
@@ -28,7 +28,7 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
 | `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and reject use native `prompt` (`runs.js:244-245`); cancel uses `confirm` (`runs.js:258`); 13 inline styles |
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
-| `#/all-repos` | Repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
+| `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
 | `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 19 inline styles, 4 native confirms and two pages |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings; clean workspaces | Save | Shares a file with Watchers (F6); the clean action is a native confirm (`admin.js:227`) |
@@ -86,7 +86,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
-| `#/your-turn` | `data.empty` text from the server (`turn.js:133`) | errors box | poll 5 s |
+| `#/home` | `data.empty` text from the server (`turn.js:133`) | errors box | poll 5 s |
 | `#/board` | `data.empty` (`board.js:77`) | errors box | poll 5 s |
 | `#/board/:id` | `data.empty` | errors box | poll 5 s |
 | `#/refinement` | "No refinement sessions yet..." (`refinement.js:472`) | errors box | none found |
@@ -121,7 +121,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 
 | Route | At 768 (R1 only) | At 390 (R1 and R2) |
 |---|---|---|
-| `#/your-turn` | Cards; 17-link nav is wider than 768 and has no wrap or scroll above 760 | Nav scrolls sideways; sidebar stacks above |
+| `#/home` | Cards; 17-link nav is wider than 768 and has no wrap or scroll above 760 | Nav scrolls sideways; sidebar stacks above |
 | `#/board` | Board columns probably wider than main | Probably clipped; no rule |
 | `#/board/:id` | As `#/board` | As `#/board` |
 | `#/refinement` | Table in `.table-box` scrolls | Same |

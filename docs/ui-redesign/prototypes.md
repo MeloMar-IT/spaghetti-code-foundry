@@ -67,7 +67,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 
 | Existing address | Display | Place in the prototype | Still works | Note |
 |---|---|---|---|---|
-| `#/your-turn` | admin | Home, "Needs you" (`home.html`) | yes | Your turn becomes Home |
+| `#/home` | admin | Home, "Needs you" (`home.html`) | yes | Your turn becomes Home; the old address `#/your-turn` is now an alias of `#/home` (`ui/ia.js`) |
 | `#/board` | admin | Board (`board.html`) | yes | |
 | `#/board/:id` | admin | Board with the repository picked | yes | |
 | `#/refinement` | both | Refinement in the nav | yes | Not prototyped; list unchanged |
