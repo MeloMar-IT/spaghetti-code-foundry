@@ -9,6 +9,7 @@
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
 // For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
 // For "What is asked of you now: ready" it answers every item under "## The items to judge" (lines "- <id>: …") as met, about the "what".
+// For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -94,7 +95,27 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
         ? [{ issue: 12 }, { draft: "D1" }]
         : [{ text: `A suggested ${field}` }];
   const firstIssue = existsSync("issues.md") ? /^=== ISSUE #(\d+) ===$/m.exec(readFileSync("issues.md", "utf8"))?.[1] : undefined;
-  const round = prompt.includes("What is asked of you now: impact")
+  // Only the talk (the prompt itself names C1 and C2) and only its acceptance criteria.
+  const draft = (prompt.split("=== End of the talk ===")[0] ?? "").split(/^## The draft to split\s*$/m)[1] ?? "";
+  const crit = /^### Acceptance criteria\s*$([\s\S]*?)(?=^#{1,6} |$(?![\s\S]))/m.exec(draft)?.[1] ?? "";
+  const cs = [...new Set([...crit.matchAll(/^- (C[1-9]\d*): /gm)].map((m) => m[1]))];
+  const round = prompt.includes("What is asked of you now: split")
+    ? {
+        ways: [
+          { cut: "step",
+            stories: [
+              { title: "The first step", sentence: "A user does the first step of the path.", criteria: cs.slice(0, Math.ceil(cs.length / 2)), dependsOn: [] },
+              { title: "The second step", sentence: "A user finishes the path.", criteria: cs.slice(Math.ceil(cs.length / 2)), dependsOn: [1] } ],
+            first: "A user can already do the first step.", unplaced: [], warnings: [] },
+          { cut: "rule",
+            stories: [
+              { title: "The main rule", sentence: "A user gets the main rule.", criteria: cs.slice(0, 1), dependsOn: [] },
+              { title: "The other rules", sentence: "A user gets the other rules.", criteria: cs.length >= 3 ? cs.slice(1, -1) : cs.slice(1), dependsOn: [1] } ],
+            first: "A user can already use the main rule.", unplaced: cs.length >= 3 ? cs.slice(-1) : [],
+            warnings: [{ kind: "same-code", stories: [1, 2], why: "Both change the same page." }] },
+        ],
+      }
+    : prompt.includes("What is asked of you now: impact")
     ? {
         areas: [{ area: "README.md", files: ["README.md"], basis: "found", why: found }],
         dependsOn: [],
