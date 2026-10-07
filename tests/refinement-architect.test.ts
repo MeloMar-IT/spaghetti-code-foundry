@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
-import { refinementsPath } from "../src/refinement/store.js";
+import { architectWorking } from "../src/refinement/architect.js";
+import { END_ON_GITHUB, beginPublishing, endPublishing, refinementsPath } from "../src/refinement/store.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -426,5 +427,74 @@ describe("the repository leaves My repositories", () => {
     expect(s).toMatchObject({ briefHidden: true, repoAvailable: false });
     addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
     expect((await get(id)).brief.text).toContain("## What already exists");
+  });
+});
+
+describe("publishing", () => {
+  const deps = () => ({ scheduler: started!.ctx.scheduler, repo: tmp });
+  const working = (id: string) => architectWorking(deps(), stored().find((s) => s.id === id));
+  const published = { issue: 7, url: "https://github.com/acme/app/issues/7", at: "2026-10-07T10:00:00.000Z" };
+
+  it("refuses to ask while the session is being published, and submits nothing", async () => {
+    const id = await make();
+    expect(beginPublishing(id)).toBe(true);
+    try {
+      const r = await ask(id);
+      expect(r.status).toBe(409);
+      expect(r.error()).toMatch(/being published/);
+      expect(runIds()).toEqual([]);
+    } finally {
+      endPublishing(id);
+    }
+    expect((await ask(id)).status).toBe(202);
+    await idle(id);
+  });
+
+  it("does not resume a paused run while the session is being published", async () => {
+    const id = await make(ann, "acme/app", "CLAUDE_LIMIT please");
+    const first = (await ask(id)).json().architect.runId;
+    await paused(id);
+    beginPublishing(id);
+    try {
+      expect((await ask(id)).status).toBe(409);
+    } finally {
+      endPublishing(id);
+    }
+    expect(runJson(first).resumes ?? 0).toBe(0);
+    expect((await get(id)).architect.state).toBe("paused");
+  });
+
+  it("cancels a paused suggestion whose draft is on GitHub, and marks it", async () => {
+    const id = await make();
+    await ask(id);
+    await idle(id);
+    const did = (await call(ann, "POST", `/api/refinement/${id}/drafts`)).json().drafts[0].id as string;
+    expect((await call(ann, "PUT", `/api/refinement/${id}/drafts/${did}`, { title: "CLAUDE_LIMIT please" })).status).toBe(200);
+    const run = (await call(ann, "POST", `/api/refinement/${id}/drafts/${did}/suggest`, { field: "what" })).json().architect.runId;
+    await paused(id);
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    f.sessions[0].drafts[0].published = published;
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+    const r = await call(ann, "POST", `/api/refinement/${id}/drafts/${did}/suggest`, { field: "what" });
+    expect(r.status).toBe(409);
+    expect(r.error()).toContain("#7");
+    expect(stored()[0].architect).toMatchObject({ runId: run, failed: END_ON_GITHUB });
+    expect(runJson(run).status).toBe("cancelled");
+  });
+
+  it("says whether the architect is working: queued or running, paused, failed, none", async () => {
+    const id = await make();
+    expect(working(id)).toBe(false);
+    process.env.FAKE_GH_SLEEP = "20";
+    const run = (await ask(id)).json().architect.runId;
+    expect(working(id)).toBe(true);
+    started!.ctx.scheduler.cancel(run);
+    await failed(id);
+    expect(working(id)).toBe(false);
+    delete process.env.FAKE_GH_SLEEP;
+    const other = await make(ann, "acme/app", "CLAUDE_LIMIT please");
+    await ask(other);
+    await paused(other);
+    expect(working(other)).toBe(false);
   });
 });

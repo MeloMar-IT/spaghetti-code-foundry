@@ -183,6 +183,15 @@ One scheduler for all runs:
 
 - A fixed number of **slots** (`concurrency`).
 - **Locks**: a flow can ask for one run at a time per repository.
+- **Fair use**: with `userLimits` and `startedToday` set (the server passes `effectiveLimits`), a
+  user never has more runs active than `maxConcurrent`, and new runs wait once `maxRunsPerDay` are
+  started today. `pump()` picks the next job: priority block first, then the owner with the fewest
+  active runs, then the owner whose last start is oldest (kept in memory), then queue order, and
+  re-evaluates after every start. Jobs without an owner are not limited and form one group.
+  Resumes count for `maxConcurrent` only. Today's count comes from `src/queue/usage.ts` (run
+  briefs, by run id) plus runs started in the current pump. `queue()` marks waiting entries with
+  `limit` (`concurrent` or `per_day`); the status kind `user_limit` shows it without numbers, and
+  `queue-stalled` ignores such jobs. The CLI and evals pass no options, so they have no limits.
 - A persistent queue file, so queued work survives a restart.
 - Runs that were active when the server stopped are marked *interrupted* and continued.
 - When a run ends, the watchers of its repository check at once, so the next story does not
@@ -382,9 +391,13 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   `getUser(owner)`). With no identity the step is refused (`NO_COMMIT_IDENTITY`). `engine.botEnv()` gives the
   bot's token and name once per run, only to steps that keep the machine's login. In agent steps
   `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
-  (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Limits: the
-  environment only, not an OS sandbox (a step can read the account's files and Keychain or call `ssh`);
-  Codex still reads `~/.codex/config.toml`; the push hook does not run in a Docker step.
+  (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Since #304
+  and #305 a user's run is also held by an OS sandbox profile (`os-sandbox.ts`); its agent steps get their
+  own agent folders in the run folder and sign in by a token variable only (`src/agents/boxed.ts`).
+  Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
+  lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
+  steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not
+  run in a Docker step.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.

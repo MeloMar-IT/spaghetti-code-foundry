@@ -232,9 +232,14 @@ async function act(fn, ok) {
   }
 }
 
+/** The line a run page shows when the flow of the run is retired. */
+export const FLOW_RETIRED = "This run's flow is retired — it cannot be resumed.";
+export const retiredLine = (s) => (s?.next?.retired ? h("p", { class: "muted flow-retired" }, FLOW_RETIRED) : null);
+
 export function actions(s) {
   const b = [];
-  const closed = s.next?.kind === "issue_closed";
+  // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
+  const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
   if (s.status === "waiting" && !closed) {
     b.push(h("button", { class: "primary", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
     b.push(h("button", { class: "danger", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
@@ -307,6 +312,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
         ...actions(s),
         admin ? h("a", { class: "btn", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
       card ?? (s.next ? nextBlock(s.next) : null),
+      retiredLine(s),
       h("div", { class: "card", style: { marginBottom: "16px" } },
         s.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, s.task) : null,
         s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap" } }, h("b", {}, "Questions"), "\n", s.questions) : null,

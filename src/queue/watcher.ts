@@ -1,12 +1,13 @@
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { loadRun, saveRun, spentToday, type RunSummary } from "../engine/state.js";
+import { isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
-import { markIssueCheckFailed, saveIssueStates } from "../issue-states.js";
+import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
+import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
@@ -173,6 +174,10 @@ const firstMeta = (first?: { storyAt?: string }) => (first ? { priority: true, .
 const APPROVE_RE = /^\s*\/(approve|reject)\b[ \t]*(.*)$/im;
 
 /** Stopped for a reason that clears by itself: daily budget, or a `wait_*` step (e.g. waiting for a PR merge). */
+/** The hidden mark of a `/defaults` comment the watcher wrote itself (auto_defaults), and how many it writes per issue. */
+const AUTO_DEFAULTS_MARK = "<!-- spaghetti-code-foundry auto-defaults -->";
+const AUTO_DEFAULTS_MAX = 2;
+
 /** Stepped aside for a busy code area (stopped at wait_for_area): the run that holds the area. */
 export function steppedAsideFor(s: RunSummary): string | undefined {
   if (s.status !== "stopped" || !/stopped at step "(?:[\w-]+\/)*wait_for_area"/.test(s.reason ?? "")) return undefined;
@@ -181,7 +186,7 @@ export function steppedAsideFor(s: RunSummary): string | undefined {
 }
 
 function isPaused(s: RunSummary): boolean {
-  return /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
+  return isUserBudgetStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
 }
 
 /** Usage limits reset after a while; try a limited run again at most every 30 minutes. */
@@ -402,6 +407,19 @@ export class Watcher {
     }
   }
 
+  /**
+   * auto_defaults: answer the open questions of an issue with the Foundry's own recommendations, by a
+   * `/defaults` comment (so the issue shows what happened). At most twice per issue: a planner that
+   * keeps asking needs a person. Returns whether the questions count as answered.
+   */
+  private async takeDefaults(n: number, comments: Comment[]): Promise<boolean> {
+    if (!this.cfg.auto_defaults) return false;
+    if (comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length >= AUTO_DEFAULTS_MAX) return false;
+    await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `/defaults\n\n— taken by the Foundry itself: this watcher answers questions with the recommendations. ${AUTO_DEFAULTS_MARK}`]);
+    this.act(`#${n} questions answered with the recommendations (auto_defaults)`);
+    return true;
+  }
+
   private latestRuns(key: "issue" | "pr", anyFlow = false): Map<string, RunSummary> {
     const m = new Map<string, RunSummary>();
     for (const s of this.d.scheduler.list(1000)) {
@@ -412,9 +430,34 @@ export class Watcher {
     return m;
   }
 
+  /** The folder of the newest run of this watcher's flow per issue, found without a cap (the brief index covers every run). */
+  private olderIndex(): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const x of this.d.scheduler.briefs()) {
+      if (x.githubRepo === this.repo && x.issue && x.flow === this.flowName() && !m.has(x.issue)) m.set(x.issue, x.dirName);
+    }
+    return m;
+  }
+
   private budgetLeft(): boolean {
     const cap = this.d.dailyBudget?.();
     return cap === undefined || spentToday(this.d.runsDir) < cap;
+  }
+
+  /** The account whose limits this watcher's work counts for (the same rule as queue()). */
+  private ownerAccount(): string | undefined {
+    return this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
+  }
+
+  /** False when the owner's daily budget is used up. True without an owner or a cap. */
+  private budgetLeftFor(owner?: string): boolean {
+    if (!owner) return true;
+    const cap = this.d.scheduler.userDailyBudget(owner);
+    return cap === undefined || spentTodayBy(this.d.runsDir, owner) < cap;
+  }
+
+  private ownerBudgetLeft(): boolean {
+    return this.budgetLeftFor(this.ownerAccount());
   }
 
   /** Newest runs this watcher's repo has with var `key` set (newest first). */
@@ -438,7 +481,7 @@ export class Watcher {
       seen.add(r.workflowName);
       if (r.conclusion !== "failure" || handled.has(String(r.databaseId))) continue;
       const lockKey = `${this.repo}#ci:${r.workflowName}`;
-      if (this.d.scheduler.isLocked(lockKey) || started >= this.cfg.max_per_tick || !this.budgetLeft()) continue;
+      if (this.d.scheduler.isLocked(lockKey) || started >= this.cfg.max_per_tick || !this.budgetLeft() || !this.ownerBudgetLeft()) continue;
       const { flow } = loadFlow(this.flowName(), this.d.repo);
       const runId = this.queue({
         kind: "run", flow, repo: this.d.repo,
@@ -465,7 +508,7 @@ export class Watcher {
       if (last && Date.now() - new Date(last.startedAt).getTime() < every * 0.95) return;
     }
     const lockKey = `${this.repo}#chore:${this.cfg.id}`;
-    if (this.d.scheduler.isLocked(lockKey) || !this.budgetLeft()) return;
+    if (this.d.scheduler.isLocked(lockKey) || !this.budgetLeft() || !this.ownerBudgetLeft()) return;
     const { flow } = loadFlow(this.flowName(), this.d.repo);
     const runId = this.queue({
       kind: "run", flow, repo: this.d.repo, task: this.cfg.task ?? "",
@@ -579,15 +622,15 @@ export class Watcher {
   /** A hold for an issue with the failed label: the run's own record when it failed, else a plain one (a cancelled run also gets the label). */
   private failedHold(issue: { number: number; title: string }, run?: RunSummary, reason?: string): Hold {
     if (run?.status === "failed") {
-      const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title });
+      const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run) });
       if (next.kind === "failed") return toHold(next);
     }
-    return this.held("failed", issue, { failedLabel: this.L.failed, runId: run?.runId, reason });
+    return this.held("failed", issue, { failedLabel: this.L.failed, runId: run?.runId, reason, retired: !!run && flowRetired(run) });
   }
 
   /** A hold for an issue whose run exists. */
   private heldRun(issue: Issue, run: RunSummary, extra: Parameters<typeof runNextStep>[1] = {}): Hold {
-    return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, ...extra }));
+    return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run), ...extra }));
   }
 
   private async tickIssues() {
@@ -619,7 +662,7 @@ export class Watcher {
       if (own) return { issue: b, next: own };
       anyRuns ??= this.latestRuns("issue", true);
       const r = anyRuns.get(String(b));
-      if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed }) };
+      if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed, retired: flowRetired(r) }) };
       const blocker = everyIssue?.find((i) => i.number === b);
       if (!blocker || seen.has(b)) return { issue: b };
       const deps = (await openDepsOf(blocker)).filter((d) => !seen.has(d));
@@ -631,7 +674,9 @@ export class Watcher {
       return { issue: b, next };
     };
     const runs = this.latestRuns("issue");
+    let olderIdx: Map<string, string> | undefined;
     const budgetLeft = this.budgetLeft();
+    const ownerLeft = this.ownerBudgetLeft();
     let started = 0;
     let firstStarted = 0; // bug stories started or queued in this check
     // Code areas bug stories wait for: the runs that hold them (of this watcher, and of other watchers of this repository).
@@ -666,7 +711,13 @@ export class Watcher {
       const n = issue.number;
       if (issue.labels.some((l) => excluded.has(l.name))) continue;
       const status = issue.labels.map((l) => l.name).find((l) => this.allStatus.includes(l));
-      const run = runs.get(String(n));
+      // The newest run may be older than the cap of latestRuns(): then the uncapped index finds it.
+      let run = runs.get(String(n));
+      if (!run) {
+        const dir = (olderIdx ??= this.olderIndex()).get(String(n));
+        const found = dir ? this.d.scheduler.get(dir) : undefined;
+        if (found && found.runId === dir) run = found;
+      }
       const isFirst = prio(issue);
       const first = isFirst ? { storyAt: issue.createdAt } : undefined;
       // A job that is still queued has no run file yet: take its id from the queue.
@@ -690,7 +741,7 @@ export class Watcher {
       if (status === this.L.needsInfo && !run) {
         const comments = await issueComments(this.repo, n);
         const answers = commentsAfter(comments, asked);
-        if (!answers.length) {
+        if (!answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
         }
@@ -709,8 +760,19 @@ export class Watcher {
         if (claim) { firstWaits.add(claim); track.claims = claim; }
         continue;
       }
+      // Reopened: closed at the last check, and its newest run failed or still waits. No second run: the label comes back.
+      if (!status && knownIssueState(this.repo, n) === "closed") {
+        const kept = run;
+        if (kept && ["failed", "stopped", "waiting"].includes(kept.status)) {
+          const label = labelFor(kept, this.L);
+          await setLabels(this.repo, n, label, this.allStatus);
+          noteIssueState(this.repo, n, "open");
+          this.act(`#${n} was reopened → label → ${label} (run ${kept.runId} is kept)`);
+          continue;
+        }
+      }
       if (this.d.scheduler.isLocked(this.lockFor(n))) {
-        const blockingRun = this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
+        const blockingRun =this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
         const askedRun = this.cfg.one_at_a_time && run?.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo && (status === this.L.needsInfo || status === this.L.working);
         const decidingRun = this.cfg.one_at_a_time && run?.status === "waiting" && (status === this.L.waiting || status === this.L.working);
         if (run && (askedRun || decidingRun)) {
@@ -760,6 +822,7 @@ export class Watcher {
         }
         if (paused) { holds.push(this.held("release", issue, { pr: paused })); continue; }
         if (!budgetLeft) { holds.push(this.held("daily_budget", issue)); continue; }
+        if (!ownerLeft) { holds.push(this.held("user_limit", issue, { userLimit: "budget" })); continue; }
         if (overLimit(isFirst)) { holds.push(limited(issue)); continue; }
         alive();
         // It ran before: GitHub's issue list can lag behind (a just-failed or just-finished issue still
@@ -775,8 +838,9 @@ export class Watcher {
         // Reconcile: the label says working but nothing is running (restart, crash, budget pause).
         const resumable = run.status === "cancelled" || /interrupted/.test(run.reason ?? "") ||
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
+          (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
-          (run.status === "stopped" && isPaused(run) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
         const lateAnswers = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo
           ? commentsAfter(await issueComments(this.repo, n), asked) : [];
         const lateDecision = !resumable && run.status === "waiting" ? await this.findDecision(run.runId, await issueComments(this.repo, n)) : undefined;
@@ -786,7 +850,7 @@ export class Watcher {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now", undefined, false, first);
+          this.resume(n, run.runId, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now", undefined, false, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -816,8 +880,8 @@ export class Watcher {
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
         } else if (!resumable) {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
-          const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run) });
-          if (["usage_limit", "daily_budget", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
+          const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run), retired: flowRetired(run) });
+          if (["usage_limit", "daily_budget", "user_limit", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
         } else {
           // Resumable, but max_per_tick is used up: only the per-check limit is in the way.
           holds.push(limited(issue, run.runId));
@@ -831,9 +895,11 @@ export class Watcher {
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
         const comments = await issueComments(this.repo, n);
         const answers = commentsAfter(comments, asked);
-        if (answers.length && !overLimit(isFirst)) {
+        // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
+        const auto = !answers.length && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
+        if ((answers.length || auto) && !overLimit(isFirst)) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
-          this.resume(n, run.runId, `answered by @${answers[0]!.author.login}`, undefined, true, first);
+          this.resume(n, run.runId, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`, undefined, true, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -876,7 +942,6 @@ export class Watcher {
     const closed: { issue: number; title: string }[] = [];
     let closedWhole = false;
     await this.tidyClosed(runs, holds, closed).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
-    await this.endWaitsOfClosedIssues(new Set(issues.map((i) => i.number))).catch((e: Error) => { tidyError ??= e; });
     let statesError: Error | undefined;
     await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
@@ -929,7 +994,7 @@ export class Watcher {
 
   /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
   private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void) {
-    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "starting", "bug_first", "one_at_a_time"];
+    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "user_limit", "starting", "bug_first", "one_at_a_time"];
     const pending = this.d.scheduler.queue().pending;
     for (const issue of issues) {
       const n = issue.number;
@@ -962,6 +1027,7 @@ export class Watcher {
   /**
    * Closed issues (e.g. by a merged pull request) that still carry a waiting/working/error label:
    * done if their last run succeeded, otherwise just without the stale status labels.
+   * A run that waits for a person is kept as it is.
    * Fills `handled` with the closed issues it dealt with; returns true when GitHub's list was whole (not cut at its limit).
    */
   private async tidyClosed(runs: Map<string, RunSummary>, holds: Hold[], handled: { issue: number; title: string }[]): Promise<boolean> {
@@ -978,9 +1044,9 @@ export class Watcher {
       handled.push({ issue: issue.number, title: issue.title ?? "" });
       const queuedId = pending.find((p) => p.githubRepo === this.repo && p.issue === String(issue.number))?.runId;
       const working = !!queuedId || (!!run && (this.d.scheduler.isActive(run.runId) || this.d.scheduler.isQueued(run.runId)));
-      if (working || run?.status === "waiting") {
-        // Still busy: change nothing. Say so, unless the run closed the issue itself.
-        if (!(run?.runId === (queuedId ?? run?.runId) && runClosedIssue(run))) holds.push(this.held("closed_elsewhere", { number: issue.number, title: issue.title ?? "" }, { runId: queuedId ?? run?.runId, runWaits: !working }));
+      if (working) {
+        // Still working: change nothing. Say so, unless the run closed the issue itself.
+        if (!(run?.runId === (queuedId ?? run?.runId) && runClosedIssue(run))) holds.push(this.held("closed_elsewhere", { number: issue.number, title: issue.title ?? "" }, { runId: queuedId ?? run?.runId }));
         continue;
       }
       const done = run?.status === "succeeded" && run.history.at(-1)?.id !== "create_split";
@@ -988,30 +1054,6 @@ export class Watcher {
       this.act(`#${issue.number} (closed) label → ${done ? this.L.done : "none"}`);
     }
     return closed.length < limit;
-  }
-
-  /**
-   * A run that waits for a person (questions, a decision) whose issue was closed on GitHub has nothing
-   * left to wait for: end it, so it no longer shows up as needing attention. Any flow, also old ones.
-   */
-  private async endWaitsOfClosedIssues(openListed: Set<number>) {
-    const candidates = [...this.latestRuns("issue", true).values()].filter((r) =>
-      (r.status === "stopped" || r.status === "waiting") && !openListed.has(Number(r.vars.issue)) &&
-      !this.d.scheduler.isActive(r.runId) && !this.d.scheduler.isQueued(r.runId));
-    for (const r of candidates.slice(0, 10)) {
-      let state: string;
-      try {
-        state = (await ghJson<{ state: string }>(["issue", "view", r.vars.issue!, "--repo", this.repo, "--json", "state"])).state;
-      } catch {
-        continue; // can't tell now; the next check tries again
-      }
-      if (state.toUpperCase() !== "CLOSED") continue;
-      const s = loadRun(this.d.runsDir, r.runId);
-      if (!s || (s.status !== "stopped" && s.status !== "waiting")) continue;
-      Object.assign(s, { status: "cancelled", reason: "the issue was closed on GitHub — nothing left to do", waiting: undefined, finishedAt: s.finishedAt ?? new Date().toISOString() });
-      saveRun(s);
-      this.act(`#${r.vars.issue} is closed → ended its run ${r.runId}, which waited for a person`);
-    }
   }
 
   /** Issues already covered by a finished precheck run (a failed check doesn't hold issues back). */
@@ -1032,6 +1074,7 @@ export class Watcher {
     const hold = (kind: NextKind) => { for (const i of list) holds.push(this.held(kind, i)); };
     if (this.d.scheduler.isLocked(lockKey)) return hold("checking");
     if (!budgetLeft) return hold("daily_budget");
+    if (!this.ownerBudgetLeft()) { for (const i of list) holds.push(this.held("user_limit", i, { userLimit: "budget" })); return; }
     const { flow } = loadFlow(this.cfg.precheck_flow!, this.d.repo);
     const nums = list.map((i) => i.number);
     const runId = this.queue({

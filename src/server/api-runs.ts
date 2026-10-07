@@ -125,6 +125,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         throw new HttpError(404, "flow not found"); // the message of a failure holds a file path
       }
       if (!isPublished(flow) || isRefinementFlow(flow.name)) throw new HttpError(404, "flow not found");
+      if (flow.workspace === "inplace") throw new HttpError(403, "this flow works directly in the server's folder; only an admin can start it");
+      if (flow.workspace === "worktree") throw new HttpError(403, "this flow works in a branch of the server's folder; only an admin can start it");
       repo = resolve(opts.repo);
       if (!existsSync(repo)) throw new HttpError(400, "the server's folder was not found");
       // The folder's own settings are read now and kept with the job; the user may fill in the published inputs only.
@@ -195,13 +197,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const body = await readJson(req);
     const s = scheduler.get(id);
     if (!s) throw new HttpError(404, "run not found");
+    const from = str(body, "from", false) || undefined;
+    if (from && !admin) throw new HttpError(403, "only an admin can restart a run from a step");
     // The one-read-at-a-time rules live in the session: an architect run is continued from there, for every role.
     if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
     // One live look at the issue; a closed one is not continued (see run-gate.ts).
     const gate = await gateRun(s, ctx.config());
     if (!gate.ok) throw new HttpError(409, gate.message);
     if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
-    const from = str(body, "from", false) || undefined;
     // The same answer for both roles; any other failure of submit is unexpected (and generic for a user).
     if (scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(400, `run ${id} is already queued or running`);
     scheduler.submit(
@@ -217,7 +220,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (action === "events" && method === "GET") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
     // What a viewer sees of the record, sent last.
-    const shown = (n: NextStep) => [n.kind, n.issueUnchecked ? "unchecked" : "", n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
+    const shown = (n: NextStep) => [n.kind, n.issueUnchecked ? "unchecked" : "", n.retired ? "retired" : "", n.text, n.until, n.timing?.progress, n.timing?.estimate, n.timing?.note].join("\n");
     const first = scheduler.get(id);
     let last = first ? shown(view(nextFor(ctx, undefined, !admin)(first))) : "";
     let lastCan = false;
@@ -261,7 +264,10 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const s = scheduler.get(id);
   if (!s) throw new HttpError(404, "run not found");
   if (!action && method === "GET") return send(res, 200, hide(shape({ ...s, ...answerable(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
-  if (action === "diff" && method === "GET") return send(res, 200, runDiff(s)), true;
+  if (action === "diff" && method === "GET") {
+    if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
+    return send(res, 200, runDiff(s)), true;
+  }
   if (action === "transcript" && method === "GET") {
     const n = Number(seg[3]);
     const rec = s.history[n];

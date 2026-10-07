@@ -5,7 +5,7 @@ import { specOf, toTarget, claudeProviderEnv, type Target } from "./agents/targe
 import type { Config } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import type { FailureNote, RunSummary } from "./engine/state.js";
-import { spentToday } from "./engine/state.js";
+import { spentToday, spentTodayBy } from "./engine/state.js";
 import { tokenVarNames } from "./engine/isolation.js";
 import { classifyFailure, failedIndex, hideFolders, safeSentence } from "./failure.js";
 import { runClaude } from "./steps/claude.js";
@@ -72,6 +72,8 @@ export interface ExplainInput {
   claudeBin?: string;
   signal?: AbortSignal;
   redact?: (t: string) => string;
+  /** The daily budget of an account; without it only the global budget applies. */
+  userDailyBudget?: (owner: string) => number | undefined;
 }
 
 export interface Explained {
@@ -100,10 +102,17 @@ export async function explainFailure(i: ExplainInput): Promise<Explained | undef
   let cap: number | undefined;
   if (config.cost_limits && !target.free) {
     const runCap = run.flowDef?.limits?.max_cost_usd;
+    let userCap: number | undefined;
+    try {
+      userCap = run.owner && i.userDailyBudget ? i.userDailyBudget(run.owner) : undefined;
+    } catch {
+      userCap = undefined;
+    }
     const left = [
       CAP_USD,
       runCap !== undefined ? runCap - run.totalCostUsd : undefined,
       config.daily_budget_usd !== undefined ? config.daily_budget_usd - spentToday(i.runsDir) : undefined,
+      run.owner && typeof userCap === "number" && Number.isFinite(userCap) && userCap > 0 ? userCap - spentTodayBy(i.runsDir, run.owner) : undefined,
     ].filter((n): n is number => n !== undefined);
     cap = Math.min(...left);
     if (cap < FLOOR_USD) return undefined;

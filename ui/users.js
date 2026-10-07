@@ -33,6 +33,8 @@ export const lastSignInText = (u) => (u.lastSignIn ? timeAgo(u.lastSignIn) : "ne
  */
 export const actionsFor = (u, now = Date.now()) => [
   "edit",
+  "limits",
+  "app",
   u.hasPassword ? "reset" : "link",
   ...(u.hasPassword && isLocked(u, now) ? ["unlock"] : []),
   u.status === "blocked" ? "unblock" : "block",
@@ -249,8 +251,117 @@ const deleteDialog = (u, { me }) => callDialog({
   prepare: () => () => api.deleteUser(u.id),
 });
 
-const DIALOGS = { edit: editDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
-const LABELS = { edit: "Edit", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
+// ---- limits (stored and shown only; the server does not enforce them yet) ----------------------------
+
+export const LIMIT_FIELDS = [
+  { key: "maxConcurrent", label: "Runs at the same time" },
+  { key: "maxRunsPerDay", label: "Runs per day" },
+  { key: "dailyBudgetUsd", label: "Daily budget (USD)" },
+];
+const LIMIT_TEXT = {
+  maxConcurrent: (v) => `${v} at a time`,
+  maxRunsPerDay: (v) => `${v} runs a day`,
+  dailyBudgetUsd: (v) => `$${v} a day`,
+};
+
+/** The limits that apply to an account: `[{ key, text, override }]`, an own value wins over the default. Empty means no limits. */
+export function limitParts(limits, id) {
+  const own = limits?.users?.[id] ?? {};
+  const defaults = limits?.defaults ?? {};
+  return LIMIT_FIELDS.flatMap(({ key }) => {
+    const override = own[key] !== undefined;
+    const v = override ? own[key] : defaults[key];
+    return v === undefined ? [] : [{ key, text: LIMIT_TEXT[key](v), override }];
+  });
+}
+
+/** Reads the three input texts: `{ problem }` or `{ values }` (a missing key is empty = no limit). */
+export function readLimits(input) {
+  const values = {};
+  for (const { key, label } of LIMIT_FIELDS) {
+    const t = text(input[key]);
+    if (!t) continue;
+    if (key === "dailyBudgetUsd") {
+      const n = Number(t);
+      if (!/^\d+(\.\d+)?([eE][+-]?\d+)?$/.test(t) || !Number.isFinite(n) || n <= 0) return { problem: "Daily budget must be a number above 0, or empty." };
+      values[key] = n;
+    } else {
+      const n = Number(t);
+      if (!/^\d+$/.test(t) || !Number.isSafeInteger(n) || n < 1) return { problem: `${label} must be a whole number of 1 or more, or empty.` };
+      values[key] = n;
+    }
+  }
+  return { values };
+}
+
+/** Only the keys that differ: a number to set, null to clear. {} means no change. */
+export function limitsPatch(current, values) {
+  const patch = {};
+  for (const { key } of LIMIT_FIELDS) {
+    if (values[key] !== undefined) {
+      if (values[key] !== current?.[key]) patch[key] = values[key];
+    } else if (current?.[key] !== undefined) patch[key] = null;
+  }
+  return patch;
+}
+
+function limitsForm(current, hintOf) {
+  const inputs = Object.fromEntries(LIMIT_FIELDS.map(({ key }) => [key, h("input", { name: key, inputmode: "decimal", autocomplete: "off", value: current?.[key] === undefined ? "" : String(current[key]), placeholder: hintOf(key) })]));
+  return {
+    nodes: LIMIT_FIELDS.map(({ key, label }) => f(label, inputs[key])),
+    read: () => readLimits(Object.fromEntries(LIMIT_FIELDS.map(({ key }) => [key, inputs[key].value]))),
+  };
+}
+
+const limitsPrepare = (form, current, save) => () => {
+  const r = form.read();
+  if (r.problem) return r.problem;
+  const patch = limitsPatch(current, r.values);
+  return Object.keys(patch).length ? () => save(patch) : null;
+};
+
+const limitsDialog = (u, { limits }) => {
+  const current = limits?.users?.[u.id] ?? {};
+  const defaults = limits?.defaults ?? {};
+  const form = limitsForm(current, (k) => (defaults[k] === undefined ? "default: no limit" : `default: ${defaults[k]}`));
+  return callDialog({
+    title: `Limits of ${u.name}`,
+    body: [para("Leave a field empty to use the default."), ...form.nodes],
+    label: "Save",
+    prepare: limitsPrepare(form, current, (patch) => api.saveUserLimits(u.id, patch)),
+  });
+};
+
+const defaultLimitsDialog = (_u, { limits }) => {
+  const current = limits?.defaults ?? {};
+  const form = limitsForm(current, () => "no limit");
+  return callDialog({
+    title: "Default limits",
+    body: [para("These apply to every account, admins too, unless the account has its own. Empty means no limit. All three are enforced; the daily budget needs cost limits to be on in Settings."), ...form.nodes],
+    label: "Save",
+    prepare: limitsPrepare(form, current, (patch) => api.saveDefaultLimits(patch)),
+  });
+};
+
+/** The lines of the app-repositories box as a list: trimmed, empty lines dropped. */
+export const appReposBody = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+
+const appReposDialog = (u, { repos }) => {
+  const area = h("textarea", { name: "appRepos", class: "mono", rows: 8, style: { width: "100%" } });
+  area.value = repos.join("\n");
+  return callDialog({
+    title: `App repositories of ${u.name}`,
+    body: [
+      para(`Repositories ${u.name} may connect with the GitHub App. One per line: owner/name, or owner/* for all repositories of an owner. An empty list allows none. Connections that exist already keep working.`),
+      ...(u.role === "admin" ? [para("An admin is not limited; the list counts only if the account becomes a user.")] : []),
+      area],
+    label: "Save",
+    prepare: () => () => api.setUserAppRepos(u.id, appReposBody(area.value)),
+  });
+};
+
+const DIALOGS = { app: appReposDialog, edit: editDialog, limits: limitsDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
+const LABELS = { edit: "Edit", limits: "Limits", app: "App repositories", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
@@ -266,16 +377,27 @@ const onPage = () => {
 /** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. Returns a cleanup. */
 export async function renderUsers(main, { me = "", notice, page = browserPage } = {}) {
   const mine = ++generation;
-  const users = await api.users();
+  // A broken limits store must not take the page down: the column then says "not available".
+  const [users, limits] = await Promise.all([api.users(), api.limits().catch(() => null)]);
   if (mine !== generation || !onPage()) return () => {};
   const reload = (next) => renderUsers(main, { me, notice: next, page }).catch((e) => toast(errorText(e), "error"));
 
   const act = async (u, kind) => {
-    const answer = await DIALOGS[kind](u, { me, page });
+    let loaded = {};
+    if (kind === "app") {
+      try {
+        loaded = await api.userAppRepos(u.id);
+      } catch (e) {
+        if (mine !== generation || !onPage()) return;
+        return toast(errorText(e), "error");
+      }
+      if (mine !== generation || !onPage()) return;
+    }
+    const answer = await DIALOGS[kind](u, { me, page, limits, repos: loaded.repos ?? [] });
     if (answer && u.id === me && ["edit", "block", "delete"].includes(kind)) return page.reload();
     let next;
     if (answer && kind === "block") next = { text: cancelledText(u.name, cancelledTotal(answer.cancelled)) };
-    else if (answer && kind === "edit") toast("Saved");
+    else if (answer && (kind === "edit" || kind === "limits" || kind === "app")) toast("Saved");
     else if (answer && kind === "unlock") toast(`${u.name} is unlocked`);
     else if (answer && kind === "unblock") toast(`${u.name} is unblocked`);
     else if (answer && kind === "delete") toast(`${u.name} was deleted`);
@@ -295,6 +417,19 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     await addDialog(null, { page });
     reload();
   };
+  const defaultLimits = async () => {
+    const answer = await defaultLimitsDialog(null, { limits });
+    if (answer) toast("Saved");
+    reload();
+  };
+  const limitsCell = (u) => {
+    if (limits === null) return h("span", { class: "muted" }, "not available");
+    const parts = limitParts(limits, u.id);
+    if (!parts.length) return h("span", { class: "muted" }, "no limits");
+    return parts.map((p, i) => [
+      i ? " · " : null,
+      p.override ? h("strong", { title: "Set for this account" }, `${p.text} (own)`) : h("span", { class: "muted", title: "Default" }, p.text)]);
+  };
   const row = (u) => h("tr", {},
     h("td", {}, u.name, u.id === me ? h("span", { class: "muted" }, " (you)") : null),
     h("td", { class: "mono" }, u.email),
@@ -302,13 +437,15 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     h("td", {}, h("span", { class: pillClass(u) }, statusText(u))),
     h("td", { class: "muted" }, lastSignInText(u)),
     h("td", { class: "mono" }, u.runs),
-    h("td", {}, actionsFor(u).map((k) => [h("button", { class: k === "delete" ? "small danger" : "small", onClick: () => (k === "view" ? view(u) : act(u, k)) }, LABELS[k]), " "])));
+    h("td", {}, limitsCell(u)),
+    h("td", {}, actionsFor(u).map((k) => [h("button", { class: k === "delete" ? "small danger" : "small", disabled: k === "limits" && limits === null, onClick: () => (k === "view" ? view(u) : act(u, k)) }, LABELS[k]), " "])));
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
-      h("span", { class: "spacer" }), h("button", { class: "primary", onClick: add }, "+ Add user")),
+      h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
+      h("button", { class: "primary", onClick: add }, "+ Add user")),
     notice ? h("p", { class: "status ok" }, notice.text) : null,
     h("table", { class: "table" },
-      h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", ""].map((t) => h("th", {}, t)))),
+      h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", ""].map((t) => h("th", {}, t)))),
       h("tbody", {}, users.map(row))));
   return () => {
     generation++;

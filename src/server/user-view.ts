@@ -68,6 +68,7 @@ export function userError(raw: string): string {
   if (/^failed: /.test(t)) return "One of its steps failed";
   if (/^usage limit reached/.test(t)) return "The usage limit was reached";
   if (/^signed out —/.test(t)) return "The Foundry is signed out of its AI account";
+  if (/^your daily limit is reached/.test(t)) return "Your limit for today is reached";
   return upper(explainError(t, "run", true).why);
 }
 

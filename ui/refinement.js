@@ -1,11 +1,13 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
+import { impactLogText } from "./refinement-impact.js";
+import { readyLogText } from "./refinement-ready.js";
 import { reviewLogText } from "./refinement-remarks.js";
 import { suggestLogText } from "./refinement-suggest.js";
 import { kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
-/** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. Later steps add the others. */
+/** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. A session is Ready when every draft is ready. */
 export const STATE_LABELS = {
   exploring: "Exploring",
   drafting: "Drafting",
@@ -42,10 +44,11 @@ export function logText(entry) {
   if (entry.what === "architect-brief") return "The architect wrote the context brief";
   if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
   if (entry.what === "draft-added") return `${who} added a story draft`;
+  if (entry.what === "draft-published") return `${who} published a story draft${entry.detail ? `: ${entry.detail}` : ""}`;
   if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
   if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
   if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
-  return talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || `${who}: ${entry.what}`;
+  return talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
 }
 
 const ASK = "Ask the architect to look at the code";
@@ -63,10 +66,11 @@ export function activityText(doing, kind = "brief") {
   const t = text(doing);
   if (!t) return "";
   if (kind !== "brief") {
-    // A round, an answer, a suggestion or a review: fixed sentences only, never the words of the step.
+    // A round, an answer, a suggestion, a review or a view: fixed sentences only, never the words of the step.
     if (/clone|check out/i.test(t)) return "Getting the code.";
     if (/reads the code/i.test(t)) return "Reading the code.";
-    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : "Checking the answer.";
+    if (kind === "impact" && /issues/i.test(t)) return "Reading the open issues.";
+    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : "Checking the answer.";
     if (/^getting ready/i.test(t)) return "Getting ready.";
     return "";
   }
@@ -78,8 +82,8 @@ export function activityText(doing, kind = "brief") {
   return t;
 }
 
-const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft." };
-const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft." };
+const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft.", impact: "Then it looks at what your draft touches.", ready: "Then it judges what code could not decide." };
+const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft.", impact: "The architect is looking at what your draft touches.", ready: "The architect is judging the readiness of your draft." };
 
 /** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
 export function architectStatus(a) {
@@ -97,7 +101,7 @@ export function askLabel(s) {
   if (!s?.mine || s.state === "dropped" || s.repoAvailable === false) return "";
   const state = s.architect?.state;
   if (state === "queued" || state === "running") return "";
-  const own = kindOf(s.architect) === "brief"; // a round, a question, a suggestion or a review is asked again where it shows
+  const own = kindOf(s.architect) === "brief"; // a round, a question, a suggestion, a review or a view is asked again where it shows
   if (state === "paused") return own ? "Ask again" : "";
   if (state === "failed" && own) return "Try again";
   return s.brief ? "Refresh" : ASK;
@@ -131,7 +135,7 @@ function statusLine(st) {
 
 /** The "Context brief" part: status line, button, brief. Returns nodes. */
 function briefSection(s, onAsk) {
-  // Only a run for the brief draws its line here; a round or a question is shown in the talk, a suggestion or a review on the draft page.
+  // Only a run for the brief draws its line here; a round or a question is shown in the talk, a suggestion, a review or a view on the draft page.
   const st = architectStatus(kindOf(s.architect) === "brief" ? s.architect : undefined);
   const label = askLabel(s);
   const b = s.brief;

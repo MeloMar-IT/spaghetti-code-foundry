@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
-import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, stepEntry, stepRow, versionRow } from "../runs.js";
+import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -44,7 +44,7 @@ export function myRunsEntries(runs, pending) {
 /** The buttons of a run page, in order: "approve", "reject", "retry", "cancel". A refinement run is continued from its session. */
 export function runActions(s, queued = false) {
   const out = [];
-  const own = !s.refinement && s.next?.kind !== "issue_closed";
+  const own = !s.refinement && s.next?.kind !== "issue_closed" && !s.next?.retired;
   // A run that is queued again can only be cancelled: the server refuses the rest.
   if (queued || s.status === "queued") return ["cancel"];
   if (s.status === "waiting" && own) out.push("approve", "reject");
@@ -359,6 +359,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       h("section", { class: "run-now", "aria-label": "Now" },
         h("h2", {}, "Now"),
         failed ? failureCard({ ...s, reason: undefined }, failedStepIndex(s) >= 0 ? { onStep: () => showTab("steps") } : {}) : s.next ? nextBlock(s.next) : null,
+        retiredLine(s),
         queued && job && job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null,
         steprow ? h("dl", { class: "meta" }, steprow) : null),
       h("div", { class: "card", style: { marginBottom: "16px" } },

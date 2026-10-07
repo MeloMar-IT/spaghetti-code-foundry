@@ -1,5 +1,7 @@
 import { basename } from "node:path";
-import { listRepos, ownsRepo } from "../auth/repos.js";
+import { loadFlow } from "../flow/load.js";
+import { buildLimitsOf, type BuildLimits, type LoadFlowVars } from "../refinement/build-limits.js";
+import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
 import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
@@ -7,7 +9,11 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
+import { splitView } from "../refinement/draft-split.js";
+import { otherDrafts } from "../refinement/known-areas.js";
+import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
+import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { isDraftKind, preview, type Draft } from "../refinement/draft.js";
 import { emptyTalk, isTalkKind } from "../refinement/talk.js";
 import {
@@ -16,10 +22,15 @@ import {
   type RefinementErrorCode,
   type Session,
   acceptProposal,
+  acceptAnywayOf,
   acceptSuggestionOf,
   addDraft,
+  checkReadyOf,
+  correctReadyState,
+  removeAcceptedOf,
   answerQuestion,
   moveToNotesOf,
+  setReviewLabelOf,
   rejectSuggestionOf,
   removeDraft,
   saveDraft,
@@ -30,12 +41,13 @@ import {
   createSession,
   dropSession,
   getSession,
+  isPublishing,
   listSessions,
   purgeDropped,
   renameSession,
   restoreSession,
 } from "../refinement/store.js";
-import { HttpError, readJson, send } from "./http.js";
+import { HttpError, readJson, readOptionalJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -67,16 +79,30 @@ function guarded<T>(ctx: ApiContext, fn: () => T): T {
   try {
     return fn();
   } catch (e) {
-    if (e instanceof RefinementError) throw new HttpError(STATUS[e.code], e.message);
-    if (e instanceof HttpError) throw e;
-    const log = ctx.diagLog;
-    if (e instanceof StoreError) log?.(`refinement: ${basename(e.file)} ${e.kind}`);
-    else log?.(`refinement: unexpected ${e instanceof Error ? e.name : "error"}`);
-    throw new HttpError(500, INTERNAL);
+    throw mapped(ctx, e);
   }
 }
 
+/** The same for code that waits for something (a call to GitHub, say): everything that goes wrong is mapped the same way. */
+export async function guardedAsync<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw mapped(ctx, e);
+  }
+}
+
+function mapped(ctx: ApiContext, e: unknown): HttpError {
+  if (e instanceof RefinementError) return new HttpError(STATUS[e.code], e.message);
+  if (e instanceof HttpError) return e;
+  const log = ctx.diagLog;
+  if (e instanceof StoreError) log?.(`refinement: ${basename(e.file)} ${e.kind}`);
+  else log?.(`refinement: unexpected ${e instanceof Error ? e.name : "error"}`);
+  return new HttpError(500, INTERNAL);
+}
+
 const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, repo: ctx.opts.repo, log: ctx.diagLog });
+export { deps as architectDeps };
 
 /** The GitHub repositories of an account, as the names a new session takes. */
 function githubNames(userId: string): string[] {
@@ -88,12 +114,47 @@ function githubNames(userId: string): string[] {
   return out;
 }
 
+/** The vars of a flow, read fresh each time so a changed limit shows at once; undefined when the flow cannot be loaded. */
+const flowVarsOf =
+  (repo: string): LoadFlowVars =>
+  (name) => {
+    try {
+      return loadFlow(name, repo).flow.vars;
+    } catch {
+      return undefined;
+    }
+  };
+
+/** The build limits of the session's repository; never fails a read. */
+export function limitsOf(ctx: ApiContext, s: Session): BuildLimits {
+  try {
+    return buildLimitsOf(s.repo, ctx.config().watchers, flowVarsOf(ctx.opts.repo), s.owner);
+  } catch {
+    return {};
+  }
+}
+
 /** A draft as the caller sees it: with its preview, the remarks of the code checks (computed now) and the review (without the texts it kept). */
-const draftView = (s: Session) => (d: Draft) => {
-  const { review: _stored, impact: _impact, ...rest } = d;
+const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) => (d: Draft) => {
+  const { review: _stored, impact: _impact, split: _split, readiness: _readiness, acceptedAnyway: _accepted, ...rest } = d;
   const review = reviewView(d);
-  const impact = impactView(d, s.drafts);
-  return { ...rest, preview: preview(d, s), remarks: draftRemarks(d), ...(review ? { review } : {}), ...(impact ? { impact } : {}) };
+  // Drafts of the owner's other sessions are looked up only for an overlap with a draft that is not in this session.
+  const outside = d.impact?.overlaps.some((o) => o.draft !== undefined && !s.drafts.some((x) => x.id === o.draft));
+  const impact = impactView(d, s.drafts, outside ? otherDrafts(s) : [], limits);
+  const split = splitView(d);
+  const readiness = readinessView(d, list);
+  const accepted = acceptedView(d, list);
+  return {
+    ...rest,
+    state: isReady(d, list) ? "ready" : "drafting",
+    preview: preview(d, s, acceptedLines(d, list)),
+    remarks: draftRemarks(d),
+    ...(review ? { review } : {}),
+    ...(impact ? { impact } : {}),
+    ...(split ? { split } : {}),
+    ...(readiness ? { readiness } : {}),
+    ...(accepted.length ? { acceptedAnyway: accepted } : {}),
+  };
 };
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
@@ -102,6 +163,8 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
   const draftsHidden = !repoAvailable && s.drafts.length > 0;
+  const limits = !draftsHidden && s.drafts.some((d) => d.impact) ? limitsOf(ctx, s) : {};
+  const list = readyListOf(findOwnedRepo(s.owner, s.repo)?.definitionOfReady);
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -116,8 +179,10 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     title: s.title,
     idea: s.idea,
     state: s.state,
+    // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
+    ...(repoAvailable ? { readyList: list } : {}),
     // Like the talk, the drafts are not shown while the repository is not theirs.
-    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s)) }),
+    ...(draftsHidden ? { draftsHidden: true } : { drafts: s.drafts.map(draftView(s, limits, list)) }),
     ...(s.epic !== undefined ? { epic: s.epic } : {}),
     architect: architectView(deps(ctx), s),
     // The brief holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
@@ -199,7 +264,9 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   /** The session when the caller may see it, after the end of its architect run was taken in. */
   const settled = (id: string) => {
     find(id);
-    return settleSession(deps(ctx), id) ?? find(id);
+    const s = settleSession(deps(ctx), id) ?? find(id);
+    // An admin may have changed the Definition of Ready: the stored drafting/ready state is made right on a read.
+    return correctReadyState(id) ?? s;
   };
   if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(ctx, settled(seg[1]!), user))), true;
   if (seg.length === 2 && method === "PUT") {
@@ -210,6 +277,8 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return send(res, 200, guarded(ctx, () => {
       // Cancel first: if the process stops after this, a retry of the drop still works and the read is already gone.
       const id = find(seg[1]!).id;
+      // A session that is being published is not dropped: refused before the run is cancelled, so a paused run stays paused.
+      if (isPublishing(id)) throw new RefinementError("busy", "this session is being published; try again in a moment");
       const runId = getSession(id)?.architect?.runId;
       if (stopArchitect(deps(ctx), id) && runId) auditAction(ctx.diagLog, user.id, "run-cancel", runId);
       dropSession(actor, id);
@@ -265,9 +334,39 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
+    // The body is optional: without one there is no own way. A body that is there must be JSON.
+    const body = await readOptionalJson(req);
+    return startRun({ kind: "split", draft: seg[3]!, own: body.own });
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review-label" && method === "PUT") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(setReviewLabelOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "move-to-notes" && method === "POST") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveToNotesOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "ready-check" && method === "POST") {
+    const did = seg[3]!;
+    // The code checks come first and are stored; the architect judges only what they left unsure.
+    const checked = guarded(ctx, () => checkReadyOf(actor, seg[1]!, did));
+    const draft = checked.drafts.find((d) => d.id === did);
+    if (draft && unsureByCode(draft).length) return startRun({ kind: "ready", draft: did });
+    // Code decided everything: a run for this draft that is still there (paused, say) is not needed any more.
+    const body = guarded(ctx, () => {
+      const a = getSession(checked.id)?.architect;
+      if (a?.kind === "ready" && a.draft === did && a.failed === undefined && stopArchitect(deps(ctx), checked.id)) auditAction(ctx.diagLog, user.id, "run-cancel", a.runId);
+      return view(ctx, settled(checked.id), user);
+    });
+    return send(res, 200, body), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "ready" && seg[6] === "accept" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(acceptAnywayOf(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "ready" && seg[6] === "accept" && method === "DELETE") {
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(removeAcceptedOf(actor, seg[1]!, seg[3]!, seg[5]!).id), user))), true;
   }
   if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "suggestions" && (seg[6] === "accept" || seg[6] === "reject") && method === "POST") {
     const body = await readJson(req);

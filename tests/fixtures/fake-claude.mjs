@@ -8,9 +8,24 @@
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
 // For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
+// For "What is asked of you now: ready" it answers every item under "## The items to judge" (lines "- <id>: …") as met, about the "what".
+// For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+// Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+
+const probeRead = (p) => (statSync(p).isDirectory() ? readdirSync(p).length : readFileSync(p).length);
+const CHILD_READ = 'const fs=require("fs");const p=process.argv[1];console.log(fs.statSync(p).isDirectory()?fs.readdirSync(p).length:fs.readFileSync(p).length)';
+const CHILD_WRITE = 'require("fs").writeFileSync(process.argv[1],process.argv[2])';
+function child(code, ...a) {
+  try {
+    return execFileSync(process.execPath, ["-e", code, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (e) {
+    process.stderr.write(`child failed: ${e.stderr || e.message}\n`);
+    process.exit(1);
+  }
+}
 
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
@@ -35,9 +50,19 @@ for (const line of prompt.split("\n")) {
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];
   if (line === "SHOWGH") result = `gh_token=${ghSeen}`;
+  // "READ <path>" lists a folder or reads a file and answers "read ok <path> <count>" (never the content); an error is not caught.
+  // "CHILD READ <path>" and "CHILD WRITE <path> <text>" do the same in a child `node -e` process; a failing child fails this fake with its stderr.
+  const rd = noTools ? null : line.match(/^READ (.*)$/);
+  if (rd) shown.push(`read ok ${rd[1]} ${probeRead(rd[1])}`);
+  const cr = noTools ? null : line.match(/^CHILD READ (.*)$/);
+  if (cr) shown.push(`read ok ${cr[1]} ${child(CHILD_READ, cr[1])}`);
+  const cw = noTools ? null : line.match(/^CHILD WRITE (\S+) (.*)$/);
+  if (cw) child(CHILD_WRITE, cw[1], cw[2]);
   // "SHOWVARS A B": one A=<value> or A=(unset) line per name; "SHOWGHDIR": what $GH_CONFIG_DIR is.
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
+  // "SHOWALLENV": "env: " and the sorted names (no values) of its environment.
+  if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
   if (line === "SHOWGHDIR") {
     const d = process.env.GH_CONFIG_DIR;
     shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
@@ -91,7 +116,27 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
         ? [{ issue: 12 }, { draft: "D1" }]
         : [{ text: `A suggested ${field}` }];
   const firstIssue = existsSync("issues.md") ? /^=== ISSUE #(\d+) ===$/m.exec(readFileSync("issues.md", "utf8"))?.[1] : undefined;
-  const round = prompt.includes("What is asked of you now: impact")
+  // Only the talk (the prompt itself names C1 and C2) and only its acceptance criteria.
+  const draft = (prompt.split("=== End of the talk ===")[0] ?? "").split(/^## The draft to split\s*$/m)[1] ?? "";
+  const crit = /^### Acceptance criteria\s*$([\s\S]*?)(?=^#{1,6} |$(?![\s\S]))/m.exec(draft)?.[1] ?? "";
+  const cs = [...new Set([...crit.matchAll(/^- (C[1-9]\d*): /gm)].map((m) => m[1]))];
+  const round = prompt.includes("What is asked of you now: split")
+    ? {
+        ways: [
+          { cut: "step",
+            stories: [
+              { title: "The first step", sentence: "A user does the first step of the path.", criteria: cs.slice(0, Math.ceil(cs.length / 2)), dependsOn: [] },
+              { title: "The second step", sentence: "A user finishes the path.", criteria: cs.slice(Math.ceil(cs.length / 2)), dependsOn: [1] } ],
+            first: "A user can already do the first step.", unplaced: [], warnings: [] },
+          { cut: "rule",
+            stories: [
+              { title: "The main rule", sentence: "A user gets the main rule.", criteria: cs.slice(0, 1), dependsOn: [] },
+              { title: "The other rules", sentence: "A user gets the other rules.", criteria: cs.length >= 3 ? cs.slice(1, -1) : cs.slice(1), dependsOn: [1] } ],
+            first: "A user can already use the main rule.", unplaced: cs.length >= 3 ? cs.slice(-1) : [],
+            warnings: [{ kind: "same-code", stories: [1, 2], why: "Both change the same page." }] },
+        ],
+      }
+    : prompt.includes("What is asked of you now: impact")
     ? {
         areas: [{ area: "README.md", files: ["README.md"], basis: "found", why: found }],
         dependsOn: [],
@@ -101,6 +146,8 @@ if (prompt.includes("Explain why this run of a coding flow failed")) {
         overlaps: firstIssue ? [{ issue: Number(firstIssue), areas: ["README.md"], basis: "found", why: "It changes the same file." }] : [],
         sensitive: [],
       }
+    : prompt.includes("What is asked of you now: ready")
+    ? { items: [...(prompt.split("## The items to judge")[1] ?? "").matchAll(/^- ([a-z0-9-]+): /gm)].map((m) => ({ id: m[1], result: "met", reason: "The draft makes this clear.", field: "what" })) }
     : prompt.includes("What is asked of you now: review")
     ? { remarks: [{ field: "criteria", item: "C1", kind: "uncheckable", text: "Nobody can tell when this is met." }, { field: "what", kind: "how", text: "This says how to build it." }] }
     : prompt.includes("What is asked of you now: suggest")

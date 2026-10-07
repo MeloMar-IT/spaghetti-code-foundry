@@ -172,12 +172,17 @@ const EXAMPLES: Record<string, Example> = {
   "POST credentials": { path: "credentials", body: {}, user: 400, admin: 400 },
   "GET users": no("users", 200),
   "POST users": no("users", 400, {}),
+  "GET users/limits": no("users/limits", 200),
+  "PUT users/limits": no("users/limits", 200, {}),
   "PUT users/:id": no(`users/${UNKNOWN}`, 404, {}),
+  "PUT users/:id/limits": no(`users/${UNKNOWN}/limits`, 404, {}),
   "POST users/:id/block": no(`users/${UNKNOWN}/block`, 404, {}),
   "POST users/:id/unblock": no(`users/${UNKNOWN}/unblock`, 404, {}),
   "POST users/:id/link": no(`users/${UNKNOWN}/link`, 404, {}),
   "POST users/:id/reset": no(`users/${UNKNOWN}/reset`, 404, {}),
   "POST users/:id/unlock": no(`users/${UNKNOWN}/unlock`, 404, {}),
+  "GET users/:id/app-repos": no(`users/${UNKNOWN}/app-repos`, 404),
+  "PUT users/:id/app-repos": no(`users/${UNKNOWN}/app-repos`, 404, { repos: [] }),
   "POST password": { path: "password", body: {}, user: 400, admin: 400 },
   "DELETE users/:id": no(`users/${UNKNOWN}`, 404),
   "GET audit": no("audit", 200),
@@ -189,6 +194,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
+  "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
@@ -209,15 +215,23 @@ const EXAMPLES: Record<string, Example> = {
   "DELETE refinement/:id/drafts/:did": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}`, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggest": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggest`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/split": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/impact": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/impact`, body: {}, user: 404, admin: 404 },
+  "PUT refinement/:id/drafts/:did/review-label": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review-label`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/ready-check": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready-check`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/ready/:item/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready/value/accept`, body: {}, user: 404, admin: 404 },
+  "DELETE refinement/:id/drafts/:did/ready/:item/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/ready/value/accept`, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/accept": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/accept`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/suggestions/:sid/reject": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggestions/${UNKNOWN}/reject`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/epic": { path: `refinement/${UNKNOWN}/epic`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, body: {}, user: 404, admin: 404 },
+  "GET refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
   "GET admin/credentials": no("admin/credentials", 200),
+  "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
   "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
   "POST admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404, {}),
@@ -236,6 +250,7 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("PUT", ["users", "limits"])?.path).toBe("users/limits");
     expect(findRule("POST", ["admin", "repos", UNKNOWN, "watchers"])?.path).toBe("admin/repos/:id/watchers");
     expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");
     expect(findRule("GET", ["admin", "credentials"])?.path).toBe("admin/credentials");
@@ -248,7 +263,12 @@ describe("the table", () => {
     expect(findRule("POST", ["runs", "abc", "answer"])?.path).toBe("runs/:id/answer");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "impact"])?.path).toBe("refinement/:id/drafts/:did/impact");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "split"])?.path).toBe("refinement/:id/drafts/:did/split");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
+    expect(findRule("PUT", ["refinement", "0000", "drafts", "0001", "review-label"])?.path).toBe("refinement/:id/drafts/:did/review-label");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "ready-check"])?.path).toBe("refinement/:id/drafts/:did/ready-check");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "ready", "value", "accept"])?.path).toBe("refinement/:id/drafts/:did/ready/:item/accept");
+    expect(findRule("DELETE", ["refinement", "0000", "drafts", "0001", "ready", "value", "accept"])?.path).toBe("refinement/:id/drafts/:did/ready/:item/accept");
     expect(findRule("POST", ["flows"])).toBeUndefined();
     expect(findRule("GET", [])).toBeUndefined();
     expect(findRule("GET", ["runs", "a", "b"])).toBeUndefined();
@@ -258,6 +278,8 @@ describe("the table", () => {
     expect(findRule("GET", ["repos", "methods"])?.path).toBe("repos/methods");
     expect(findRule("PUT", ["repos", "a", "auth"])?.path).toBe("repos/:id/auth");
     expect(findRule("POST", ["repos", "a", "test"])?.path).toBe("repos/:id/test");
+    expect(findRule("GET", ["repos", "a", "ready"])?.path).toBe("repos/:id/ready");
+    expect(findRule("PUT", ["admin", "repos", "a", "ready"])?.path).toBe("admin/repos/:id/ready");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");
     expect(findRule("PUT", ["admin", "repos", "a", "settings"])?.path).toBe("admin/repos/:id/settings");
     expect(findRule("GET", ["admin"])).toBeUndefined();
@@ -274,6 +296,8 @@ describe("the table", () => {
     expect(findRule("PUT", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
     expect(findRule("DELETE", ["refinement", "a", "drafts", "b"])?.path).toBe("refinement/:id/drafts/:did");
     expect(findRule("PUT", ["refinement", "a", "epic"])?.path).toBe("refinement/:id/epic");
+    expect(findRule("GET", ["refinement", "a", "publish"])?.path).toBe("refinement/:id/publish");
+    expect(findRule("POST", ["refinement", "a", "publish"])?.path).toBe("refinement/:id/publish");
     expect(findRule("POST", ["refinement", "a", "proposals", "b", "accept"])?.path).toBe("refinement/:id/proposals/:pid/accept");
   });
 
@@ -475,27 +499,22 @@ describe("starting a run as a user", () => {
     expect(run).toMatchObject({ owner: ann.user.id, source: "ui", vars: { github_repo: "ACME/App" } });
   });
 
-  it("runs a flow without github_repo in the server's folder, with the folder's variables", async () => {
+  it("a user's run of an empty flow does not read the folder's variables", async () => {
     mkdirSync(join(repo, ".claude-factory"), { recursive: true });
     writeFileSync(confFile(), "vars:\n  test_cmd: 'true'\n");
     try {
-      const r = await start(ann, { flow: "wt", task: "t", vars: { github_repo: "acme/app" } });
+      const r = await start(ann, { flow: "plain", task: "t" });
       expect(r.status).toBe(201);
       const { runId } = r.json() as { runId: string };
       await ctx.scheduler.wait(runId);
       const run = runJson(runId);
       expect(run.repo).toBe(repo);
-      expect(run.vars.test_cmd).toBe("true");
       expect(run.owner).toBe(ann.user.id);
+      expect(run.vars.test_cmd).toBeUndefined();
 
       writeFileSync(confFile(), "vars:\n  github_repo: other/repo\n");
-      const none = await start(ann, { flow: "wt" });
-      expect([none.status, none.error()]).toEqual([403, 'set the var "github_repo" to one of your repositories']);
-      const given = await start(ann, { flow: "wt", vars: { github_repo: "acme/app" } });
-      expect(given.status).toBe(201);
-      const id = (given.json() as { runId: string }).runId;
-      await ctx.scheduler.wait(id);
-      expect(runJson(id).vars.github_repo).toBe("acme/app");
+      expect((await start(ann, { flow: "plain" })).status).toBe(201);
+      expect((await start(ann, { flow: "wt", vars: { github_repo: "acme/app" } })).status).toBe(403);
     } finally {
       rmSync(confFile(), { force: true });
     }
@@ -503,7 +522,7 @@ describe("starting a run as a user", () => {
 
   it("checks every flow of the user's list in the same way", async () => {
     const list = (await call(ann, "GET", "/api/flows")).json() as { name: string; fields: { name: string }[] }[];
-    expect(list.map((f) => f.name)).toEqual(expect.arrayContaining(["walk", "plain", "wt", "withrepo"]));
+    expect(list.map((f) => f.name)).toEqual(expect.arrayContaining(["walk", "plain", "withrepo"]));
     for (const { name, fields } of list) {
       const r = await start(ann, { flow: name, vars: { github_repo: "nobody/none" } });
       const message = fields.some((f) => f.name === "github_repo") ? '"nobody/none" is not one of your repositories' : 'you cannot set the var "github_repo"';
@@ -661,6 +680,7 @@ describe("published flows", () => {
 
   it("lists and starts a copy of a built-in flow once the admin publishes it", async () => {
     const flow = parse(readFileSync(resolve("tests/fixtures/flows/feature.yaml"), "utf8")); // a plain flow (retired from flows/)
+    flow.workspace = "empty"; // users cannot start a worktree flow
     flow.publish = { enabled: true, name: "Build a feature" };
     expect((await put(stringify(flow))).status).toBe(200);
     try {
@@ -825,5 +845,59 @@ describe("repositories over HTTP", () => {
       renameSync(aside, file);
     }
     expect((await call(ann, "GET", "/api/repos")).status).toBe(200);
+  });
+});
+
+describe("security review", () => {
+  const start = (who: TestSession, body: unknown) => call(who, "POST", "/api/runs", body);
+
+  it("resume with from is for admins only", async () => {
+    const mine = await waitingRun(ann);
+    const r = await call(ann, "POST", `/api/runs/${mine}/resume`, { from: "say" });
+    expect([r.status, r.error()]).toEqual([403, "only an admin can restart a run from a step"]);
+    const theirs = await waitingRun(admin);
+    expect((await call(admin, "POST", `/api/runs/${theirs}/resume`, { from: "say" })).status).toBe(202);
+    await ctx.scheduler.idle();
+  });
+
+  it("a flow that works in the server's folder is not for users", async () => {
+    expect((await call(admin, "PUT", "/api/flows/ip", { yaml: QUICK("ip", "", "inplace"), scope: "repo" })).status).toBe(200);
+    expect((await start(ann, { flow: "ip" })).status).toBe(403);
+    expect((await start(admin, { flow: "ip", likeUser: true })).status).toBe(403);
+    expect((await start(admin, { flow: "ip" })).status).toBe(201);
+    await ctx.scheduler.idle();
+    for (const [who, path] of [[ann, "/api/flows"], [admin, "/api/flows?published=1"]] as const) {
+      const list = (await call(who, "GET", path)).json() as { name: string }[];
+      expect(list.map((f) => f.name)).not.toContain("ip");
+      expect(list.map((f) => f.name)).toContain("walk");
+    }
+  });
+
+  it("a flow that works in a branch of the server's folder is not for users", async () => {
+    expect((await call(admin, "PUT", "/api/flows/wtx", { yaml: QUICK("wtx", "", "worktree"), scope: "repo" })).status).toBe(200);
+    const r = await start(ann, { flow: "wtx" });
+    expect([r.status, r.error()]).toEqual([403, "this flow works in a branch of the server's folder; only an admin can start it"]);
+    expect((await start(admin, { flow: "wtx", likeUser: true })).status).toBe(403);
+    const ok = await start(admin, { flow: "wtx" });
+    expect(ok.status).toBe(201);
+    const { runId } = ok.json() as { runId: string };
+    await ctx.scheduler.wait(runId);
+    expect(runJson(runId)).toMatchObject({ status: "succeeded", branch: expect.stringMatching(/^factory\//) });
+    for (const [who, path] of [[ann, "/api/flows"], [admin, "/api/flows?published=1"]] as const) {
+      const list = (await call(who, "GET", path)).json() as { name: string }[];
+      expect(list.map((f) => f.name)).not.toContain("wtx");
+      expect(list.map((f) => f.name)).toContain("walk");
+    }
+  });
+
+  it("the changes of such a run are for admins only", async () => {
+    const mine = await waitingRun(ann);
+    const copy = "inplace-run";
+    mkdirSync(join(runsDir, copy));
+    const j = runJson(mine);
+    writeFileSync(join(runsDir, copy, "run.json"), JSON.stringify({ ...j, runId: copy, runDir: join(runsDir, copy), flowDef: { ...j.flowDef, workspace: "inplace" } }));
+    expect((await call(ann, "GET", `/api/runs/${copy}/diff`)).status).toBe(403);
+    expect((await call(admin, "GET", `/api/runs/${copy}/diff`)).status).toBe(200);
+    expect((await call(ann, "GET", `/api/runs/${mine}/diff`)).status).toBe(200);
   });
 });

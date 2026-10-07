@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction } from "../auth/audit.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
 import { StoreError } from "../auth/store.js";
+import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app-repos.js";
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
@@ -16,7 +18,7 @@ import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the repository list is not working; see the server log";
-const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409 } as const;
+const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409, "bad-ready": 400 } as const;
 
 /**
  * Runs repository-list code. Input errors become 4xx; everything else is logged (the file name and the kind, never
@@ -87,6 +89,14 @@ function oldKeys(ctx: ApiContext, left: number, done: string): void {
   throw new HttpError(500, `${done}, but an old key is still in the Keychain, so older copies of the data could be read; try again, or run scf credential rotate-key`);
 }
 
+const APP_NOT_ALLOWED = "the administrator has not allowed your account to connect this repository through the GitHub App; ask the administrator, or choose another method";
+
+/** 403 when a user's list does not hold the repository. An admin is not limited. GitHub is not asked before this. */
+function needOnAppList(ctx: ApiContext, user: User, github: string | undefined): void {
+  if (user.role === "admin" || github === undefined) return;
+  if (!guardedRepos(ctx, () => appRepoAllowed(user.id, github))) throw new HttpError(403, APP_NOT_ALLOWED);
+}
+
 const APP_NOT_SET_UP = "the GitHub App is not set up on this server; ask the administrator, or choose another method";
 
 /** The app, or a 400 when the administrator has not set it up. */
@@ -121,10 +131,13 @@ const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
 
 /** A record for the admin page: with its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
-function adminRow(rec: RepoRecord, users?: Map<string, User>) {
+function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
+  const github = rec.method === "github-app" ? tryParseRepoUrl(rec.url)?.github : undefined;
+  const offList = github !== undefined && u?.role === "user" && !onAppList(lists ? (lists.get(rec.owner) ?? []) : getAppRepos(rec.owner), github);
   const problem = watcherRepoProblem(rec, u ?? undefined);
-  return { ...rec, settings: rec.settings ?? {}, account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}) };
+  const { definitionOfReady, ...rest } = rec;
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */
@@ -133,7 +146,8 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
   if (seg.length === 2 && method === "GET") {
     const rows = guardedRepos(ctx, () => {
       const users = new Map(listUsers().map((u) => [u.id, u]));
-      return listAllRepos().map((r) => adminRow(r, users));
+      const lists = allAppRepos();
+      return listAllRepos().map((r) => adminRow(r, users, lists));
     });
     return send(res, 200, rows, publicKeys(rows)), true;
   }
@@ -141,6 +155,16 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
     const body = await readJson(req);
     const r = guardedRepos(ctx, () => setRepoSettings(seg[2]!, body));
     if (r.changed.length) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `settings: ${r.changed.join(", ")}`);
+    const row = adminRow(r.repo);
+    return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg.length === 4 && seg[3] === "ready" && method === "PUT") {
+    const body = await readJson(req);
+    const r = guardedRepos(ctx, () => setRepoReady(seg[2]!, body));
+    if (r.changed) {
+      const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
+      auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
+    }
     const row = adminRow(r.repo);
     return send(res, 200, row, publicKeys([row])), true;
   }
@@ -217,6 +241,7 @@ async function testRepo(ctx: ApiContext, user: User, id: string): Promise<{ at: 
     if (rec.method === "none" && user.role !== "admin") {
       throw new HttpError(409, "this repository has no sign-in yet; choose one with Change authentication");
     }
+    if (rec.method === "github-app") needOnAppList(ctx, user, tryParseRepoUrl(rec.url)?.github);
     const started = Date.now();
     const isApp = rec.method === "github-app";
     let secret: string | undefined;
@@ -276,13 +301,17 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     noServerAccess(body.method);
     const input = { url: given(body, "url") ?? given(body, "name"), method: given(body, "method"), username: given(body, "username"), token: given(body, "token") };
     let installationId: string | undefined;
+    let authorize: (() => void) | undefined;
     if (input.method === "github-app") {
+      const github = tryParseRepoUrl(String(input.url))?.github;
+      needOnAppList(ctx, user, github); // before the app is looked at: an unlisted user gets 403 whether or not the app is set up
       const app = needApp(ctx);
+      authorize = () => needOnAppList(ctx, user, github);
       // every error of the request itself is answered before GitHub is asked
       guardedRepos(ctx, () => checkNewRepo(user.id, input));
-      installationId = await lookupInstallation(ctx, app, tryParseRepoUrl(String(input.url))?.github);
+      installationId = await lookupInstallation(ctx, app, github);
     }
-    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId }));
+    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId, authorize }));
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
     const out = shown(repo);
     return send(res, 201, out, publicKeys([out])), true;
@@ -292,13 +321,17 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     noServerAccess(body.method);
     const change = { method: given(body, "method"), username: given(body, "username"), token: given(body, "token"), url: given(body, "url"), newKey: given(body, "newKey") };
     let installationId: string | undefined;
+    let authorize: (() => void) | undefined;
     if (change.method === "github-app") {
-      const app = needApp(ctx);
       guardedRepos(ctx, () => checkRepoAuth(user.id, seg[1]!, change));
       const rec = guardedRepos(ctx, () => getRepo(seg[1]!));
-      installationId = await lookupInstallation(ctx, app, rec ? tryParseRepoUrl(rec.url)?.github : undefined);
+      const github = rec ? tryParseRepoUrl(rec.url)?.github : undefined;
+      needOnAppList(ctx, user, github);
+      const app = needApp(ctx);
+      authorize = () => needOnAppList(ctx, user, github);
+      installationId = await lookupInstallation(ctx, app, github);
     }
-    const r = guardedRepos(ctx, () => setRepoAuth(user.id, seg[1]!, change, { installationId }));
+    const r = guardedRepos(ctx, () => setRepoAuth(user.id, seg[1]!, change, { installationId, authorize }));
     if (r.changed) {
       auditAction(ctx.diagLog, user.id, "repo-change", r.repo.id, r.repo.url);
       ctx.watchers.sync(); // the method decides whether a watcher of this repository may run
@@ -309,6 +342,11 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 3 && seg[2] === "test" && method === "POST") {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;
+  }
+  if (seg.length === 3 && seg[2] === "ready" && method === "GET") {
+    const rec = guardedRepos(ctx, () => getRepo(seg[1]!));
+    if (!rec || (rec.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such repository");
+    return send(res, 200, readyView(rec.definitionOfReady)), true;
   }
   if (seg.length === 2 && method === "DELETE") {
     removeAndTell(ctx, user.id, () => removeRepo(user.id, seg[1]!));

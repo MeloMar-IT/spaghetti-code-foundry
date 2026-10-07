@@ -25,13 +25,13 @@ export interface TurnSource {
 export type TurnAct = "defaults" | "answer" | "approve" | "reject" | "retry" | "retry_hint";
 
 /** The actions for an item of this kind; none without a watcher or an issue (the GitHub link stays the way). */
-export function actsFor(kind: NextStep["kind"], watcher: string | undefined, issue: number | undefined): TurnAct[] {
+export function actsFor(kind: NextStep["kind"], watcher: string | undefined, issue: number | undefined, retired = false): TurnAct[] {
   if (!watcher || issue === undefined) return [];
   switch (kind) {
     case "questions": return ["defaults", "answer"];
     case "planner_questions": return ["answer"];
     case "approve_plan": case "approve_split": case "approval": return ["approve", "reject"];
-    case "failed": return ["retry", "retry_hint"];
+    case "failed": return retired ? [] : ["retry", "retry_hint"];
     default: return [];
   }
 }
@@ -165,7 +165,7 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
       key: s.key, repo: s.next.repo, what: s.next.title || s.next.where.label, next: s.next, since: s.since,
       unblocks: s.next.issue === undefined ? 0 : unblocksOf(s.next.repo, [s.next.issue], deps),
       dismissable: s.dismissable, watcher: s.watcher, stamp: s.stamp,
-      acts: actsFor(s.next.kind, s.watcher, s.next.issue),
+      acts: actsFor(s.next.kind, s.watcher, s.next.issue, s.next.retired),
       ...(s.owner ? { owner: s.owner } : {}),
       ...(s.ownerName ? { ownerName: s.ownerName } : {}),
     });

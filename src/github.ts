@@ -305,13 +305,20 @@ export interface RestIssue {
 
 const errorText = (e: unknown) => `${String((e as { stderr?: string }).stderr ?? "")} ${String((e as Error).message)}`;
 
-/** The newest issues (not pull requests) with a label, open and closed: one call, at most 100. */
-export async function listIssuesByLabel(repo: string, label: string, timeoutMs?: number): Promise<RestIssue[]> {
-  const out = (await gh(["api", `repos/${repo}/issues?labels=${encodeURIComponent(label)}&state=all&per_page=100&sort=created&direction=desc`], undefined, timeoutMs)).trim();
+/** One call to the issue list of a repository: the answer as a list, pull requests left out. */
+async function listIssues(repo: string, query: string, timeoutMs?: number): Promise<RestIssue[]> {
+  const out = (await gh(["api", `repos/${repo}/issues?${query}state=all&per_page=100&sort=created&direction=desc`], undefined, timeoutMs)).trim();
   const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
   if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
   return list.filter((i) => !i.pull_request);
 }
+
+/** The newest issues (not pull requests) with a label, open and closed: one call, at most 100. */
+export const listIssuesByLabel = (repo: string, label: string, timeoutMs?: number): Promise<RestIssue[]> => listIssues(repo, `labels=${encodeURIComponent(label)}&`, timeoutMs);
+
+/** The newest issues (not pull requests), open and closed: one call, at most 100. */
+export const listNewestIssues = (repo: string, timeoutMs?: number): Promise<RestIssue[]> => listIssues(repo, "", timeoutMs);
+
 
 /** One issue by number; undefined when GitHub says it does not exist. */
 export async function restIssue(repo: string, issue: number, timeoutMs?: number): Promise<RestIssue | undefined> {
@@ -327,7 +334,7 @@ export async function restIssue(repo: string, issue: number, timeoutMs?: number)
 export async function createIssue(repo: string, o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<RestIssue> {
   const out = await gh(["api", `repos/${repo}/issues`, "-X", "POST", "--input", "-"], undefined, timeoutMs, JSON.stringify(o));
   const made = JSON.parse(out.trim()) as RestIssue;
-  if (!made || !Number.isInteger(made.number)) throw new Error("GitHub did not report the new issue");
+  if (!made || !Number.isSafeInteger(made.number) || made.number < 1) throw new Error("GitHub did not report the new issue");
   return made;
 }
 
@@ -391,4 +398,11 @@ export async function issueState(repo: string, issue: number, timeoutMs?: number
   const s = (await issueStates(repo, [issue], timeoutMs, undefined, env)).get(issue);
   if (!s) throw new Error(`GitHub did not report issue #${issue}`);
   return s;
+}
+
+/** The names of the labels of a repository (all pages). Rejects when GitHub cannot be reached or refuses. */
+export async function repoLabels(repo: string, timeoutMs?: number): Promise<string[]> {
+  // --jq prints one name per line, also over several pages (plain --paginate prints the arrays one after the other).
+  const out = await gh(["api", `repos/${repo}/labels?per_page=100`, "--paginate", "--jq", ".[].name"], undefined, timeoutMs);
+  return out.split("\n").map((l) => l.trim()).filter(Boolean);
 }

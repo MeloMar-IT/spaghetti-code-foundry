@@ -1,4 +1,4 @@
-export type RepoErrorCode = "bad-name" | "bad-url" | "bad-auth" | "duplicate" | "taken" | "limit" | "not-found" | "no-owner" | "bad-settings" | "bad-owner" | "blocked" | "no-credential";
+export type RepoErrorCode = "bad-name" | "bad-url" | "bad-auth" | "duplicate" | "taken" | "limit" | "not-found" | "no-owner" | "bad-settings" | "bad-owner" | "blocked" | "no-credential" | "bad-ready";
 
 /** A problem with what the caller asked for. The message is safe to show and never holds a token. */
 export class RepoError extends Error {
@@ -46,7 +46,7 @@ export interface ParsedRepoUrl {
 
 const bad = (message: string) => new RepoError("bad-url", message);
 const HOST_RE = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
-const USER_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const USER_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
 const SEGMENT_RE = /^[A-Za-z0-9._~-]+$/;
 
 /**

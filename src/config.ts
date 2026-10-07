@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
@@ -45,6 +45,11 @@ const watcherShape = {
      * which asks every owner decision up front). Issues it asks about wait for an answer.
      */
     precheck_flow: z.string().optional(),
+    /**
+     * issues: answer the Foundry's questions with its own recommendations (a `/defaults` comment on the
+     * issue) instead of waiting for a person. At most twice per issue; after that a person answers.
+     */
+    auto_defaults: z.boolean().default(false),
     /** issues: labels to remove when a run succeeds (e.g. the trigger label). */
     remove_on_done: z.array(z.string()).default([]),
     /** issues: post the failure reason and the failing step's output on the issue. */
@@ -246,6 +251,12 @@ const SelfUpdateSchema = z
   .refine((u) => !u.enabled || u.repo, { message: "name the repository the Foundry may update from (owner/name)", path: ["repo"] })
   .prefault({});
 
+/** A name, or a prefix ending in `_*`, that an admin may list in `step_env`. */
+export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
+/** Names that never go on that list: the engine's own, the login and git and ssh settings. */
+export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
+const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -327,8 +338,28 @@ export const ConfigSchema = z
       })
       .strict()
       .optional(),
+    /** Variables of the server that steps of a user's run may also see (a name, or a prefix ending in _*). */
+    step_env: z
+      .object({
+        /** All steps. */
+        pass: z.array(stepEnvName).max(100).default([]),
+        /** Agent steps only. */
+        agent_pass: z.array(stepEnvName).max(100).default([]),
+      })
+      .strict()
+      .prefault({}),
     /** Defaults for flows that don't set their own sandbox. */
-    sandbox: z.object({ claude: z.boolean().optional(), docker_image: z.string().optional() }).strict().default({}),
+    sandbox: z
+      .object({
+        claude: z.boolean().optional(),
+        docker_image: z.string().optional(),
+        /** `required`: a shell step of a user's run is held in an OS sandbox, or the run is refused. `off`: allowed without it. */
+        user_runs: z.enum(["required", "off"]).default("required"),
+        /** Absolute paths a sandboxed shell step of a user's run may read, besides its own folder (for example a node folder under the home). */
+        user_read: z.array(z.string().refine((p) => isAbsolute(p), "must be an absolute path")).max(50).default([]),
+      })
+      .strict()
+      .default({ user_runs: "required", user_read: [] }),
     watchers: z.array(WatcherSchema).default([]),
     /** Thresholds of the monitor watcher. */
     monitor: MonitorSchema.prefault({}),

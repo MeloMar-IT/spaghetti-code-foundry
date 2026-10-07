@@ -167,6 +167,26 @@ describe("statusTargets", () => {
     expect(t).toMatchObject({ create: true, final: false, urgent: false, rank: 2 });
   });
 
+  it("says a user limit in the same words with and without a run file, and names no amount", () => {
+    for (const limit of ["per_day", "concurrent"] as const) {
+      const pending = [{ runId: "r1", githubRepo: REPO, issue: "7", limit }];
+      const withoutFile = only(statusTargets(REPO, [view({ tracked: [t7({ runId: "r1" })], scheduler: sched({ pending }) })], new Map(), true));
+      const withFile = only(statusTargets(REPO, [view({ tracked: [t7({ runId: "r1" })], scheduler: sched({ pending, runs: [run({ runId: "r1", status: "stopped" })] }) })], new Map(), true));
+      for (const body of [withoutFile.body, withFile.body]) {
+        expect(body.toLowerCase()).toContain(limit === "per_day" ? "your limit for today is reached" : "your limit of runs at the same time is reached");
+        expect(body.replace(/#7|r1|issues\/7/g, "")).not.toMatch(/\d/);
+      }
+    }
+  });
+
+  it("says a user limit hold of a watcher as the user's limit for today, with no word about money", () => {
+    const hold = holdOf(nextStep("user_limit", base, { ...data, userLimit: "budget" }));
+    const t = only(statusTargets(REPO, [view({ tracked: [t7()], holds: [hold] })], new Map(), true));
+    expect(t.body.toLowerCase()).toContain("your limit for today is reached");
+    expect(t.body.toLowerCase()).not.toContain("budget");
+    expect(t.body).not.toContain("$");
+  });
+
   it("says what the reader must do and writes it first", () => {
     const hold = holdOf(nextStep("questions", base, { ...data, questions: 2 }));
     const t = only(statusTargets(REPO, [view({ tracked: [t7()], holds: [hold] })], new Map(), true));

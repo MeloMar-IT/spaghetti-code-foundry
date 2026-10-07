@@ -159,6 +159,16 @@ export function isAuthError(error: string | undefined, output: string): boolean 
   return AUTH_RE.test(`${error ?? ""}\n${output.length < 400 ? output : ""}`);
 }
 
+/** Variables that usually hold a provider key. Their values are hidden in output, and no list passes them to a user's step. */
+export const KNOWN_KEY_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"];
+
+/** The variables that hold a provider key: the config's `api_key_env` names and the well-known ones. */
+export function providerKeyVars(config: Pick<Config, "providers">): string[] {
+  const names = new Set(KNOWN_KEY_VARS);
+  for (const p of Object.values(config.providers)) if (p.api_key_env) names.add(p.api_key_env);
+  return [...names];
+}
+
 /** Environment for Claude Code talking to a non-Anthropic endpoint. */
 export function claudeProviderEnv(t: Target, neverSend: readonly string[] = []): NodeJS.ProcessEnv {
   const p = t.provider;

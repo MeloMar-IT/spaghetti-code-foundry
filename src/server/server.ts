@@ -3,7 +3,9 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
-import { redactText } from "../credentials/redact.js";
+import { hideKeyVars, redactText } from "../credentials/redact.js";
+import { providerKeyVars } from "../agents/targets.js";
+import { TOKEN_MIN } from "../credentials/store.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
@@ -30,12 +32,14 @@ import { hasAdmin, type User } from "../auth/users.js";
 import { repoRoutes } from "./api-repos.js";
 import { getRepo, listAllRepos } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
+import { effectiveLimits } from "../auth/limits.js";
 import { type BlockedWatcher, effectiveRepoWatchers, listRepoWatchers, removeOrphanWatchers, repoWatchersMtime } from "../repos/watchers.js";
 import { getUser } from "../auth/users.js";
 import { moveConfigWatchers } from "../repos/migrate-watchers.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
+import { refinementPublishRoutes } from "./api-refinement-publish.js";
 import { auditRoutes } from "./api-audit.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
 import { userRoutes } from "./api-users.js";
@@ -74,6 +78,8 @@ export interface ServerOptions {
   auditSweepMs?: number;
   /** How often the stored watchers are read again after the file could not be read, in ms (default 30000). */
   watcherRetryMs?: number;
+  /** How long the publish plan waits for GitHub, in ms (default 15000). A test makes it short. */
+  ghTimeoutMs?: number;
 }
 
 export interface ApiContext {
@@ -103,7 +109,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementPublishRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -115,7 +121,18 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     sink(text);
   };
   const opts: ServerOptions = { ...given, log };
-  let config = loadConfig();
+  // loadConfig(), then the values of the provider key variables are hidden; a key too short to hide is named once
+  const shortKeys = new Set<string>();
+  const readConfig = (): Config => {
+    const c = loadConfig();
+    for (const name of hideKeyVars(providerKeyVars(c))) {
+      if (shortKeys.has(name)) continue;
+      shortKeys.add(name);
+      log(`! the key in ${name} is shorter than ${TOKEN_MIN} characters, so it is not hidden in output`);
+    }
+    return c;
+  };
+  let config = readConfig();
   // The effective config: config.yaml plus the runnable stored watchers (refreshed in every sync()).
   let effective: Config = config;
   let blocked: BlockedWatcher[] = [];
@@ -142,6 +159,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     config: () => effective,
     queueFile: join(process.env.FACTORY_HOME ?? FACTORY_HOME, "queue.json"),
     accountActive,
+    userLimits: (id) => effectiveLimits(id, log),
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
@@ -195,7 +213,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     fileConfig: () => config,
     blockedWatchers: () => blocked,
     reloadConfig: () => {
-      config = loadConfig();
+      config = readConfig();
       rebuild();
     },
     listen,
@@ -209,7 +227,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     log(`! repo-watchers: leftover watchers could not be removed: ${e instanceof StoreError ? `${basename(e.file)} ${e.kind}` : "unexpected error"}`);
   }
   // Existing watchers of config.yaml move to their repositories (the store first, the file second) before they are read.
-  if (moveConfigWatchers({ log }).changed) config = loadConfig();
+  if (moveConfigWatchers({ log }).changed) config = readConfig();
   refreshStored();
 
   // Before the first pump and before adopt(): jobs of blocked accounts never start, and a stop-work request made while

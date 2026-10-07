@@ -2,20 +2,23 @@ import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { listRepos, ownsRepo } from "../auth/repos.js";
+import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
 import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
-import { END_NO_IMPACT_DRAFT, setImpact, type ImpactRefs } from "./draft-impact.js";
+import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
+import { END_NO_SPLIT_DRAFT, setSplit, type SplitRefs } from "./draft-split.js";
+import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
+import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
-import { DRAFT_LOG_KINDS, DraftsSchema, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
-export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact"] as const;
+export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact", "ready", "split"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 export const refinementsPath = () => join(dataHome(), "refinements.json");
@@ -53,7 +56,7 @@ const ArchitectSchema = z
   .object({ runId: RUN_ID, at: z.iso.datetime(), failed: z.string().max(REASON_MAX).optional(), kind: z.enum(ARCHITECT_KINDS).optional(), question: z.string().min(1).max(ASK_MAX).optional(), draft: z.uuid().optional(), field: z.enum(SUGGEST_FIELDS).optional() })
   .strict()
   .refine((a) =>
-    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
+    a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" || a.kind === "ready" || a.kind === "split" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
   );
 
 const SessionSchema = z
@@ -232,11 +235,24 @@ export interface Actor {
   admin: boolean;
 }
 
+/** Sessions that are being published right now (in this server process). A person's change of such a session is refused. */
+const publishing = new Set<string>();
+/** Marks the session as being published; false when it is marked already. */
+export function beginPublishing(id: string): boolean {
+  if (publishing.has(id)) return false;
+  publishing.add(id);
+  return true;
+}
+export function endPublishing(id: string): void {
+  publishing.delete(id);
+}
+export const isPublishing = (id: string): boolean => publishing.has(id);
+
 /**
  * Finds the session for an actor, changes it under the lock and writes the file. Expired sessions are removed on the way.
- * `fn` returns the changed session, or undefined when nothing changes.
+ * `fn` returns the changed session, or undefined when nothing changes. Only the publisher (`publisher`) may change a session that is being published.
  */
-function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean, fn: (s: Session, at: string) => Session | undefined): Session {
+function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean, fn: (s: Session, at: string) => Session | undefined, publisher = false): Session {
   return withAuthLock(() => {
     const now = clock(opts);
     const file = read();
@@ -244,6 +260,7 @@ function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean,
     const cur = kept.find((s) => s.id === id);
     if (!cur || (cur.owner !== actor.id && !actor.admin)) throw new RefinementError("not-found", "no such refinement session");
     if (cur.owner !== actor.id && !mayAdmin) throw new RefinementError("not-owner", "only the owner can change this session");
+    if (!publisher && publishing.has(id)) throw new RefinementError("busy", "this session is being published; try again in a moment");
     const next = fn(cur, now.toISOString());
     if (!next && kept.length === file.sessions.length) return copy(cur);
     save(next ? kept.map((s) => (s === cur ? next : s)) : kept);
@@ -253,6 +270,9 @@ function change(actor: Actor, id: string, opts: StoreOptions, mayAdmin: boolean,
 
 /** The log lines a run that is not over still needs for its end: kept free from every other change of the session. */
 const reservedFor = (s: Session): number => (s.architect && s.architect.failed === undefined ? architectLogRoom(s.architect.kind) - 1 : 0);
+
+/** How many more log lines the session can take before the slot kept for dropping (and for a run that is not over). */
+export const logRoom = (s: Session): number => LOG_LIMIT - 1 - reservedFor(s) - s.log.length;
 
 const room = (s: Session, last: number, keep = true) => {
   if (s.log.length + 1 > last - (keep ? reservedFor(s) : 0)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
@@ -340,6 +360,9 @@ export const END_NO_ROOM = "The talk or the log of this session has no room for 
 export const END_NO_QUESTION = "The question of the person could not be found";
 export const END_NO_DRAFT = "The story draft for the suggestion could not be found";
 export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
+export const END_NO_READY_DRAFT = "The story draft for the readiness check could not be found";
+export const END_ON_GITHUB = "The story draft is on GitHub already";
+export const END_READY_CHANGED = "The draft changed while the architect judged it; check readiness again";
 
 export interface ArchitectAsk {
   kind?: ArchitectKind;
@@ -356,6 +379,8 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
   if (kind === "suggest" && (!ask.draft || !ask.field)) throw new Error("a suggestion run needs a draft and a field");
   if (kind === "review" && !ask.draft) throw new Error("a review run needs a draft");
   if (kind === "impact" && !ask.draft) throw new Error("an impact run needs a draft");
+  if (kind === "ready" && !ask.draft) throw new Error("a readiness run needs a draft");
+  if (kind === "split" && !ask.draft) throw new Error("a split run needs a draft");
   return change(actor, id, opts, false, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
     if (s.log.length + architectLogRoom(kind) > LOG_LIMIT - 1) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
@@ -365,7 +390,7 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
       ...(kind !== "brief" ? { kind } : {}),
       ...(kind === "question" && ask.question !== undefined ? { question: ask.question } : {}),
       ...(kind === "suggest" ? { draft: ask.draft, field: ask.field } : {}),
-      ...(kind === "review" || kind === "impact" ? { draft: ask.draft } : {}),
+      ...(kind === "review" || kind === "impact" || kind === "ready" || kind === "split" ? { draft: ask.draft } : {}),
     };
     const entry: LogItem =
       kind === "question"
@@ -376,7 +401,11 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
             ? { at, by: actor.id, what: "review-asked" }
             : kind === "impact"
               ? { at, by: actor.id, what: "impact-asked" }
-              : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
+              : kind === "split"
+                ? { at, by: actor.id, what: "split-asked" }
+                : kind === "ready"
+                  ? { at, by: actor.id, what: "ready-asked" }
+                  : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
     return { ...s, architect, updated: at, log: [...s.log, entry] };
   });
 }
@@ -394,14 +423,14 @@ export function noteArchitectResumed(id: string, runId: string, opts: StoreOptio
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { split: unknown; refs?: SplitRefs } | { judged: unknown; refs?: ReadyRefs } | { failed: string };
 
 /**
  * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
  * each clears the run. A failure keeps the talk and the brief and marks the run. Nothing is written for another run id, an unknown
  * session or a mark that is there already.
  */
-export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, opts: StoreOptions = {}): Session | undefined {
+export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, opts: TalkOptions = {}): Session | undefined {
   return changeById(id, opts, (s, at) => {
     if (s.architect?.runId !== runId) return undefined;
     const a = s.architect;
@@ -411,6 +440,8 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
       return { ...s, architect: { ...a, failed }, updated: at, log: a.failed === undefined ? logged(s, at, "architect-failed", failed) : s.log };
     };
     if ("failed" in end) return fail(end.failed);
+    // A draft that is on GitHub is not changed by the end of a run.
+    if (a.draft && s.drafts.find((d) => d.id === a.draft)?.published) return fail(END_ON_GITHUB);
     const { architect: _gone, ...rest } = s;
     if ("brief" in end) {
       const tooLong = end.brief.text.length > BRIEF_MAX;
@@ -450,6 +481,31 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
         return fail(END_BAD_FORM);
       }
     }
+    if ("split" in end) {
+      if (a.kind !== "split" || !a.draft) return fail(END_NO_SPLIT_DRAFT);
+      try {
+        const c = setSplit({ drafts: s.drafts, epic: s.epic }, a.draft, end.split, end.refs, at);
+        if (!c) return fail(END_NO_SPLIT_DRAFT);
+        return { ...rest, drafts: c.drafts, updated: at, log: logged(s, at, "architect-split", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
+    if ("judged" in end) {
+      if (a.kind !== "ready" || !a.draft) return fail(END_NO_READY_DRAFT);
+      const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+      try {
+        const c = setJudged({ drafts: s.drafts, epic: s.epic }, s.talk, a.draft, end.judged, end.refs, list ?? readyListOf(undefined));
+        if (!c) return fail(END_NO_READY_DRAFT);
+        if (c === "changed") return fail(END_READY_CHANGED);
+        const state = stateOf(s.state, s.drafts.length > 0, c.drafts, list);
+        return { ...rest, drafts: c.drafts, state, updated: at, log: logged(s, at, "architect-judged", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(END_BAD_FORM);
+      }
+    }
     const talk = s.talk ?? emptyTalk();
     try {
       let c: TalkChange | undefined;
@@ -480,7 +536,14 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
 
 export interface TalkOptions extends StoreOptions {
   repoOk?: (owner: string, repo: string) => boolean;
+  /** The Definition of Ready of the repository (owner, GitHub name); undefined when the repository is not there. */
+  readyList?: (owner: string, repo: string) => readonly ReadyItem[] | undefined;
 }
+
+const defaultReadyList = (owner: string, repo: string): readonly ReadyItem[] | undefined => {
+  const r = findOwnedRepo(owner, repo);
+  return r ? readyListOf(r.definitionOfReady) : undefined;
+};
 
 /** The session with the changed talk and its log lines. Throws `limit` when the lines do not all fit before the slot kept for dropping. */
 interface LogLine {
@@ -491,7 +554,9 @@ interface LogLine {
 
 function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, by: string, keep = true): Session {
   if (c.lines.length) room(s, LOG_LIMIT - c.lines.length, keep);
-  return { ...s, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
+  // A change of the open questions clears the checks of every draft.
+  const cleared = openMark(s.talk) !== openMark(c.talk) ? { drafts: clearAll(s.drafts), ...(s.state === "ready" ? { state: "drafting" as const } : {}) } : {};
+  return { ...s, ...cleared, talk: c.talk, updated: at, log: [...s.log, ...c.lines.map((l) => ({ at, by, what: l.what, ...(l.detail !== undefined ? { detail: l.detail } : {}), ...(l.list ? { list: l.list } : {}) }))] };
 }
 
 /** The talk and the drafts change only in a session that is not dropped and whose repository is in My repositories. */
@@ -517,7 +582,10 @@ export const removeEntry = (actor: Actor, id: string, entryId: string, opts: Tal
   change(actor, id, opts, false, (s, at) => {
     mustBeOpen(s, opts);
     const next = withTalk(s, remove(s.talk ?? emptyTalk(), entryId), at, actor.id);
-    return { ...next, drafts: untie(next.drafts, entryId) };
+    const drafts = untie(next.drafts, entryId);
+    const held = next.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
+    if (held?.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${held.published.issue} is tied to this entry; it cannot be removed here`);
+    return { ...next, drafts };
   });
 
 /**
@@ -541,27 +609,120 @@ export function recordAsked(id: string, runId: string, asked: { question: string
 
 // ---- the story drafts ------------------------------------------------------------------------------
 
-function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState) => DraftChange | undefined): Session {
+/** What a change of the drafts must check first: the draft it is about, the Epic, a new draft. */
+interface DraftGuard {
+  draft?: string;
+  epic?: true;
+  add?: true;
+}
+
+const onGithub = (d: Draft): string => `a story draft that is on GitHub as issue #${d.published?.issue}`;
+
+/**
+ * The state of a session with these drafts: `published` when every draft is on GitHub; else as `sessionState`, which looks only at the
+ * drafts that are not on GitHub. Without a list (the repository is not there) only the first rule applies.
+ */
+function stateOf(cur: SessionState, hadDrafts: boolean, drafts: Draft[], list: readonly ReadyItem[] | undefined): SessionState {
+  if (drafts.length && drafts.every((d) => d.published)) return "published";
+  if (!list) return cur;
+  return sessionState(cur, hadDrafts, drafts.filter((d) => !d.published), list);
+}
+
+function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: DraftState, x: { talk: Talk | undefined; list: readonly ReadyItem[]; at: string }) => DraftChange | undefined, guard: DraftGuard = {}): Session {
   return change(actor, id, opts, false, (s, at) => {
     mustBeOpen(s, opts);
-    const c = fn({ drafts: s.drafts, epic: s.epic });
+    if (guard.add && s.state === "published") throw new RefinementError("bad-state", "every story draft of this session is on GitHub; start a new session for more");
+    const target = guard.draft === undefined ? undefined : s.drafts.find((d) => d.id === guard.draft);
+    if (target?.published) throw new RefinementError("bad-state", `${onGithub(target)}; it cannot be changed here`);
+    const lock = guard.epic ? s.drafts.find((d) => d.published) : undefined;
+    if (lock) throw new RefinementError("bad-state", `${onGithub(lock)}; the Epic cannot be changed any more`);
+    const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
+    const before = { drafts: s.drafts, epic: s.epic };
+    const c = fn(before, { talk: s.talk, list, at });
     if (!c) return undefined;
     if (c.line) room(s, LOG_LIMIT - 1);
     const { epic: _epic, ...rest } = s;
-    // The first draft starts the drafting; with none left the session is exploring again.
-    const state = s.state === "exploring" && !s.drafts.length && c.drafts.length ? "drafting" : s.state === "drafting" && s.drafts.length && !c.drafts.length ? "exploring" : s.state;
+    // A draft whose text changed has no check any more; the state follows the drafts (first draft, none left, all ready).
+    const drafts = clearChanged(before, c);
+    // A draft that is on GitHub stays as it is, also when the change reaches it through another draft.
+    const held = s.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
+    if (held) throw new RefinementError("bad-state", `${onGithub(held)} would change by this; it cannot be done here`);
+    const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
     const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
-    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts: c.drafts, state, updated: at, log: [...s.log, ...line] };
+    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
 
-export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft);
-export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input));
-export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId));
+export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft, { add: true });
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input), { draft: draftId });
+export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
 export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input));
+  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input), { draft: draftId });
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input));
+  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input), { draft: draftId });
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
-export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input));
-export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input));
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input), { draft: draftId });
+export const setReviewLabelOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input), { draft: draftId });
+export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input), { epic: true });
+
+// ---- the Definition of Ready -----------------------------------------------------------------------
+
+/** The person checks a draft against the Definition of Ready of the repository, by code: only `readiness` of the draft changes. */
+export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at), { draft: draftId });
+/** The person accepts an item of the list anyway, with a reason. */
+export const acceptAnywayOf = (actor: Actor, id: string, draftId: string, itemId: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at), { draft: draftId });
+export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list), { draft: draftId });
+
+// ---- publishing ------------------------------------------------------------------------------------
+
+/**
+ * A story draft became a GitHub issue: remembers it, with the state and the log line, in one write. Runs while the session is marked as
+ * being published. It does not ask whether the repository is still there: the issue exists. Undefined (nothing written) when the draft has
+ * this issue already; `limit` (nothing written) when the log has no room for the line.
+ */
+export function recordPublished(actor: Actor, id: string, draftId: string, issue: { issue: number; url: string }, opts: TalkOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s, at) => {
+      if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
+      const d = s.drafts.find((x) => x.id === draftId);
+      if (!d) throw new RefinementError("not-found", "no such story draft");
+      if (d.published) {
+        if (d.published.issue === issue.issue) return undefined;
+        throw new RefinementError("bad-state", `${onGithub(d)} already; it is not recorded as #${issue.issue}`);
+      }
+      room(s, LOG_LIMIT - 1);
+      const drafts = s.drafts.map((x) => (x === d ? { ...x, published: { issue: issue.issue, url: issue.url, at } } : x));
+      const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+      const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
+      return { ...s, drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+    },
+    true,
+  );
+}
+
+/**
+ * A read: the stored drafting/ready state is made right for the list as it is now (an admin may have changed the list). Writes
+ * `state` only, no log line, and not `updated`. The lock is taken only when the state is wrong, and the state is worked out again
+ * under it. Undefined when nothing changes.
+ */
+export function correctReadyState(id: string, opts: TalkOptions = {}): Session | undefined {
+  const wrong = (s: Session): SessionState | undefined => {
+    if (s.state !== "drafting" && s.state !== "ready") return undefined;
+    const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+    if (!list) return undefined;
+    const state = stateOf(s.state, s.drafts.length > 0, s.drafts, list);
+    return state === s.state ? undefined : state;
+  };
+  const seen = getSession(id, opts);
+  if (!seen || wrong(seen) === undefined) return undefined;
+  return changeById(id, opts, (cur) => {
+    const state = wrong(cur);
+    return state === undefined ? undefined : { ...cur, state };
+  });
+}

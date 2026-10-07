@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { CredentialError, type CredentialType, type Removed, addCredentialLocked, checkSecret, listCredentials, moveCredentialLocked, oldKeysLeft as credentialKeysLeft, readSecret, removeCredentialsLocked } from "../credentials/store.js";
@@ -7,6 +8,7 @@ import { PUBLIC_KEY_RE, generateKeyPair } from "../credentials/ssh-keygen.js";
 import { removeWatchersOfReposLocked } from "../repos/watchers.js";
 import { DETAIL_MAX, changedKeys } from "./audit.js";
 import { ConnectionSchema, type ConnectionResult, readRepoSecret, repoSecretName } from "./repo-connection.js";
+import { ReadyListSchema, checkReadyList, readyListOf } from "../refinement/ready-list.js";
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
@@ -54,6 +56,8 @@ const RecordSchema = z
     installationId: z.string().regex(INSTALLATION_RE).optional(),
     added: z.iso.datetime(),
     settings: RepoSettingsSchema.optional(),
+    /** The Definition of Ready; absent means the default list. */
+    definitionOfReady: ReadyListSchema.optional(),
     connection: ConnectionSchema.optional(),
   })
   .strict()
@@ -117,8 +121,8 @@ const FileV1 = z
 export type RepoRecord = z.infer<typeof RecordSchema>;
 type RepoFile = z.infer<typeof FileV2>;
 /** What a user may see: the record without the admin's settings. */
-export type PublicRepo = Omit<RepoRecord, "settings">;
-const strip = ({ settings: _s, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
+export type PublicRepo = Omit<RepoRecord, "settings" | "definitionOfReady">;
+const strip = ({ settings: _s, definitionOfReady: _d, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
 
 /** The same id for the same old entry on every read, so a link to it keeps working until the file is rewritten. */
 function legacyId(owner: string, name: string): string {
@@ -163,8 +167,14 @@ export const listAllRepos = (): RepoRecord[] => read().repos.map((r) => ({ ...r 
 
 /** True when the account has this GitHub repository (any case, with or without ".git", https or ssh). */
 export function ownsRepo(userId: string, name: string): boolean {
+  return findOwnedRepo(userId, name) !== undefined;
+}
+
+/** The account's record of a GitHub repository (any case, with or without ".git", https or ssh), with its admin fields. */
+export function findOwnedRepo(userId: string, name: string): RepoRecord | undefined {
   const key = githubKey(name);
-  return read().repos.some((r) => r.owner === userId && tryParseRepoUrl(r.url)?.github !== undefined && keyOfRecord(r) === key);
+  const r = read().repos.find((x) => x.owner === userId && tryParseRepoUrl(x.url)?.github !== undefined && keyOfRecord(x) === key);
+  return r ? { ...r } : undefined;
 }
 
 /** True when the account has this GitHub repository with a method other than "none". Reads no secret, sets no "last used". Throws like read(). */
@@ -376,10 +386,11 @@ export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ow
  * Adds a repository. The record is written first and the token second, and a failed second write takes the record back,
  * so no token exists without a record. `ownerOk` says whether the account exists (default: it is in users.json).
  */
-export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string } = {}): PublicRepo {
+export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void } = {}): PublicRepo {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
   const { url, auth } = addPlan(input);
   return withAuthLock(() => {
+    opts.authorize?.(); // asked again under the lock: what was allowed before the lookup may be taken back since
     const file = addChecks(userId, url, opts);
     if (auth.method === "github-app") checkInstallationId(opts.installationId);
     // a failed key leaves both files as they were
@@ -424,7 +435,7 @@ export interface AuthChange {
   newKey?: unknown;
 }
 
-type AuthOpts = { ownerOk?: (userId: string) => boolean; installationId?: string };
+type AuthOpts = { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void };
 
 /** All checks of a change, and the record it would give. Inside the lock; writes nothing. */
 function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange, opts: AuthOpts, requireId: boolean) {
@@ -468,6 +479,7 @@ function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange,
     ...(installationId ? { installationId } : {}),
     added: rec.added,
     ...(rec.settings ? { settings: rec.settings } : {}),
+    ...(rec.definitionOfReady ? { definitionOfReady: rec.definitionOfReady } : {}),
   };
   // the status stays only for a call that changes nothing about how the repository is reached
   if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
@@ -493,6 +505,7 @@ export function checkRepoAuth(userId: string, id: string, input: AuthChange, opt
 export function setRepoAuth(userId: string, id: string, input: AuthChange, opts: AuthOpts = {}): { repo: PublicRepo; oldKeysLeft: number; changed: boolean } {
   if ([input.method, input.username, input.token, input.url, input.newKey].every((v) => v === undefined)) throw badAuth("give a method, a user name, a token, an address or a new key");
   return withAuthLock(() => {
+    opts.authorize?.(); // asked again under the lock: what was allowed before the lookup may be taken back since
     const file = read();
     const { rec, next, auth, deploy, app, secret, credentialId } = authPlan(file, userId, id, input, opts, true);
     let oldKeysLeft = 0;
@@ -599,8 +612,8 @@ export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, ins
       const type = now.method === "ssh-deploy-key" ? "ssh-key" : "token";
       if (!listCredentials(now.owner).some((c) => c.id === now.credentialId && c.name === secretName(now) && c.type === type)) return "changed";
     }
-    const { settings: _a, ...was } = bare(rec);
-    const { settings: _b, ...is } = bare(now);
+    const { settings: _a, definitionOfReady: _c, ...was } = bare(rec);
+    const { settings: _b, definitionOfReady: _d, ...is } = bare(now);
     if (JSON.stringify(was) !== JSON.stringify(is)) return "changed";
     // a new installation (the app was installed again) is kept with the status; it is never taken from a request
     const id = now.method === "github-app" && installationId ? { installationId } : {};
@@ -635,6 +648,21 @@ export function setRepoSettings(id: string, input: unknown): { repo: RepoRecord;
     const next: RepoRecord = Object.keys(settings).length ? { ...rest, settings } : rest;
     if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, changed: changedKeys(rec.settings ?? {}, settings) };
+  });
+}
+
+/** Replaces (or, for the default list or { items: null }, clears) the Definition of Ready of any repository. */
+export function setRepoReady(id: string, input: unknown): { repo: RepoRecord; changed: boolean } {
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec) throw new RepoError("not-found", "no such repository");
+    const list = checkReadyList(input, readyListOf(rec.definitionOfReady));
+    const changed = !isDeepStrictEqual(rec.definitionOfReady, list);
+    const { definitionOfReady: _old, ...rest } = rec;
+    const next: RepoRecord = list ? { ...rest, definitionOfReady: list } : rest;
+    if (changed) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed };
   });
 }
 

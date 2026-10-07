@@ -7,7 +7,9 @@ import { cleanRuns } from "../clean.js";
 import { listEvalReports } from "../evals.js";
 import { clickThrough } from "../notify.js";
 import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
-import { computeStats } from "../stats.js";
+import { effectiveLimits } from "../auth/limits.js";
+import { computeStats, todayCostByOwner } from "../stats.js";
+import { userUsage } from "./usage-view.js";
 import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
 import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
@@ -103,9 +105,22 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] === "evals" && method === "GET") return send(res, 200, listEvalReports()), true;
 
   if (seg[0] === "stats" && method === "GET") {
-    const stats = computeStats(scheduler.list(2000));
-    const names = ownerNames();
-    const byUser = stats.byUser.map((u) => ({ owner: u.owner, name: u.owner ? names.get(u.owner) ?? DELETED_OWNER : "no owner", runs: u.runs, costUsd: u.costUsd }));
+    const now = new Date(); // one clock for every "today" number
+    const runs = scheduler.list(2000);
+    const stats = computeStats(runs, 30, now);
+    const active = new Map<string, number>();
+    for (const a of scheduler.queue().active) {
+      const o = scheduler.ownerOf(a.runId) ?? "";
+      active.set(o, (active.get(o) ?? 0) + 1);
+    }
+    const byUser = userUsage(stats.byUser, {
+      names: ownerNames(),
+      active,
+      runsToday: scheduler.startedTodayByOwner(now),
+      costToday: todayCostByOwner(runs, now),
+      limitsOf: (id) => effectiveLimits(id, ctx.diagLog),
+      deletedName: DELETED_OWNER,
+    });
     return send(res, 200, { ...stats, byUser }), true;
   }
   return false;

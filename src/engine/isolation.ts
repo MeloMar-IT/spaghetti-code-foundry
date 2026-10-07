@@ -26,6 +26,30 @@ export function stepIsolated(owner: string | undefined, githubRepo: string | und
   }
 }
 
+/** The owner's id when the owner is a user; undefined without an owner or for a readable admin. Fails closed like `stepIsolated`. */
+export function userAccount(owner: string | undefined): string | undefined {
+  if (!owner) return undefined;
+  try {
+    const user = getUser(owner);
+    return user && user.role === "admin" ? undefined : owner;
+  } catch {
+    return owner;
+  }
+}
+
+/** Why a user's run in the server's own folder stops before any step. */
+export const INPLACE_REFUSED = "This flow works directly in the server's folder, so only an admin can run it.";
+
+/** Why a user's run in a branch of the server's folder stops before any step. */
+export const WORKTREE_REFUSED = "This flow works in a branch of the server's folder, so only an admin can run it.";
+
+/** The reason a user's run of this workspace mode is refused; undefined when it may run. Fails closed like `userAccount`. */
+export function workspaceRefused(workspace: string | undefined, owner: string | undefined): string | undefined {
+  if (workspace !== "inplace" && workspace !== "worktree") return undefined;
+  if (!userAccount(owner)) return undefined;
+  return workspace === "inplace" ? INPLACE_REFUSED : WORKTREE_REFUSED;
+}
+
 /** Name and e-mail for commits: the bot's from Settings, else the owner's account (field by field). Undefined when one is missing. */
 export function commitIdentity(config: Pick<Config, "bot">, owner: string | undefined): CommitIdentity | undefined {
   let user: CommitIdentity | undefined;

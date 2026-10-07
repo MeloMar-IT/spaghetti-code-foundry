@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { BOT_MARKER, BOT_MARKERS, commentsAfter, isBot } from "../src/github.js";
-import { loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
+import { USER_BUDGET_REASON, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { issueStatesDir, knownIssueState, readIssueStates, saveIssueStates } from "../src/issue-states.js";
 import { WatcherManager } from "../src/queue/watchers.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -231,23 +231,179 @@ describe("watcher", () => {
     expect(gh.ghLog()).toMatch(/gh issue edit 4 .*--add-label factory:done/);
   });
 
-  it("ends a run that waits for answers when its issue is closed on GitHub", async () => {
+  /** Close #n on GitHub (it leaves the open list; the closed list still shows `label`), then check. */
+  const closeIssue = async (w: Watcher, n: number, label: string) => {
+    issues();
+    process.env.FAKE_GH_FRESH = JSON.stringify([{ number: n, state: "CLOSED" }]);
+    process.env.FAKE_GH_CLOSED_ISSUES = JSON.stringify([{ number: n, title: `issue ${n}`, state: "CLOSED", labels: [{ name: label }] }]);
+    await w.tick();
+    await settle();
+  };
+  const reopenIssue = async (w: Watcher, n: number) => {
+    issues([n]);
+    delete process.env.FAKE_GH_FRESH;
+    process.env.FAKE_GH_CLOSED_ISSUES = "[]";
+    await w.tick();
+    await settle();
+  };
+  const runsOf = (issue: string) => scheduler.list().filter((s) => s.vars.issue === issue);
+  const clearFakes = () => { for (const k of ["FAKE_GH_FRESH", "FAKE_GH_CLOSED_ISSUES", "FAKE_GH_FAIL", "FAKE_PLAN"]) delete process.env[k]; };
+
+  it("keeps a run that waits for answers when its issue is closed, and gives the label back when it is reopened", async () => {
     process.env.FAKE_PLAN = "Which DB?\nPLAN_STATUS: NEEDS_INFO";
     issues([4]);
     const w = watcher();
     await w.tick();
     await settle();
-    expect(runFor("4").status).toBe("stopped");
-    // Someone closes #4 on GitHub (e.g. after splitting it by hand): it leaves the open list.
-    issues();
-    process.env.FAKE_GH_FRESH = JSON.stringify([{ number: 4, state: "CLOSED" }]);
+    const run = runFor("4");
+    expect(run.status).toBe("stopped");
+    const before = gh.ghLog().length;
+    await closeIssue(w, 4, "factory:needs-info");
+    expect(runFor("4")).toMatchObject({ runId: run.runId, status: "stopped" });
+    expect(runFor("4").reason ?? "").not.toMatch(/closed/);
+    const closedLog = gh.ghLog().slice(before);
+    expect(closedLog).toMatch(/issue edit 4 .*--remove-label factory:needs-info/);
+    expect(closedLog).not.toContain("--add-label");
+    expect(closedLog).not.toContain("issue view 4 --repo acme/app --json state");
+    expect(w.status.holds).toEqual([]);
+    expect(knownIssueState("acme/app", 4)).toBe("closed");
+    const reopenAt = gh.ghLog().length;
+    await reopenIssue(w, 4);
+    expect(runsOf("4")).toHaveLength(1);
+    expect(runFor("4")).toMatchObject({ runId: run.runId, status: "stopped" });
+    expect(gh.ghLog().slice(reopenAt)).toMatch(/issue edit 4 .*--add-label factory:needs-info/);
+    expect(knownIssueState("acme/app", 4)).toBe("open");
+    expect(w.status.lastActions.join("\n")).toContain("was reopened");
+    issues([4, "factory:needs-info"]);
     await w.tick();
     await settle();
-    const ended = runFor("4");
-    expect(ended.status).toBe("cancelled");
-    expect(ended.reason).toBe("the issue was closed on GitHub — nothing left to do");
-    // An issue that is open (just not labelled) keeps its waiting run.
-    delete process.env.FAKE_GH_FRESH;
+    expect(runsOf("4")).toHaveLength(1);
+    expect(w.status.holds).toMatchObject([{ issue: 4, next: { who: "You", runId: run.runId } }]);
+    clearFakes();
+  });
+
+  it("close and reopen with a run that waits for approval: no new run, the label comes back", async () => {
+    const dir = join(gh.tmp, ".claude-factory", "flows");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "slow.yaml"), "name: slow\nworkspace: inplace\nsteps:\n  - {id: ok, type: approval, message: go}\n");
+    issues([8]);
+    const w = new Watcher(WatcherSchema.parse({ id: "w", github_repo: "acme/app", flow: "slow" }), {
+      scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (l) => lines.push(l),
+    });
+    await w.tick();
+    await settle();
+    const run = runFor("8");
+    expect(run.status).toBe("waiting");
+    const before = gh.ghLog().length;
+    await closeIssue(w, 8, "factory:waiting-approval");
+    expect(w.status.holds).toEqual([]);
+    expect(gh.ghLog().slice(before)).toMatch(/issue edit 8 .*--remove-label factory:waiting-approval/);
+    expect(runFor("8")).toMatchObject({ runId: run.runId, status: "waiting" });
+    const reopenAt = gh.ghLog().length;
+    await reopenIssue(w, 8);
+    expect(gh.ghLog().slice(reopenAt)).toMatch(/issue edit 8 .*--add-label factory:waiting-approval/);
+    expect(runsOf("8")).toHaveLength(1);
+    expect(runFor("8").status).toBe("waiting");
+    issues([8, "factory:waiting-approval"]);
+    await w.tick();
+    expect(w.status.holds).toMatchObject([{ issue: 8, next: { runId: run.runId } }]);
+    expect(runsOf("8")).toHaveLength(1);
+    clearFakes();
+  });
+
+  describe("reopen of a failed run", () => {
+    const failedRun = async () => {
+      const dir = join(gh.tmp, ".claude-factory", "flows");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "slow.yaml"), "name: slow\nworkspace: inplace\nsteps:\n  - {id: work, type: shell, run: 'sleep 1'}\n");
+      issues([8]);
+      const w = new Watcher(WatcherSchema.parse({ id: "w", github_repo: "acme/app", flow: "slow" }), {
+        scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (l) => lines.push(l),
+      });
+      await w.tick();
+      await settle();
+      const run = runFor("8");
+      saveRun({ ...run, status: "failed", reason: "boom" });
+      issues([8, "factory:failed"]);
+      await w.tick(); // stores #8 as open
+      await closeIssue(w, 8, "factory:failed");
+      return { w, run };
+    };
+    afterEach(clearFakes);
+
+    it("puts the failed label back and starts nothing", async () => {
+      const { w } = await failedRun();
+      expect(gh.ghLog()).toMatch(/issue edit 8 .*--remove-label factory:failed/);
+      expect(knownIssueState("acme/app", 8)).toBe("closed");
+      const reopenAt = gh.ghLog().length;
+      await reopenIssue(w, 8);
+      expect(gh.ghLog().slice(reopenAt)).toMatch(/issue edit 8 .*--add-label factory:failed/);
+      expect(runsOf("8")).toHaveLength(1);
+      expect(knownIssueState("acme/app", 8)).toBe("open");
+      // Control: the label removed on an open issue still starts over.
+      issues([8]);
+      await w.tick();
+      await settle();
+      expect(runsOf("8")).toHaveLength(2);
+    });
+
+    it("a failed label call keeps the closed state, starts nothing and is retried", async () => {
+      const { w } = await failedRun();
+      process.env.FAKE_GH_FAIL = "issue edit";
+      await reopenIssue(w, 8);
+      delete process.env.FAKE_GH_FAIL;
+      expect(knownIssueState("acme/app", 8)).toBe("closed");
+      expect(runsOf("8")).toHaveLength(1);
+      const retryAt = gh.ghLog().length;
+      await reopenIssue(w, 8);
+      expect(gh.ghLog().slice(retryAt)).toMatch(/issue edit 8 .*--add-label factory:failed/);
+      expect(knownIssueState("acme/app", 8)).toBe("open");
+      expect(runsOf("8")).toHaveLength(1);
+    });
+
+    it("finds the run even when more than 1000 newer runs exist", async () => {
+      const { w, run } = await failedRun();
+      const runs = join(gh.tmp, "runs");
+      for (let i = 0; i < 1001; i++) {
+        const runId = `zz-fill-${String(i).padStart(4, "0")}`;
+        const runDir = join(runs, runId);
+        mkdirSync(runDir, { recursive: true });
+        saveRun({ ...run, runId, runDir, status: "succeeded", vars: { ...run.vars, github_repo: "acme/other", issue: "77" } });
+      }
+      const reopenAt = gh.ghLog().length;
+      await reopenIssue(w, 8);
+      expect(gh.ghLog().slice(reopenAt)).toMatch(/issue edit 8 .*--add-label factory:failed/);
+      expect(scheduler.briefs().filter((b) => b.githubRepo === "acme/app" && b.issue === "8")).toHaveLength(1);
+      // The next check tracks the old run, so Your turn lists it.
+      issues([8, "factory:failed"]);
+      await w.tick();
+      expect(w.tracked).toMatchObject([{ issue: 8, runId: run.runId }]);
+      expect(w.status.holds).toMatchObject([{ issue: 8, next: { runId: run.runId } }]);
+      expect(scheduler.briefs().filter((b) => b.githubRepo === "acme/app" && b.issue === "8")).toHaveLength(1);
+    });
+  });
+
+  it("a run cancelled by an older version stays cancelled, also after a reopen", async () => {
+    process.env.FAKE_PLAN = "Which DB?\nPLAN_STATUS: NEEDS_INFO";
+    issues([4]);
+    const w = watcher();
+    await w.tick();
+    await settle();
+    const run = runFor("4");
+    const reason = "the issue was closed on GitHub — nothing left to do";
+    saveRun({ ...run, status: "cancelled", reason });
+    issues([4, "factory:needs-info"]);
+    await w.tick(); // stores #4 as open
+    await closeIssue(w, 4, "factory:needs-info");
+    expect(knownIssueState("acme/app", 4)).toBe("closed");
+    expect(loadRun(join(gh.tmp, "runs"), run.runId)).toMatchObject({ status: "cancelled", reason });
+    const reopenAt = gh.ghLog().length;
+    await reopenIssue(w, 4);
+    expect(loadRun(join(gh.tmp, "runs"), run.runId)).toMatchObject({ status: "cancelled", reason });
+    // As before: a cancelled run is not restored; the unlabelled issue starts a new run.
+    expect(runsOf("4")).toHaveLength(2);
+    expect(gh.ghLog().slice(reopenAt)).toMatch(/--add-label factory:working/);
+    clearFakes();
   });
 
   describe("issue states", () => {
@@ -295,7 +451,7 @@ describe("watcher", () => {
       await settle();
       expect(w.status.lastError).toBeUndefined();
       expect(graphql()).toBe(1);
-      expect(runFor("4").status).toBe("cancelled"); // endWaitsOfClosedIssues is unchanged; cancelled still counts
+      expect(runFor("4").status).toBe("stopped"); // a closed issue keeps its run
       expect(knownIssueState("acme/app", 4)).toBe("closed");
       expect(knownIssueState("acme/app", 6)).toBe("open");
     });
@@ -682,6 +838,77 @@ describe("watcher", () => {
     await capped.tick();
     expect(capped.status.holds).toMatchObject([{ issue: 8, next: { kind: "daily_budget", until: "tomorrow" } }]);
     expect(capped.status.holds![0]!.reason).not.toContain("$");
+  });
+
+  describe("the owner's daily budget", () => {
+    const OWNER = "acct-1";
+    /** A scheduler with a daily budget for OWNER, and a watcher of a repository owned by OWNER. */
+    const owned = (cap: number | undefined, over: Record<string, unknown> = {}, cfgOver: Record<string, unknown> = {}) => {
+      const sch = new Scheduler({
+        runsDir: join(gh.tmp, "runs"), config: () => ({ ...config, ...cfgOver }), claudeBin,
+        userLimits: () => (cap === undefined ? {} : { dailyBudgetUsd: cap }),
+      });
+      const base = watcher(over);
+      const w = new Watcher({ ...base.cfg, repoId: "r1", ownerId: OWNER }, { scheduler: sch, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: (l) => lines.push(l) });
+      return { sch, w };
+    };
+    /** Runs issue 8 to the end, then makes it a costed run of OWNER. */
+    const spend = async (over: Record<string, unknown> = {}) => {
+      issues([8]);
+      await watcher().tick();
+      await settle();
+      const s = loadRun(join(gh.tmp, "runs"), runFor("8").runId)!;
+      Object.assign(s, { owner: OWNER, totalCostUsd: 1, ...over });
+      saveRun(s);
+    };
+
+    it("holds a new issue: no run, no label, and no amount in the hold", async () => {
+      await spend();
+      const { sch, w } = owned(0.01);
+      issues([9]);
+      await w.tick();
+      expect(w.status.holds).toMatchObject([{ issue: 9, next: { kind: "user_limit", until: "tomorrow" } }]);
+      expect(w.status.holds![0]!.reason).not.toContain("$");
+      expect(sch.queue().pending).toHaveLength(0);
+      expect(sch.list().filter((s) => s.vars.issue === "9")).toHaveLength(0);
+      expect(gh.ghLog()).not.toMatch(/issue edit 9 /);
+    });
+
+    it("starts the issue when cost limits are off", async () => {
+      await spend();
+      const { sch, w } = owned(0.01, {}, { cost_limits: false });
+      issues([9]);
+      await w.tick();
+      await sch.idle();
+      expect(sch.list().filter((s) => s.vars.issue === "9")).toHaveLength(1);
+    });
+
+    it("keeps the working label of a run stopped by the budget, shows the hold, and resumes when the cap is raised", async () => {
+      await spend({ status: "stopped", reason: USER_BUDGET_REASON, finishedAt: new Date().toISOString() });
+      issues([8, "factory:working"]);
+      const capped = owned(0.01);
+      const before = gh.ghLog().length;
+      await capped.w.tick();
+      expect(capped.w.status.holds).toMatchObject([{ issue: 8, next: { kind: "user_limit", until: "tomorrow" } }]);
+      expect(capped.sch.queue().pending).toHaveLength(0);
+      expect(gh.ghLog().slice(before)).not.toMatch(/issue edit 8 /);
+      const raised = owned(50);
+      await raised.w.tick();
+      expect(lines.join("\n")).toContain("the owner's limit allows it again");
+      await raised.sch.idle();
+    });
+
+    it("starts no scheduled chore and no CI fix", async () => {
+      await spend();
+      const chore = owned(0.01, { id: "chore", source: "schedule", every: "1h", task: "Update deps" });
+      await chore.w.tick();
+      expect(chore.sch.list().filter((s) => s.flow === "chore")).toHaveLength(0);
+      process.env.FAKE_GH_RUNS = JSON.stringify([{ databaseId: 7, workflowName: "CI", status: "completed", conclusion: "failure", headSha: "abc7def0", url: "https://ci/7" }]);
+      const ci = owned(0.01, { id: "ci", source: "ci-failures" });
+      await ci.w.tick();
+      expect(ci.sch.list().filter((s) => s.flow === "ci-fix")).toHaveLength(0);
+      expect(ci.sch.queue().pending).toHaveLength(0);
+    });
   });
 
   it("holds carry the time they wait since", async () => {

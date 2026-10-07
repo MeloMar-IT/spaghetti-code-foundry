@@ -84,6 +84,10 @@ export interface ClaudeRunOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  /** Pass only `env`, nothing of the server's environment. */
+  cleanEnv?: boolean;
+  /** Start Claude inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
+  sandboxProfile?: string;
   /** Sandbox Claude's bash tool (writes limited to the workspace). */
   sandbox?: boolean;
   /** Load no MCP servers (keeps the prompt small for local models). */
@@ -164,6 +168,8 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const spawned = await runProcess(bin, buildClaudeArgs(o), {
     cwd: o.cwd,
     env: o.env,
+    cleanEnv: o.cleanEnv,
+    sandboxProfile: o.sandboxProfile,
     stdin: o.prompt,
     timeoutMs: o.timeoutMs,
     signal: o.signal,

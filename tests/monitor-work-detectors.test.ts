@@ -291,6 +291,10 @@ describe("queue not moving", () => {
     const old = ago(HOUR);
     expect(find("queue-stalled", { queue: q([job()], 2), lastStart: old })).toEqual([]);
     expect(find("queue-stalled", { queue: q([job({ waitingFor: "a0" })], 1), lastStart: old })).toEqual([]);
+    expect(find("queue-stalled", { queue: q([job({ limit: "per_day" })]), lastStart: old })).toEqual([]);
+    expect(find("queue-stalled", { queue: q([job({ limit: "concurrent" })]), lastStart: old })).toEqual([]);
+    const mixed = find("queue-stalled", { queue: q([job({ limit: "per_day" }), job({ runId: "q2" })]), lastStart: old });
+    expect(mixed[0]).toMatchObject({ evidence: { counts: { queued: 1 } } });
     expect(find("queue-stalled", { queue: q([job()]), lastStart: ago(MIN) })).toEqual([]);
     expect(find("queue-stalled", { queue: q([job({ enqueuedAt: ago(MIN) })]), lastStart: old })).toEqual([]);
     expect(find("queue-stalled", { queue: q([job()]), lastStart: old, asleep: true })).toEqual([]);

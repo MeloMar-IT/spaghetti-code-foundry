@@ -251,6 +251,27 @@ steps:
   `{{steps.<id>.output}}`. `{{vars}}`, `{{workdir}}`, `{{run.*}}`, `{{learnings}}` and other step
   fields are refused.
 
+### Security rules for published flows
+
+A user steers a published flow with text, so treat every input as untrusted. The schema refuses
+the first two problems when you save; the rest is up to you.
+
+- Never paste user text into a shell command. A flow with a user input is refused when a shell
+  `run` has `{{vars.<input>}}` or a bare `{{vars}}`. Read `"$FACTORY_VAR_NAME"` and
+  `"$FACTORY_TASK"` instead, always quoted.
+- `agent_env` as an input (`mode: input`) is refused: a user could set `NODE_OPTIONS`, `DYLD_*` or
+  `BASH_ENV` for agent steps. Also do not publish `test_cmd` as an input, and never `eval` or
+  `sh -c` a value users fill in.
+- For users' repositories use `workspace: empty` and clone in a `repo_access` step. `worktree` is a
+  branch of the server's own folder, so it is refused for users, like `inplace`: the API answers
+  403, the flow is not listed, and a user's run of it fails before any step. Only admins (and runs
+  without an owner) can use `worktree` and `inplace`.
+- Give agent steps only the tools they need. The task and the issue text are untrusted
+  instructions.
+- Keep secrets out of `vars`. Hidden variables are not secret from the run itself.
+
+See `docs/THREAT_MODEL.md` for what is protected and what is still open.
+
 ## Templates and environment variables
 
 In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:

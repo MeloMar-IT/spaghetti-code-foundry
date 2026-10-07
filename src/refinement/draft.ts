@@ -3,6 +3,8 @@ import { z } from "zod";
 import { REMARK_FIELDS } from "./draft-check.js";
 import { RefinementError } from "./errors.js";
 import { ImpactSchema } from "./draft-impact.js";
+import { SplitSchema } from "./draft-split.js";
+import { READY_MAX, READY_TEXT_MAX } from "./ready-list.js";
 import { HAS_CONTROL, MAP_KEY, chars, cut, type Talk } from "./talk.js";
 
 // ---- limits (characters are counted as code points) ------------------------------------------------
@@ -39,6 +41,8 @@ export const REMARK_SENTENCES = 2;
 
 /** How many sentences a text has: a stop, question mark or exclamation mark followed by a space starts the next one. */
 export const sentenceCount = (t: string): number => t.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+/** The same, as `tools/refine-round-check` counts: closing quotes and brackets may sit between the mark and the space. */
+export const strictSentenceCount = (t: string): number => t.split(/(?<=[.!?]["'”’)\]]*)\s+/).filter(Boolean).length;
 
 export const DRAFT_LOG_KINDS = [
   "draft-added",
@@ -53,7 +57,15 @@ export const DRAFT_LOG_KINDS = [
   "architect-reviewed",
   "impact-asked",
   "architect-impact",
+  "split-asked",
+  "architect-split",
   "moved-to-notes",
+  "ready-checked",
+  "ready-asked",
+  "architect-judged",
+  "ready-accepted",
+  "ready-unaccepted",
+  "draft-published",
 ] as const;
 export type DraftLogKind = (typeof DRAFT_LOG_KINDS)[number];
 export const isDraftKind = (what: string): boolean => (DRAFT_LOG_KINDS as readonly string[]).includes(what);
@@ -77,6 +89,9 @@ const field = (max: number, oneLine = false) => z.object({ text: text(max, oneLi
 /** `tie`: the id of the rule or example of the map that a criterion comes from. */
 const CriterionSchema = z.object({ id: z.uuid(), text: text(CRITERION_MAX), from: z.enum(SOURCES), tie: z.uuid().optional() }).strict();
 const IssueNumber = z.number().int().min(1);
+/** The link of a GitHub issue: https://github.com/<owner>/<name>/issues/<n>. */
+export const ISSUE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*$/;
+const PublishedSchema = z.object({ issue: IssueNumber.max(Number.MAX_SAFE_INTEGER), url: z.string().max(300).regex(ISSUE_URL), at: z.iso.datetime() }).strict();
 const DependsSchema = z
   .object({ id: z.uuid(), issue: IssueNumber.optional(), draft: z.uuid().optional(), from: z.enum(SOURCES) })
   .strict()
@@ -104,6 +119,36 @@ const RemarkSchema = z
   .strict()
   .refine((r) => (r.field === "criteria") === (r.item !== undefined));
 const ReviewSchema = z.object({ at: z.iso.datetime(), remarks: z.array(RemarkSchema).max(REVIEW_MAX) }).strict();
+export const READY_RESULTS = ["met", "not-met", "unsure"] as const;
+export const READY_BY = ["code", "architect"] as const;
+const READY_ID = z.string().regex(/^[a-z0-9-]{1,40}$/);
+/**
+ * One result of a readiness check. Of the architect (`by`): `field` is the field of the draft its sentence points at, `item` the
+ * criterion (its id) when it is about one, `about` the text of that field or criterion when it was judged. Of code: none of these.
+ */
+const ReadyResultSchema = z
+  .object({
+    id: READY_ID,
+    text: text(READY_TEXT_MAX, true),
+    result: z.enum(READY_RESULTS),
+    reason: text(REASON_MAX, true),
+    by: z.enum(READY_BY),
+    field: z.enum(SUGGEST_FIELDS).optional(),
+    item: z.uuid().optional(),
+    about: text(LONG_TEXT_MAX).optional(),
+  })
+  .strict()
+  .refine((r) => (r.by === "architect" ? r.field !== undefined && r.about !== undefined : r.field === undefined && r.item === undefined && r.about === undefined))
+  .refine((r) => r.item === undefined || r.field === "criteria");
+/** The result of a readiness check: for each item of the list as it was then, its text, the result and why. */
+const ReadinessSchema = z.object({ at: z.iso.datetime(), items: z.array(ReadyResultSchema).max(READY_MAX) }).strict();
+/** Items the person accepted anyway, with the item text they were given for and the reason. */
+const AcceptedSchema = z
+  .array(z.object({ id: READY_ID, text: text(READY_TEXT_MAX, true), reason: text(REASON_MAX, true), at: z.iso.datetime() }).strict())
+  .min(1)
+  .max(READY_MAX);
+export type Readiness = z.infer<typeof ReadinessSchema>;
+export type Accepted = z.infer<typeof AcceptedSchema>[number];
 export type Remark = z.infer<typeof RemarkSchema>;
 export type Review = z.infer<typeof ReviewSchema>;
 export type Suggestion = z.infer<typeof SuggestionSchema>;
@@ -124,12 +169,20 @@ const DraftSchema = z
     rejected: z.array(RejectedSchema).max(REJECTED_MAX).optional(),
     review: ReviewSchema.optional(),
     impact: ImpactSchema.optional(),
+    split: SplitSchema.optional(),
+    addReviewLabel: z.literal(true).optional(),
+    readiness: ReadinessSchema.optional(),
+    acceptedAnyway: AcceptedSchema.optional(),
+    /** The GitHub issue this draft became. Written by publishing only; a draft that has it is not changed any more. */
+    published: PublishedSchema.optional(),
   })
   .strict()
   .superRefine((d, ctx) => {
     const dup = (path: (string | number)[]) => ctx.addIssue({ code: "custom", message: "duplicate", path });
     const ids = new Set<string>();
     d.criteria.forEach((c, i) => (ids.has(c.id) ? dup(["criteria", i, "id"]) : ids.add(c.id)));
+    const accIds = new Set<string>();
+    d.acceptedAnyway?.forEach((x, i) => (accIds.has(x.id) ? dup(["acceptedAnyway", i, "id"]) : accIds.add(x.id)));
     const depIds = new Set<string>();
     const targets = new Set<string>();
     d.dependsOn.forEach((x, i) => {
@@ -164,6 +217,7 @@ export const DraftsSchema = z
   });
 export const EpicSchema = IssueNumber.max(Number.MAX_SAFE_INTEGER);
 
+export type Published = z.infer<typeof PublishedSchema>;
 export type Draft = z.infer<typeof DraftSchema>;
 export type Field = z.infer<ReturnType<typeof field>>;
 export type Criterion = z.infer<typeof CriterionSchema>;
@@ -467,14 +521,20 @@ export function rejectSuggestion(st: DraftState, draftId: string, sid: string, i
 export const oneLine = (t: string): string => t.replace(new RegExp(`\\s*[\\n${LS_PS}]\\s*`, "g"), " ");
 
 /** The draft as Markdown in the project's story format: only the person's text and fixed words. */
-export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }): { title: string; body: string } {
+export function preview(
+  d: Draft,
+  s: { drafts: Draft[]; epic?: number },
+  accepted: { text: string; reason: string }[] = [],
+  draftDep?: (other: Draft) => string,
+): { title: string; body: string } {
   const part = (f: Field | undefined) => (f ? oneLine(f.text) : "…");
   const why = part(d.why);
   const sentence = `As ${part(d.who)}, I want ${part(d.what)}, so that ${why}${/[.!?]$/.test(why) ? "" : "."}`;
   const deps = d.dependsOn.flatMap((x) => {
     if (x.issue !== undefined) return [`- #${x.issue}`];
     const other = s.drafts.find((o) => o.id === x.draft);
-    return other ? [`- ${other.title ? oneLine(other.title.text) : "…"} (draft)`] : [];
+    if (!other) return [];
+    return [draftDep ? `- ${draftDep(other)}` : `- ${other.title ? oneLine(other.title.text) : "…"} (draft)`];
   });
   const blocks = [
     ...(s.epic !== undefined ? [`**Epic:** #${s.epic}`] : []),
@@ -483,6 +543,7 @@ export function preview(d: Draft, s: { drafts: Draft[]; epic?: number }): { titl
     ...(d.outOfScope ? [`### Out of scope\n${d.outOfScope.text}`] : []),
     ...(d.notes ? [`### Notes for the builder\n${d.notes.text}`] : []),
     `### Depends on\n${deps.length ? deps.join("\n") : "None (can be built on its own)."}`,
+    ...(accepted.length ? [["### Accepted anyway", ...accepted.map((a) => `- ${a.text}: ${oneLine(a.reason)}`)].join("\n")] : []),
   ];
   return { title: d.title?.text ?? "", body: blocks.join("\n\n") };
 }

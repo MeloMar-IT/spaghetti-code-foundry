@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -66,6 +67,7 @@ const rec = (over: object = {}) => ({
   url: "https://github.com/o/a",
   method: "github-token",
   settings: {},
+  ready: { items: DEFAULT_READY.map(({ id, text }) => ({ id, text, rule: id })), isDefault: true },
   account: { name: "Ann", email: "ann@example.com", role: "user", status: "active" },
   ...over,
 });
@@ -105,7 +107,7 @@ describe("the page", () => {
     }
     const rows = walk(main()).filter((e) => e.tag === "tr").slice(1);
     expect(rows).toHaveLength(2);
-    for (const r of rows) expect(walk(r).filter((e) => e.tag === "button").map((e) => e.textContent)).toEqual(["Settings", "Transfer"]);
+    for (const r of rows) expect(walk(r).filter((e) => e.tag === "button").map((e) => e.textContent)).toEqual(["Settings", "Definition of Ready", "Transfer"]);
   });
 
   it("reads none as the server's own access for an admin's repository", async () => {
@@ -126,6 +128,16 @@ describe("the page", () => {
     await show();
     expect(main().textContent).toContain("Unknown account");
     expect(byClass(main(), "pill").map((e) => e.textContent)).toContain("blocked");
+  });
+
+  it("marks a repository that is not on the app list, and only then", async () => {
+    repos = [rec({ method: "github-app", offAppList: true }), rec({ url: "https://github.com/o/b", method: "github-app" })];
+    await show();
+    const marks = byClass(main(), "pill").map((e) => e.textContent).filter((t) => t === "not on the app list");
+    expect(marks).toHaveLength(1);
+    const rows = walk(main()).filter((e) => e.tag === "tr").slice(1);
+    expect(rows[0]!.textContent).toContain("not on the app list");
+    expect(rows[1]!.textContent).not.toContain("not on the app list");
   });
 
   it("shows the empty list text", async () => {
@@ -174,6 +186,120 @@ describe("settings dialog", () => {
     expect(errText(root())).toContain("mainBranch must be a valid git branch name");
     expect(button(root(), "Save")!.disabled).toBeFalsy();
     expect(root().children).not.toHaveLength(0);
+  });
+});
+
+describe("Definition of Ready dialog", () => {
+  const inputs = () => walk(root()).filter((e) => e.tag === "input" && e.attrs.name === "item");
+  const texts = () => inputs().map((e) => e.value);
+  const rowButton = (n: number, text: string) => walk(root()).filter((e) => e.tag === "button" && e.textContent === text)[n];
+  const open = async (r = rec()) => {
+    repos = [r];
+    await show();
+    press(button(main(), "Definition of Ready"));
+    await flush();
+    return r;
+  };
+  const D = DEFAULT_READY.map(({ id, text }) => ({ id, text }));
+
+  it("READY_DEFAULTS equals the server's default list", () => {
+    expect(ui.READY_DEFAULTS).toEqual(D);
+  });
+
+  it("readyBody trims and leaves out a missing id", () => {
+    expect(ui.readyBody([{ id: "value", text: " a " }, { text: " b" }, { id: "c-1", text: "c" }])).toEqual({ items: [{ id: "value", text: "a" }, { text: "b" }, { id: "c-1", text: "c" }] });
+  });
+
+  it("is prefilled with the seven items, with labels on the buttons", async () => {
+    await open();
+    expect(texts()).toEqual(D.map((d) => d.text));
+    expect(inputs()[0]!.attrs.maxlength).toBe("200");
+    expect(rowButton(1, "Up")!.attrs["aria-label"]).toBe("Move item 2 up");
+    expect(root().textContent).toContain("Back to the default drops the items you added and your wording.");
+  });
+
+  it("turns Up off on the first row, Down on the last, and Remove with one row", async () => {
+    await open(rec({ ready: { items: [{ id: "a", text: "one" }, { id: "b", text: "two" }], isDefault: false } }));
+    expect(rowButton(0, "Up")!.attrs.disabled).toBeDefined();
+    expect(rowButton(1, "Up")!.attrs.disabled).toBeUndefined();
+    expect(rowButton(1, "Down")!.attrs.disabled).toBeDefined();
+    press(rowButton(0, "Remove"));
+    expect(texts()).toEqual(["two"]);
+    expect(rowButton(0, "Remove")!.attrs.disabled).toBeDefined();
+  });
+
+  it("rewords, moves, removes and adds, then saves with the exact body", async () => {
+    const r = await open();
+    inputs()[0]!.value = "  value reworded ";
+    press(rowButton(0, "Down"));
+    expect(texts().slice(0, 2)).toEqual([D[1]!.text, "  value reworded "]);
+    press(rowButton(6, "Remove"));
+    press(button(root(), "+ Add item"));
+    inputs()[inputs().length - 1]!.value = "my own";
+    press(button(root(), "Save"));
+    await flush();
+    await flush();
+    expect(sent).toEqual([{
+      method: "PUT",
+      url: `/api/admin/repos/${r.id}/ready`,
+      body: { items: [{ id: "standalone", text: D[1]!.text }, { id: "value", text: "value reworded" }, ...D.slice(2, 6), { text: "my own" }] },
+    }]);
+    expect(toastText()).toBe("Definition of Ready saved");
+    expect(root().children).toHaveLength(0);
+  });
+
+  it("keeps what was typed when another row is moved", async () => {
+    await open();
+    inputs()[3]!.value = "typed";
+    press(rowButton(0, "Down"));
+    expect(texts()).toContain("typed");
+  });
+
+  it("puts a removed default item back with its id", async () => {
+    const r = await open();
+    press(rowButton(6, "Remove"));
+    const back = button(root(), `Add back: ${D[6]!.text}`);
+    press(back);
+    expect(button(root(), `Add back: ${D[6]!.text}`)).toBeUndefined();
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent[0]!.body).toEqual({ items: D });
+    expect(sent[0]!.url).toBe(`/api/admin/repos/${r.id}/ready`);
+  });
+
+  it("Back to the default refills the seven texts and drops a custom row", async () => {
+    await open(rec({ ready: { items: [{ id: "c-1", text: "custom" }], isDefault: false } }));
+    expect(texts()).toEqual(["custom"]);
+    press(button(root(), "Back to the default"));
+    expect(texts()).toEqual(D.map((d) => d.text));
+  });
+
+  it("shows a message for an empty item and sends nothing", async () => {
+    await open();
+    press(button(root(), "+ Add item"));
+    press(button(root(), "Save"));
+    await flush();
+    expect(errText(root())).toContain("Fill in every item, or remove it.");
+    expect(sent).toEqual([]);
+  });
+
+  it("shows a 400 in the dialog and enables Save again", async () => {
+    await open();
+    answers.push({ status: 400, error: "two items have the same text" });
+    press(button(root(), "Save"));
+    await flush();
+    expect(errText(root())).toContain("two items have the same text");
+    expect(button(root(), "Save")!.disabled).toBeFalsy();
+    expect(root().children).not.toHaveLength(0);
+  });
+
+  it("sets a text with markup as the value and sends it unchanged", async () => {
+    await open(rec({ ready: { items: [{ id: "c-1", text: "<img src=x>" }], isDefault: false } }));
+    expect(inputs()[0]!.value).toBe("<img src=x>");
+    expect(walk(root()).some((e) => e.tag === "img")).toBe(false);
+    press(button(root(), "Save"));
+    await flush();
+    expect(sent[0]!.body).toEqual({ items: [{ id: "c-1", text: "<img src=x>" }] });
   });
 });
 
@@ -277,8 +403,9 @@ describe("wiring", () => {
     };
     await api.allRepos();
     await api.setRepoSettings("a b", {});
+    await api.setRepoReady("a b", { items: null });
     await api.transferRepo("a b", "x@y.io");
-    expect(seen).toEqual(["GET /api/admin/repos", "PUT /api/admin/repos/a%20b/settings", "POST /api/admin/repos/a%20b/transfer"]);
+    expect(seen).toEqual(["GET /api/admin/repos", "PUT /api/admin/repos/a%20b/settings", "PUT /api/admin/repos/a%20b/ready", "POST /api/admin/repos/a%20b/transfer"]);
   });
 
   it("never gives the page to a user", () => {

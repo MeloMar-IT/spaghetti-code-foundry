@@ -313,6 +313,39 @@ describe("deliver pipeline", () => {
     expect(gh.ghLog()).toContain("the issue has the `Factory_review_plan` label");
   });
 
+  it("auto_defaults: questions are answered with the recommendations by the watcher itself, at most twice", async () => {
+    process.env.FAKE_QUESTIONS_FOR = "6";
+    issues([6, ["Factory_go"]]);
+    const w = watcher({ precheck_flow: "epic-questions", auto_defaults: true });
+    await w.tick();
+    await settle();
+    expect(gh.ghLog()).toContain("**Q1. Which package format?**");
+    // The questions are asked; at the next check nobody has answered, so the watcher takes the recommendations and builds.
+    issues([6, ["Factory_go", "Factory_needs_info"]]);
+    process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: [{ author: { login: "foundry-owner" }, createdAt: "2026-01-01T00:00:00Z", body: gh.comments().find((c) => c.issue === 6 && c.body.includes("has questions before it builds"))!.body }], labels: [] });
+    await w.tick();
+    await settle();
+    const own = gh.comments().filter((c) => c.issue === 6 && c.body.startsWith("/defaults"));
+    expect(own).toHaveLength(1);
+    expect(own[0]!.body).toContain("taken by the Foundry itself");
+    expect(runOf("issue-deliver", "6")?.status).toBe("succeeded");
+    expect(w.status.holds ?? []).toEqual([]);
+  });
+
+  it("auto_defaults stops after two answers of its own: then a person answers", async () => {
+    const mark = "<!-- spaghetti-code-foundry auto-defaults -->";
+    const asked = "🤖 **Spaghetti Code Foundry** has questions before it builds this issue\n**Q1. Which?**\n<!-- claude-factory run=x questions -->";
+    const c = (body: string, t: string) => ({ author: { login: "foundry-owner" }, createdAt: t, body });
+    issues([6, ["Factory_go", "Factory_needs_info"]]);
+    process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: [c(`/defaults ${mark}`, "2026-01-01T00:00:00Z"), c(`/defaults ${mark}`, "2026-01-02T00:00:00Z"), c(asked, "2026-01-03T00:00:00Z")], labels: [] });
+    const w = watcher({ precheck_flow: "epic-questions", auto_defaults: true });
+    await w.tick();
+    await settle();
+    expect(gh.comments().filter((x) => x.issue === 6 && x.body.startsWith("/defaults"))).toHaveLength(0);
+    expect(runOf("issue-deliver", "6")).toBeUndefined();
+    expect(w.status.holds).toMatchObject([{ issue: 6, next: { kind: "questions" } }]);
+  });
+
   it("asks the open questions for all new issues up front, then builds; /defaults answers them", async () => {
     process.env.FAKE_QUESTIONS_FOR = "6";
     issues([5, ["Factory_go"]], [6, ["Factory_go"]]);

@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { RunSummary } from "../src/engine/state.js";
+import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { USER_ERROR, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
@@ -190,6 +190,7 @@ describe("userLogLine", () => {
     "    · agent claude:anthropic:opus",
     "    · not resuming plan: it ran on codex, this step on claude",
     "⚠ daily budget reached — agent steps continue on ollama:x",
+    "⚠ the owner's daily budget reached — agent steps continue on ollama:x",
     "    ↪ claude:x hit a limit — retrying on codex:y",
     "    ⚠ build: not sandboxed (no sandbox.docker_image configured)",
     "⚠ something new",
@@ -208,6 +209,7 @@ describe("userError, userRecord, hidePaths, movedText", () => {
     ["output did not match pass_if", "Its output did not pass the check of the step"],
     ["failed: build", "One of its steps failed"],
     ["usage limit reached: x", "The usage limit was reached"],
+    [USER_BUDGET_REASON, "Your limit for today is reached"],
     ["signed out — the Claude Code login has expired", "The Foundry is signed out of its AI account"],
     ["exit code 2", "Its command ended with an error"],
     ["claude result: error_max_budget_usd", "The administrator's limit was reached"],
@@ -314,7 +316,7 @@ async function stream(s: Srv, who: TestSession, path: string, ms = 400) {
 const writeRun = (s: Srv, id: string, extra: Record<string, unknown> = {}) => {
   mkdirSync(join(s.runsDir, id), { recursive: true });
   writeFileSync(join(s.runsDir, id, "run.json"), JSON.stringify({
-    runId: id, flow: "old", task: "", vars: {}, repo: s.repo, status: "succeeded", runDir: join(s.runsDir, id),
+    runId: id, flow: "old", task: "", vars: {}, repo: s.repo, source: "ui", status: "succeeded", runDir: join(s.runsDir, id),
     startedAt: "2026-01-01T00:00:00.000Z", totalCostUsd: 0, history: [], state: { next: null, steps: {}, visits: {} }, ...extra,
   }));
 };
@@ -575,5 +577,92 @@ describe("errors a user gets", () => {
   it("answers the moved-folder 503 to a user without the folder", async () => {
     expect(movedText("/x", false)).not.toContain("/x");
     expect(readFileSync(resolve("src/server/server.ts"), "utf8")).toContain("movedText(moved, admin)");
+  });
+});
+
+describe("a run held by a user limit", () => {
+  let s: Srv;
+  let admin: TestSession;
+  let ann: TestSession;
+  let held: string;
+
+  beforeAll(async () => {
+    s = await boot(prepare(), { accountSweepMs: 3_600_000 });
+    admin = await signInAs(s.base);
+    ann = await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
+    expect((await call(s, admin, "PUT", "/api/flows/leaky", { yaml: LEAKY, scope: "repo" })).status).toBe(200);
+    expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxConcurrent: 7, maxRunsPerDay: 1 })).status).toBe(200);
+    const first = await call(s, ann, "POST", "/api/runs", { flow: "leaky", task: "one" });
+    expect(first.status).toBe(201);
+    held = (await call(s, ann, "POST", "/api/runs", { flow: "leaky", task: "two" })).json().runId;
+  });
+  afterAll(() => {
+    for (const q of [...s.ctx.scheduler.queue().pending, ...s.ctx.scheduler.queue().active]) s.ctx.scheduler.cancel(q.runId);
+  });
+
+  it("tells the user why it waits, without a number", async () => {
+    const q = await call(s, ann, "GET", "/api/queue");
+    const mine = q.json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.next.kind).toBe("user_limit");
+    expect(mine.next.status).toBe("waiting — your limit for today is reached");
+    expect("limit" in mine).toBe(false);
+    expect(q.text).not.toMatch(/maxRunsPerDay|maxConcurrent|"limit"|"7"/);
+    expect(mine.next.text).not.toMatch(/\d/);
+  });
+
+  it("tells the admin which limit it is", async () => {
+    const mine = (await call(s, admin, "GET", "/api/queue")).json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.limit).toBe("per_day");
+    expect(mine.next.status).toBe("waiting — the owner's limit of runs per day");
+  });
+
+  it("starts the held run at once when the admin raises the limit", async () => {
+    expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxRunsPerDay: 5 })).status).toBe(200);
+    expect(s.ctx.scheduler.isQueued(held)).toBe(false);
+  });
+});
+
+describe("a run held by the daily budget of its owner", () => {
+  let s: Srv;
+  let admin: TestSession;
+  let ann: TestSession;
+  let held: string;
+  const stopped = "20261007-000000-halted";
+
+  beforeAll(async () => {
+    s = await boot(prepare(), { accountSweepMs: 3_600_000 });
+    admin = await signInAs(s.base);
+    ann = await signInAs(s.base, { name: "Ann", email: "ann@example.com", role: "user" });
+    expect((await call(s, admin, "PUT", "/api/flows/leaky", { yaml: LEAKY, scope: "repo" })).status).toBe(200);
+    expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { dailyBudgetUsd: 4.25 })).status).toBe(200);
+    // a costed run of today
+    writeRun(s, "20261007-000000-spent", { owner: ann.user.id, startedAt: new Date().toISOString(), totalCostUsd: 9 });
+    held = (await call(s, ann, "POST", "/api/runs", { flow: "leaky", task: "two" })).json().runId;
+    writeRun(s, stopped, {
+      owner: ann.user.id, status: "stopped", reason: USER_BUDGET_REASON, startedAt: new Date().toISOString(), totalCostUsd: 0,
+      workdir: s.repo, flowDef: { name: "x", workspace: "empty", steps: [{ id: "a", type: "shell", run: "true" }] }, state: { next: "a", steps: {}, visits: {} },
+    });
+  });
+  afterAll(() => {
+    for (const q of [...s.ctx.scheduler.queue().pending, ...s.ctx.scheduler.queue().active]) s.ctx.scheduler.cancel(q.runId);
+  });
+
+  it("tells the user the limit for today is reached, with no amount and no word about money", async () => {
+    const q = await call(s, ann, "GET", "/api/queue");
+    const mine = q.json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.next.kind).toBe("user_limit");
+    expect(mine.next.status).toBe("waiting — your limit for today is reached");
+    expect("limit" in mine).toBe(false);
+    const run = await call(s, ann, "GET", `/api/runs/${stopped}`);
+    expect(run.json().next.status).toBe("waiting — your limit for today is reached");
+    for (const text of [q.text, run.text]) expect(text.match(/.{20}(\$|budget|"limit"|4\.25|dailyBudget).{20}/i)?.[0]).toBeUndefined();
+  });
+
+  it("tells the admin it is the owner's daily budget, with the amount", async () => {
+    const mine = (await call(s, admin, "GET", "/api/queue")).json().pending.find((p: { runId: string }) => p.runId === held);
+    expect(mine.limit).toBe("budget");
+    expect(mine.next.why).toBe("The owner's daily budget of $4.25 is used up");
+    const run = (await call(s, admin, "GET", `/api/runs/${stopped}`)).json();
+    expect(run.next.why).toBe("The owner's daily budget of $4.25 is used up");
   });
 });

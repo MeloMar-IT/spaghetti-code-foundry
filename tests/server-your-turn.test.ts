@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefsOf } from "./helpers/briefs.js";
+import { flowRepo } from "./helpers/flow-repo.js";
 import { ConfigSchema } from "../src/config.js";
 import { markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { saveFindings } from "../src/monitor/findings.js";
@@ -23,7 +24,7 @@ const cfg = (watchers: Record<string, unknown>[] = []) => ConfigSchema.parse({ w
 const issuesWatcher = { id: "a", github_repo: "acme/app", flow: "github-issue" };
 
 const run = (runId: string, over: Record<string, unknown> = {}) => ({
-  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: "acme/app" }, repo: "/x",
+  runId, flow: "github-issue", flowDef: { steps: [] }, task: `task ${runId}`, vars: { github_repo: "acme/app" }, repo: flowRepo(),
   status: "failed", reason: "boom", runDir: "/tmp/none", startedAt: ago(1), finishedAt: ago(1), history: [],
   state: { next: null, steps: {}, visits: {} }, totalCostUsd: 0, ...over,
 }) as never as import("../src/engine/state.js").RunSummary;
@@ -278,6 +279,49 @@ describe("Your turn and closed issues", () => {
     expect(items(ctxOf([mine()]))[0]!.next.issueUnchecked).toBeUndefined();
     markIssueCheckFailed("acme/app");
     expect(items(ctxOf([mine()]))).toMatchObject([{ next: { kind: "failed", issueUnchecked: true } }]);
+  });
+
+  describe("a run of a retired flow", () => {
+    const failedHold = hold(nextStep("failed", { repo: "acme/app", issue: 7, title: "T7", runId: "r1" }, { watched: true, failedLabel: "factory:failed", reason: 'step "x" failed' }));
+    const issues = [{ issue: 7, title: "T7", runId: "r1" }];
+    const watcherRun = (over: Record<string, unknown> = {}) => mine("r1", { source: "watcher a issue #7", ...over });
+
+    it("offers no retry for a tracked issue whose hold has no flag, and the record says to start a new run", () => {
+      const ctx = ctxOf([watcherRun({ repo: "/nowhere" })], [tracked(c, 0, [failedHold], issues)]);
+      const item = items(ctx).find((i) => i.next.runId === "r1")!;
+      expect(item.next.retired).toBe(true);
+      // the run's own record replaces the hold: no "resume" wording
+      expect(item.next.text).toMatch(/to start over\.$/);
+      expect(item.next.text).not.toContain("resume the run");
+      expect(item.next.failure?.options[0]).toBe("Retry — remove the factory:failed label");
+      expect(item.acts).toEqual([]);
+    });
+    it("offers retry when the run's repository folder holds the flow", () => {
+      const ctx = ctxOf([watcherRun()], [tracked(c, 0, [failedHold], issues)]);
+      expect(items(ctx).find((i) => i.next.runId === "r1")!.acts).toEqual(["retry", "retry_hint"]);
+    });
+    it("lists an untracked run without a source as retired, and a stored closed issue wins", () => {
+      const r = run("r1", { vars: { github_repo: "acme/app", issue: "7" }, repo: "/nowhere" });
+      const rec = allNext(ctxOf([r])).runs[0]!;
+      expect(rec.retired).toBe(true);
+      expect(rec.text).toMatch(/to start over\.$/);
+      store("closed");
+      const closed = allNext(ctxOf([r])).runs[0]!;
+      expect(closed.kind).toBe("issue_closed");
+      expect(closed.retired).toBeUndefined();
+    });
+    it("looks the flow up per repository folder and flow name, within one request", () => {
+      const other = mkdtempSync(join(tmpdir(), "no-flow-"));
+      const runs = [
+        run("a1", { vars: { github_repo: "acme/app" }, repo: flowRepo(), source: "watcher a issue #1" }),
+        run("b1", { vars: { github_repo: "acme/app" }, repo: other, source: "watcher a issue #2" }),
+        run("c1", { vars: { github_repo: "acme/app" }, repo: other, source: "ui" }),
+        run("d1", { vars: { github_repo: "acme/app" }, repo: other }),
+      ];
+      const got = Object.fromEntries(allNext(ctxOf(runs)).runs.map((r) => [r.runId, r.retired === true]));
+      rmSync(other, { recursive: true, force: true });
+      expect(got).toEqual({ a1: false, b1: true, c1: false, d1: true });
+    });
   });
 
   it("keeps a watcher-started run listed with the note when the state is unknown", () => {

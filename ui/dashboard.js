@@ -82,12 +82,42 @@ export function clarityCard(c) {
     c.misses?.length ? h("ul", { class: "muted" }, c.misses.map((m) => h("li", {}, `${m.id} — ${m.status}`))) : null);
 }
 
-/** "By user": runs and cost per account, as the server sorted them (highest cost first). */
+const LIMIT_WORDS = { maxConcurrent: "Runs at the same time", maxRunsPerDay: "Runs per day", dailyBudgetUsd: "Daily budget" };
+
+/** A limit in dollars; a small limit keeps its digits ("$0.001", not "$0.00"). */
+const usdLimit = (n) => (n >= 0.01 ? usd(n) : `$${n.toLocaleString("en-US", { maximumSignificantDigits: 2, maximumFractionDigits: 20 })}`);
+
+/**
+ * "By user": per account runs and cost over 30 days, plus today's runs, runs active now and today's cost, each as
+ * "value / limit" when a limit applies. An account at a limit gets an "at limit" mark. Lines come as the server sorted them.
+ */
 export function byUserCard(list) {
-  return h("div", { class: "card" }, h("h3", {}, "By user"),
+  const of = (text, limit, limitText) => (limit === undefined ? text : `${text} / ${limitText}`);
+  const row = (u) => {
+    const at = u.atLimit ?? [];
+    const lim = u.limits ?? {};
+    const mark = at.length ? h("span", { class: "pill locked", title: `At limit: ${at.map((f) => LIMIT_WORDS[f] ?? f).join(", ")}` }, "at limit") : null;
+    return h("tr", { class: at.length ? "at-limit" : "" },
+      h("td", {}, ownerLabel(u.name), mark ? " " : null, mark),
+      h("td", {}, u.runs),
+      h("td", { class: "mono" }, usd(u.costUsd)),
+      h("td", {}, of(String(u.today?.runs ?? 0), lim.maxRunsPerDay, lim.maxRunsPerDay)),
+      h("td", {}, of(String(u.active ?? 0), lim.maxConcurrent, lim.maxConcurrent)),
+      h("td", { class: "mono" }, of(usd(u.today?.costUsd), lim.dailyBudgetUsd, lim.dailyBudgetUsd === undefined ? "" : usdLimit(lim.dailyBudgetUsd))));
+  };
+  return h("div", { class: "card", style: { gridColumn: "1 / -1" } }, h("h3", {}, "By user"),
     list.length ? h("table", { class: "table compact" },
-      h("thead", {}, h("tr", {}, ["Name", "Runs", "Cost"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, list.map((u) => h("tr", {}, h("td", {}, ownerLabel(u.name)), h("td", {}, u.runs), h("td", { class: "mono" }, usd(u.costUsd)))))) : h("p", { class: "muted" }, "No runs yet."));
+      h("thead", {}, h("tr", {}, ["Name", "Runs", "Cost", "Runs today", "Active now", "Cost today"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, list.map(row))) : h("p", { class: "muted" }, "No runs yet."));
+}
+
+/** "By repository": runs and cost over 30 days, plus today's runs and cost. */
+export function byRepoCard(list) {
+  return h("div", { class: "card" }, h("h3", {}, "By repository"),
+    list.length ? h("table", { class: "table compact" },
+      h("thead", {}, h("tr", {}, ["Repository", "Runs", "Cost", "Runs today", "Cost today"].map((x) => h("th", {}, x)))),
+      h("tbody", {}, list.map((r) => h("tr", {}, h("td", { class: "mono" }, r.repo), h("td", {}, r.runs), h("td", { class: "mono" }, usd(r.costUsd)),
+        h("td", {}, r.today?.runs ?? 0), h("td", { class: "mono" }, usd(r.today?.costUsd)))))) : h("p", { class: "muted" }, "No runs yet."));
 }
 
 export async function renderDashboard(main) {
@@ -123,10 +153,7 @@ export async function renderDashboard(main) {
             h("td", {}, h("a", { href: `#/flows/${encodeURIComponent(f.flow)}` }, f.flow)),
             h("td", {}, f.runs), h("td", {}, rateBar(f.succeeded, f.runs)),
             h("td", { class: "mono" }, `${f.avgMinutes}m`), h("td", { class: "mono" }, usd(f.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")),
-      h("div", { class: "card" }, h("h3", {}, "By repository"),
-        s.byRepo.length ? h("table", { class: "table compact" },
-          h("thead", {}, h("tr", {}, ["Repository", "Runs", "Cost"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.byRepo.map((r) => h("tr", {}, h("td", { class: "mono" }, r.repo), h("td", {}, r.runs), h("td", { class: "mono" }, usd(r.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")),
+      byRepoCard(s.byRepo),
       byUserCard(s.byUser ?? []),
       h("div", { class: "card" }, h("h3", {}, "Where runs fail"),
         s.failingSteps.length ? h("table", { class: "table compact" },

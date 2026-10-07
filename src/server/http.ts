@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extname, join, normalize } from "node:path";
+import { extname, join, normalize, sep } from "node:path";
 import { BLOCKED, CANNOT_READ, REDACTED, liveRedactor, redactedJson, type Redactor } from "../credentials/redact.js";
 
 const MAX_BODY = 1_000_000;
@@ -135,6 +135,29 @@ export async function readJson(req: IncomingMessage): Promise<Record<string, unk
   }
 }
 
+/**
+ * Like readJson, but a request with no body at all is `{}`. Any body is read (up to MAX_BODY) and must be JSON, so a text body
+ * or a body that is too large is refused as it is everywhere else.
+ */
+export async function readOptionalJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > MAX_BODY) throw new HttpError(413, "body too large");
+    chunks.push(c as Buffer);
+  }
+  if (size === 0) return {};
+  if (!req.headers["content-type"]?.startsWith("application/json")) throw new HttpError(415, "expected application/json");
+  try {
+    const v = JSON.parse(Buffer.concat(chunks).toString());
+    if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Error();
+    return v as Record<string, unknown>;
+  } catch {
+    throw new HttpError(400, "invalid JSON body");
+  }
+}
+
 export function str(body: Record<string, unknown>, key: string, required = true): string {
   const v = body[key];
   if ((v === undefined || v === null) && !required) return "";
@@ -144,7 +167,7 @@ export function str(body: Record<string, unknown>, key: string, required = true)
 
 export function serveStatic(res: ServerResponse, root: string, rel: string) {
   const file = normalize(join(root, rel));
-  if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
+  if (!(file === root || file.startsWith(root + sep)) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404).end("not found");
     return;
   }

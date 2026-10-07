@@ -26,6 +26,17 @@ export interface ProcessOptions {
   pinnedSecrets?: string[];
   /** Run in a process group of its own and kill the whole group when the process ends (steps that hold a credential). */
   ownGroup?: boolean;
+  /** Start from nothing instead of the server's environment: only `env` is passed (a user's run, see short-env.ts). */
+  cleanEnv?: boolean;
+  /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
+  sandboxProfile?: string;
+}
+
+export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+
+/** What is really started: the command itself, or the command inside the given sandbox profile. */
+export function spawnTarget(cmd: string, args: string[], profile?: string): { cmd: string; args: string[] } {
+  return profile === undefined ? { cmd, args } : { cmd: SANDBOX_EXEC, args: ["-p", profile, cmd, ...args] };
 }
 
 /**
@@ -42,8 +53,8 @@ export function inheritedEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Proc
 }
 
 /** process.env (without a Claude host session's variables) + overrides; an override of `undefined` removes the variable. */
-function mergeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env = { ...inheritedEnv(), ...overrides };
+function mergeEnv(overrides: NodeJS.ProcessEnv = {}, clean = false): NodeJS.ProcessEnv {
+  const env = { ...(clean ? {} : inheritedEnv()), ...overrides };
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
   return env;
 }
@@ -67,9 +78,10 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     }
     const log = createWriteStream(opts.logFile, { flags: "a" });
     let logError: NodeJS.ErrnoException | undefined;
-    const child = spawn(cmd, args, {
+    const target = spawnTarget(cmd, args, opts.sandboxProfile);
+    const child = spawn(target.cmd, target.args, {
       cwd: opts.cwd,
-      env: mergeEnv(opts.env),
+      env: mergeEnv(opts.env, opts.cleanEnv),
       stdio: ["pipe", "pipe", "pipe"],
       ...(opts.ownGroup ? { detached: true } : {}),
     });

@@ -21,8 +21,8 @@ export const drafts = new Map();
 
 const text = (s) => String(s ?? "").trim();
 
-/** What the architect's run is for: "brief" (also when there is no run), "round", "question", "suggest" or "review". */
-export const kindOf = (a) => (["round", "question", "suggest", "review"].includes(a?.kind) ? a.kind : "brief");
+/** What the architect's run is for: "brief" (also when there is no run), "round", "question", "suggest", "review" or "impact". */
+export const kindOf = (a) => (["round", "question", "suggest", "review", "impact", "ready"].includes(a?.kind) ? a.kind : "brief");
 
 /** True when the buttons and fields of the talk may be shown: an own session that is open and whose repository is there. */
 export const mayChange = (s) => Boolean(s?.mine) && s.state !== "dropped" && s.repoAvailable !== false && !s.talkHidden;

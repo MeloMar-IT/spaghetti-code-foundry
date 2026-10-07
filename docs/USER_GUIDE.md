@@ -165,6 +165,7 @@ The same rules as for a user apply: only a published flow, only your own reposit
 - **No refresh needed:** the page updates every 5 seconds. When you come back from a GitHub link, the watcher checks GitHub at once. An answer you give elsewhere shows at the next watcher check.
 - **Closed on GitHub, run still working:** such an issue is listed, with a link to the run (the Runs page while the run is only queued). Cancel the run if the work is no longer wanted, or Dismiss it to let the run finish.
 - **Closed issues:** a failed, stopped, waiting or cancelled run of an issue that is closed on GitHub is not listed, not counted, not a card on the Board and not in the failed list of "since", and nothing is sent for it. This holds for every run, whoever started it, except a run that closed its own issue (for example a hotfix that could not be merged back to `develop`). Its Runs page shows "Nothing — the issue is closed" and no Approve, Reject, Resume or Retry. If the last check of the issue on GitHub failed and nothing is stored, the item stays listed with the note "The state of the issue on GitHub could not be checked". If the issue is opened again, the run is listed again.
+- **Retired flow:** a run that a watcher started (or that has no source) and whose flow no longer exists in any flow folder cannot be resumed. Its Runs page shows "This run's flow is retired — it cannot be resumed." and no Approve, Reject, Resume or Retry; Your turn offers no Retry for it. The record says to start over (failed) or to start a new run (stopped, cancelled, interrupted). The three API routes answer 409 `The flow "<name>" is retired — this run cannot be resumed. Start the work again with a current flow.` and `scf resume|approve|reject` refuse without `--force`. A run you started by hand is never retired. If the issue is closed, the closed message comes first.
 - **Checked every minute:** the Foundry checks that the Board, the watchers, the runs and this page agree. The result is on the [Dashboard](#dashboard).
 - **Empty:** it says "Nothing needs you." and, when it can, how many stories are being built and when the next release pull request is expected.
 - **Badge:** the number of items shows in the navigation and in the tab title, for example "(3) Foundry". When something waits, the app opens on this page.
@@ -439,6 +440,11 @@ Every status in the app has a **?** that shows the two sentences from this table
 | in develop (ships with the 17:00 release) | The work is finished and waits for the 17:00 release. Nothing to do now — the release pull request then brings it to main. |
 | waiting for #88 | It needs #88 to be done first. Nothing to do — it starts by itself after that. |
 | waiting for another run | Only one run at a time works here, and another run is active. Nothing to do — it starts when that run is finished. |
+| waiting — your limit for today is reached | You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow. |
+| waiting — your limit of runs at the same time is reached | As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends. |
+| waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
+| waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
+| waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
 | paused — usage limit | The usage limit of the AI account is reached. Nothing to do — the Foundry tries again after the limit resets. |
@@ -456,7 +462,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
 | waiting for you — two fixes did not work | The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page. |
 | watcher silent | The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page. |
-| closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
+| closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
 | issue closed | The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work. |
 | restarting soon | The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done. |
 | replaced by a newer run | A newer run took over the same work. Nothing to do with this run. |
@@ -1125,6 +1131,7 @@ watchers:
 | `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are closed (or have a `dependency_done_labels` label) |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
+| `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
 | `pause_while_pr_open` | Start nothing while a PR from a branch with this prefix is open (for the older two-label pipeline) |
 | `comment_on_failure` | On by default: post the failure reason and output on the issue |
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
@@ -1342,9 +1349,13 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
-- **The issue was closed on GitHub, but its run is still working or waits for approval.** The
+- **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
+  A run that waits for you or is stopped is not cancelled when its issue is closed: it only
+  leaves your lists. If you reopen the issue, the watcher puts the status label back and the
+  same run is listed again; no second run starts. Runs that an older version already cancelled
+  stay cancelled.
 - **The watcher has not checked for a long time** (more than three times its interval). The line
   says since when ("has not checked since 11:20"). Press **Check now** on the Watchers page; the
   line is gone after the next check.
@@ -1383,6 +1394,10 @@ flowchart LR
   Each code change gets **one** Codex review. Set `review_twice_above_risk` to a number (for
   example `50`) to get a second review after a `[high]` finding or for stories riskier than that;
   the default is `off`.
+- **No test run twice on the same code.** The tests before a change and the tests after a merge are
+  skipped when exactly that code already passed them in another run — which is the normal case for
+  the tests before a change: the story starts from the `develop` the previous story just tested.
+  The log says "not run again". Set `reuse_test_results: no` to always run them.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.
@@ -1488,7 +1503,7 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 ![Settings](images/settings.png)
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
-it; paused runs continue the next day. Flows can also cap one run (`limits.max_cost_usd`).
+it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
 **Safety**
 
@@ -1574,10 +1589,20 @@ token (the method "GitHub App" on My repositories). Set it up once:
    (this works as before). Without one, the app is used only for the repository method.
 3. Without an app ID, a key file and a name, the method is not offered, and the API answers 400.
 
-Install the app only on repositories that every Foundry user may work in, and choose "Only select
-repositories". The server finds the installation with the app's own key, so a user needs no rights on GitHub:
-if the app is installed on a whole organisation, any Foundry user can connect any repository of it and get push
-access through the app. The first account to add a repository gets it. A user cannot read these settings.
+The server finds the installation with the app's own key, so a user needs no rights on GitHub. That is why
+each account has a list of the repositories it may connect through the app. Set it on the Users page with the
+"App repositories" button: one entry per line, `owner/name`, or `owner/*` for every repository of an owner.
+An admin's own connections are not limited. A user cannot read or change any list, or these settings.
+
+- Adding a repository, changing its method to the app and testing an app connection answer 403 when the
+  repository is not on the account's list. GitHub is not asked.
+- An account without a list can connect nothing through the app. After an upgrade, set the list of every
+  account that needs the app.
+- The list is checked only when a connection is added, changed or tested. Existing connections keep working
+  in runs and watchers, also when you later remove an entry. To cut one off, remove the connection. The
+  admin's Repositories page marks an app connection that is not on its account's list with "not on the app list".
+- Still install the app only on repositories that Foundry users may work in, and choose "Only select repositories".
+
 After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
 
 **Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones here
@@ -1628,6 +1653,15 @@ marked "(you)".
 - **Unblock** lets the user sign in again. Cancelled runs are not restarted.
 - **Delete** asks first, names the account, wipes its stored credentials and keeps its runs
   (they show `deleted user`). It cannot be undone.
+- **Limits** (per account) and **Default limits** (toolbar) set three limits: runs at the same
+  time, runs per day and the daily budget in USD. An empty field means "no limit". The defaults
+  apply to every account, admins too; an account's own value wins over the default. The Limits
+  column shows each account's effective limits and marks its own values with "(own)". Clear a field
+  in the account's dialog and the default applies again. Deleting an account removes its own
+  limits. **All three limits are enforced.** A job over a limit waits in the queue and starts by itself when the limit allows; the queue and the run page say which limit it is. Free slots are shared between users: the next slot goes to the user with the fewest working runs, then to the user whose last start is oldest. Only new runs count for "runs per day" (local day); resuming, answering or approving a run does not. Architect runs of a refinement session count for "at the same time" but not for "runs per day". Runs of a watcher count for the watcher's owner. Runs without an owner (the command line) are not limited in the queue, but a run that falls to the first admin counts for that admin, so an admin who uses the command line may need to raise their own limits. The daily budget counts the cost of the user's runs that started today (local day). When it is reached, no new job of that user starts and a working run stops before its next agent step (shell and approval steps still run); it continues the next day, or when you raise the budget. A watcher starts no new work for that owner and holds the issue. The user sees "waiting — your limit for today is reached", with no amount; you see the amount. `cost_limits: false` turns the budget off, and the global `daily_budget_usd` still applies on top. Runs without an owner are only under the global budget. Lowering a limit does not stop working runs; nothing new starts until usage is below it. Only admins can
+  see or change them, and no answer to a user contains them. Each change writes a `limits-change`
+  line to the audit log with the account (or "defaults") and the field names, not the amounts.
+  Without a `limits.json` in the data folder, everything is "no limit".
 
 A refusal (the last admin, an e-mail that is taken, bad input) shows in the dialog and the list does
 not change. An error from Block or Delete can come after the change was made; close the dialog to
@@ -1697,6 +1731,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `run-start` | A run is started | run id | |
 | `run-cancel`, `run-approve`, `run-reject`, `run-resume` | A run is cancelled, approved, rejected or resumed (a cancel that cancelled nothing writes no line) | run id | |
 | `run-answer` | An answer to the questions of a run was accepted (a refused call writes no line; the text is never logged) | run id | |
+| `refinement-publish` | Ready drafts of a refinement session were published | session id | repository and issue numbers |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
 | `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
@@ -1826,8 +1861,16 @@ show as "n runs ahead of you", without ids.
 
 **Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: the machine's login and the bot's token work as before.
 - **Commit name.** Commits in these runs use the bot name and e-mail from Settings when they are set (each on its own), else the name and e-mail of the account that owns the run. If the account was deleted and the bot name and e-mail are not both set, the step ends with "the account that owns this run could not be found, so its commits have no name": set the bot name and e-mail in Settings, then resume the run.
-- **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; set `HTTPS_PROXY` or `GIT_SSL_CAINFO` in the server's environment if you need them.
-- **The limit.** This is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. A Codex agent still loads the account's Codex settings (`~/.codex/config.toml`); on a server with users, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
+- **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; if you need a proxy or a certificate file, list `HTTPS_PROXY` or `SSL_CERT_FILE` in `step_env.pass` (see "Environment of the steps").
+- **Environment of the steps.** A step of a run owned by a user does not get the server's environment. A shell step gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `LANG`, `LANGUAGE`, `LC_ALL`, `TZ` and `TERM`, the Foundry's own `FACTORY_…` variables, and the names an admin lists. An agent step gets the same plus what its own agent and provider need (for example `ANTHROPIC_API_KEY` for Claude on an Anthropic provider, `OPENAI_API_KEY` for Codex on OpenAI); keys of other providers are not passed. Admin runs are unchanged.
+  - **Admins add a variable** in `config.yaml`: `step_env.pass` lists names for all steps, `step_env.agent_pass` names for agent steps only. A name may end in `_*` (for example `AWS_*`). Names starting with `FACTORY_`, `SCF_`, `GH_`, `GITHUB_`, `GIT_` or `SSH_` are refused, and provider keys are never passed by a list. `SCF_STEP_ENV_PASS` in the server's environment (comma separated) adds names too. A name on `pass` can be read by every user's shell steps, so use `agent_pass` for a secret that only agents need (such as `CLAUDE_CODE_USE_BEDROCK` with the `AWS_…` keys).
+  - **After the upgrade,** a flow that relied on an inherited variable such as `JAVA_HOME` or `NVM_DIR` in a user's run needs that name added.
+  - **Hidden in output.** The values of the provider key variables named in the config (`api_key_env`) are hidden in logs, live output and API answers. A value shorter than 8 characters is not hidden; the server logs a line when it finds one.
+  - **The limit.** The agent's own key is still visible to the agent's shell tool unless the agent program hides it.
+- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log` or `logs/`), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
+  - **Settings.** Tick **Allow user runs without the OS sandbox** (`sandbox.user_runs: off`) to run user runs without it. If no sandbox works (not macOS, or `sandbox-exec` fails) and the box is not ticked, a user's run does not start: "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings." The server variable `SCF_USER_SANDBOX=off` (or `FACTORY_USER_SANDBOX=off`) does the same.
+  - **Extra read paths.** `sandbox.user_read` in `config.yaml` lists up to 50 paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
+- **The limit.** Agent steps are **not in an operating-system sandbox** yet, and neither are runs with the sandbox switched off. For them, this is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. A Codex agent still loads the account's Codex settings (`~/.codex/config.toml`); on a server with users, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
 - **A token** ("GitHub token" or "HTTPS token"): `gh` and git use it. Give it Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment.
 - **A deploy key:** git uses it over ssh, and nothing else (no ssh agent, no key or ssh settings of the server's account; host keys are kept in `known_hosts` in the data folder). The key is a file in the folder `sign-in` of the run folder, outside the workspace. It exists only while the marked step runs and is deleted when the step ends. **A deploy key gives git access only:** a step that calls `gh` fails with "a deploy key gives git access only; choose a token or the GitHub App under My repositories". Call `gh` by name; the check does not see `gh` called by its full path.
 - **The GitHub App:** each marked step gets a new token from the app, limited to this repository, for `gh` and git. It is never stored and is hidden in the output. **A token lives one hour,** so a marked step with the app must finish within one hour. A step that runs longer and is then refused fails with "the app's token ran out during the step"; resume the run to get a new token. If the app is not set up, not installed on the repository or GitHub cannot be reached, the run fails with a sentence that says so.
@@ -1907,6 +1950,21 @@ owner), the URL, the authentication method and the connection status ("Not teste
 - **The settings are only stored and shown.** Runs do not use them yet: the test command still comes from the
   flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. They are never in
   `GET /api/repos` and never shown on **My repositories**.
+- **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
+  the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
+  seven items: the value is clear (who and why); it stands on its own or its dependencies are named; every
+  acceptance criterion can be checked; it is small enough to build in one go; there are no open questions; it
+  says what is out of scope; it contains no implementation plan. The default items also have a fixed `rule`
+  key that later parts use to pick the check; an item an admin adds has none.
+  - **Admin:** the **Definition of Ready** button on a repository row opens a dialog: reword, add, remove,
+    move up or down, add a removed default item back, **Back to the default**, Save. The API is
+    `PUT /api/admin/repos/<id>/ready {"items": [{"id"?, "text"}]}`; `{"items": null}` or the unchanged default
+    list stores nothing. Limits: 1 to 20 items, each 1 to 200 characters on one line, no control characters, no
+    two items with the same text, no unknown or repeated `id`. A refusal is a 400 with one plain sentence.
+  - **Owner:** **My repositories** shows the list read-only. `GET /api/repos/<id>/ready` answers
+    `{ items, isDefault }` to the owner and to an admin; anyone else gets 404.
+  - A transfer keeps the list; removing the repository removes it. It is only stored and shown for now: no
+    story is checked against it yet.
 - **Transfer** moves a repository to another account, chosen by e-mail (any case). It is refused, with a plain
   message, when the e-mail is missing or not valid (400), no account has it (404), the account is blocked (409),
   or it already has 50 repositories (400). Afterwards the repository is in the new owner's list and no longer in
@@ -2005,11 +2063,39 @@ keeps the number; turning the flow off and on again raises it. A run keeps the f
 with, even if you save a new version while it waits, and the run page shows "Flow version". If
 you edit a flow file by hand, raise the number yourself.
 
-**Trust.** Roles limit the API and the pages. They do not limit what a run can do. A user who can
-start a run can run commands as your Mac user (through the task and variables such as
-`test_cmd`), with the server's GitHub access. That is the same as admin rights. Give a user
-account only to people you would give an admin account. To switch user runs off, change the rule
-`POST runs` to `no` in `src/server/permissions.ts`.
+**Trust.** Roles limit the API and the pages. They do not fully limit what a run can do. The
+server's GitHub login is not put into a user's run. On macOS, every step of a user's run, shell and
+agent, is held by a sandbox profile: it cannot read your Mac account's files, the Keychain or the
+agent login, and it writes only in its own run folder. Agent steps sign in by a token variable you
+set for the server: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` for
+Claude; `OPENAI_API_KEY` or `CODEX_API_KEY` for Codex; the provider's `api_key_env` for a compatible
+provider. A local model needs none. Without one the step is refused. Each run has its own empty
+agent folders, so your agent settings, MCP servers and skills do not reach it. The agent's shell tool
+can see the token. The limits are in `docs/THREAT_MODEL.md` (SR-O1): macOS only, and with
+`sandbox.user_runs: off` nothing is held. To switch user runs off, change the rule `POST runs` to
+`no` in `src/server/permissions.ts`.
+
+**Security rules for published flows.** A published flow is code that users steer with text. Keep
+to these rules:
+
+- Never paste user text into a shell command: no `{{vars.<input>}}` and no bare `{{vars}}`. Read
+  `"$FACTORY_VAR_NAME"` and `"$FACTORY_TASK"`, always in quotes.
+- Never `eval` or `sh -c` a value users fill in. Do not publish `test_cmd` or `agent_env` as an
+  input.
+- For users' repositories use `workspace: empty` and clone in a `repo_access` step. `worktree` is a
+  branch of the server's own folder, so it is refused for users, like `inplace`. Only admins can
+  run those flows.
+- Give agent steps only the tools they need. The task and the issue text are untrusted
+  instructions.
+- Keep secrets out of `vars`. Hidden variables are not secret from the run itself.
+
+The flow editor refuses `{{vars}}` in a shell `run` and `agent_env` as an input when you save a
+flow that has a user input. `from` on resume is for admins only; a user gets 403. A user's run of an
+`inplace` or `worktree` flow fails before any step ("This flow works in a branch of the server's
+folder, so only an admin can run it." for `worktree`), the flow is not listed for users, and starting
+it gives 403. A user also gets 403 for the diff of an `inplace` run. The server's own git calls for
+a workspace ignore hooks, `fsmonitor` and the global git settings. A user's run without `github_repo` keeps its learnings in a file of its own account. What is
+protected and what is still open is in `docs/THREAT_MODEL.md`.
 
 **After an upgrade.** Existing accounts with the role `user` lose access to everything but Refinement, Runs and My repositories.
 Change a role with `scf user role <e-mail> admin|user`, or create an admin with
@@ -2074,13 +2160,18 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |
 | `GET /api/users` | yes | no | list the accounts |
+| `GET /api/users/limits` | yes | no | the default limits for all accounts and the overrides per account (all three are enforced) |
+| `PUT /api/users/limits` | yes | no | set or clear the default limits: runs at the same time, runs per day, daily budget in USD (null clears one) |
 | `POST /api/users` | yes | no | add an account without a password; the answer has its one-time set-password token |
 | `PUT /api/users/:id` | yes | no | change the name, e-mail or role of an account |
+| `PUT /api/users/:id/limits` | yes | no | set or clear the limits of one account; a cleared one follows the default again |
 | `POST /api/users/:id/block` | yes | no | block an account, end its sessions and cancel its queued jobs |
 | `POST /api/users/:id/unblock` | yes | no | unblock an account |
 | `POST /api/users/:id/link` | yes | no | a new set-password token for an account without a password |
 | `POST /api/users/:id/reset` | yes | no | take the password of an account away, end its sessions and give a one-time set-password token |
 | `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
+| `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
+| `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions and stored credentials |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
@@ -2089,10 +2180,12 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
+| `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
+| `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
 | `POST /api/admin/repos/:id/watchers` | yes | no | add a watcher to a repository (GitHub, with a sign-in that can call the GitHub API) |
@@ -2120,11 +2213,18 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
 | `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again (an admin who is not the owner: 403) |
+| `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
+| `POST /api/refinement/:id/drafts/:did/split` | yes | yes | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
 | `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
 | `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
+| `POST /api/refinement/:id/drafts/:did/ready-check` | yes | yes | check a story draft of your refinement session against the Definition of Ready of its repository: by code, and the architect judges what code cannot decide, or resume a paused check (one architect run per account at a time); no field changes |
+| `POST /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | accept an item of the Definition of Ready anyway for a story draft of your refinement session, with a reason; not for the implementation plan item |
+| `DELETE /api/refinement/:id/drafts/:did/ready/:item/accept` | yes | yes | remove the "accepted anyway" mark of an item from a story draft of your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
+| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies; it reads the labels from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -2283,8 +2383,10 @@ themselves still pause runs; they continue by themselves when the limit resets.
 Spend today and over 30 days, success rate, **Needs a human** (the number of runs whose next
 move is yours — the same as **Needs you** on the Runs page), the **Waiting** card (every
 labelled issue that isn't being worked on: who has the next move, what to do, why, and a link;
-lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository,
+lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first, plus today's runs, runs active now and today's cost; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository (with today's runs and cost),
 the steps where runs fail most, and eval results.
+
+**By user and limits.** Where an account has limits (fair use), the card shows them next to the numbers, for example `2 / 5` for runs today against the limit. An account that has reached a limit (runs at the same time, runs per day, or cost per day) gets an **at limit** mark. Accounts that have limits or a run active now are listed even without runs in the last 30 days. A deleted account ("deleted user") has no limits and no mark. "Today" is the server's local day. Only admins get these numbers.
 
 **Your turn in numbers** shows how long items waited for you (last 30 days) and whether anything waited for you without being on Your turn:
 
@@ -2561,7 +2663,7 @@ The folder of your clone can keep its name.
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
-**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too; later steps add the others.
+**States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
 **The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
 
@@ -2643,11 +2745,33 @@ The result is stored with the draft as `review`: `{ at, remarks }`, at most 20 r
 
 **The architect's view of a draft.** `POST /api/refinement/:id/drafts/:did/impact` (no body) starts an architect run of kind `impact` and answers 202 with the session. The same rules as a review apply: only the owner, a brief is needed, the draft must not be empty, one architect run per account, and a paused run is resumed by the same call. The task lists the other drafts as `D1`, `D2`, … so the architect can name them in `dependsOn` and `dependents`; the answer stores them as draft ids, and a statement about a draft that was not in the task is left out. A run keeps the flow's limit of $3, because it must read the code and up to 50 issues.
 
-When the run ends, the checked view (see `ask=impact` below) is stored with the draft as `impact` and replaces an older one. No field of the draft changes and the session state does not change. The session answer shows each draft's `impact` with the `basis` (`found` or `estimate`) of every statement, and `outOfDate: true` when the title, who, what, why, a criterion, out of scope or depends-on changed since the view was asked. A wrong form fails the run with "The architect's answer did not have the agreed form" and the old view stays. The view is not shown while the repository is not in My repositories. The log tells `impact-asked` and `architect-impact`.
+When the run ends, the checked view (see `ask=impact` below) is stored with the draft as `impact` and replaces an older one. No field of the draft changes and the session state does not change. The session answer shows each draft's `impact` with the `basis` (`found` or `estimate`) of every statement, and `outOfDate: true` when the title, who, what, why, a criterion, out of scope or depends-on changed since the view was asked. A wrong form fails the run with "The architect's answer did not have the agreed form" and the old view stays. The task also has a part "Areas the Foundry knows": the `AREAS:` of the newest Foundry run of each issue of the repository (at most 50 issues; runs of all accounts; only paths and the issue number) and the areas in the stored views of your other drafts on this repository. The view shows an overlap with another draft by the draft's title, marked as a draft. The view is not shown while the repository is not in My repositories. The log tells `impact-asked` and `architect-impact`.
+
+**Ways to split a draft.** `POST /api/refinement/:id/drafts/:did/split` starts an architect run of kind `split` and answers 202 with the session. The body is optional; it may be `{ "own": "…" }`, your own way, one text of at most 500 characters (anything else gives 400). The same rules as a review apply: only the owner, a brief is needed, one architect run per account, and a paused run is resumed by the same call. The answer is 409 when the draft has fewer than 2 acceptance criteria. The task lists the criteria as C1, C2, …; your own way goes into the task under a heading that shows its length. A run keeps the $1 limit of a review. Nothing is split by this.
+
+When the run ends, the checked ways (see `ask=split` below) are stored with the draft as `split` and replace older ones; the C numbers are stored as criterion ids. No field of the draft and no session state changes. The session answer shows each draft's `split` (`at` and `ways`) and `outOfDate: true` when the draft changed since it was asked. It is not shown while the repository is not in My repositories. A wrong form fails the run with "The architect's answer did not have the agreed form" and the old ways stay; a draft that is gone fails the run with a fixed sentence. The log tells `split-asked` and `architect-split`.
+
+**Size and plan review.** The view of a draft also carries `fit` and, sometimes, `planReview`. Both are worked out each time the session is read, so a changed limit shows at once. Neither blocks a change of the draft or a later publish. You decide.
+- `fit` compares the estimated files and lines with `max_files` and `max_code_lines` of the repository's build flow: "likely fits in one story", or "likely too big — consider splitting" (`over` says `files`, `lines` or both). It names both limits. The limits come from an enabled watcher of the repository whose flow has both; the watcher's `vars` win over the flow's. Your own stored watcher is looked at first, then one in `config.yaml`, then any other. Only the two numbers and the label name are shown, nothing else of the watcher. With no such watcher, `fit` says the build limits are not known and gives no verdict.
+- `planReview` appears when the view has at least one `sensitive` topic (sign-in, permissions, secrets, credentials or stored user data). It recommends a plan review by a person and names the topics and the repository's review label (`review_plan_label`). Without a known label it still recommends, and says there is no review label.
+- `PUT /api/refinement/:id/drafts/:did/review-label` with `{ "add": true }` or `{ "add": false }` stores your choice with the draft as `addReviewLabel`. Only the owner may set it, also when no review is recommended. Nothing is sent to GitHub, and no run sets it; publishing will read it.
 
 **Move to the notes.** `POST …/drafts/:did/move-to-notes` with `{ "field": "…", "item": "…" }` (`item` only for `criteria`) adds the text to the notes for the builder as a line "Wish: <text>" and removes it from its field. It works only for a text with a `plan` remark (code checks or review) or a `how` remark (review, not stale); otherwise it is refused. Nothing moves by itself. Typed text added to typed notes stays `typed`; any mix with accepted text makes the notes `accepted-edited`.
 
-**Log.** The log tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
+**Ready check.** `POST …/drafts/:did/ready-check` (no body) checks the draft against the Definition of Ready of its repository, by code only (no AI call), and answers 200 with the session. Same rules as the other draft calls: owner only (404 another user, 403 an admin), 409 for a dropped session or a repository not in My repositories, and 409 when the log has no room. The draft shows `readiness`: `{ at, items: [{ id, text, result, reason, by }] }`. `result` is `met`, `not-met` or `unsure`; `by` is `code`; the reason is one sentence of at most 300 characters that names the field or text it is about. The check never changes a field of the draft.
+- `no-open-questions`: met when the map has no open question and no question waits for an answer; otherwise not met, with the count.
+- `out-of-scope`: met when Out of scope has text; otherwise not met.
+- `checkable`: not met with no acceptance criterion; otherwise unsure.
+- `value`: not met when "As …" or "so that …" is empty; otherwise unsure.
+- `standalone`: not met when a depends-on draft is gone or is the draft itself; otherwise unsure.
+- `no-plan`: not met when a `plan` remark exists (the word found is quoted); otherwise unsure.
+- `small` and items without a rule: unsure. An unsure reason says that the architect has to judge it.
+
+**Accepted anyway.** `POST …/drafts/:did/ready/:item/accept` with `{ "reason": "…" }` (1 to 300 characters, required) marks an item "accepted anyway"; `DELETE` on the same path removes the mark. The item with the rule `no-plan` cannot be accepted anyway (409); an item that is not in the repository's list is 404. The reasons are stored with the draft and go into `preview.body` as a section `### Accepted anyway`, one line per item (the item text and the reason); the section is left out when there are none. A mark counts only for the wording it was given for: after the admin rewords the item it is not shown or published, and neither is a mark for an item that is gone. A mark on an item the last check says is `met` stays stored, shows as "not needed" and is left out of the preview.
+
+**Ready.** A draft is `ready` when it has a check and every item of the repository's current list is `met` or accepted anyway; otherwise its `state` is `drafting`. An item that is new or reworded after the check counts as not checked. The session state is `ready` when it has at least one draft and every draft is ready, and goes back to `drafting` when any draft is not. The draft `state` is the truth; the session state is a summary. Any change of a draft's text, a move to the notes, an accepted suggestion, a removed draft it depended on, a change of the open questions or an Epic change that alters the preview removes the check results (of that draft, or of every draft for the last two) and makes it `drafting` again. The accepted-anyway reasons stay. The stored session state is corrected when the session is read, for example after the admin changed the list; publishing must call `isReady` again and not trust the stored state.
+
+**Log.** The log tells that a readiness check was made (with the counts), that an item was accepted anyway and that a mark was removed. A check and an accept need room in the log. It also tells that a review was asked for, that the architect reviewed (with the number of remarks), and that a text was moved to the notes.
 
 **Remarks on the page.** Under a field or a criterion the page shows the remarks about that text. They are plain text, never HTML.
 - The remarks of the code checks show after each save, with the word that was found (for example: "fast" is vague — say what can be observed). They update by themselves; the field you are typing in is not redrawn, so its text and cursor stay.
@@ -2656,6 +2780,33 @@ When the run ends, the checked view (see `ask=impact` below) is stored with the 
 - A plan or how-to-build remark says "This belongs in the build step." and has **Move to notes for the builder**. The page asks first ("Move this text to the notes for the builder? It is taken out of its field."). After you confirm, the text is added to the notes as a "Wish:" line and the page shows it. A stale review remark has no button. Text you typed in other fields and have not saved is saved first and stays.
 - No text in any field changes unless you type or press a button. Remarks and buttons show only where the fields of the draft show; elsewhere (dropped session, admin, missing repository) the remarks show as text without buttons.
 - The log tells a review asked for, a review made and a text moved. The Context brief part does not show the line of a review run. A review run for a draft that is not open shows its line at the top of Story drafts, like a suggestion run.
+
+**The architect's view on the page.** Every open draft has a part **Architect's view** with the button **Ask for the architect's view**. It shows when the session has a brief and the draft has some text; otherwise the page says to write something first. While the architect works the page shows the same status line as the other architect runs; a paused run shows its reason with **Ask again**, a failed one **Try again**. Unsaved text is saved first; if that save fails, nothing is asked.
+- The view shows the areas with their files, what the draft depends on, what depends on it, the risks by kind (data, security, compatibility, users) with one sentence each, the size (small, medium or large) with the estimated files and lines, and the sentence that compares the size with the build limits.
+- It lists the other open stories and drafts that touch the same code. For code the Foundry found, it says they cannot be built at the same time. For an estimate it says "May touch the same code — likely cannot be built at the same time."
+- Every statement is marked **found in the code** or **estimate**. The size and the fit sentence are always estimates. The page never shows hours or days.
+- When a plan review is recommended, the page says why and shows the checkbox **Add the review label when this story is published**, with the label name. It is off until you tick it. The choice is only kept with the draft; nothing is sent to GitHub.
+- A view written before your last change shows **out of date** with **Ask again**. The notes for the builder count as a change, because the architect reads them.
+- The view is advice. It has no button that changes a field, and nothing on the page is disabled because of it.
+- Where the fields of the draft are not shown (another account's session as an admin, a dropped session) the view shows as text without buttons; a ticked review label shows as a sentence.
+- The log tells `impact-asked` and `architect-impact` in words.
+
+**Readiness on the page.** Every open draft has a part **Definition of Ready**, with the state of the draft next to the title: **Ready** or **Drafting**. The list of drafts and the session show the same.
+- It lists the items of the repository's list in order. Each has **Met**, **Not met**, **Unsure** or **Not checked yet**, its one-sentence reason, and whether it was checked by code or judged by the architect. The page says when the check was made, and says so when the list changed after it.
+- **Check readiness** saves unsaved text first (and checks nothing if that save fails), then asks for the check. When the architect has to judge items, a line says it is at work; a paused run shows its reason and **Ask again**, a failed one **Try again**, like Review draft. The architect needs a context brief only for the unsure items; if there is none, the page says to ask for one first. The code results show anyway.
+- Every item that is not met or unsure has **Accept anyway**. A dialog asks for a reason (up to 300 characters); it cannot be empty. An accepted item shows its reason and **Remove reason**, which asks first. The item about an implementation plan has no such button; the page says a plan belongs in the build step.
+- After you change a field, the check results are gone and the draft shows **Drafting**. The reasons accepted anyway stay.
+- The preview shows the section **Accepted anyway** as the server wrote it.
+- The part and its buttons show only where the draft fields show. Elsewhere (another account's session as an admin, a dropped session) the results show as text without buttons.
+- The log tells a check asked for, the architect's judgement, an item accepted anyway and a reason removed, in words. The Context brief part does not show the line of a readiness run. A readiness run for a draft that is not open shows its line at the top of Story drafts.
+
+**Publishing.** `POST /api/refinement/:id/publish` creates GitHub issues for the ready drafts, with the repository's sign-in. The body is optional: `{ "drafts": [ { "id": "<draft id>", "labels": ["…"], "startBuilding": false } ] }`. Without `drafts`, every ready draft is created with no extra labels. Only the owner may publish (an admin who is not the owner: 403). The answer lists the issues it made or found, with numbers and links.
+- **Order and numbers.** A draft is created after the drafts it depends on, so its "Depends on" lines use the real issue numbers (`- #101`), not "new issue". A draft that has an issue is never created again.
+- **Labels.** Chosen labels must exist in the repository and are sent in its spelling. The build label is added only when `startBuilding` is true, and needs a watcher on the repository (else 400). The review label is added only for a draft with the review label choice on. You cannot choose the build or review label by hand (400). One unknown label refuses the whole call before anything is created.
+- **Title.** A draft needs a title. If a ready draft has none, the call is refused (409) and nothing is created.
+- **The hidden marker.** Each issue body ends with a hidden line naming the session and the draft. If a call fails halfway, **publish again**: drafts that have an issue are skipped, and an issue made before the answer was lost is found by its marker and taken over, with its text and labels unchanged. After a timeout, wait a moment before you try again: GitHub's list of issues can lag a few seconds, and an issue not listed yet would be created twice. Only the newest 100 issues are searched.
+- **While it runs.** The session cannot be changed while it is being published (409, "try again in a moment"); this includes rename, drop and architect calls. Publish waits (409) while an architect run of the session is queued or running; a paused run does not block it. A second publish at the same time gets 409. A session whose log is full cannot be published.
+- **Afterwards.** A published draft shows `published: { issue, url, at }` and the log has `draft-published`. It cannot be changed any more: edits, ready checks, the review label, suggestions and architect calls on it give 409 naming the issue. While a draft is published, the Epic cannot be changed, a map entry that the draft is tied to cannot be removed, and a draft that a published draft still names cannot be removed. Other drafts work as before. Editing after publishing comes later.
 
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
@@ -2757,7 +2908,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact] [--var ask=split]
 ```
 
 **What it reads.** The code of the repository (the `develop` branch when there is one, else the default branch). Only for `ask=impact` the step `list_issues` also reads the newest 50 open issues (titles, texts and labels, no comments) into `issues.md`; for every other ask it reads nothing and prints one line saying so. Then the open issues are not read: what the talk says about the backlog is what the architect knows of it.
@@ -2776,10 +2927,20 @@ scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--
 - `dependsOn` and `dependents` (at most 10 each): `{ issue }` or `{ draft: "D1" }`, with `basis` and `why`.
 - `risks` (at most 12): `{ kind, basis, text }`. `kind` is `data`, `security`, `compatibility` or `users`; `text` is one sentence.
 - `size`: `{ size, files, lines, why }`. `files` is the number of files changed (all files); `lines` is the lines of new or changed production code (tests and docs do not count). Both are whole-number estimates. `size` is `small` (at most 5 files and 200 lines), `large` (more than 15 files or 800 lines) or `medium`; the check sets the word from the numbers.
-- `overlaps` (at most 20): `{ issue, areas, basis, why }`, an open issue that touches the same areas. The issue must be in `issues.md` and the areas must be among the answer's areas. Every overlap is `estimate`, whatever the architect wrote.
+- `overlaps` (at most 20): `{ issue, areas, basis, why }`, an open issue that touches the same areas. The issue must be in `issues.md` and the areas must be among the answer's areas. An overlap names an issue (`{ issue }`) or another draft (`{ draft: "D2" }`). The server, not the architect, sets its `basis`: `found` only when the issue or draft is in the task's part "Areas the Foundry knows" and one of its areas overlaps an area of this draft (equal, or one is a path prefix of the other, the rule of the area lock); every other overlap is `estimate`. An overlap with an issue that is not among the open issues read is dropped, unless the Foundry is building it now.
 - `sensitive` (at most 5): `{ topic, basis, why }`. `topic` is `sign-in`, `permissions`, `secrets`, `credentials` or `user-data`.
 
 The architect gives no implementation plan, no questions, no proposals, no suggestions and no remarks; the check fails the run when the answer has those lists. It also fails, with one plain sentence that holds no text of the answer, when a text names a number of hours, days or weeks, when a sentence limit is passed (a `why` is at most two sentences), or when the form is wrong. Lists are cut at their limits.
+
+**`ask=split`.** The architect proposes ways to split a draft that is too big. The task is the talk with the draft; the check counts the criteria from its part `## The draft to split`, under `### Acceptance criteria`, as lines `- C1: …`, `- C2: …` (other C lines in the talk do not count). The answer is `{ "ways": [ … ] }` with 1 to 3 ways. Each way has:
+
+- `cut`: `step` (a step in the user's path), `interface`, `data` (a kind of data), `rule` or `spike` (a small investigation first). No two ways use the same cut.
+- `stories`: 2 to 6, in build order. Each has a `title` (one line, at most 120 characters), a `sentence` (one sentence, at most 300), `criteria` (C numbers) and `dependsOn` (numbers of earlier stories of the same way, counted from 1).
+- `first`: one sentence that says what the first story already delivers to a user.
+- `unplaced`: the C numbers that fit no story. Every C number of the draft is in exactly one story or in `unplaced`.
+- `warnings`: `{ "kind": "layer", "story": 2, "why": "…" }` when a story delivers nothing a user can see or check, and `{ "kind": "same-code", "stories": [1, 2], "why": "…" }` when two stories touch the same code so heavily that they cannot be built at the same time.
+
+When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. Only the flow exists so far: no page or server route asks for a split yet.
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 

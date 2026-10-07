@@ -44,10 +44,15 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   echo '{}'; exit 0 ;;
 esac
 # REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create makes that call fail.
+# $FAKE_GH_FAIL_CREATE_AT=<n>: the nth create call (the count is kept in $FAKE_GH_LOG.creates) fails with $FAKE_GH_FAIL_TEXT (default "boom").
 api_fail() { [ "$FAKE_GH_FAIL_API" = "$1" ] && { printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; }; }
 case "$all" in
   "api repos/"*"/issues -X POST --input -")
     api_fail create
+    if [ -n "$FAKE_GH_FAIL_CREATE_AT" ]; then
+      cn=$(($(cat "$FAKE_GH_LOG.creates" 2>/dev/null || echo 0) + 1)); echo "$cn" > "$FAKE_GH_LOG.creates"
+      if [ "$cn" = "$FAKE_GH_FAIL_CREATE_AT" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+    fi
     repo=${all#api repos/}; repo=${repo%%/issues*}
     node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const b=JSON.parse(s);const n=Math.max(100,...l.map(x=>x.number))+1;const i={number:n,state:"open",state_reason:null,title:b.title,body:b.body,labels:(b.labels||[]).map(name=>({name})),html_url:"https://github.com/"+process.argv[2]+"/issues/"+n,created_at:new Date().toISOString(),closed_at:null};l.push(i);fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- created issue (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$repo"
     exit 0 ;;
@@ -114,6 +119,8 @@ case "$all" in "api graphql"*)
   '
   exit $? ;;
 esac
+# "api repos/<o>/<n>/labels?…": the label names, one per line, from $FAKE_GH_LOG.labels (nothing when the file is not there).
+case "$all" in "api repos/"*"/labels?"*) cat "$FAKE_GH_LOG.labels" 2>/dev/null; exit 0 ;; esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")

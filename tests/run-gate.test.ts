@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import { createUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
 import { clearTokenCache } from "../src/github-app.js";
 import { issueStatesDir, knownIssueState, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
-import { CLOSED_MESSAGE, type GateRun, gateRun, issuesWatched, resumeGate, runIssue } from "../src/run-gate.js";
+import { CLOSED_MESSAGE, type GateRun, flowExists, flowRetired, gateRun, issuesWatched, resumeGate, retiredMessage, runIssue } from "../src/run-gate.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { fakeGithubApp, type FakeGithubApp } from "./helpers/github-app.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -244,5 +244,92 @@ describe("gateRun", { timeout: 60_000 }, () => {
     setIssue("CLOSED");
     await gateRun(run(), config({ watchers: [{ id: "a", github_repo: "acme/app", flow: "github-issue", ...over }] }));
     expect(existsSync(issueStatesDir()) ? readdirSync(issueStatesDir()) : []).toEqual([]);
+  });
+});
+
+describe("flowRetired", () => {
+  let repo: string;
+  const put = (name: string, ext = "yaml") => {
+    mkdirSync(join(repo, ".claude-factory", "flows"), { recursive: true });
+    writeFileSync(join(repo, ".claude-factory", "flows", `${name}.${ext}`), "name: x\n");
+  };
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "retired-"));
+  });
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("has the exact sentence", () => {
+    expect(retiredMessage("old-flow")).toBe('The flow "old-flow" is retired — this run cannot be resumed. Start the work again with a current flow.');
+  });
+  it("retires a watcher run, or one without a source, when no flow file exists", () => {
+    expect(flowRetired({ flow: "gone", repo, source: "watcher a issue #7" })).toBe(true);
+    expect(flowRetired({ flow: "gone", repo, source: undefined })).toBe(true);
+    expect(flowRetired({ flow: "gone", repo, source: "" })).toBe(true);
+  });
+  it("does not retire it when the flow file is in the repository folder (.yaml or .yml) or is a built-in", () => {
+    put("here");
+    put("there", "yml");
+    expect(flowRetired({ flow: "here", repo, source: "watcher a issue #7" })).toBe(false);
+    expect(flowRetired({ flow: "there", repo })).toBe(false);
+    expect(flowRetired({ flow: "issue-gitflow", repo })).toBe(false);
+  });
+  it("never retires a hand-started, eval or refinement run, or one without flow or repo", () => {
+    for (const source of ["ui", "cli", "ui approve", "eval x", "refinement 11111111-1111-4111-8111-111111111111"]) {
+      expect(flowRetired({ flow: "gone", repo, source }), source).toBe(false);
+    }
+    expect(flowRetired({ flow: "", repo })).toBe(false);
+    expect(flowRetired({ flow: "gone" })).toBe(false);
+  });
+  it("uses the given lookup, and does no lookup for a name that is not a plain file name", () => {
+    const seen: string[] = [];
+    expect(flowRetired({ flow: "a", repo }, (f) => (seen.push(f), true))).toBe(false);
+    expect(flowRetired({ flow: "a", repo }, (f) => (seen.push(f), false))).toBe(true);
+    expect(seen).toEqual(["a", "a"]);
+    for (const flow of ["../x", "a/b"]) expect(flowRetired({ flow, repo }, (f) => (seen.push(f), true))).toBe(true);
+    expect(seen).toEqual(["a", "a"]);
+    expect(flowExists("../x", repo)).toBe(false);
+  });
+  it("finds a flow whose file name has spaces or non-ASCII letters", () => {
+    put("my flow");
+    put("Überprüfung");
+    for (const flow of ["my flow", "Überprüfung"]) expect(flowRetired({ flow, repo, source: "watcher a issue #7" }), flow).toBe(false);
+    expect(flowRetired({ flow: "other flow", repo })).toBe(true);
+  });
+
+  describe("in the gate", { timeout: 60_000 }, () => {
+    const retiredRun = (extra: Partial<GateRun> = {}): GateRun => ({ ...vars(), flow: "gone", source: "watcher a issue #7", owner: undefined, repo, ...extra });
+    const RETIRED = { ok: false, reason: "flow_retired", message: retiredMessage("gone") };
+    const setIssue = (state: string) => (process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 7, state }]));
+    let g: ReturnType<typeof fakeGithub>;
+    beforeEach(() => {
+      g = fakeGithub();
+    });
+    afterEach(() => {
+      delete process.env.FAKE_GH_ISSUES;
+      delete process.env.FAKE_GH_FAIL;
+      g.restore();
+    });
+    const config = (): Config => ConfigSchema.parse({ protected_branches: [] });
+
+    it("refuses a retired run without an issue, with no call to GitHub", async () => {
+      expect(await gateRun(retiredRun({ vars: {} }), config())).toEqual(RETIRED);
+      expect(g.ghLog()).not.toContain("api graphql");
+    });
+    it("lets the closed message win, and answers retired for an open issue", async () => {
+      setIssue("CLOSED");
+      expect(await gateRun(retiredRun(), config())).toEqual(CLOSED);
+      setIssue("OPEN");
+      expect(await gateRun(retiredRun(), config())).toEqual(RETIRED);
+    });
+    it("falls back to the stored closed state, else to retired, when GitHub cannot be read", async () => {
+      process.env.FAKE_GH_FAIL = "api graphql";
+      expect(await gateRun(retiredRun(), config())).toEqual(RETIRED);
+      saveIssueStates("acme/app", new Map([[7, "closed"]]));
+      expect(await gateRun(retiredRun(), config())).toEqual(CLOSED);
+    });
+    it("passes a run that is not retired", async () => {
+      setIssue("OPEN");
+      expect(await gateRun(retiredRun({ source: "ui" }), config())).toEqual({ ok: true });
+    });
   });
 });

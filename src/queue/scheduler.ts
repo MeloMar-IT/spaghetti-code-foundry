@@ -3,10 +3,12 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
+import { isRefinementRun } from "../auth/run-owner.js";
+import { runIdsStartedToday } from "./usage.js";
 
 const MAX_LOG_LINES = 5000;
 
@@ -51,7 +53,14 @@ interface Active {
   summary?: RunSummary;
   listeners: Set<(e: RunEvent) => void>;
   done: Promise<RunSummary | undefined>;
+  /** The account the run counts for in limits. Falls back to the run's owner when it is not set (a run nobody owned). */
+  account?: string;
+  /** The round-robin group: the owner when the job was queued, "" for jobs without an owner. Never changes. */
+  group: string;
 }
+
+/** Which per-user limit holds a job back. */
+export type UserLimit = "concurrent" | "per_day" | "budget";
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -61,6 +70,12 @@ export interface SchedulerOptions {
   queueFile?: string;
   /** False when the account is blocked or gone: the jobs it queued wait. Without it, no job is held. */
   accountActive?: (accountId: string) => boolean;
+  /** The limits of an account. Without it, nobody is limited (CLI, evals). Runs already working are never stopped by a lower limit. */
+  userLimits?: (accountId: string) => { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };
+  /** Spend of an account's runs that started today. Default: read from the run files. */
+  spentTodayBy?: (accountId: string) => number;
+  /** New runs of an account that started today. Default: counted from the run files. */
+  startedToday?: (accountId: string) => number;
   onFinished?: (summary: RunSummary, job: QueuedJob) => void;
   /** Makes a run id (default: newRunId). Tests use it to force a clash. */
   newId?: () => string;
@@ -98,6 +113,13 @@ export class Scheduler {
   private recent = new Map<string, Active>(); // finished, kept briefly for late subscribers
   /** Viewers of runs that are not running right now; attached when the run starts. */
   private pendingListeners = new Map<string, Set<(e: RunEvent) => void>>();
+  /** Why a pending job waits for a user limit (memory only; rebuilt by every pump). */
+  private limited = new Map<string, UserLimit>();
+  /** When a group last got a slot (a sequence number, so two starts in one millisecond do not tie). Memory only. */
+  private lastStartOf = new Map<string, number>();
+  private startSeq = 0;
+  /** New runs this scheduler started that are still active: they count before and after their run.json exists. */
+  private started = new Map<string, { account: string; day: string }>();
 
   constructor(private o: SchedulerOptions) {
     if (o.queueFile && existsSync(o.queueFile)) {
@@ -129,6 +151,20 @@ export class Scheduler {
     }
     const q = [...this.pending, ...[...this.active.values()].map((a) => a.queued)].find((p) => p.runId === runId && p.job.kind === "run");
     return typeof q?.owner === "string" ? q.owner : undefined;
+  }
+
+  /** New runs that started today per account, counted as the per-day limit counts them: every run folder plus runs just started in memory. */
+  startedTodayByOwner(now = new Date()): Map<string, number> {
+    const day = now.toDateString();
+    const ids = new Map<string, Set<string>>();
+    const add = (owner: string, id: string) => (ids.get(owner) ?? ids.set(owner, new Set()).get(owner)!).add(id);
+    for (const b of listRunBriefs(this.o.runsDir)) {
+      const t = new Date(b.startedAt);
+      if (isRefinementRun(b.source) || Number.isNaN(t.getTime()) || t.toDateString() !== day) continue;
+      add(b.owner ?? "", b.runId);
+    }
+    for (const [id, s] of this.started) if (s.day === day) add(s.account, id);
+    return new Map([...ids].map(([o, s]) => [o, s.size]));
   }
 
   /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
@@ -305,6 +341,7 @@ export class Scheduler {
   queue() {
     return {
       pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
+        const limit = this.limited.get(runId);
         const same = (q: QueuedJob) => (repoLock && q.repoLock === repoLock) || (lockKey && q.lockKey === lockKey);
         // The lock owner: an active job, else an earlier job in the queue that holds the same lock.
         const blocker = [...this.active.values()].find((a) => same(a.queued))?.queued ?? this.pending.slice(0, i).find(same);
@@ -312,7 +349,8 @@ export class Scheduler {
         return {
           runId, lockKey, repoLock, source, enqueuedAt, kind: job.kind, waitingFor: blocker?.runId,
           ...(priority ? { priority: true as const } : {}),
-          ...(!priority && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
+          ...(limit ? { limit } : {}),
+          ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
           repo: job.kind === "run" ? job.repo : undefined, task: job.kind === "run" ? job.task : undefined,
@@ -326,7 +364,7 @@ export class Scheduler {
   /** Does a priority job in front of job `i` get the next free slot? One that waits for a busy lock does not hold anyone back. */
   private priorityAhead(i: number): boolean {
     const active = [...this.active.values()].map((a) => a.queued);
-    return this.pending.slice(0, i).some((p) => p.priority && !((p.lockKey && active.some((a) => a.lockKey === p.lockKey)) || (p.repoLock && active.some((a) => a.repoLock === p.repoLock))));
+    return this.pending.slice(0, i).some((p) => p.priority && !this.limited.has(p.runId) && !((p.lockKey && active.some((a) => a.lockKey === p.lockKey)) || (p.repoLock && active.some((a) => a.repoLock === p.repoLock))));
   }
 
   /** Wait for a run to finish (resolves immediately if it is not queued or running). */
@@ -447,18 +485,152 @@ export class Scheduler {
       }
       return !ok;
     };
-    for (let i = 0; i < this.pending.length && this.active.size < limit; ) {
-      const q = this.pending[i]!;
-      const active = [...this.active.values()].map((a) => a.queued);
-      const locked = (q.lockKey && active.some((a) => a.lockKey === q.lockKey)) || (q.repoLock && active.some((a) => a.repoLock === q.repoLock));
-      if (locked || held(q)) {
-        i++;
-        continue;
+    for (const id of [...this.started.keys()]) if (!this.active.has(id)) this.started.delete(id);
+
+    // The account of a job: the owner of a new run, the owner of the run for a resume. No account: not limited.
+    const accounts = new Map<string, string | undefined>();
+    const accountOf = (q: QueuedJob): string | undefined => {
+      if (!accounts.has(q.runId)) accounts.set(q.runId, q.job.kind === "run" ? q.owner : this.ownerOf(q.runId));
+      return accounts.get(q.runId);
+    };
+    const valid = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1;
+    const limits = new Map<string, { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number }>();
+    const spends = new Map<string, number>();
+    const spent = (acc: string): number => {
+      let v = spends.get(acc);
+      if (v === undefined) {
+        try {
+          v = this.o.spentTodayBy?.(acc) ?? spentTodayBy(this.o.runsDir, acc);
+        } catch {
+          v = 0;
+        }
+        if (!Number.isFinite(v)) v = 0;
+        spends.set(acc, v);
       }
-      this.pending.splice(i, 1);
-      this.start(q);
+      return v;
+    };
+    const limitsOf = (acc: string) => {
+      let l = limits.get(acc);
+      if (!l) {
+        try {
+          l = this.o.userLimits?.(acc) ?? {};
+        } catch {
+          l = {};
+        }
+        limits.set(acc, l);
+      }
+      return l;
+    };
+    // Architect runs use a slot but are not counted as new runs of the day.
+    const countable = (q: QueuedJob) => q.job.kind === "run" && !isRefinementRun(q.source);
+    const activeOf = (acc: string) => [...this.active.values()].filter((a) => (a.account ?? a.summary?.owner) === acc).length;
+    const groupActive = (g: string) => [...this.active.values()].filter((a) => a.group === g).length;
+    let briefs: RunBrief[] | undefined;
+    const startedNow = new Map<string, number>();
+    const baselines = new Map<string, number>();
+    const todayCount = (acc: string): number => {
+      if (this.o.startedToday) {
+        // The baseline is read once per account per pump: a counter that reads run files would otherwise include runs started in this pump.
+        let base = baselines.get(acc);
+        if (base === undefined) {
+          try {
+            base = this.o.startedToday(acc);
+          } catch {
+            base = 0;
+          }
+          if (!Number.isFinite(base)) base = 0;
+          baselines.set(acc, base);
+        }
+        return base + (startedNow.get(acc) ?? 0);
+      }
+      briefs ??= listRunBriefs(this.o.runsDir);
+      const now = new Date();
+      const ids = runIdsStartedToday(briefs, acc, now);
+      // counted by run id, so a run that is in both the files and `started` counts once
+      for (const [id, s] of this.started) if (s.account === acc && s.day === now.toDateString()) ids.add(id);
+      return ids.size;
+    };
+    const limitOf = (q: QueuedJob): UserLimit | undefined => {
+      const acc = accountOf(q);
+      if (!acc || !this.o.userLimits) return undefined;
+      const l = limitsOf(acc);
+      if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
+      if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
+      const cap = this.userDailyBudget(acc);
+      if (cap !== undefined && spent(acc) >= cap) return "budget";
+      return undefined;
+    };
+    const locked = (q: QueuedJob) => {
+      const active = [...this.active.values()].map((a) => a.queued);
+      return !!((q.lockKey && active.some((a) => a.lockKey === q.lockKey)) || (q.repoLock && active.some((a) => a.repoLock === q.repoLock)));
+    };
+    const keyOf = (q: QueuedJob): [number, number] => {
+      const g = accountOf(q) ?? "";
+      return [groupActive(g), this.lastStartOf.get(g) ?? 0];
+    };
+
+    while (this.active.size < limit) {
+      const ready = this.pending.filter((q) => !locked(q) && !held(q) && !limitOf(q));
+      if (!ready.length) break;
+      // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
+      const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;
+      let best = pool[0]!;
+      let bestKey = keyOf(best);
+      for (const q of pool.slice(1)) {
+        const key = keyOf(q);
+        if (key[0] < bestKey[0] || (key[0] === bestKey[0] && key[1] < bestKey[1])) {
+          best = q;
+          bestKey = key;
+        }
+      }
+      const account = accountOf(best);
+      const group = account ?? "";
+      this.pending.splice(this.pending.indexOf(best), 1);
+      this.lastStartOf.set(group, ++this.startSeq);
+      this.start(best, account, group);
+      if (countable(best)) {
+        // A run nobody owned falls to the first admin inside runFlow: it counts for that account but keeps its own group.
+        const a = this.active.get(best.runId);
+        let acc = account;
+        if (!acc) {
+          try {
+            acc = a?.summary?.owner ?? loadRun(this.o.runsDir, best.runId)?.owner;
+          } catch {
+            acc = undefined;
+          }
+          if (acc && a) a.account = acc;
+        }
+        if (acc) {
+          this.started.set(best.runId, { account: acc, day: new Date().toDateString() });
+          startedNow.set(acc, (startedNow.get(acc) ?? 0) + 1);
+        }
+      }
+    }
+    this.limited = new Map();
+    if (this.o.userLimits) {
+      for (const q of this.pending) {
+        if (held(q)) continue;
+        const l = limitOf(q);
+        if (l) this.limited.set(q.runId, l);
+      }
     }
     this.persist();
+  }
+
+  /** The daily budget of an account, or undefined: no limits source, cost limits off, no valid value. Never throws. */
+  userDailyBudget(accountId: string): number | undefined {
+    try {
+      if (!this.o.userLimits || !this.o.config().cost_limits) return undefined;
+      const cap = this.o.userLimits(accountId)?.dailyBudgetUsd;
+      return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Looks again at what can start, e.g. after a limit changed. */
+  recheck(): void {
+    this.pump();
   }
 
   /** When a job last started, or the scheduler was created. */
@@ -470,11 +642,11 @@ export class Scheduler {
    * A job never inherits the gh identity of the code that called submit(), setPriority(), answer() or pump():
    * it starts in a host scope (a repository's watcher may be the caller).
    */
-  private start(q: QueuedJob) {
-    withGhEnv(undefined, () => this.startJob(q));
+  private start(q: QueuedJob, account?: string, group = "") {
+    withGhEnv(undefined, () => this.startJob(q, account, group));
   }
 
-  private startJob(q: QueuedJob) {
+  private startJob(q: QueuedJob, account: string | undefined, group: string) {
     this.lastStartAt = new Date().toISOString();
     const a: Active = {
       queued: q,
@@ -482,6 +654,8 @@ export class Scheduler {
       lines: [],
       listeners: this.pendingListeners.get(q.runId) ?? new Set(),
       done: Promise.resolve(undefined),
+      ...(account ? { account } : {}),
+      group,
     };
     this.pendingListeners.delete(q.runId);
     this.active.set(q.runId, a);
@@ -501,6 +675,8 @@ export class Scheduler {
         a.summary = structuredClone(summary);
         emit({ type: "update", summary: a.summary });
       },
+      // a job without an account falls to the first admin inside runFlow: it stays under the global budget only
+      userDailyBudget: this.o.userLimits && account ? (o: string) => this.userDailyBudget(o) : undefined,
     };
     const j = q.job;
     const promise =

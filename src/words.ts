@@ -16,6 +16,10 @@ export interface WordFacts {
   signedOut?: boolean;
   /** `usage_limit`: the AI service could not be reached. */
   unreachable?: boolean;
+  /** `user_limit`: the limit of runs per day (else the limit of runs at the same time). */
+  perDay?: boolean;
+  /** `user_limit`: the daily budget. */
+  budget?: boolean;
 }
 
 interface Words {
@@ -61,6 +65,22 @@ const GLOSSARY: Record<NextKind, Words> = {
     status: (f) => (f.user ? "paused — the administrator's limit was reached" : "paused — daily budget"),
     help: (f) => (f.user ? "The administrator's limit for today is reached. Nothing to do — it goes on tomorrow." : "Today's budget is used up. Nothing to do — it goes on tomorrow."),
   },
+  user_limit: {
+    status: (f) => (f.user
+      ? (f.budget || f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
+      : (f.budget ? "waiting — the owner's daily budget" : f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
+    help: (f) => (f.budget
+      ? (f.user
+        ? "The administrator's limit for today is reached. Nothing to do — it goes on by itself tomorrow."
+        : "The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page.")
+      : f.user
+      ? (f.perDay
+        ? "You started as many new runs today as the administrator allows. Nothing to do — it starts by itself tomorrow."
+        : "As many of your runs are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of your runs ends.")
+      : (f.perDay
+        ? "The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page."
+        : "As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page.")),
+  },
   checking: { status: "checking for questions", help: "The Foundry reads the new issues and looks for questions only you can answer. Nothing to do — an issue without questions starts after the check." },
   starting: { status: "starting soon", help: "Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself." },
   bug_first: { status: "waiting — a bug story goes first", help: "A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that." },
@@ -82,7 +102,7 @@ const GLOSSARY: Record<NextKind, Words> = {
   monitor_stopped: { status: "bug stories stopped", help: "The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page." },
   monitor_needs_you: { status: "waiting for you — two fixes did not work", help: "The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page." },
   watcher_stale: { status: "watcher silent", help: "The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page." },
-  closed_elsewhere: { status: "closed on GitHub, run still busy", help: "The issue was closed on GitHub, but its run is still working or waits for approval and nothing was changed. Cancel the run on its page if the work is no longer wanted." },
+  closed_elsewhere: { status: "closed on GitHub, run still busy", help: "The issue was closed on GitHub, but its run is still working and nothing was changed. Cancel the run on its page if the work is no longer wanted." },
   issue_closed: { status: "issue closed", help: "The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work." },
   restart: { status: "restarting soon", help: "The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done." },
   superseded: { status: "replaced by a newer run", help: "A newer run took over the same work. Nothing to do with this run." },

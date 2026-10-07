@@ -11,7 +11,9 @@
 // Areas are paths ("platform/src/main/java/…/update", "desktop-compose/…/Main.kt"); two areas
 // overlap when one is a prefix of the other. "*" overlaps every path. Areas starting with "@"
 // (e.g. "@develop") are names that only overlap themselves.
-// A lock whose run is no longer running (its run.json says so, or is gone) is ignored and removed.
+// A lock whose run is no longer running is ignored and removed. The server keeps a marker file per running run in
+// <lock folder>/.running; a lock made while the marker existed has "marker": true and follows the marker. Other locks
+// follow the run's run.json (it says so, or is gone); a run.json that may not be read counts as running.
 // Env: FACTORY_VAR_GITHUB_REPO (locks are per repository), SCF_LOCK_DIR / FACTORY_LOCK_DIR (default
 // <data folder>/locks). The data folder is SCF_HOME, else FACTORY_HOME, else ~/.spaghetti-code-foundry
 // (or ~/.claude-factory while that is the only one that exists and has not been moved).
@@ -43,13 +45,16 @@ export function overlaps(a, b) {
   return a === b || a.startsWith(b + "/") || b.startsWith(a + "/");
 }
 
+// The server keeps a marker file per running run in <lock folder>/.running (a step in an OS sandbox may not read other runs' folders).
+const running = (id) => existsSync(join(root, ".running", id.replace(/[^\w.-]/g, "_")));
+
 function alive(lock) {
-  const f = join(lock.runDir, "run.json");
-  if (!existsSync(f)) return false;
+  if (lock.marker === true) return running(lock.runId);
   try {
-    return JSON.parse(readFileSync(f, "utf8")).status === "running";
-  } catch {
-    return true; // being written right now
+    return JSON.parse(readFileSync(join(lock.runDir, "run.json"), "utf8")).status === "running";
+  } catch (e) {
+    if (e && (e.code === "ENOENT" || e.code === "ENOTDIR")) return false;
+    return true; // being written right now, or may not be read: counts as running
   }
 }
 
@@ -114,7 +119,7 @@ if (cmd === "acquire") {
       const hit = others.find((l) => l.areas.some((x) => areas.some((a) => overlaps(a, x))));
       if (hit) return hit;
       const name = `${runId.replace(/[^\w.-]/g, "_")}__${Date.now()}.json`;
-      writeFileSync(join(dir, name), JSON.stringify({ runId, runDir, areas, at: new Date().toISOString() }));
+      writeFileSync(join(dir, name), JSON.stringify({ runId, runDir, areas, at: new Date().toISOString(), ...(running(runId) ? { marker: true } : {}) }));
       return undefined;
     });
     if (!blocker) {

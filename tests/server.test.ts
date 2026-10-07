@@ -294,6 +294,95 @@ steps:
     expect(stats.byFlow.map((f) => f.flow)).toContain("gated");
   });
 
+  it("refuses resume, approve and reject of a run of a retired flow, and shows it on the record", async () => {
+    const { fakeGithub } = await import("./helpers/fake-github.js");
+    const gh = fakeGithub();
+    const RETIRED = (n: string) => `The flow "${n}" is retired — this run cannot be resumed. Start the work again with a current flow.`;
+    const CLOSED = "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.";
+    // one issue per run: a newer run on the same issue would supersede the others
+    const setIssue = (state: string) => (process.env.FAKE_GH_ISSUES = JSON.stringify([78, 79, 80].map((number) => ({ number, state }))));
+    try {
+      const start = async (yaml: string, issue: number) => (await (await json("POST", "/api/runs", { yaml, task: "t", vars: { github_repo: "acme/gate", issue: String(issue) } })).json() as { runId: string }).runId;
+      const failed = await start("name: gone-boom\nworkspace: inplace\nsteps:\n  - {id: boom, type: shell, run: exit 1}\n", 78);
+      const waiting = await start("name: gone-gate\nworkspace: inplace\nsteps:\n  - {id: gate, type: approval, message: \"ok?\"}\n  - {id: after, type: shell, run: echo after}\n", 79);
+      const handStarted = await start("name: gone-hand\nworkspace: inplace\nsteps:\n  - {id: boom, type: shell, run: exit 1}\n", 80);
+      await waitFor(failed, "failed");
+      await waitFor(waiting, "waiting");
+      await waitFor(handStarted, "failed");
+      // As a watcher left them: the run is read from its file each time.
+      for (const id of [failed, waiting]) {
+        const file = join(tmp, "runs", id, "run.json");
+        writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), source: "watcher w issue #78" }));
+      }
+      setIssue("OPEN");
+      for (const [id, action, flow] of [[failed, "resume", "gone-boom"], [waiting, "approve", "gone-gate"], [waiting, "reject", "gone-gate"]] as const) {
+        const r = await json("POST", `/api/runs/${id}/${action}`, {});
+        expect(r.status).toBe(409);
+        expect(((await r.json()) as { error: string }).error).toBe(RETIRED(flow));
+      }
+      const queue = (await (await json("GET", "/api/queue")).json()) as { pending: { runId?: string }[] };
+      expect(queue.pending.map((p) => p.runId)).not.toContain(failed);
+      const f = (await (await json("GET", `/api/runs/${failed}`)).json()) as { next: { retired?: boolean; text: string } };
+      expect(f.next.retired).toBe(true);
+      expect(f.next.text).toContain("start a new run");
+      expect(((await (await json("GET", `/api/runs/${waiting}`)).json()) as { next: { retired?: boolean } }).next.retired).toBe(true);
+
+      // the closed message wins
+      setIssue("CLOSED");
+      const closed = await json("POST", `/api/runs/${failed}/resume`, {});
+      expect(closed.status).toBe(409);
+      expect(((await closed.json()) as { error: string }).error).toBe(CLOSED);
+      setIssue("OPEN");
+
+      // the hand-started run of a flow that is no file is not retired
+      expect((await json("POST", `/api/runs/${handStarted}/resume`, {})).status).toBe(202);
+      expect(((await (await json("GET", `/api/runs/${handStarted}`)).json()) as { next: { retired?: boolean } }).next.retired).toBeUndefined();
+
+      // the flow file comes back: the run can be resumed
+      mkdirSync(join(tmp, ".claude-factory", "flows"), { recursive: true });
+      writeFileSync(join(tmp, ".claude-factory", "flows", "gone-boom.yaml"), "name: gone-boom\nworkspace: inplace\nsteps:\n  - {id: boom, type: shell, run: exit 1}\n");
+      expect((await json("POST", `/api/runs/${failed}/resume`, {})).status).toBe(202);
+    } finally {
+      rmSync(join(tmp, ".claude-factory"), { recursive: true, force: true });
+      delete process.env.FAKE_GH_ISSUES;
+      gh.restore();
+    }
+  });
+
+  it("the event stream sends an update when the flow of a waiting run is retired and when it is back", async () => {
+    const yaml = "name: gone-stream\nworkspace: inplace\nsteps:\n  - {id: gate, type: approval, message: \"ok?\"}\n  - {id: after, type: shell, run: echo after}\n";
+    const { runId } = (await (await json("POST", "/api/runs", { yaml, task: "t" })).json()) as { runId: string };
+    await waitFor(runId, "waiting");
+    const file = join(tmp, "runs", runId, "run.json");
+    const res = await fetch(`${base}/api/runs/${runId}/events`, { headers: session.headers() });
+    const reader = res.body!.getReader();
+    let text = "";
+    const read = async (until: (t: string) => boolean) => {
+      const stop = Date.now() + 10_000;
+      while (!until(text) && Date.now() < stop) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+    };
+    try {
+      const run = JSON.parse(readFileSync(file, "utf8"));
+      writeFileSync(file, JSON.stringify({ ...run, source: "watcher w issue #1" }));
+      await read((t) => t.includes('"retired":true'));
+      expect(text).toContain('"retired":true');
+      // the flow file appears: the next update has no flag
+      mkdirSync(join(tmp, ".claude-factory", "flows"), { recursive: true });
+      writeFileSync(join(tmp, ".claude-factory", "flows", "gone-stream.yaml"), yaml);
+      const mark = text.length;
+      await read((t) => /"kind":"approval"/.test(t.slice(mark)));
+      expect(text.slice(mark)).not.toContain('"retired":true');
+    } finally {
+      await reader.cancel();
+      rmSync(join(tmp, ".claude-factory"), { recursive: true, force: true });
+      await json("POST", `/api/runs/${runId}/cancel`);
+    }
+  });
+
   it("refuses resume, approve and reject of a closed issue, and lets them through after a reopen", async () => {
     const { fakeGithub } = await import("./helpers/fake-github.js");
     const gh = fakeGithub();

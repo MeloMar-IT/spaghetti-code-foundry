@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { codexSandbox } from "../src/agents/run.js";
-import { isQuotaError, isTransientError, parseSpec, resolveTarget, toTarget } from "../src/agents/targets.js";
+import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
+import { liveLogFile } from "../src/engine/state.js";
 import { readTranscript } from "../src/engine/transcript.js";
 import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -43,6 +44,16 @@ describe("model specs", () => {
     expect(() => toTarget({ provider: "nope" }, c)).toThrow(/unknown provider/);
     const withDefault = cfg({ providers: { ollama: { kind: "ollama", default_model: "qwen3-coder" } } });
     expect(toTarget({ provider: "ollama" }, withDefault)).toMatchObject({ model: "qwen3-coder", provider: { base_url: "http://localhost:11434" } });
+  });
+});
+
+describe("providerKeyVars", () => {
+  it("lists the config's key variables and the well-known ones, once each", () => {
+    const c = cfg({ providers: { a: { kind: "anthropic-compatible", base_url: "http://x", api_key_env: "MY_KEY" }, b: { kind: "anthropic-compatible", base_url: "http://y", api_key_env: "OPENAI_API_KEY" } } });
+    const names = providerKeyVars(c);
+    expect(names).toEqual(expect.arrayContaining(["MY_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"]));
+    expect(new Set(names).size).toBe(names.length);
+    expect(providerKeyVars(cfg())).toEqual(KNOWN_KEY_VARS);
   });
 });
 
@@ -310,6 +321,22 @@ steps:
     // Resuming keeps honouring it.
     const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, from: "b", config: cfg({ router: { fallback: ["codex"] } }) });
     expect(r.history.at(-1)!.agent).toBe("codex:openai");
+  });
+
+  it("continues on a free fallback when the owner's daily budget is used up", async () => {
+    const s = await runFlow(parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+`), {
+      task: "t", repo, runsDir, claudeBin, owner: "u1", userDailyBudget: () => 0.005,
+      config: cfg({ bot: { name: "Bot", email: "bot@example.com" }, router: { fallback: ["codex"] } }),
+    });
+    expect(s.status).toBe("succeeded");
+    expect(s.history.map((h) => h.agent)).toEqual(["claude:anthropic", "codex:openai"]);
+    expect(readFileSync(liveLogFile(s.runDir), "utf8")).toMatch(/the owner's daily budget reached — agent steps continue on/);
   });
 
   it("does not resume a session across agents", async () => {

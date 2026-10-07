@@ -7,7 +7,8 @@ import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { claimRunStart } from "../home.js";
-import { CANNOT_READ, redactText, requireRedaction } from "../credentials/redact.js";
+import { providerKeyVars } from "../agents/targets.js";
+import { CANNOT_READ, hideKeyVars, redactText, requireRedaction } from "../credentials/redact.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
@@ -21,12 +22,15 @@ import {
   type Scope,
   type StepResult,
 } from "./execute.js";
+import { freeWhenBoxed } from "../agents/boxed.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
-import { stepIsolated } from "./isolation.js";
+import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
+import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
-import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, taskWithAnswers, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
+import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, spentTodayBy, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { prepareWorkspace } from "./workspace.js";
 
@@ -44,6 +48,8 @@ interface CommonOptions {
   onUpdate?: (summary: RunSummary) => void;
   /** Defaults to <data folder>/config.yaml. */
   config?: Config;
+  /** The daily budget of an account; without it only the global budget applies. */
+  userDailyBudget?: (owner: string) => number | undefined;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -73,9 +79,12 @@ export function newRunId(now = new Date()): string {
   return `${ts}-${randomBytes(2).toString("hex")}`;
 }
 
-export function learningsFile(vars: Record<string, string>, repo: string): string {
-  const key = vars.github_repo && vars.github_repo !== "owner/repo" ? vars.github_repo : basename(repo);
-  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", `${key.replace(/[^\w.-]+/g, "__")}.md`);
+/** The learnings file of a run. Without a usable `github_repo` the key is the folder name; a user's account then gets its own file. */
+export function learningsFile(vars: Record<string, string>, repo: string, account?: string): string {
+  const named = vars.github_repo && vars.github_repo !== "owner/repo";
+  const key = named ? vars.github_repo : basename(repo);
+  const suffix = !named && account ? `__${account}` : "";
+  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "learnings", `${`${key}${suffix}`.replace(/[^\w.-]+/g, "__")}.md`);
 }
 
 /** The variables of a run: the flow's defaults, then the folder's own settings (not for an empty workspace), then the given ones. */
@@ -95,9 +104,11 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const runId = opts.runId ?? newRunId();
   const runDir = join(opts.runsDir, runId);
 
-  const vars = opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
+  const refused = workspaceRefused(flow.workspace, owner);
+  // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
+  const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const summary: RunSummary = {
     runId,
     flow: flow.name,
@@ -120,6 +131,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     saveRun(summary);
   });
   opts.onUpdate?.(summary);
+  if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
 
   try {
     requireRedaction(); // before the workspace is made: output cannot be hidden when the stored secrets are unreadable
@@ -176,8 +188,15 @@ async function drive(
     appendLiveLog(summary.runDir, line);
     opts.log?.(line);
   };
+  // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
+  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
+  if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
+  // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it
+  const sandbox = sandboxedRun(summary.owner, config);
+  if (typeof sandbox === "object") return finish(summary, opts, config, { outcome: "failed", reason: sandbox.refused, next: summary.state.next, lastOutput: "" });
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
+  hideKeyVars(providerKeyVars(config));
   try {
     requireRedaction();
   } catch (e) {
@@ -187,7 +206,7 @@ async function drive(
     saveRun(summary);
     opts.onUpdate?.(summary);
   };
-  const lf = learningsFile(summary.vars, summary.repo);
+  const lf = learningsFile(summary.vars, summary.repo, userAccount(summary.owner));
 
   // The bot's name and token, asked once per run; only steps that keep the machine's login get them.
   let botOnce: Promise<Record<string, string>> | undefined;
@@ -215,6 +234,16 @@ async function drive(
 
   const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
   const dailyCap = config.cost_limits ? config.daily_budget_usd : undefined;
+  const userLeft = (): number | undefined => {
+    if (!config.cost_limits || !summary.owner || !opts.userDailyBudget) return undefined;
+    let cap: number | undefined;
+    try {
+      cap = opts.userDailyBudget(summary.owner);
+    } catch {
+      cap = undefined;
+    }
+    return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap - spentTodayBy(opts.runsDir, summary.owner) : undefined;
+  };
   const engine: Engine = {
     summary,
     config,
@@ -232,10 +261,11 @@ async function drive(
       const left = [
         runCap !== undefined ? runCap - summary.totalCostUsd : undefined,
         dailyCap !== undefined ? dailyCap - spentToday(opts.runsDir) : undefined,
+        userLeft(),
       ].filter((n): n is number => n !== undefined);
       return left.length ? Math.min(...left) : undefined;
     },
-    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir),
+    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft),
   };
 
   const scope: Scope = {
@@ -246,7 +276,8 @@ async function drive(
       workdir: summary.workdir!,
       run: { id: summary.runId, dir: summary.runDir, branch: summary.branch ?? "", history: "" },
       steps: summary.state.steps,
-      learnings: existsSync(lf) ? readFileSync(lf, "utf8") : "",
+      // a sandboxed step may have put a link or a pipe there: only a plain file is read
+      learnings: sandbox === "on" ? readPlainFile(lf) : existsSync(lf) ? readFileSync(lf, "utf8") : "",
     },
     visits: summary.state.visits,
     prefix: "",
@@ -258,11 +289,17 @@ async function drive(
     : `run ${summary.runId} · flow ${summary.flow} · ${summary.workdir}${summary.branch ? ` (branch ${summary.branch})` : ""}`);
   save();
 
+  // a marker for tools/area-lock: this run is running (a step may not read other runs' folders)
+  sweepRunning(opts.runsDir);
+  const marker = markRunning(summary.runId);
+  if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
   let result: LoopResult;
   try {
-    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir);
+    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir, userLeft);
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
+  } finally {
+    unmarkRunning(summary.runId, marker);
   }
   return finish(summary, opts, config, result);
 }
@@ -318,7 +355,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
   opts.onUpdate?.(summary);
   if (r.outcome === "failed") {
     // One short model call for the cause; its note and cost are saved in a second update.
-    const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal }).catch(() => undefined);
+    const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal, userDailyBudget: opts.userDailyBudget }).catch(() => undefined);
     if (ex) {
       summary.totalCostUsd += ex.costUsd;
       if (ex.note) {
@@ -342,7 +379,7 @@ function resumePoint(step: Step, scope: Scope, engine: Engine): string {
   return mine.at(-2)?.id.slice(scope.prefix.length) ?? step.id;
 }
 
-async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string): Promise<LoopResult> {
+async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined): Promise<LoopResult> {
   const { flow, ctx, visits } = scope;
   const { summary, config } = engine;
   const steps = flow.steps;
@@ -371,13 +408,21 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     const overDay = config.cost_limits && config.daily_budget_usd !== undefined && spentToday(runsDir) >= config.daily_budget_usd;
     // Shell and approval steps cost nothing, so they still run (e.g. posting what was already paid for).
     const costsMoney = step.type !== "shell" && step.type !== "approval";
-    if (costsMoney && (overRun || overDay) && !engine.budgetFallback) {
-      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free)[0] : undefined;
+    let overUser = false;
+    if (costsMoney && !overRun && !overDay && !engine.budgetFallback) {
+      const l = userLeft();
+      overUser = l !== undefined && l <= 0;
+    }
+    if (costsMoney && (overRun || overDay || overUser) && !engine.budgetFallback) {
+      // in a user's boxed run only a local model is free: Codex there is paid by key
+      const free = config.router.fallback_on.includes("budget") ? fallbackTargets(config, (t) => t.free && (sandboxedRun(summary.owner, config) !== "on" || freeWhenBoxed(t)))[0] : undefined;
       if (free) {
         engine.budgetFallback = free;
-        engine.log(`⚠ ${overRun ? "run" : "daily"} budget reached — agent steps continue on ${free.label}`);
+        engine.log(`⚠ ${overRun ? "run" : overDay ? "daily" : "the owner's daily"} budget reached — agent steps continue on ${free.label}`);
       } else if (overRun) {
         return { outcome: "failed", reason: `run budget of $${runCap} reached`, ...here() };
+      } else if (!overDay) {
+        return { outcome: "stopped", reason: USER_BUDGET_REASON, ...here() };
       } else {
         return { outcome: "stopped", reason: `daily budget of $${config.daily_budget_usd} reached — resume tomorrow`, ...here() };
       }

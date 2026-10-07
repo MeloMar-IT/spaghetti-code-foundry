@@ -38,7 +38,11 @@ export async function runShell(o: {
   maxOutput?: number;
   /** The step holds a credential: its whole process group is killed when it ends. */
   ownGroup?: boolean;
-}): Promise<ShellRunResult> {
+  /** Pass only `env`, nothing of the server's environment. */
+  cleanEnv?: boolean;
+  /** Hold the command in this `sandbox-exec` profile (not used with a Docker image: the container holds it). */
+  sandboxProfile?: string;
+}):Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
   let args = ["-c", o.command];
@@ -57,6 +61,8 @@ export async function runShell(o: {
     logFile: o.logFile,
     pinnedSecrets: o.pinnedSecrets,
     ownGroup: o.ownGroup,
+    cleanEnv: o.cleanEnv,
+    sandboxProfile: o.dockerImage ? undefined : o.sandboxProfile,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
   const keep = o.maxOutput ?? MAX_OUTPUT;

@@ -127,6 +127,14 @@ describe("pure functions", () => {
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "review", reason: "x" } }))).toBe("");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "review", reason: "x" } }))).toBe("Refresh");
   });
+  it("architectStatus and askLabel for an impact run", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "impact" })).toMatchObject({ busy: true, detail: "Then it looks at what your draft touches." });
+    expect(ui.architectStatus({ state: "running", kind: "impact", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is looking at what your draft touches.", detail: "Checking the view." });
+    expect(ui.activityText("Only for ask=impact: read the newest 50 open issues", "impact")).toBe("Reading the open issues.");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "impact", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "impact", reason: "x" } }))).toBe("Refresh");
+  });
   it("the brief part draws no line for a review run", async () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
     await show();

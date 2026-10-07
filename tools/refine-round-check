@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
 // Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
-// (`round`, the default, `question`, `suggest`, `review` or `impact`) and, for `suggest`, $FACTORY_VAR_FIELD (title, who, what, why,
-// criteria, outOfScope, dependsOn or notes).
+// (`round`, the default, `question`, `suggest`, `review`, `impact`, `ready` or `split`), for `suggest` $FACTORY_VAR_FIELD (title, who, what, why,
+// criteria, outOfScope, dependsOn or notes) and, for `ready`, $FACTORY_VAR_ITEMS (the ids of the items to judge, comma separated).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
 // For `suggest` it prints { "field": …, "suggestions": [ … ] }: the first suggestion for a text field, the first 10 for
 // criteria (each { text, from: "R1" or "E1" }) and dependsOn (each { issue } or { draft: "D1" }; others are left out).
 // For `review` it prints { "remarks": [ { field, item?, kind, text } ] }: the first 20, `item` ("C1") only for criteria, the text on one
 // line, cut at 300 characters, in at most two sentences (more fails).
-// For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive }: known fields only, lists cut at their
-// limits. It reads issues.md (when there) for the numbers of the open issues. The size word is set from files and lines. Every
-// overlap is an `estimate`; an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
+// For `ready` it prints { "items": [ { id, result, reason, field, item? } ] } in the asked order, one result for each asked item: `result` is
+// met, not-met or unsure, `reason` one sentence of at most 300 characters (never cut), `field` a field of the draft, `item` ("C1") only for
+// criteria. Anything else in the answer (other keys, other lists, an `item` on another field) fails.
+// For `impact` it prints { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open }: known fields only, lists cut at their
+// limits. `open` holds the numbers of the open issues of issues.md (when there); the Foundry decides which issue overlaps stay. The
+// size word is set from files and lines. An overlap names an issue or a draft ("D1") and is always an `estimate` here (the Foundry sets
+// the basis itself); an area marked `found` without a file becomes `estimate`. A text that names hours, days or weeks fails.
+// For `split` it prints { "ways": [ { cut, stories: [ { title, sentence, criteria, dependsOn } ], first, unplaced, warnings } ] }: 1 to 3 ways,
+// each C number of the task in exactly one story or in `unplaced`. The C numbers are the lines `- C<n>: ` of the part "Acceptance criteria"
+// under "## The draft to split" in $FACTORY_TASK (read here, never by the shell). Nothing is cut: a wrong form or a longer text fails.
 import { readFileSync } from "node:fs";
 
+const READY_ITEMS_MAX = 20, READY_REASON_MAX = 300, READY_RESULTS = ["met", "not-met", "unsure"];
 const MAX_QUESTIONS = 5, MAX_PROPOSALS = 20, REMARK_MAX_COUNT = 20, REMARK_MAX = 300;
 const QUESTION_MAX = 500, OPTION_MAX = 300, PROPOSAL_MAX = 500, DONE_MAX = 500, ANSWER_MAX = 8000;
 const VIEWS = ["need", "build", "test"], LISTS = ["rule", "example", "open"];
@@ -113,6 +121,36 @@ function checkReview(obj) {
   return { remarks };
 }
 
+// Exactly the asked items, once each, in the asked order. The answer may hold nothing else: no other key, no proposed text.
+function checkReady(obj, asked) {
+  if (!asked.length || asked.length > READY_ITEMS_MAX || !asked.every((id) => /^[a-z0-9-]{1,40}$/.test(id)) || new Set(asked).size !== asked.length) {
+    bad("set the variable items to the ids of the items to judge");
+  }
+  if (["questions", "proposals", "suggestions", "remarks"].some((k) => listOf(obj[k], k).length)) {
+    bad("the architect's answer has questions, proposals, suggestions or remarks, but only results were asked for");
+  }
+  if (Object.keys(obj).some((k) => k !== "items")) bad("the architect's answer has more than the results that were asked for");
+  if (!Array.isArray(obj.items)) bad("items is not a list");
+  const byId = new Map();
+  obj.items.forEach((x, i) => {
+    const n = i + 1;
+    if (!isObject(x)) bad(`result ${n} is not an object`);
+    if (typeof x.id !== "string" || !asked.includes(x.id)) bad(`result ${n} names an item that was not asked`);
+    if (byId.has(x.id)) bad(`result ${n} names an item a second time`);
+    if (!READY_RESULTS.includes(x.result)) bad(`result ${n} has no result of met, not-met or unsure`);
+    const reason = clean(x.reason).replace(/\s*[\n\t]\s*/g, " ");
+    if (!reason) bad(`result ${n} has no reason`);
+    if ([...reason].length > READY_REASON_MAX) bad(`result ${n} has a reason of more than ${READY_REASON_MAX} characters`);
+    if (sentences(reason) > 1) bad(`result ${n} has more than one sentence`);
+    if (!FIELDS.includes(x.field)) bad(`result ${n} does not name a field of the draft`);
+    if (x.item !== undefined && (x.field !== "criteria" || typeof x.item !== "string" || !/^C\d+$/.test(x.item))) bad(`result ${n} does not name a criterion`);
+    if (Object.keys(x).some((k) => !["id", "result", "reason", "field", "item"].includes(k))) bad(`result ${n} has more than a result, a reason and a field`);
+    byId.set(x.id, { id: x.id, result: x.result, reason, field: x.field, ...(x.item !== undefined ? { item: x.item } : {}) });
+  });
+  if (byId.size < asked.length) bad(`the answer has no result for ${asked.length - byId.size} of the ${asked.length} items`);
+  return { items: asked.map((id) => byId.get(id)) };
+}
+
 const IMPACT_MAX = { areas: 15, dependsOn: 10, dependents: 10, risks: 12, overlaps: 20, sensitive: 5 };
 const PATH_MAX = 150, AREA_FILES_MAX = 8, OVERLAP_AREAS_MAX = 5, IMPACT_TEXT_MAX = 300, SIZE_NUMBER_MAX = 100000, DRAFT_MAX = 6;
 const BASES = ["found", "estimate"], RISK_KINDS = ["data", "security", "compatibility", "users"], SIZES = ["small", "medium", "large"];
@@ -200,13 +238,15 @@ function checkImpact(obj) {
   const overlaps = list("overlaps").map((x, i) => {
     const what = `overlap ${i + 1}`;
     if (!isObject(x)) bad(`${what} is not an object`);
-    if (!Number.isSafeInteger(x.issue) || x.issue < 1) bad(`${what} names no issue`);
-    if (!known.has(x.issue)) bad(`${what} names an issue that is not among the open issues that were read`);
+    let target;
+    if (Number.isSafeInteger(x.issue) && x.issue >= 1) target = { issue: x.issue };
+    else if (typeof x.draft === "string" && new RegExp(`^D\\d{1,${DRAFT_MAX}}$`).test(x.draft)) target = { draft: x.draft };
+    else bad(`${what} names no issue and no draft`);
     basisOf(x, what); // must be there; whatever it says, the answer of this step is an estimate
     const own = paths(x.areas, what, OVERLAP_AREAS_MAX, "areas");
     if (!own.length) bad(`${what} names no area`);
     if (!own.every((a) => areas.some((r) => r.area === a))) bad(`${what} names an area that is not among the areas of the answer`);
-    return { issue: x.issue, areas: own, basis: "estimate", why: prose(x.why, what, "why", 2) };
+    return { ...target, areas: own, basis: "estimate", why: prose(x.why, what, "why", 2) };
   });
   const sensitive = list("sensitive").map((x, i) => {
     const what = `sensitive topic ${i + 1}`;
@@ -215,12 +255,124 @@ function checkImpact(obj) {
     const basis = basisOf(x, what);
     return { topic: x.topic, basis, why: prose(x.why, what, "why", 2) };
   });
-  return { areas, dependsOn, dependents, risks, size, overlaps, sensitive };
+  return { areas, dependsOn, dependents, risks, size, overlaps, sensitive, open: [...known].sort((p, q) => p - q) };
 }
 
-function check(raw, ask, field) {
+const CUTS = ["step", "interface", "data", "rule", "spike"], WARNING_KINDS = ["layer", "same-code"];
+// A written quantity that TIME misses: "a day", "an hour", "zero days", "no weeks".
+const TIME_WORDS = /\b(?:an?|zero|no)[\s-]*(?:(?:man|person|working|work|business|calendar|elapsed|full|whole)[\s-]*)?(?:hours?|hrs?|days?|weeks?)\b/i;
+const SPLIT_TITLE_MAX = 120, SPLIT_TEXT_MAX = 300, C_NUMBER = /^C[1-9]\d*$/;
+// The C numbers of the draft: the lines `- C<n>: ` of its acceptance criteria, and only those (not the idea, the map or the notes).
+function taskCriteria(task) {
+  // Only the first "## The draft to split" and the first "### Acceptance criteria" in it count; the part ends at the next heading.
+  // Later heading-like lines (repeated parts written into the draft text) add nothing.
+  const out = new Set();
+  let draft = 0, criteria = 0; // 0 = not yet, 1 = inside, 2 = done
+  for (const line of task.replace(/\r\n?/g, "\n").split("\n")) {
+    const h = /^(#{1,6})\s+(.*?)\s*$/.exec(line);
+    if (h) {
+      if (draft === 1 && criteria === 1) criteria = 2;
+      if (draft === 0 && h[1] === "##" && h[2] === "The draft to split") draft = 1;
+      else if (draft === 1 && criteria === 0 && h[1] === "###" && h[2] === "Acceptance criteria") criteria = 1;
+      else if (draft === 1 && criteria === 0 && h[1].length <= 2) draft = 2;
+      continue;
+    }
+    const m = draft === 1 && criteria === 1 ? /^- (C[1-9]\d*): /.exec(line) : null;
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+// A text on one line, not cut: line breaks are looked for before anything is trimmed.
+function splitText(v, what, name, max, maxSentences) {
+  if (typeof v !== "string") bad(`${what} has no ${name}`);
+  if (/[\n\r\v\f\x85\p{Zl}\p{Zp}]/u.test(v)) bad(`${what} has a ${name} with a line break`);
+  const t = clean(v.replace(/\t+/g, " "));
+  if (!t) bad(`${what} has no ${name}`);
+  if ([...t].length > max) bad(`${what} has a ${name} of more than ${max} characters`);
+  if (TIME.test(t) || TIME_WORDS.test(t)) bad(`${what} names a number of hours, days or weeks`);
+  if (maxSentences && sentences(t) > maxSentences) bad(`${what} has a ${name} of more than ${maxSentences === 1 ? "one sentence" : "two sentences"}`);
+  return t;
+}
+const noExtra = (x, keys) => Object.keys(x).some((k) => !keys.includes(k));
+
+function checkSplit(obj, task) {
+  const all = taskCriteria(task);
+  if (noExtra(obj, ["ways"])) bad("the architect's answer has more than the ways that were asked for");
+  if (!Array.isArray(obj.ways)) bad("ways is not a list");
+  if (!obj.ways.length) bad("the answer has no way to split the draft");
+  if (obj.ways.length > 3) bad("the answer has more than 3 ways");
+  const usedCuts = [];
+  const ways = obj.ways.map((x, wi) => {
+    const W = `way ${wi + 1}`;
+    if (!isObject(x)) bad(`${W} is not an object`);
+    if (noExtra(x, ["cut", "stories", "first", "unplaced", "warnings"])) bad(`${W} has an unknown field`);
+    if (!CUTS.includes(x.cut)) bad(`${W} has no cut of step, interface, data, rule or spike`);
+    if (usedCuts.includes(x.cut)) bad(`${W} has the same cut as way ${usedCuts.indexOf(x.cut) + 1}`);
+    usedCuts.push(x.cut);
+    if (!Array.isArray(x.stories) || x.stories.length < 2 || x.stories.length > 6) bad(`${W} does not have 2 to 6 stories`);
+    const count = x.stories.length;
+    const placed = new Set();
+    const stories = x.stories.map((s, si) => {
+      const n = si + 1, S = `story ${n} of ${W}`;
+      if (!isObject(s)) bad(`${S} is not an object`);
+      if (noExtra(s, ["title", "sentence", "criteria", "dependsOn"])) bad(`${S} has an unknown field`);
+      const title = splitText(s.title, S, "title", SPLIT_TITLE_MAX);
+      const sentence = splitText(s.sentence, S, "sentence", SPLIT_TEXT_MAX, 1);
+      if (s.criteria !== undefined && !Array.isArray(s.criteria)) bad(`${S} has criteria that are not a list`);
+      const criteria = [];
+      for (const c of s.criteria ?? []) {
+        if (typeof c !== "string" || !C_NUMBER.test(c)) bad(`${S} does not name its criteria as C numbers`);
+        if (!all.has(c)) bad(`${S} names a criterion that is not in the task`);
+        if (placed.has(c)) bad(`${S} names a criterion that is in a story already`);
+        placed.add(c);
+        criteria.push(c);
+      }
+      if (s.dependsOn !== undefined && !Array.isArray(s.dependsOn)) bad(`${S} has a dependsOn that is not a list`);
+      const dependsOn = [];
+      for (const d of s.dependsOn ?? []) {
+        if (d === n) bad(`${S} depends on itself`);
+        if (Number.isInteger(d) && d > n && d <= count) bad(`${S} depends on a later story`);
+        if (!Number.isInteger(d) || d < 1 || d > n - 1) bad(`${S} depends on an unknown story`);
+        if (!dependsOn.includes(d)) dependsOn.push(d);
+      }
+      return { title, sentence, criteria, dependsOn };
+    });
+    const first = splitText(x.first, W, "first", SPLIT_TEXT_MAX, 1);
+    if (x.unplaced !== undefined && !Array.isArray(x.unplaced)) bad(`${W} has an unplaced that is not a list`);
+    const unplaced = [];
+    for (const c of x.unplaced ?? []) {
+      if (typeof c !== "string" || !C_NUMBER.test(c)) bad(`${W} does not name its unplaced criteria as C numbers`);
+      if (!all.has(c)) bad(`${W} has an unplaced criterion that is not in the task`);
+      if (placed.has(c)) bad(`${W} has a criterion in a story and in unplaced`);
+      if (unplaced.includes(c)) bad(`${W} names an unplaced criterion twice`);
+      unplaced.push(c);
+    }
+    const left = all.size - placed.size - unplaced.length;
+    if (left > 0) bad(`${W} leaves out ${left} of the ${all.size} criteria of the task`);
+    if (x.warnings !== undefined && !Array.isArray(x.warnings)) bad(`${W} has warnings that are not a list`);
+    const unknownStory = (v) => !Number.isInteger(v) || v < 1 || v > count;
+    const warnings = (x.warnings ?? []).map((v, vi) => {
+      const V = `warning ${vi + 1} of ${W}`;
+      if (!isObject(v)) bad(`${V} is not an object`);
+      if (!WARNING_KINDS.includes(v.kind)) bad(`${V} has no kind of layer or same-code`);
+      if (noExtra(v, v.kind === "layer" ? ["kind", "story", "why"] : ["kind", "stories", "why"])) bad(`${V} has an unknown field`);
+      if (v.kind === "layer") {
+        if (unknownStory(v.story)) bad(`${V} names an unknown story`);
+        return { kind: v.kind, story: v.story, why: splitText(v.why, V, "why", SPLIT_TEXT_MAX, 2) };
+      }
+      if (!Array.isArray(v.stories) || v.stories.length !== 2) bad(`${V} does not name two stories`);
+      if (v.stories.some(unknownStory)) bad(`${V} names an unknown story`);
+      if (v.stories[0] === v.stories[1]) bad(`${V} names the same story twice`);
+      return { kind: v.kind, stories: [...v.stories], why: splitText(v.why, V, "why", SPLIT_TEXT_MAX, 2) };
+    });
+    return { cut: x.cut, stories, first, unplaced, warnings };
+  });
+  return { ways };
+}
+
+function check(raw, ask, field, items, task) {
   const kind = ask || "round";
-  if (!["round", "question", "suggest", "review", "impact"].includes(kind)) bad("set the variable ask to round, question, suggest, review or impact");
+  if (!["round", "question", "suggest", "review", "impact", "ready", "split"].includes(kind)) bad("set the variable ask to round, question, suggest, review, impact, ready or split");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
@@ -233,6 +385,8 @@ function check(raw, ask, field) {
   if (kind === "suggest") return checkSuggestions(obj, field);
   if (kind === "review") return checkReview(obj);
   if (kind === "impact") return checkImpact(obj);
+  if (kind === "split") return checkSplit(obj, task ?? "");
+  if (kind === "ready") return checkReady(obj, (items ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");
     const answer = cut(clean(obj.answer), ANSWER_MAX);
@@ -248,7 +402,7 @@ function check(raw, ask, field) {
 }
 
 try {
-  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD)));
+  console.log(JSON.stringify(check(process.env.FACTORY_OUT_ROUND ?? "", process.env.FACTORY_VAR_ASK, process.env.FACTORY_VAR_FIELD, process.env.FACTORY_VAR_ITEMS, process.env.FACTORY_TASK)));
 } catch (e) {
   console.log(e instanceof Bad ? e.message : "the architect's answer could not be checked");
   process.exitCode = 1; // not process.exit(): let stdout drain

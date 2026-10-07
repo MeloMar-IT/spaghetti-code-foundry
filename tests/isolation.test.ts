@@ -152,7 +152,9 @@ describe("a provider key in an admin run that keeps the machine's login", { time
     const config = cfg({ providers: { gh: { kind: "anthropic-compatible", base_url: "http://127.0.0.1:1", api_key_env: "BOT_TOKEN_FOR_TEST" } } });
     const s = await go(flowOf(agent("a", "SHOWENV", "    model: gh:m\n")), { owner: admin.id, config });
     delete process.env.PROVIDER_KEY_FOR_TEST;
-    expect(out(s, "a")).toContain(`token=${BOT}`);
+    // the provider's key reaches the agent (it is not "none"), and its value is now hidden in the output like a stored credential
+    expect(out(s, "a")).toContain("token=[redacted]");
+    expect(out(s, "a")).not.toContain(BOT);
   });
 });
 

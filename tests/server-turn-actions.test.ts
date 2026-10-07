@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dataHome } from "../src/auth/store.js";
@@ -316,6 +317,58 @@ describe("retry of a closed issue", () => {
     const ctx = ctxAll();
     expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
     untouched(ctx);
+  });
+});
+
+describe("retry of a retired flow", () => {
+  // The item of a run carries the run's id in its key.
+  const FKEY = "acme/app#8|failed|r8";
+  let repo: string;
+  const flowFile = () => join(repo, ".claude-factory", "flows", "gone.yaml");
+  const ctxRetired = () => {
+    const ctx = stub([hold(rec("failed", 8, "r8"), SINCE)]) as unknown as { scheduler: Record<string, unknown> };
+    const r = { runId: "r8", flow: "gone", source: "watcher a issue #8", repo, vars: { github_repo: "acme/app", issue: "8" }, status: "failed", reason: 'step "x" failed', startedAt: SINCE, finishedAt: SINCE, history: [], state: { next: null, steps: {}, visits: {} }, runDir: "/tmp/none", task: "t", totalCostUsd: 0 };
+    ctx.scheduler.list = () => [r];
+    ctx.scheduler.get = (id: string) => (id === "r8" ? r : undefined);
+    ctx.scheduler.briefs = () => [{ runId: "r8", flow: "gone", status: "failed", startedAt: SINCE, source: r.source, githubRepo: "acme/app", issue: "8", dirName: "r8", runDir: "/tmp/none", updatedAt: SINCE }];
+    return ctx as unknown as ApiContext;
+  };
+  const untouched = () => {
+    expect(comments()).toBe(0);
+    expect(gh.ghLog()).not.toContain("issue edit");
+    expect(kick).not.toHaveBeenCalled();
+  };
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "retired-act-"));
+  });
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("offers no retry, and refuses both retry actions without a label or comment call", async () => {
+    const ctx = ctxRetired();
+    const item = turnFor(ctx, NOW).all.find((i) => i.key === FKEY)!;
+    expect(item.next.retired).toBe(true);
+    expect(item.acts).toEqual([]);
+    expect(await status(act(ctx, { key: FKEY, action: "retry" }))).toBe(409);
+    expect(await status(act(ctx, { key: FKEY, action: "retry_hint", stamp: SINCE, text: "try again" }))).toBe(409);
+    untouched();
+  });
+
+  it("a stale page that still shows retry gets a refusal after the flow file is gone", async () => {
+    mkdirSync(join(repo, ".claude-factory", "flows"), { recursive: true });
+    writeFileSync(flowFile(), "name: gone\n");
+    const ctx = ctxRetired();
+    expect(turnFor(ctx, NOW).all.find((i) => i.key === FKEY)!.acts).toEqual(["retry", "retry_hint"]);
+    rmSync(flowFile());
+    const err = await act(ctx, { key: FKEY, action: "retry" }).catch((e: Error & { status: number }) => e);
+    expect(err).toMatchObject({ status: 409, message: "that is not possible for this item" });
+    untouched();
+  });
+
+  it("goes through while the flow file exists", async () => {
+    mkdirSync(join(repo, ".claude-factory", "flows"), { recursive: true });
+    writeFileSync(flowFile(), "name: gone\n");
+    await act(ctxRetired(), { key: FKEY, action: "retry" });
+    expect(gh.ghLog()).toContain("issue edit 8 --repo acme/app");
   });
 });
 

@@ -1,14 +1,18 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { cleanEnv } from "./diff.js";
 
 export interface Workspace {
   workdir: string;
   branch?: string;
 }
 
+// no hook and no monitor of the repository runs
+const SAFE_OPTIONS = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+
 function git(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", [...SAFE_OPTIONS, ...args], { cwd, encoding: "utf8", env: cleanEnv(), stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 export function repoRoot(dir: string): string | undefined {
