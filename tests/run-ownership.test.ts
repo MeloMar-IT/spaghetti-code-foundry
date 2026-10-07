@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { userCommand, type UserIo } from "../src/auth/cli.js";
+import { limitsPath } from "../src/auth/limits.js";
 import { createUser } from "../src/auth/users.js";
 import { parseFlow } from "../src/flow/load.js";
 import { RULES, ruleKey } from "../src/server/permissions.js";
@@ -372,6 +373,59 @@ describe("runs of other accounts", () => {
     const costs = st.byUser.map((u: { costUsd: number }) => u.costUsd);
     expect(costs).toEqual([...costs].sort((a: number, b: number) => b - a));
     expect(Math.round(costs.reduce((a: number, b: number) => a + b, 0) * 1e4) / 1e4).toBe(st.totals.costUsd);
+  });
+
+  describe("usage against the limits", () => {
+    const reset = async () => {
+      await call(s, admin, "PUT", "/api/users/limits", { maxConcurrent: null, maxRunsPerDay: null, dailyBudgetUsd: null });
+      for (const u of [ann, bob]) await call(s, admin, "PUT", `/api/users/${u.user.id}/limits`, { maxConcurrent: null, maxRunsPerDay: null, dailyBudgetUsd: null });
+    };
+    afterEach(reset);
+    const usage = async () => (await call(s, admin, "GET", "/api/stats")).json();
+
+    it("shows today's runs, cost, limits and the mark per account, and today per repository", async () => {
+      expect((await call(s, admin, "PUT", "/api/users/limits", { maxRunsPerDay: 5 })).status).toBe(200);
+      expect((await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxRunsPerDay: 1, dailyBudgetUsd: 0.1 })).status).toBe(200);
+      writeRun(s, "20300101-000000-use-ann", { owner: ann.user.id, startedAt: recent(), totalCostUsd: 0.25, vars: { github_repo: "acme/use" } });
+      writeRun(s, "20300101-000000-use-ghost", { owner: GHOST, startedAt: recent(), totalCostUsd: 0.5 });
+      const st = await usage();
+      const find = (id: string) => st.byUser.find((u: { owner: string }) => u.owner === id);
+      expect(find(ann.user.id)).toMatchObject({ limits: { maxRunsPerDay: 1, dailyBudgetUsd: 0.1 }, atLimit: ["maxRunsPerDay", "dailyBudgetUsd"], active: 0 });
+      expect(find(ann.user.id).today.runs).toBeGreaterThanOrEqual(1);
+      expect(find(bob.user.id).limits.maxRunsPerDay).toBe(5);
+      expect(find(GHOST)).toMatchObject({ limits: {}, atLimit: [] });
+      expect(st.byRepo.every((r: { today?: object }) => typeof r.today === "object")).toBe(true);
+      expect(st.byRepo.find((r: { repo: string }) => r.repo === "acme/use").today.runs).toBe(1);
+    });
+
+    it("counts runs started today for the day of the given clock only", () => {
+      const noon = new Date(2021, 5, 15, 12);
+      writeRun(s, "20210615-000000-day-ann", { owner: ann.user.id, startedAt: new Date(2021, 5, 15, 0, 0).toISOString() });
+      expect(s.ctx.scheduler.startedTodayByOwner(noon).get(ann.user.id)).toBe(1);
+      expect(s.ctx.scheduler.startedTodayByOwner(new Date(2021, 5, 14, 23, 59)).get(ann.user.id) ?? 0).toBe(0);
+      expect(s.ctx.scheduler.startedTodayByOwner(new Date(2021, 5, 16, 0, 0)).get(ann.user.id) ?? 0).toBe(0);
+    });
+
+    it("gives empty limits, not an error, when limits.json is broken", async () => {
+      const file = limitsPath();
+      writeFileSync(file, "{ not json");
+      try {
+        const r = await call(s, admin, "GET", "/api/stats");
+        expect(r.status).toBe(200);
+        expect(r.json().byUser.every((u: { limits: object; atLimit: string[] }) => Object.keys(u.limits).length === 0 && u.atLimit.length === 0)).toBe(true);
+      } finally {
+        rmSync(file, { force: true });
+      }
+    });
+
+    it("counts runs that are active now for their owner and marks the concurrent limit", async () => {
+      const id = (await call(s, ann, "POST", "/api/runs", { flow: "slow", task: "slow" })).json().runId as string;
+      expect(await until(() => s.ctx.scheduler.queue().active.some((a: { runId: string }) => a.runId === id))).toBe(true);
+      await call(s, admin, "PUT", `/api/users/${ann.user.id}/limits`, { maxConcurrent: 1 });
+      const line = (await usage()).byUser.find((u: { owner: string }) => u.owner === ann.user.id);
+      expect(line.active).toBe(1);
+      expect(line.atLimit).toContain("maxConcurrent");
+    });
   });
 
   it("shows a user no owner, no cost and no board, turn or stats", async () => {

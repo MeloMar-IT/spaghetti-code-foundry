@@ -151,6 +151,20 @@ export class Scheduler {
     return typeof q?.owner === "string" ? q.owner : undefined;
   }
 
+  /** New runs that started today per account, counted as the per-day limit counts them: every run folder plus runs just started in memory. */
+  startedTodayByOwner(now = new Date()): Map<string, number> {
+    const day = now.toDateString();
+    const ids = new Map<string, Set<string>>();
+    const add = (owner: string, id: string) => (ids.get(owner) ?? ids.set(owner, new Set()).get(owner)!).add(id);
+    for (const b of listRunBriefs(this.o.runsDir)) {
+      const t = new Date(b.startedAt);
+      if (isRefinementRun(b.source) || Number.isNaN(t.getTime()) || t.toDateString() !== day) continue;
+      add(b.owner ?? "", b.runId);
+    }
+    for (const [id, s] of this.started) if (s.day === day) add(s.account, id);
+    return new Map([...ids].map(([o, s]) => [o, s.size]));
+  }
+
   /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
   answer(runId: string, text: string, by: string, meta: JobMeta = {}): void {
     if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
