@@ -1,0 +1,20 @@
+id: full
+version: 1.2.0-rc.1
+category: testing
+capabilities: [unit-tests, mocking]
+detectors:
+  - type: file
+    glob: "tests/**/*.test.ts"
+  - type: content
+    glob: package.json
+    contains: vitest
+roles: [tester, coder]
+dependencies:
+  - id: minimal
+    min_version: 0.1.0
+conflicts: [other-skill]
+tool_profile:
+  shell: true
+  network: false
+  filesystem: write
+risk: medium
