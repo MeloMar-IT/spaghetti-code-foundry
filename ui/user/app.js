@@ -1,9 +1,11 @@
 import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
+import { resolve } from "/ia.js";
 import { renderRefinement } from "/refinement.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { homeHash, renderStart } from "/user/start.js";
+import { showPage } from "/shell.js";
 import { beginView } from "/view-as.js";
 
 const main = document.getElementById("main");
@@ -30,12 +32,7 @@ async function route() {
   if (page.hash !== location.hash) history.replaceState(null, "", page.hash);
   cleanup?.();
   cleanup = null;
-  for (const a of document.querySelectorAll("[data-nav]")) {
-    const on = a.dataset.nav === page.section;
-    a.classList.toggle("active", on);
-    if (on) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  }
+  showPage("user", resolve("user", page.hash));
   // Each call draws into its own box, so a slow page that finishes after a hash change cannot touch the current one.
   const box = h("div", {});
   mount(main, box);

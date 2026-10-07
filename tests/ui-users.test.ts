@@ -817,8 +817,10 @@ describe("late answers", () => {
 
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
-  it("is wired into the page", () => {
-    expect(read("index.html")).toContain('href="#/users" data-nav="users">Users<');
+  it("is wired into the page", async () => {
+    const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "users", href: "#/users", label: "Users" });
+    expect(read("index.html")).toContain('href="#/users" data-nav="administration"');
     expect(read("app.js")).toContain('from "./users.js"');
     expect(read("app.js")).toContain('section === "users"');
     expect(read("user/index.html")).not.toContain("#/users");

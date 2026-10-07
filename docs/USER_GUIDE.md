@@ -76,14 +76,14 @@ admin for a new one.
 
 | Page | What it is for |
 |---|---|
-| **Your turn** | Only what waits for you, one button each; the app opens here when something waits |
+| **Home** (was *Your turn*) | Only what waits for you, one button each; the app opens here when something waits. The old address `#/your-turn` still works |
 | **Board** | Where every story is, in columns per repository |
 | **Flows** | Your flows and the built-in ones: edit, create, run |
 | **Library** | Reusable blocks of steps to drop into flows |
 | **Refinement** | Where a rough idea grows into a story before it goes to the backlog |
 | **Runs** | Everything that ran or is running; the ones that need you on top |
 | **My repositories** | The repositories you work in, and how the Foundry signs in to them |
-| **Repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
+| **All repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
 | **Credentials** | Admin: the stored credentials of all accounts, without any secret |
 | **Watchers** | Automatic runs from GitHub issues, PR comments, red CI, or a schedule |
 | **Models** | Which agents and models are available, and which model runs which step |
@@ -91,6 +91,8 @@ admin for a new one.
 | **Users** | The accounts: add, edit, block and delete them (admins only) |
 | **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
+
+**Navigation (admin display).** The top bar has at most seven places: **Home**, **Board**, **Refinement**, **Runs** and **Repositories** for daily work, then, set apart and smaller, **Flows** and **Administration**. **Start work** is a button, not a place. Under the top bar a second row groups the pages of one place: Repositories (My repositories, All repositories, Credentials), Flows (Flows, Library) and Administration (Users, Watchers, Models, Problems, Dashboard, Audit, Settings). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 An account with the role `user` works on its own display at `/user/`, with **Start work**, **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
 

@@ -3,6 +3,8 @@ import { api } from "./api.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
+import { resolve } from "./ia.js";
+import { showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
@@ -376,7 +378,9 @@ async function route() {
   const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
-  const hash = location.hash || "#/flows";
+  const to = resolve("admin", location.hash);
+  if (to.hash !== location.hash) history.replaceState(null, "", to.hash);
+  const hash = to.hash;
   const [, section, arg] = hash.split("/").map(decodeURIComponent);
   const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && hash !== "#/new";
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
@@ -387,9 +391,10 @@ async function route() {
   S.lastHash = hash;
   S.cleanup?.();
   S.cleanup = null;
-  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === (section === "new" ? "flows" : section)));
+  showPage("admin", to);
+  document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
-    if (section === "your-turn") S.cleanup = await renderYourTurn(main);
+    if (section === "home") S.cleanup = await renderYourTurn(main);
     else if (section === "board") S.cleanup = renderBoard(main, arg);
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);

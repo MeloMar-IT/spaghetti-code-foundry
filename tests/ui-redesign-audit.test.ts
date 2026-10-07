@@ -157,19 +157,26 @@ describe("the inventory matches the code", () => {
     for (const r of userRoutes(authSource)) expect(auth.isUserHash(r.replace(":id", "x-1")), r).toBe(true);
   });
 
-  it("gives every nav link a row with the same label, and every labelled row a nav link", () => {
-    for (const [file, prefix, rows] of [["ui/index.html", "", adminRows], ["ui/user/index.html", "/user/", userRows]] as const) {
-      const links = navLinks(read(file));
-      expect(links.length).toBeGreaterThan(0);
-      for (const l of links) {
-        const row = rows.find((r) => code(r[0]!) === `${prefix}#/${l.name}`);
-        expect(row, `${file}: no row for ${l.name}`).toBeDefined();
-        expect(row![1], `${file}: label of ${l.name}`).toBe(l.text);
-      }
+  it("gives every row the nav label of its page in ui/ia.js (— for a detail page)", async () => {
+    const { PAGES } = (await import("../ui/ia.js" as string)) as { PAGES: { path: string; nav: string; label: Record<string, string> }[] };
+    for (const [role, prefix, rows] of [["admin", "", adminRows], ["user", "/user/", userRows]] as const) {
       for (const r of rows) {
-        if (r[1] === "—") continue;
-        expect(links.some((l) => `${prefix}#/${l.name}` === code(r[0]!) && l.text === r[1]), `${r[0]} claims nav label ${r[1]}`).toBe(true);
+        const page = PAGES.find((p) => p.path === code(r[0]!).slice(prefix.length));
+        expect(page, `${r[0]}: no page in ui/ia.js`).toBeDefined();
+        expect(r[1], `${r[0]}: nav label`).toBe(page!.nav === "detail" ? "—" : page!.label[role] ?? "—");
       }
+    }
+  });
+
+  it("has a data-nav link in each HTML file for every primary destination and action", async () => {
+    const { primaryFor, actionsFor } = (await import("../ui/ia.js" as string)) as {
+      primaryFor: (r: string) => { id: string; label: string }[];
+      actionsFor: (r: string) => { id: string; label: string }[];
+    };
+    for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
+      const links = navLinks(read(file)).map((l) => ({ id: l.name, label: l.text }));
+      const want = [...actionsFor(role), ...primaryFor(role)].map((l) => l.id);
+      expect(links.map((l) => l.id).sort(), file).toEqual(want.sort());
     }
   });
 

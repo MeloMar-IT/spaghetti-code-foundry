@@ -505,7 +505,7 @@ steps:
   it("serves the Your turn page", async () => {
     const text = (p: string) => fetch(base + p).then((r) => r.text());
     const html = await text("/");
-    expect(html).toContain('data-nav="your-turn"');
+    expect(html).toContain('data-nav="home"');
     expect(html).toContain('id="turn-badge"');
     expect(html).toContain("<title>Spaghetti Code Foundry</title>");
     expect((await fetch(base + "/turn.js")).status).toBe(200);
@@ -515,7 +515,7 @@ steps:
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "retry" })).status).toBe(404);
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "explode" })).status).toBe(400);
     const app = await text("/app.js");
-    for (const s of ["renderYourTurn", "startHash(", 'section === "your-turn"']) expect(app).toContain(s);
+    for (const s of ["renderYourTurn", "startHash(", 'section === "home"']) expect(app).toContain(s);
     expect(await text("/api.js")).toContain("/api/your-turn");
   });
 

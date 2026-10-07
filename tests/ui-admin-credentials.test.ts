@@ -130,8 +130,10 @@ describe("late answers", () => {
 describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
 
-  it("links the page and imports it", () => {
-    expect(read("index.html")).toContain('<a href="#/all-repos" data-nav="all-repos">Repositories</a>\n      <a href="#/credentials" data-nav="credentials">Credentials</a>');
+  it("links the page and imports it", async () => {
+    const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string }[] };
+    const repos = ia.subnavFor("admin", "repos").map((l) => l.href);
+    expect(repos.indexOf("#/credentials")).toBe(repos.indexOf("#/all-repos") + 1);
     const app = read("app.js");
     expect(app).toContain('from "./admin-credentials.js"');
     expect(app).toContain('section === "credentials"');

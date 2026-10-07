@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
+import { setCount } from "./shell.js";
 import { actButtons } from "./turn-act.js";
 
 // The "Your turn" page: only what waits for the owner, from GET /api/your-turn. No wording of
@@ -20,7 +21,7 @@ export function showCount(count) {
     badge.textContent = count > 0 ? String(count) : "";
     badge.hidden = !(count > 0);
   }
-  document.title = tabTitle(count);
+  setCount(count);
 }
 
 let gen = 0; // the newest request wins
