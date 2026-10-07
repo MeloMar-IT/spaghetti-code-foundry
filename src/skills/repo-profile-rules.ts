@@ -107,12 +107,17 @@ export function manifestOf(relPath: string): { system: string; lockfile: boolean
   return undefined;
 }
 
-/** Schema file type by name, or undefined. */
+/** Schema or data-store definition file type by name (the file is named, never read), or undefined. */
 export function schemaOf(relPath: string): string | undefined {
   const b = baseName(relPath);
   if (/\.schema\.json$/.test(b)) return "json-schema";
-  if (/^(?:openapi|swagger)\.[\w]+$/.test(b)) return "openapi";
+  if (/(?:^|[._-])(?:openapi|swagger)\.(?:ya?ml|json)$/i.test(b)) return "openapi";
+  if (/^(?:tnsnames|sqlnet)\.ora$/i.test(b)) return "oracle-net";
+  if (/^kafka(?:[._-][\w.-]*)?\.(?:properties|ya?ml)$/i.test(b)) return "kafka-config";
   switch (extOf(relPath)) {
+    case "cql": return "cql";
+    case "mqsc": return "mqsc";
+    case "pks": case "pkb": return "plsql";
     case "sql": return "sql";
     case "prisma": return "prisma";
     case "proto": return "protobuf";
