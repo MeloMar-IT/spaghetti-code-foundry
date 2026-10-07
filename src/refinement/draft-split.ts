@@ -13,6 +13,7 @@ export const SPLIT_OWN_MAX = 500;
 export const SPLIT_MIN_CRITERIA = 2;
 export const SPLIT_CUTS = ["step", "interface", "data", "rule", "spike"] as const;
 export const END_NO_SPLIT_DRAFT = "The story draft for the split could not be found";
+export const END_SPLIT_PAUSED = "The draft was split while the run was paused";
 
 const LINE_BREAK = new RegExp(`[\\n\\r\\v\\f\\u0085${String.fromCharCode(0x2028, 0x2029)}]`);
 // The rules of checkSplit in tools/refine-round-check, so a forged or damaged answer cannot store what the tool would refuse.
@@ -99,6 +100,11 @@ export function confirmRefusal(d: Pick<Draft, "splitInto" | "part" | "published"
   if (d.part) return "a part of a split cannot be split again";
   if (d.published !== undefined) return "a published draft cannot be split";
   return undefined;
+}
+
+/** Throws bad-state when the draft is the original of a split: it is read-only. Nothing for an unknown draft. */
+export function refuseSplit(st: DraftState, draftId: string): void {
+  if (st.drafts.find((d) => d.id === draftId)?.splitInto) throw new RefinementError("bad-state", SPLIT_READ_ONLY);
 }
 
 /** Why this draft cannot be split (asked for ways), or undefined: the state reasons of confirmRefusal, then the criteria count. */

@@ -9,7 +9,7 @@ import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
 import { confirmSplit, moveCriterion } from "./draft-parts.js";
-import { END_NO_SPLIT_DRAFT, setSplit, type SplitRefs } from "./draft-split.js";
+import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
@@ -363,6 +363,7 @@ export const END_NO_DRAFT = "The story draft for the suggestion could not be fou
 export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
 export const END_NO_READY_DRAFT = "The story draft for the readiness check could not be found";
 export const END_ON_GITHUB = "The story draft is on GitHub already";
+export const END_SPLIT_DURING = "The draft was split while the architect was reading";
 export const END_READY_CHANGED = "The draft changed while the architect judged it; check readiness again";
 
 export interface ArchitectAsk {
@@ -443,6 +444,8 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
     if ("failed" in end) return fail(end.failed);
     // A draft that is on GitHub is not changed by the end of a run.
     if (a.draft && s.drafts.find((d) => d.id === a.draft)?.published) return fail(END_ON_GITHUB);
+    // The original of a split is read-only: a run that ends after the split does not store its result there.
+    if (a.draft && !("split" in end) && s.drafts.find((d) => d.id === a.draft)?.splitInto) return fail(END_SPLIT_DURING);
     const { architect: _gone, ...rest } = s;
     if ("brief" in end) {
       const tooLong = end.brief.text.length > BRIEF_MAX;
@@ -657,28 +660,28 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
 }
 
 export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft, { add: true });
-export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input), { draft: draftId });
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), saveTyped(st, draftId, input)), { draft: draftId });
 export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
 export const confirmSplitOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => confirmSplit(st, draftId, input), { draft: draftId });
 export const moveCriterionOf = (actor: Actor, id: string, draftId: string, criterionId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveCriterion(st, draftId, criterionId, input), { draft: draftId });
 export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input), { draft: draftId });
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), acceptSuggestion(st, draftId, sid, input)), { draft: draftId });
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input), { draft: draftId });
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), rejectSuggestion(st, draftId, sid, input)), { draft: draftId });
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
-export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input), { draft: draftId });
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), moveToNotes(st, draftId, input)), { draft: draftId });
 export const setReviewLabelOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input), { draft: draftId });
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), setReviewLabel(st, draftId, input)), { draft: draftId });
 export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input), { epic: true });
 
 // ---- the Definition of Ready -----------------------------------------------------------------------
 
 /** The person checks a draft against the Definition of Ready of the repository, by code: only `readiness` of the draft changes. */
-export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at), { draft: draftId });
+export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), checkReady(st, x.talk, draftId, x.list, x.at)), { draft: draftId });
 /** The person accepts an item of the list anyway, with a reason. */
 export const acceptAnywayOf = (actor: Actor, id: string, draftId: string, itemId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at), { draft: draftId });
-export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list), { draft: draftId });
+  changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), acceptAnyway(st, draftId, itemId, input, x.list, x.at)), { draft: draftId });
+export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), removeAccepted(st, draftId, itemId, x.list)), { draft: draftId });
 
 // ---- publishing ------------------------------------------------------------------------------------
 

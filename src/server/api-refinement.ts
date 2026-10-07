@@ -10,7 +10,7 @@ import { architectView, askArchitect, settleSession, stopArchitect, type Archite
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
 import { partWarnings } from "../refinement/draft-parts.js";
-import { splitView } from "../refinement/draft-split.js";
+import { SPLIT_READ_ONLY, splitView } from "../refinement/draft-split.js";
 import { otherDrafts } from "../refinement/known-areas.js";
 import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
@@ -363,7 +363,18 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "ready-check" && method === "POST") {
     const did = seg[3]!;
     // The code checks come first and are stored; the architect judges only what they left unsure.
-    const checked = guarded(ctx, () => checkReadyOf(actor, seg[1]!, did));
+    const checked = guarded(ctx, () => {
+      try {
+        return checkReadyOf(actor, seg[1]!, did);
+      } catch (e) {
+        // A split original is not checked. A check of it that was paused before the split is ended by the architect code, which refuses with the same sentence.
+        const a = e instanceof RefinementError && e.message === SPLIT_READ_ONLY ? getSession(seg[1]!)?.architect : undefined;
+        if (a?.kind === "ready" && a.draft === did && a.failed === undefined && architectView(deps(ctx), { architect: a }).state === "paused") {
+          askArchitect(deps(ctx), actor, seg[1]!, { kind: "ready", draft: did });
+        }
+        throw e;
+      }
+    });
     const draft = checked.drafts.find((d) => d.id === did);
     if (draft && unsureByCode(draft).length) return startRun({ kind: "ready", draft: did });
     // Code decided everything: a run for this draft that is still there (paused, say) is not needed any more.

@@ -6,23 +6,30 @@ import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
 import { dropDraft } from "../src/refinement/draft.js";
 import { draftMark } from "../src/refinement/draft-impact.js";
 import { confirmSplit, moveCriterion, partWarnings } from "../src/refinement/draft-parts.js";
-import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, SPLIT_READ_ONLY, confirmRefusal, ownWay, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
+import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, SPLIT_READ_ONLY, confirmRefusal, ownWay, refuseSplit, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
 import { OWN_WAY_HEADING, splitOf, splitText } from "../src/refinement/split-text.js";
 import {
   END_BAD_FORM,
   END_ON_GITHUB,
+  END_SPLIT_DURING,
   RefinementError,
+  acceptAnywayOf,
   acceptSuggestionOf,
   addDraft,
+  checkReadyOf,
   checkRefinements,
   confirmSplitOf,
   createSession,
   moveCriterionOf,
   endArchitectRun,
   getSession,
+  moveToNotesOf,
   refinementsPath,
+  rejectSuggestionOf,
+  removeAcceptedOf,
   removeDraft,
   saveDraft,
+  setReviewLabelOf,
   setArchitectRun,
 } from "../src/refinement/store.js";
 import { emptyTalk } from "../src/refinement/talk.js";
@@ -512,6 +519,87 @@ describe("removing and editing the drafts of a split", () => {
     for (const target of [p2!.id, did]) {
       edit((f) => (f.sessions[0].drafts[1].suggestions = [{ id: sid, field: "dependsOn", draft: target }]));
       expect(code(() => acceptSuggestionOf(ann, id, p1!.id, sid, {}, T))).toBe("bad-draft");
+    }
+  });
+});
+
+describe("a split original is read-only", () => {
+  const SID = "22222222-2222-4222-8222-222222222222";
+  const confirmed = () => {
+    const { id, did } = setup();
+    const s = confirm(id, did, planOf(id, did, { way: undefined }));
+    return { id, did, parts: s.drafts.slice(1).map((d) => d.id) };
+  };
+  const stateOf = (id: string) => {
+    const s = getSession(id)!;
+    return { drafts: s.drafts, epic: s.epic } as any;
+  };
+
+  it("refuseSplit throws for a split draft and does nothing for others", () => {
+    const { id, did, parts } = confirmed();
+    expect(code(() => refuseSplit(stateOf(id), did))).toBe("bad-state");
+    expect(message(() => refuseSplit(stateOf(id), did))).toBe(SPLIT_READ_ONLY);
+    expect(code(() => refuseSplit(stateOf(id), parts[0]!))).toBeUndefined();
+    expect(code(() => refuseSplit(stateOf(id), "nope"))).toBeUndefined();
+    const plain = setup();
+    expect(code(() => refuseSplit(stateOf(plain.id), plain.did))).toBeUndefined();
+  });
+
+  it("refuses each change of the original and writes nothing", () => {
+    const { id, did } = confirmed();
+    const before = readFileSync(refinementsPath(), "utf8");
+    const calls: [string, () => unknown][] = [
+      ["saveDraft", () => saveDraft(ann, id, did, { title: "New" }, T)],
+      ["acceptSuggestionOf", () => acceptSuggestionOf(ann, id, did, SID, {}, T)],
+      ["rejectSuggestionOf", () => rejectSuggestionOf(ann, id, did, SID, {}, T)],
+      ["moveToNotesOf", () => moveToNotesOf(ann, id, did, { field: "what" }, T)],
+      ["setReviewLabelOf", () => setReviewLabelOf(ann, id, did, {}, T)],
+      ["checkReadyOf", () => checkReadyOf(ann, id, did, T)],
+      ["acceptAnywayOf", () => acceptAnywayOf(ann, id, did, "value", { reason: "x" }, T)],
+      ["removeAcceptedOf", () => removeAcceptedOf(ann, id, did, "value", T)],
+    ];
+    for (const [name, fn] of calls) {
+      expect([name, code(fn), message(fn)]).toEqual([name, "bad-state", SPLIT_READ_ONLY]);
+    }
+    expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+    expect(code(() => saveDraft(ann, id, "nope", {}, T))).toBe("not-found");
+  });
+
+  it("can still remove the original", () => {
+    const { id, did } = confirmed();
+    expect(removeDraft(ann, id, did, T).drafts).toHaveLength(2);
+  });
+
+  it("can be edited again after the last part is removed", () => {
+    const { id, did, parts } = confirmed();
+    removeDraft(ann, id, parts[0]!, T);
+    expect(code(() => saveDraft(ann, id, did, { title: "Again" }, T))).toBe("bad-state");
+    removeDraft(ann, id, parts[1]!, T);
+    saveDraft(ann, id, did, { title: "Again" }, T);
+    expect(draft(id, did).title).toMatchObject({ text: "Again" });
+  });
+
+  it("does not refuse a part", () => {
+    const { id, parts } = confirmed();
+    saveDraft(ann, id, parts[0]!, { title: "Changed" }, T);
+    expect(draft(id, parts[0]!).title).toMatchObject({ text: "Changed" });
+    expect(checkReadyOf(ann, id, parts[0]!, T).drafts.find((d) => d.id === parts[0])!.readiness).toBeDefined();
+  });
+
+  it("does not store the result of a run that ends after the split", () => {
+    const kinds: [string, any][] = [
+      ["suggest", { suggested: {} }],
+      ["review", { reviewed: {} }],
+      ["impact", { impact: {} }],
+      ["ready", { judged: {} }],
+    ];
+    for (const [kind, end] of kinds) {
+      const { id, did } = setup();
+      setArchitectRun(ann, id, `late-${kind}`, { kind, draft: did, field: "who" } as any);
+      confirm(id, did, planOf(id, did, { way: undefined }));
+      const s = endArchitectRun(id, `late-${kind}`, end);
+      expect([kind, s?.architect?.failed]).toEqual([kind, END_SPLIT_DURING]);
+      expect(() => checkRefinements()).not.toThrow();
     }
   });
 });
