@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
+import { publishSection } from "./refinement-publish.js";
 import { impactLogText } from "./refinement-impact.js";
 import { readyLogText } from "./refinement-ready.js";
 import { reviewLogText } from "./refinement-remarks.js";
@@ -416,6 +417,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         );
       }
       sections.update(s);
+      publishing.update(s);
       const lowerKey = JSON.stringify(s.log);
       if (lowerKey !== shownLower) {
         shownLower = lowerKey;
@@ -423,9 +425,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       }
     };
     const sections = draftSection({ id, save, send, errorText, statusLine: (a) => statusLine(architectStatus(a)) });
+    const publishing = publishSection({ id, save, errorText, current, saveAll: sections.saveAll, read: async () => seen(await api.refinementSession(id)) });
     leaveDrafts = sections.leave;
     show(s);
-    mount(main, upper, sections.node, lower); // after the first draw, so the focus finds its control again
+    mount(main, upper, sections.node, publishing.node, lower); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 

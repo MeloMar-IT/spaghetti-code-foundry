@@ -444,7 +444,10 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .drafts .ready ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
 .drafts .ready .pill, .drafts .ready li > small { margin: 0 6px; }
 .drafts .ready li > button { margin-left: 6px; }
-.pill.ready-met, .pill.state-ready { background: var(--ok-soft); color: var(--ok); }
+.publish { display: grid; gap: 8px; justify-items: start; margin-top: 16px; }
+.modal ol.plan li { margin-bottom: 12px; }
+.modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
 .pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
 .drafts .remark { font-size: 12.5px; color: var(--muted); }
 .drafts .remark > small { margin-left: 6px; }

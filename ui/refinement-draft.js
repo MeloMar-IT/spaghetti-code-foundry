@@ -119,6 +119,13 @@ function readOnlyNodes(s, d) {
     from.length ? [h("b", {}, "Where the text came from"), h("ul", {}, from.map((t) => h("li", {}, t)))] : null);
 }
 
+/** The link to the issue of a published draft; plain text when the address is not on github.com. */
+function issueLink(d) {
+  const text = `#${d.published.issue}`;
+  const url = String(d.published.url ?? "");
+  return url.startsWith("https://github.com/") ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, text) : text;
+}
+
 const dependsItem = (x) => (x.issue !== undefined ? { id: x.id, issue: x.issue } : { id: x.id, draft: x.draft });
 const nodes = (v) => [v].flat(Infinity).filter(Boolean);
 
@@ -610,10 +617,11 @@ export function draftSection(ctx) {
     if (!drafts.length) return h("p", { class: "muted" }, "No story drafts yet.");
     const openId = opened.get(sid);
     return h("ul", {}, drafts.map((d) => h("li", { class: "entry" }, h("span", {}, draftTitle(d)), h("span", { class: `pill state-${d.state}` }, draftStateText(d)),
+      d.published ? h("span", { class: "muted" }, "On GitHub: ", issueLink(d)) : null,
       mine ? h("button", { "data-focus": `open-${d.id}`, onClick: () => open(openId === d.id ? null : d.id) }, openId === d.id ? "Close" : "Open") : null)));
   };
   const epicNodes = (s, mine) => {
-    if (!mine) return s.epic !== undefined ? h("p", {}, `Epic: #${s.epic}`) : null;
+    if (!mine || (s.drafts ?? []).some((d) => d.published)) return s.epic !== undefined ? h("p", {}, `Epic: #${s.epic}`) : null;
     return [
       h("p", {}, s.epic !== undefined ? `Epic: #${s.epic}` : "No Epic set."),
       h("div", { class: "row" }, epicInput,
@@ -644,7 +652,7 @@ export function draftSection(ctx) {
       stray ? ctx.statusLine(a) : null,
       stray && a.state === "paused" && mine && strayDraft ? h("p", { class: "muted" }, `Open the draft "${draftTitle(strayDraft)}" to ask again.`) : null,
     ]);
-    fill("epic", `${mine}|${s.epic}`, () => epicNodes(s, mine));
+    fill("epic", `${mine}|${s.epic}|${drafts.some((d) => d.published)}`, () => epicNodes(s, mine));
     if (!mine) {
       ed = null;
       memo.editor = null;
@@ -652,12 +660,12 @@ export function draftSection(ctx) {
       fill("list", `ro|${s.draftsHidden}|${JSON.stringify([drafts, s.talk?.map, s.readyList])}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map((d) => {
         const n = impactNodes(s, d, null);
         const r = readyNodes(s, d, null);
-        return [previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null];
+        return [d.published ? h("p", {}, "On GitHub: ", issueLink(d)) : null, previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null];
       }) : listNodes(drafts, false)));
     } else {
-      fill("list", `rw|${opened.get(sid)}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d), d.state]))}`, () => [
+      fill("list", `rw|${opened.get(sid)}|${s.state}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d), d.state, d.published?.issue]))}`, () => [
         listNodes(drafts, true),
-        h("div", { class: "row" }, h("button", { onClick: (e) => ctx.send(e.currentTarget, () => api.addDraft(sid).then((next) => {
+        s.state === "published" ? null : h("div", { class: "row" }, h("button", { onClick: (e) => ctx.send(e.currentTarget, () => api.addDraft(sid).then((next) => {
           const before = new Set((sess.drafts ?? []).map((d) => d.id));
           const added = next.drafts?.find((d) => !before.has(d.id));
           if (added) {
@@ -670,8 +678,19 @@ export function draftSection(ctx) {
       const d = drafts.find((x) => x.id === opened.get(sid));
       if (!d) {
         ed = null;
+        memo.editor = null;
         boxes.editor.replaceChildren();
+      } else if (d.published) {
+        // On GitHub: shown as text only, no fields; the saved texts are the record of what was published.
+        ed = null;
+        fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}`, () => h("div", { class: "card" },
+          h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here."),
+          previewNodes(d), readOnlyNodes(s, d), readyNodes(s, d, null), impactNodes(s, d, null)));
       } else {
+        if (memo.editor) {
+          memo.editor = null;
+          ed = null;
+        }
         if (!ed || ed.did !== d.id) buildEditor(d);
         syncEditor(d);
         if (focusTitle) {
@@ -694,6 +713,17 @@ export function draftSection(ctx) {
       } }, "Discard") : null) : null));
   };
 
+  /** Sends every typed text now, until nothing that has a place is waiting. { ok: false } when a save failed; `lost`: texts of this session with no place on the page. */
+  const saveAll = async () => {
+    for (let i = 0; i < 5; i++) {
+      const done = await Promise.all(flushAll());
+      if (done.includes(false)) return { ok: false, lost: 0 };
+      if (![...unsaved.keys()].some((k) => k.startsWith(`${sid}${SEP}`) && placeOf(k) && !failed.has(k))) break;
+    }
+    const left = [...unsaved.keys()].filter((k) => k.startsWith(`${sid}${SEP}`));
+    return { ok: !left.some((k) => placeOf(k)), lost: left.filter((k) => !placeOf(k)).length };
+  };
+
   const me = { sid, flush };
   cur = me;
   if (!guarded && typeof window !== "undefined" && typeof window.addEventListener === "function") {
@@ -705,5 +735,5 @@ export function draftSection(ctx) {
     flushAll();
     if (cur === me) cur = null;
   };
-  return { node: root, update, leave };
+  return { node: root, update, leave, saveAll };
 }
