@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en" data-role="admin" data-theme="auto" data-width="wide" data-state="data" data-alt="a" data-alts="a b" data-states="data empty loading error">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home — SCF prototype</title>
+<link rel="stylesheet" href="proto.css">
+<script src="proto.js" defer></script>
+</head>
+<body class="page-home">
+<div class="frame">
+<div class="app">
+<header class="top">
+  <button class="icon menu-btn" data-drawer aria-label="Menu">☰</button>
+  <span class="brand">SCF</span>
+  <button class="search" data-open="cmd">Search runs, repositories, actions <kbd>⌘K</kbd></button>
+  <button class="btn" data-open="start">Start work</button>
+  <button class="icon" data-open="activity">Activity<span class="badge">2</span></button>
+  <button class="icon" data-open="account">Account</button>
+</header>
+<nav class="side" aria-label="Main">
+  <a href="home.html"><i>⌂</i><span class="label">Home</span></a>
+  <a href="board.html" data-only-role="admin"><i>▥</i><span class="label">Board</span></a>
+  <a href="runs.html"><i>≡</i><span class="label">Runs</span></a>
+  <a href="repositories.html"><i>◫</i><span class="label">Repositories</span></a>
+  <a href="#refinement"><i>✎</i><span class="label">Refinement</span></a>
+  <a href="#flows" data-only-role="admin"><i>⑂</i><span class="label">Flows</span></a>
+  <a href="admin.html" data-only-role="admin"><i>⚙</i><span class="label">Administration</span></a>
+</nav>
+<div class="main-wrap">
+<div class="health ok" data-only-role="admin">All good <button class="btn small" data-open="healthp">Details</button></div>
+<main class="main">
+<section class="view" data-only-alt="a" data-only-state="data">
+<header class="head"><div><h1>Home</h1><p class="muted">What needs you first.</p></div><div class="actions"><button class="btn primary" data-open="review">Review request</button><button class="btn" data-open="start">Start work</button></div></header>
+<h3>Needs you</h3>
+<div class="card row"><div><b>Add retry to the uploader</b><br><span class="pill wait">Waiting for you</span> <span class="repo">example/app</span> <span class="owner" data-only-role="admin">ana@example.test</span></div><button class="btn" data-open="review">Review request</button></div>
+<div class="card row"><div><b>Rename the config keys</b><br><span class="pill fail">Failed</span> <span class="repo">example/app</span> <span class="owner" data-only-role="admin">ana@example.test</span></div><a class="btn" href="run.html?run=failed">See what failed</a></div>
+<h3>Active and recent</h3>
+<div class="card row"><div><b>Fix the date parser</b><br><span class="pill run">Running</span> <span class="repo">example/app</span> <span class="owner" data-only-role="admin">ana@example.test</span></div><a class="btn" href="run.html?run=running">Follow</a></div>
+<div class="card row"><div><b>Speed up the search page</b><br><span class="pill ok">Done</span> <span class="repo">example/app</span> <span class="owner" data-only-role="admin">ana@example.test</span></div><a class="btn" href="run.html?run=done">Review changes</a></div>
+<p class="muted" data-only-role="user">Only your own runs are shown.</p>
+</section>
+<section class="view" data-only-alt="b" data-only-state="data">
+<header class="head"><div><h1>Home</h1><p class="muted">Pick an item, act on the right.</p></div><div class="actions"><button class="btn" data-open="start">Start work</button></div></header>
+<div class="split">
+  <div>
+    <h3>Needs you</h3>
+    <a class="card wait" href="#item1" style="display:block;text-decoration:none">Add retry to the uploader<br><span class="pill wait">Waiting for you</span></a>
+    <a class="card fail" href="run.html?run=failed" style="display:block;text-decoration:none">Rename the config keys<br><span class="pill fail">Failed</span></a>
+    <h3>Active</h3>
+    <a class="card" href="run.html?run=running" style="display:block;text-decoration:none">Fix the date parser<br><span class="pill run">Running</span></a>
+  </div>
+  <div class="card"><h2>Add retry to the uploader</h2><p><span class="pill wait">Waiting for you</span> <span class="repo">example/app</span></p>
+    <p>The plan is ready. Approve it, or reject it with a note.</p>
+    <label class="field"><span>Note (optional)</span><textarea></textarea></label>
+    <button class="btn primary">Approve</button> <button class="btn danger">Reject</button>
+  </div>
+</div>
+</section>
+<section class="view" data-only-alt="a" data-only-state="empty">
+<header class="head"><div><h1>Home</h1><p class="muted">Nothing runs and nothing waits.</p></div></header>
+<div class="empty"><h2>What should be done?</h2>
+  <label class="field"><textarea placeholder="Describe the task"></textarea></label>
+  <button class="btn primary">Start</button>
+</div>
+</section>
+<section class="view" data-only-alt="a" data-only-state="loading">
+<header class="head"><div><h1>Home</h1><p class="muted">Loading.</p></div></header>
+<div class="loading" aria-busy="true"><div class="bar"></div><div class="bar"></div><div class="bar short"></div></div>
+</section>
+<section class="view" data-only-alt="a" data-only-state="error">
+<header class="head"><div><h1>Home</h1><p class="muted">Something went wrong.</p></div></header>
+<div class="error"><b>Could not load your work.</b><p>Nothing was changed. Try again.</p><button class="btn">Retry</button></div>
+</section>
+</main>
+</div>
+</div>
+<div class="panel menu" id="account" hidden>
+  <button class="small close" data-close>Close</button>
+  <p><b>Ana</b> <span class="muted">ana@example.test</span></p>
+  <p class="muted"><span data-only-role="admin">Role: admin</span><span data-only-role="user">Role: user</span></p>
+  <ul><li><a href="#password">Change password</a></li><li><a href="#signout">Sign out</a></li></ul>
+</div>
+<div class="panel cmd" id="cmd" hidden>
+  <button class="small close" data-close>Close</button>
+  <input autofocus placeholder="Type to search runs, repositories, actions">
+  <ul>
+    <li><a href="runs.html">Runs</a></li>
+    <li><a href="run.html?run=failed">Run: Rename the config keys (failed)</a></li>
+    <li><a href="repositories.html">Repositories</a></li>
+    <li><a href="board.html" data-only-role="admin">Board</a></li>
+    <li><a href="#start" data-open="start">Action: Start work</a></li>
+  </ul>
+</div>
+<div class="panel side-panel" id="start" hidden>
+  <button class="small close" data-close>Close</button>
+  <h2>Start work</h2>
+  <label class="field"><span>What should be done?</span><textarea autofocus placeholder="Describe the task"></textarea></label>
+  <label class="field"><span>Repository</span><select><option>example/app</option><option>example/site</option></select></label>
+  <a class="btn primary" href="run.html?run=running">Start</a>
+</div>
+<div class="panel side-panel" id="activity" hidden>
+  <button class="small close" data-close>Close</button>
+  <h2>Activity</h2>
+  <p class="muted">What changed since you last looked.</p>
+  <div class="since" data-only-role="admin">
+    <h3>Done</h3><p>Speed up the search page <a href="run.html?run=done">open</a></p>
+    <h3>On develop</h3><p>Fix the date parser</p>
+    <h3>Released</h3><p>Nothing</p>
+    <h3>Failed</h3><p>Rename the config keys <a href="run.html?run=failed">open</a></p>
+    <h3>Waiting</h3><p>Add retry to the uploader <a href="home.html">review</a></p>
+    <h3>Notes</h3><p class="muted">The monitor has no new findings.</p>
+    <button class="btn small">Dismiss</button>
+  </div>
+  <div data-only-role="user">
+    <h3>Your runs</h3>
+    <p>Add retry to the uploader waits for you. <a href="home.html">Review</a></p>
+    <p>Rename the config keys failed. <a href="run.html?run=failed">See what failed</a></p>
+  </div>
+</div>
+<div class="panel side-panel" id="healthp" hidden>
+  <button class="small close" data-close>Close</button>
+  <div class="health ok" data-only-role="admin">Server health: all good</div>
+  <p data-only-role="admin">Version <span class="mono">3da81e3</span>, 2026-10-07. An update is waiting.</p>
+  <p data-only-role="admin">Last check of <span class="repo">example/app</span>: 2 min ago. Monitor findings: 0 open of 3.</p>
+</div>
+<div class="panel side-panel" id="review" hidden>
+  <button class="small close" data-close>Close</button>
+  <h2>Review request</h2>
+  <p><b>Add retry to the uploader</b></p>
+  <p class="muted">Plan: add a retry with a 3 s pause. 2 files.</p>
+  <label class="field"><span>Note (optional)</span><textarea autofocus></textarea></label>
+  <button class="btn primary" data-close>Approve</button> <button class="btn danger" data-close>Reject</button>
+</div>
+</div>
+</body>
+</html>
