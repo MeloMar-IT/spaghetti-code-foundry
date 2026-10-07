@@ -293,7 +293,7 @@ describe("confirming a split", () => {
   const publish = async (id: string, index: number) => {
     started!.close();
     const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
-    f.sessions.find((s: any) => s.id === id).drafts[index].published = 42;
+    f.sessions.find((s: any) => s.id === id).drafts[index].published = { issue: 42, url: "https://github.com/acme/app/issues/42", at: "2026-01-01T00:00:00.000Z" };
     writeFileSync(refinementsPath(), JSON.stringify(f));
     started = await startServer(opts());
     await get(id);
@@ -347,7 +347,9 @@ describe("confirming a split", () => {
     }
     const p = await withDraft();
     await publish(p.id, 0);
-    expect((await confirm(p.id, p.did, {})).error()).toBe("a published draft cannot be split");
+    const c = await confirm(p.id, p.did, {});
+    expect(c.status).toBe(409);
+    expect(c.error()).toMatch(/on GitHub as issue #42/);
     expect((await split(p.id, p.did)).status).toBe(409);
   });
 
@@ -359,12 +361,15 @@ describe("confirming a split", () => {
     expect((await confirm(id, "00000000-0000-4000-8000-000000000000", body)).status).toBe(404);
   });
 
-  it("removes a published part only after its original is gone, and strips part from the parts", async () => {
+  it("does not remove a published part or its original, and strips part from the parts of a removed original", async () => {
     const { id, did } = await withDraft();
     const s = (await confirm(id, did, await plan(id))).json();
     await publish(id, 2);
     expect((await call(ann, "DELETE", url(id, `drafts/${s.drafts[2].id}`))).status).toBe(409);
-    const r = await call(ann, "DELETE", url(id, `drafts/${did}`));
+    expect((await call(ann, "DELETE", url(id, `drafts/${did}`))).status).toBe(409);
+    const other = await withDraft();
+    await confirm(other.id, other.did, await plan(other.id));
+    const r = await call(ann, "DELETE", url(other.id, `drafts/${other.did}`));
     expect(r.status).toBe(200);
     expect(r.json().drafts.every((d: any) => d.part === undefined)).toBe(true);
   });

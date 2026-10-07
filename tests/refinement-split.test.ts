@@ -3,11 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askOfJob, kindOfRun } from "../src/refinement/architect.js";
+import { dropDraft } from "../src/refinement/draft.js";
 import { draftMark } from "../src/refinement/draft-impact.js";
+import { confirmSplit } from "../src/refinement/draft-parts.js";
 import { END_NO_SPLIT_DRAFT, SPLIT_OWN_MAX, SPLIT_READ_ONLY, confirmRefusal, ownWay, splitRefusal, splitView, type SplitRefs } from "../src/refinement/draft-split.js";
 import { OWN_WAY_HEADING, splitOf, splitText } from "../src/refinement/split-text.js";
 import {
   END_BAD_FORM,
+  END_ON_GITHUB,
   RefinementError,
   acceptSuggestionOf,
   addDraft,
@@ -259,6 +262,7 @@ describe("ownWay and splitRefusal", () => {
 
 // ---- confirming a split -----------------------------------------------------------------------------
 
+const PUBLISHED = { issue: 12, url: "https://github.com/acme/app/issues/12", at: "2026-01-01T00:00:00.000Z" };
 const confirm = (id: string, did: string, body: unknown) => confirmSplitOf(ann, id, did, body, T);
 const ids = (id: string, did: string) => draft(id, did).criteria.map((c) => c.id);
 /** The plan of way 0 in the form of the body. */
@@ -429,8 +433,12 @@ describe("confirming a split", () => {
     expect(splitRefusal(draft(id, did))).toBe(SPLIT_READ_ONLY);
     expect(splitRefusal(draft(id, part))).toBe("a part of a split cannot be split again");
     const other = setup();
-    edit((f) => (f.sessions[1].drafts[0].published = 12));
-    expect(message(() => confirm(other.id, other.did, {}))).toBe("a published draft cannot be split");
+    edit((f) => (f.sessions[1].drafts[0].published = PUBLISHED));
+    // The store refuses a published draft first; the rule of the split itself holds for the state too.
+    expect(code(() => confirm(other.id, other.did, {}))).toBe("bad-state");
+    expect(message(() => confirm(other.id, other.did, {}))).toMatch(/on GitHub as issue #12/);
+    const st = { drafts: getSession(other.id)!.drafts, epic: undefined };
+    expect(message(() => confirmSplit(st, other.did, {}))).toBe("a published draft cannot be split");
     expect(splitRefusal(draft(other.id, other.did))).toBe("a published draft cannot be split");
     expect(confirmRefusal({ splitInto: undefined, part: undefined, published: undefined })).toBeUndefined();
   });
@@ -446,8 +454,8 @@ describe("confirming a split", () => {
     const b = setup();
     setArchitectRun(ann, b.id, "late-2", { kind: "split", draft: b.did });
     const refs2 = refsOf(b.id, b.did);
-    edit((f) => (f.sessions[1].drafts[0].published = 3));
-    expect(endArchitectRun(b.id, "late-2", { split: ANSWER(), refs: refs2 }).architect?.failed).toBe(END_NO_SPLIT_DRAFT);
+    edit((f) => (f.sessions[1].drafts[0].published = PUBLISHED));
+    expect(endArchitectRun(b.id, "late-2", { split: ANSWER(), refs: refs2 }).architect?.failed).toBe(END_ON_GITHUB);
     expect(draft(b.id, b.did).split).toBeUndefined();
     expect(() => checkRefinements()).not.toThrow();
   });
@@ -475,13 +483,22 @@ describe("removing and editing the drafts of a split", () => {
     expect(() => checkRefinements()).not.toThrow();
   });
 
-  it("does not remove a published part while the original is there", () => {
+  it("does not remove a published part, and the original keeps its parts then", () => {
     const { id, did } = setup();
     const p2 = confirm(id, did, planOf(id, did, { way: undefined })).drafts[2]!.id;
-    edit((f) => (f.sessions[0].drafts[2].published = 9));
+    edit((f) => (f.sessions[0].drafts[2].published = PUBLISHED));
     expect(code(() => removeDraft(ann, id, p2, T))).toBe("bad-state");
-    removeDraft(ann, id, did, T);
-    expect(code(() => removeDraft(ann, id, p2, T))).toBeUndefined();
+    // Removing the original would change the published part (it loses `part`), which the store does not allow.
+    expect(code(() => removeDraft(ann, id, did, T))).toBe("bad-state");
+    expect(draft(id, did).splitInto).toHaveLength(2);
+    expect(() => checkRefinements()).not.toThrow();
+  });
+
+  it("dropDraft itself refuses a published part", () => {
+    const { id, did } = setup();
+    const s = confirm(id, did, planOf(id, did, { way: undefined }));
+    const drafts = s.drafts.map((d, i) => (i === 2 ? { ...d, published: PUBLISHED } : d));
+    expect(message(() => dropDraft({ drafts, epic: undefined }, drafts[2]!.id))).toBe("this part is on GitHub; it cannot be removed");
   });
 
   it("refuses a part that depends on a later part or on its original", () => {
@@ -525,7 +542,7 @@ describe("loading splits", () => {
   });
 
   it("refuses a split draft that is a part or published", () => {
-    broken((d) => (d[0].published = 5));
+    broken((d) => (d[0].published = PUBLISHED));
     broken((d) => (d[0].part = { of: d[0].id }));
   });
 
