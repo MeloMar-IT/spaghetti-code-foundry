@@ -186,6 +186,58 @@ describe("the plan", () => {
   });
 });
 
+describe("a split", () => {
+  const THREE = [{ text: "It exports a file" }, { text: "It has a header" }, { text: "It is sent by mail" }];
+  const PART = { who: FULL.who, what: FULL.what, why: FULL.why, outOfScope: FULL.outOfScope };
+  /** X depends on the original; the original is split in "First" and "Second" (Second depends on First); the parts named in `check`, and X, are ready-checked. */
+  async function splitSession(leftover = false, check: (parts: string[]) => string[] = (p) => p) {
+    const { id, did } = await withDraft({ ...FULL, title: "Export", criteria: THREE }, false);
+    const x = await addDraft(id, { ...FULL, title: "Report page" }, false);
+    expect((await dependOn(id, x, did)).status).toBe(200);
+    const c = (await call(ann, "GET", `/api/refinement/${id}`)).json().drafts.find((d: any) => d.id === did).criteria.map((k: any) => k.id);
+    const body = {
+      parts: [
+        { title: "First", criteria: [c[0]], dependsOn: [] },
+        { title: "Second", criteria: leftover ? [c[1]] : [c[1], c[2]], dependsOn: [1] },
+      ],
+      unplaced: leftover ? [c[2]] : [],
+    };
+    const r = await call(ann, "POST", url(id, `drafts/${did}/split/confirm`), body);
+    expect(r.status).toBe(201);
+    const parts = r.json().drafts.filter((d: any) => d.part).map((d: any) => d.id) as string[];
+    for (const pid of parts) expect((await call(ann, "PUT", url(id, `drafts/${pid}`), PART)).status).toBe(200);
+    for (const d of [...check(parts), x]) expect((await call(ann, "POST", url(id, `drafts/${d}/ready-check`))).status).toBe(200);
+    return { id, did, x, parts };
+  }
+
+  it("has no item for the original, and a dependant depends on each part; nothing is stored", async () => {
+    const { id, did, x, parts } = await splitSession();
+    const before = file();
+    const p = (await plan(id)).json();
+    expect(p.items.map((i: any) => [i.n, i.draft, i.state])).toEqual([[1, parts[0], "ready"], [2, parts[1], "ready"], [3, x, "ready"]]);
+    expect(p.items.some((i: any) => i.draft === did)).toBe(false);
+    expect(p.items[2].dependsOn).toEqual([{ item: 1, title: "First" }, { item: 2, title: "Second" }]);
+    expect(p.items[2].body).toContain("- new issue 1: First");
+    expect(p.items[2].body).toContain("- new issue 2: Second");
+    expect("leftBehind" in p).toBe(false);
+    expect(file()).toBe(before);
+    const stored = JSON.parse(file()).sessions[0].drafts.find((d: any) => d.id === x);
+    expect(stored.dependsOn[0].draft).toBe(did);
+  });
+
+  it("names the original and its criteria that are in no part", async () => {
+    const { id, did } = await splitSession(true);
+    expect((await plan(id)).json().leftBehind).toEqual([{ draft: did, title: "Export", criteria: 1 }]);
+  });
+
+  it("names a part that is not ready", async () => {
+    const { id, parts } = await splitSession(false, (p) => [p[1]!]);
+    const item = (await plan(id)).json().items.find((i: any) => i.draft === parts[1]);
+    expect(item.state).toBe("not-ready");
+    expect(item.reason).toContain("First");
+  });
+});
+
 describe("labels", () => {
   it("lists the labels of the repository, read from GitHub with the repository's own sign-in", async () => {
     gh.setLabels(["bug", "Factory_go"]);

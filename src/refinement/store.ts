@@ -624,7 +624,9 @@ const onGithub = (d: Draft): string => `a story draft that is on GitHub as issue
  * drafts that are not on GitHub. Without a list (the repository is not there) only the first rule applies.
  */
 function stateOf(cur: SessionState, hadDrafts: boolean, drafts: Draft[], list: readonly ReadyItem[] | undefined): SessionState {
-  if (drafts.length && drafts.every((d) => d.published)) return "published";
+  // A split original is never published; its parts are.
+  const publishable = drafts.filter((d) => !d.splitInto);
+  if (publishable.length && publishable.every((d) => d.published)) return "published";
   if (!list) return cur;
   return sessionState(cur, hadDrafts, drafts.filter((d) => !d.published), list);
 }

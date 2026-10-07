@@ -3,7 +3,7 @@ import { auditAction } from "../auth/audit.js";
 import { buildLabelOf } from "../refinement/build-limits.js";
 import { acceptedLines } from "../refinement/draft-ready.js";
 import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
-import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, planOf, refinedMarker } from "../refinement/publish.js";
+import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, planOf, refinedMarker, withoutSplits } from "../refinement/publish.js";
 import { architectWorking, settleSession } from "../refinement/architect.js";
 import { RefinementError, beginPublishing, endPublishing, getSession, logRoom, recordPublished, type Session } from "../refinement/store.js";
 import { createIssue, isBot, listNewestIssues, repoLabels, type RestIssue } from "../github.js";
@@ -62,7 +62,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
     const buildLabel = buildLabelOf(s.repo, ctx.config().watchers, s.owner);
     const reviewLabel = limitsOf(ctx, s).reviewLabel;
     const onGithub = new Map(s.drafts.flatMap((d) => (d.published !== undefined ? [[d.id, d.published.issue] as const] : [])));
-    const { items, willCreate } = planOf(s, {
+    const { items, willCreate, leftBehind } = planOf(s, {
       list: labels.list,
       onGithub,
       by,
@@ -74,6 +74,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       repo: s.repo,
       items,
       willCreate,
+      ...(leftBehind.length ? { leftBehind } : {}),
       repoLabels: labels.names,
       ...(buildLabel ? { buildLabel } : { noBuildLabel: "this repository has no enabled watcher for issues, so no label starts a build" }),
       ...(reviewLabel ? { reviewLabel } : {}),
@@ -122,7 +123,8 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
 
     // Everything is checked before the first issue is made: every entry of the request, and the labels of each draft that is made.
     for (const choice of choices.values()) chosenLabels(choice, rules);
-    const byId = new Map(s.drafts.map((d) => [d.id, d]));
+    const live = withoutSplits(s.drafts);
+    const byId = new Map(live.map((d) => [d.id, d]));
     const labels = new Map(planned.willCreate.map((did) => [did, labelsFor(choices.get(did), byId.get(did)!, rules)]));
     const untitled = planned.willCreate.find((did) => !byId.get(did)!.title);
     if (untitled !== undefined) throw new HttpError(409, `the story draft ${untitled} has no title; give every ready draft a title first, nothing was created`);
@@ -146,7 +148,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
         let made: Made;
         if (marked) made = { draft: did, issue: marked.number, url: issueUrl(s.repo, marked.number, marked.html_url), found: true };
         else {
-          const text = issueText(d, s, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf: (other) => (numbers.has(other) ? { issue: numbers.get(other)! } : undefined) });
+          const text = issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf: (other) => (numbers.has(other) ? { issue: numbers.get(other)! } : undefined) });
           let issue: RestIssue;
           try {
             issue = await createIssue(s.repo, { title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout);
