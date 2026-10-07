@@ -287,6 +287,34 @@ describe("gitflow pipeline", () => {
     expect(runOf("7")!.history.find((h) => h.id === "baseline_tests")!.output).not.toContain("not run again");
   });
 
+  it("tries the push to develop again when GitHub has a server problem", async () => {
+    // The remote fails the first push to develop with a server error, then accepts it.
+    const hook = join(gh.remote, "hooks", "pre-receive");
+    const flag = join(gh.tmp, "failed-once");
+    writeFileSync(hook, [
+      "#!/bin/sh",
+      "while read old new ref; do",
+      `  if [ "$ref" = refs/heads/develop ] && [ "$old" != 0000000000000000000000000000000000000000 ] && [ ! -f "${flag}" ]; then`,
+      `    touch "${flag}"; echo "Internal Server Error" >&2; exit 1`,
+      "  fi",
+      "done",
+    ].join("\n"), { mode: 0o755 });
+    process.env.FACTORY_PUSH_RETRY_SEC = "0";
+    try {
+      issues(5);
+      await watcher().tick();
+      await settle();
+    } finally {
+      delete process.env.FACTORY_PUSH_RETRY_SEC;
+    }
+    const run = runOf("5")!;
+    expect(run.status).toBe("succeeded");
+    const out = run.history.find((h) => h.id === "push_develop")!.output;
+    expect(out).toContain("GitHub had a problem — trying the push again");
+    expect(out).toContain("PUSHED: develop");
+    expect(run.history.filter((h) => h.id === "merge_develop")).toHaveLength(1);
+  });
+
   it("does not lock docs or whole test folders", () => {
     const dir = mkdtempSync(join(tmpdir(), "lockign-"));
     writeFileSync(join(dir, "run.json"), JSON.stringify({ status: "running" }));
