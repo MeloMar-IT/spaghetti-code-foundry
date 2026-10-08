@@ -114,7 +114,7 @@ export const RULES: Rule[] = [
   r("DELETE", "admin/view-as", "no", "end the view of a user's display"),
   r("GET", "admin/credentials", "no", "the stored credentials of all accounts, without any secret"),
   r("GET", "refinement", "yes", "your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner)"),
-  r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories"),
+  r("POST", "refinement", "yes", "start a refinement session on one of your GitHub repositories, from an idea or from an open issue of it (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it)"),
   r("GET", "refinement/:id", "yes", "read your refinement session, with the architect's brief and state and the talk (an admin: any session)"),
   r("PUT", "refinement/:id", "yes", "rename your refinement session"),
   r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),

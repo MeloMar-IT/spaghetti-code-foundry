@@ -49,6 +49,7 @@ import {
   restoreSession,
 } from "../refinement/store.js";
 import { HttpError, readJson, readOptionalJson, send } from "./http.js";
+import { importIssue } from "./api-refinement-import.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -70,6 +71,11 @@ const STATUS: Record<RefinementErrorCode, number> = {
   "bad-state": 409,
   busy: 409,
   "no-repo": 409,
+  "bad-issue": 400,
+  "no-issue": 404,
+  "issue-closed": 409,
+  building: 409,
+  duplicate: 409,
 };
 
 /** How often the server removes dropped sessions that are past their 30 days, in ms. */
@@ -179,6 +185,7 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
+    ...(s.source ? { source: s.source } : {}),
     state: s.state,
     // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
     ...(repoAvailable ? { readyList: list } : {}),
@@ -259,6 +266,16 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
+    if (body.issue !== undefined) {
+      let made: Session;
+      try {
+        made = await importIssue(ctx, req, body);
+      } catch (e) {
+        if (e instanceof RefinementError && e.code === "duplicate" && e.session) return send(res, 409, { error: e.message, session: e.session }), true;
+        throw mapped(ctx, e);
+      }
+      return send(res, 201, guarded(ctx, () => view(ctx, made, user))), true;
+    }
     const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title }), user));
     return send(res, 201, s), true;
   }
