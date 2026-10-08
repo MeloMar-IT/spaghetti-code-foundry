@@ -496,6 +496,20 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 - Each test run has its own temporary data folder.
 - Documents are checked too: flow examples in the authoring guide must validate, and the error
   texts in the user guide must match the code.
+- **Browser tests (separate).** `npm run test:ui` runs Playwright specs (`tests/browser/*.spec.ts`)
+  against the real server in a real browser. `npm test` does not run them and passes with no
+  browser installed. Install the browser once with `npx playwright install chromium`.
+  - A launcher (`tests/browser/server.ts`) starts the server on a free port with a temporary data
+    folder, one admin, one user and seeded data: a run in each main status, a repository, a
+    refinement session and a watcher (`tests/browser/seed.ts`).
+  - `tests/browser/widths.ts` defines the widths once: 360, 768, 1024 and 1440 px.
+    `openAs(browser, role, width)` opens a signed-in page; `expectNoSidewaysScroll(page)` fails when
+    the document is wider than the viewport.
+  - The navigation spec checks every primary link on both displays at all four widths. At 360 px
+    it goes through the menu button and drawer.
+  - Pages keep an event stream open, so the tests never wait for "network idle".
+  - Two cases (admin display at 360 and 768 px) are `test.fixme`: they show sideways scroll that
+    UI quality 1b (part 2 of #264) fixes.
 
 ---
 

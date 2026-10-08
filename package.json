@@ -30,7 +30,8 @@
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js dist/factory.js",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ui": "playwright test --config tests/browser/playwright.config.ts"
   },
   "engines": {
     "node": ">=20"
@@ -40,6 +41,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/node": "^26.6.3",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
