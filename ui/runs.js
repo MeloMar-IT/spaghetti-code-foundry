@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
+import { icon } from "./icons.js";
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 
@@ -106,7 +107,7 @@ function toolSummary(name, input) {
   return typeof v === "string" ? v : JSON.stringify(v);
 }
 
-function transcriptView(events) {
+export function transcriptView(events) {
   if (!events.length) return h("p", { class: "muted" }, "No transcript recorded.");
   return h("div", { class: "transcript" }, events.map((e) => {
     if (e.kind === "raw") return h("pre", { class: "mono" }, e.text || "(no output)");
@@ -117,7 +118,7 @@ function transcriptView(events) {
       h("div", {}, e.text));
     const edit = e.name === "Edit" && e.input.old_string != null;
     return h("details", { class: `tx-tool${e.isError ? " bad" : ""}` },
-      h("summary", {}, h("span", { class: "pill" }, e.name), h("span", { class: "mono tx-arg" }, toolSummary(e.name, e.input))),
+      h("summary", {}, h("span", { class: "pill" }, e.name), e.isError ? icon("circle-x", { label: "Failed" }) : null, h("span", { class: "mono tx-arg" }, toolSummary(e.name, e.input))),
       edit
         ? h("pre", { class: "diff" }, ...String(e.input.old_string).split("\n").map((l) => h("span", { class: "del" }, `- ${l}\n`)), ...String(e.input.new_string ?? "").split("\n").map((l) => h("span", { class: "add" }, `+ ${l}\n`)))
         : e.name === "Write" ? h("pre", { class: "mono" }, String(e.input.content ?? "").slice(0, 6000)) : null,

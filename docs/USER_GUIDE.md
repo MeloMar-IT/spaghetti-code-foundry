@@ -249,6 +249,8 @@ next to it to read what it means and what happens next, and press it again to cl
 works with a mouse, the keyboard (Tab, then Enter or Space) and touch. Pressing it does not
 open the run.
 
+Every status pill also shows a small icon before its words (for example a check for done, a clock for waiting, a cross for failed), so you can tell what it means without the colour. The words are unchanged.
+
 **How long will it take?** A run that is not finished shows "Step N of M": the number of its
 step in the flow. It can jump, because steps that only run when another step jumps to them are
 counted too. A running run also shows an estimate ("Estimate: about 20 min left (usually 25–40

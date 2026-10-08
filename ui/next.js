@@ -1,4 +1,5 @@
 import { h } from "./dom.js";
+import { icon, semanticOf, STATUS } from "./icons.js";
 
 // Shows the next-step record from the server. No wording of its own: only fields of the record, plus the label of the "?" button and the note of an unchecked issue.
 
@@ -62,13 +63,16 @@ export function helpMark(text) {
 }
 
 /** A status name as a pill with its "?": [pill, help]. `x` has `status` and `help` (a record, or a watcher's `state`). */
-export const statusMark = (x, cls = "", busy = false) => [
-  h("span", { class: `pill ${cls}`.trim() }, busy ? h("span", { class: "spinner", style: { width: "10px", height: "10px" } }) : null, x.status),
-  helpMark(x.help),
-];
+export const statusMark = (x, cls = "", busy = false, semantic = "neutral") => {
+  const sem = Object.hasOwn(STATUS, semantic) ? semantic : "neutral";
+  return [
+    h("span", { class: `pill sem-${sem} ${cls}`.trim() }, icon(busy ? "loader-circle" : STATUS[sem], { small: true, spin: busy }), x.status),
+    helpMark(x.help),
+  ];
+};
 
 /** The status of a record. */
-export const nextStatus = (n) => statusMark(n, `${whoClass(n)} kind-${n.kind}`, n.kind === "running");
+export const nextStatus = (n) => statusMark(n, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind));
 
 /** "Continues: …" when the record says when it continues. */
 export const untilPart = (n) => (n.until ? h("span", { class: "muted" }, `Continues: ${n.until}`) : null);
