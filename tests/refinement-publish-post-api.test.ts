@@ -120,6 +120,102 @@ describe("publishing", () => {
     expect(audit()).toMatchObject([{ target: id, detail: "acme/app #101", by: ann.user.id }]);
   });
 
+  it("writes the numbers of the parts for a draft that depended on a split original, and makes no issue for the original", async () => {
+    setRepoReady(annRepo().id, { items: LIST2 });
+    const id = await session();
+    const o = await addDraft(id, { ...FULL, title: "Original story", criteria: [{ text: "It exports a file" }, { text: "It has a header" }] }, false);
+    const x = await addDraft(id, { ...FULL, title: "Report page" }, false);
+    expect((await call(ann, "PUT", url(id, `drafts/${x}`), { dependsOn: [{ draft: o }] })).status).toBe(200);
+    const c = (await call(ann, "GET", `/api/refinement/${id}`)).json().drafts.find((d: any) => d.id === o).criteria.map((k: any) => k.id);
+    const body = { parts: [{ title: "First", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn: [1] }], unplaced: [] };
+    const r = await call(ann, "POST", url(id, `drafts/${o}/split/confirm`), body);
+    expect(r.status).toBe(201);
+    const parts = r.json().drafts.filter((d: any) => d.part).map((d: any) => d.id) as string[];
+    for (const p of parts) await call(ann, "PUT", url(id, `drafts/${p}`), { who: FULL.who, what: FULL.what, why: FULL.why, outOfScope: FULL.outOfScope });
+    for (const d of [...parts, x]) expect((await call(ann, "POST", url(id, `drafts/${d}/ready-check`))).status).toBe(200);
+    const done = await publish(id);
+    expect(done.status).toBe(200);
+    expect(done.json().state).toBe("published");
+    expect(stored(id).state).toBe("published");
+    const made = gh.createdBodies();
+    expect(made.map((m) => m.title)).toEqual(["First", "Second", "Report page"]);
+    expect(made[2]!.body).toContain("- #101");
+    expect(made[2]!.body).toContain("- #102");
+    expect(made[2]!.body).not.toContain("new issue");
+    expect(made[2]!.body).not.toContain("Original story");
+    expect("leftBehind" in done.json()).toBe(false);
+    const original = stored(id).drafts.find((d: any) => d.id === o);
+    expect(original.splitInto).toHaveLength(2);
+    expect(original.published).toBeUndefined();
+  });
+
+  /** The original has three criteria; "First" and "Second" take the first two, or all three. X depends on the original. */
+  async function split(leftover: boolean, ready: (parts: string[]) => string[]) {
+    setRepoReady(annRepo().id, { items: LIST2 });
+    const id = await session();
+    const o = await addDraft(id, { ...FULL, title: "Export", criteria: [{ text: "One" }, { text: "Two" }, { text: "Three" }] }, false);
+    const x = await addDraft(id, { ...FULL, title: "Report page" }, false);
+    expect((await call(ann, "PUT", url(id, `drafts/${x}`), { dependsOn: [{ draft: o }] })).status).toBe(200);
+    const c = (await call(ann, "GET", `/api/refinement/${id}`)).json().drafts.find((d: any) => d.id === o).criteria.map((k: any) => k.id);
+    const body = {
+      parts: [
+        { title: "First", criteria: [c[0]], dependsOn: [] },
+        { title: "Second", criteria: leftover ? [c[1]] : [c[1], c[2]], dependsOn: [1] },
+      ],
+      unplaced: leftover ? [c[2]] : [],
+    };
+    expect((await call(ann, "POST", url(id, `drafts/${o}/split/confirm`), body)).status).toBe(201);
+    const parts = (await call(ann, "GET", `/api/refinement/${id}`)).json().drafts.filter((d: any) => d.part).map((d: any) => d.id) as string[];
+    for (const p of parts) await call(ann, "PUT", url(id, `drafts/${p}`), { who: FULL.who, what: FULL.what, why: FULL.why, outOfScope: FULL.outOfScope });
+    for (const d of [...ready(parts), x]) expect((await call(ann, "POST", url(id, `drafts/${d}/ready-check`))).status).toBe(200);
+    return { id, o, x, parts };
+  }
+
+  it("names the split original that stays behind with criteria, and still finishes as published", async () => {
+    const { id, o } = await split(true, (p) => p);
+    const r = await publish(id);
+    expect(r.status).toBe(200);
+    expect(r.json().state).toBe("published");
+    expect(r.json().leftBehind).toEqual([{ draft: o, title: "Export", criteria: 1 }]);
+    const original = stored(id).drafts.find((d: any) => d.id === o);
+    expect(original.published).toBeUndefined();
+    expect(original.criteria).toHaveLength(1);
+    const again = await publish(id);
+    expect(again.status).toBe(200);
+    expect(again.json()).toMatchObject({ created: [], state: "published", leftBehind: [{ draft: o, title: "Export", criteria: 1 }] });
+    expect(gh.createdBodies()).toHaveLength(3);
+  });
+
+  it("creates the dependant only after every part is on GitHub, and a part on GitHub cannot be split, removed or emptied", async () => {
+    const { id, o, x, parts } = await split(false, (p) => [p[0]!]);
+    const first = await publish(id);
+    expect(first.status).toBe(200);
+    expect(first.json().created.map((c: any) => c.draft)).toEqual([parts[0]]);
+    expect(first.json().state).not.toBe("published");
+    expect(stored(id).drafts.find((d: any) => d.id === x).published).toBeUndefined();
+
+    const crit = stored(id).drafts.find((d: any) => d.id === parts[0]).criteria[0].id;
+    const c = await call(ann, "POST", url(id, `drafts/${parts[0]}/split/confirm`), { parts: [], unplaced: [] });
+    expect(c.status).toBe(409);
+    expect((await call(ann, "POST", url(id, `drafts/${parts[0]}/split`), {})).status).toBe(409);
+    expect((await call(ann, "DELETE", url(id, `drafts/${parts[0]}`))).status).toBe(409);
+    expect((await call(ann, "DELETE", url(id, `drafts/${o}`))).status).toBe(409);
+    expect((await call(ann, "POST", url(id, `drafts/${parts[0]}/criteria/${crit}/move`), { to: o })).status).toBe(409);
+    expect(gh.createdBodies()).toHaveLength(1);
+
+    expect((await call(ann, "DELETE", url(id, `drafts/${parts[1]}`))).status).toBe(200);
+    const original = stored(id).drafts.find((d: any) => d.id === o);
+    expect(original.splitInto).toEqual([parts[0]]);
+    expect(original.published).toBeUndefined();
+
+    const last = await publish(id);
+    expect(last.status).toBe(200);
+    expect(last.json().created.map((m: any) => m.draft)).toEqual([x]);
+    expect(last.json().state).toBe("published");
+    expect(gh.createdBodies().map((m) => m.title)).toEqual(["First", "Report page"]);
+    expect(gh.createdBodies()[1]!.body).toContain("- #101");
+  });
+
   it("takes an empty body as no choices: every ready draft is created with no labels", async () => {
     const { id } = await withDraft();
     await addDraft(id, { ...FULL, title: "Second" });

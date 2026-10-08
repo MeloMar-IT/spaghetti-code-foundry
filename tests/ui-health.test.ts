@@ -54,6 +54,19 @@ describe("renderHealth", () => {
     expect(e.all("button")).toHaveLength(0);
   });
 
+  it("lists skill problems with the label and reason, and counts the rest", () => {
+    const e = el();
+    ui.renderHealth(e, { ...good, ok: false, summary: "3 problems", skillProblems: [{ source: "admin", root: "skills.roots[0]", package: "x", reason: "bad version" }, { source: "admin", root: "built-in", reason: "ENOENT" }], skillProblemsMore: 1 });
+    const items = e.all("li");
+    expect(items).toHaveLength(3);
+    expect(items[0]!.textContent).toBe("Skills (skills.roots[0] / x): bad version");
+    expect(items[1]!.textContent).toBe("Skills (built-in): ENOENT");
+    expect(items[2]!.textContent).toContain("1 more skill problem");
+    const plain = el();
+    ui.renderHealth(plain, good);
+    expect(plain.all("ul")).toHaveLength(0);
+  });
+
   it("lists each problem with its action, reason and link", () => {
     const e = el();
     ui.renderHealth(e, bad);
@@ -195,5 +208,69 @@ describe("the link to the Problems page", () => {
   });
   it("is not there without the field", () => {
     expect(link()).toBeUndefined();
+  });
+});
+
+describe("the health chip", () => {
+  const chipEl = () => (globalThis as any).document.getElementById("health-btn") as FakeElement;
+
+  it("showHealth hides the line when all is good and not asked for", () => {
+    const e = el();
+    const chip = el();
+    ui.showHealth(e, chip, good);
+    expect(e.hidden).toBe(true);
+    expect(chip.textContent).toBe("All good");
+    expect(chip.attrs.class).toBe("health-chip ok");
+    expect(chip.attrs["aria-expanded"]).toBe("false");
+    ui.showHealth(e, chip, good, true);
+    expect(e.hidden).toBe(false);
+    expect(chip.attrs["aria-expanded"]).toBe("true");
+  });
+
+  it("showHealth shows the line when not ok, or when the server is silent", () => {
+    const e = el();
+    const chip = el();
+    // A problem only turns the chip red; Home lists it. The line opens when asked for.
+    ui.showHealth(e, chip, bad);
+    expect(e.hidden).toBe(true);
+    expect(chip.attrs.class).toBe("health-chip bad");
+    ui.showHealth(e, chip, bad, true);
+    expect(e.hidden).toBe(false);
+    ui.showHealth(e, chip, null);
+    expect(e.hidden).toBe(false);
+    expect(chip.textContent).toBe("No answer");
+    expect(() => ui.showHealth(e, null, good)).not.toThrow();
+  });
+
+  it("loadHealth sets line and chip; an older answer wins on neither", async () => {
+    const e = el();
+    const a = ui.loadHealth(e);
+    const b = ui.loadHealth(e);
+    calls[1]!.answer(good);
+    await b;
+    calls[0]!.answer(bad);
+    await a;
+    expect(e.textContent).toBe("All good");
+    expect(e.hidden).toBe(true);
+    expect(chipEl().textContent).toBe("All good");
+    expect(chipEl().attrs.class).toBe("health-chip ok");
+  });
+
+  it("the chip opens and closes the line; stop removes the one listener", async () => {
+    const chip = chipEl();
+    chip.listeners = {};
+    const e = el();
+    const stop = ui.startHealth(e);
+    expect(chip.listeners.click).toHaveLength(1);
+    calls[0]!.answer(good);
+    await flush();
+    expect(e.hidden).toBe(true);
+    chip.click();
+    expect(e.hidden).toBe(false);
+    expect(chip.attrs["aria-expanded"]).toBe("true");
+    chip.click();
+    expect(e.hidden).toBe(true);
+    stop();
+    expect(chip.listeners.click).toHaveLength(0);
   });
 });

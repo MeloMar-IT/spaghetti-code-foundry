@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
+import { setCount } from "./shell.js";
 import { actButtons } from "./turn-act.js";
 
 // The "Your turn" page: only what waits for the owner, from GET /api/your-turn. No wording of
@@ -20,7 +21,7 @@ export function showCount(count) {
     badge.textContent = count > 0 ? String(count) : "";
     badge.hidden = !(count > 0);
   }
-  document.title = tabTitle(count);
+  setCount(count);
 }
 
 let gen = 0; // the newest request wins
@@ -127,10 +128,12 @@ function continuingView(item) {
 }
 
 /** The page for one answer of the server. */
-export function turnView(data, { onDismiss, onRestore, onLeave, onAct }) {
+export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embedded = false } = {}) {
   return [
-    h("div", { class: "toolbar" }, h("h1", {}, "Your turn")),
-    data.count === 0 ? h("div", { class: "empty" }, data.empty) : null,
+    embedded
+      ? h("h2", {}, data.count > 0 ? `Needs you (${data.count})` : "Needs you")
+      : h("div", { class: "toolbar" }, h("h1", {}, "Your turn")),
+    data.count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, data.empty) : null,
     ...(data.groups ?? []).map((g) =>
       h("div", { class: "card turn-group" }, h("h3", {}, g.repo), ...g.items.map((i) => itemView(i, { onDismiss, onLeave, onAct })))),
     data.continuing?.length
@@ -142,8 +145,8 @@ export function turnView(data, { onDismiss, onRestore, onLeave, onAct }) {
   ];
 }
 
-/** Opens the page; returns a function that closes it. */
-export async function renderYourTurn(main) {
+/** Opens the page; returns a function that closes it. `embedded`: a section of Home; `onData` gets every answer drawn. */
+export async function renderYourTurn(main, { embedded = false, onData } = {}) {
   let left; // an item with a watcher whose link was opened: check GitHub again when the user comes back
   const fail = (e) => toast(e.message, "error");
   const handlers = {
@@ -156,11 +159,17 @@ export async function renderYourTurn(main) {
       await refresh(async () => data);
     },
   };
-  page = (data) => mount(main, turnView(data, handlers));
+  const mine = (data) => {
+    mount(main, turnView(data, handlers, { embedded }));
+    onData?.(data);
+  };
+  page = mine;
+  // Only clear the hook if it is still ours: a newer page may have taken it over.
+  const release = () => { if (page === mine) page = null; };
   try {
     await refresh();
   } catch (e) {
-    page = null;
+    release();
     throw e;
   }
   const timer = setInterval(() => refresh().catch(() => {}), 5000);
@@ -173,7 +182,7 @@ export async function renderYourTurn(main) {
   };
   document.addEventListener("visibilitychange", onVisible);
   return () => {
-    page = null;
+    release();
     clearInterval(timer);
     document.removeEventListener("visibilitychange", onVisible);
   };

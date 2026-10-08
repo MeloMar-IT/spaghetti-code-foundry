@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -119,6 +120,9 @@ describe("pure functions", () => {
     expect(talk.kindOf({ kind: "suggest" })).toBe("suggest");
     expect(talk.kindOf({ kind: "impact" })).toBe("impact");
     expect(talk.kindOf({ kind: "review" })).toBe("review");
+    expect(talk.kindOf({ kind: "split" })).toBe("split");
+    expect(talk.roundLabel(session({ architect: { state: "paused", kind: "split" } }))).toBe("");
+    expect(talk.canAsk(session({ architect: { state: "paused", kind: "split" } }))).toBe(false);
     expect(talk.roundLabel(session({ architect: { state: "paused", kind: "review" } }))).toBe("");
     expect(talk.canAsk(session({ architect: { state: "paused", kind: "review" } }))).toBe(false);
     const review = talk.talkSection(session({ architect: { state: "running", kind: "review" } }), { send: () => {}, errorText: String, line: null });
@@ -252,7 +256,7 @@ describe("the api calls", () => {
   });
   it("is wired into the page and the style sheet", () => {
     expect(readFileSync("ui/refinement.js", "utf8")).toContain('from "./refinement-talk.js"');
-    const css = readFileSync("ui/style.css", "utf8");
+    const css = readUiCss();
     expect(css).toMatch(/\.talk \{[^}]*min-width: 0/);
     expect(css).toContain("overflow-wrap: anywhere");
   });

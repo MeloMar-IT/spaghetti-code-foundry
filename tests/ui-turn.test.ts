@@ -287,6 +287,43 @@ describe("renderYourTurn", () => {
     cleanup();
   });
 
+  it("embedded: a section heading instead of the page title, and onData on every answer", async () => {
+    const main = new FakeElement("main");
+    const onData = vi.fn();
+    const p = ui.renderYourTurn(main, { embedded: true, onData });
+    await flush();
+    calls.shift()!.answer(data([item()]));
+    const cleanup = await p;
+    expect(main.all("h1")).toHaveLength(0);
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Needs you (1)"]);
+    expect(onData).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(data([]));
+    await flush();
+    expect(main.all("h2").map((e) => e.textContent)).toEqual(["Needs you"]);
+    expect(main.all("div").some((e) => e.attrs.class === "home-clear")).toBe(true);
+    expect(onData).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
+  it("an old cleanup does not take the page hook from a newer page", async () => {
+    const first = await open(data([item()]));
+    const second = await open(data([item()]));
+    first.cleanup(); // the stale call is closed after the new one started
+    await vi.advanceTimersByTimeAsync(5000);
+    const poll = calls.filter((c) => c.url.includes("your-turn")).pop()!;
+    poll.answer(data([item({ key: "z", what: "Fresh" })]));
+    await flush();
+    expect(second.main.textContent).toContain("Fresh");
+    second.cleanup();
+  });
+
+  it("the default page keeps its title", async () => {
+    const { main, cleanup } = await open(data([item()]));
+    expect(main.all("h1").map((e) => e.textContent)).toEqual(["Your turn"]);
+    cleanup();
+  });
+
   it("stops after cleanup and ignores a late answer on the page", async () => {
     const { main, cleanup } = await open(data([item()]));
     await vi.advanceTimersByTimeAsync(5000);

@@ -4,8 +4,8 @@ import { h, modal } from "./dom.js";
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
 const check = (checked, label) => {
-  const el = h("input", { type: "checkbox", style: { width: "auto" }, checked: !!checked });
-  return { el, row: h("label", { class: "row", style: { gap: "6px" } }, el, h("span", {}, label)) };
+  const el = h("input", { type: "checkbox", class: "fit", checked: !!checked });
+  return { el, row: h("label", { class: "row tight" }, el, h("span", {}, label)) };
 };
 
 const SOURCES = {
@@ -121,7 +121,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const max = input(String(w.max_per_tick), { type: "number", min: 1 });
     const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes", value: Object.entries(w.vars ?? {}).map(([k, v]) => `${k}=${v}`).join("\n") });
     const enabled = check(w.enabled, "Enabled");
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const noRepo = !existing && !available.length;
     const save = h("button", { class: "primary", disabled: noRepo, onClick: () => {
       if (state.busy || noRepo) return;
@@ -137,23 +137,23 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const labelField = h("div", { class: "grid" }, f("Trigger label", label), f("Skip issues with these labels", exclude));
     const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
     const taskField = h("div", {}, f("Chore", task, "Becomes the run's task. The flow opens a PR only if something changed."),
-      h("div", { class: "chips", style: { marginTop: "6px" } }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));
+      h("div", { class: "chips mt-6" }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));
     const branchField = f("Branch to watch", branch);
     const showFor = () => {
-      labelField.style.display = source.value === "issues" ? "" : "none";
-      taskField.style.display = source.value === "schedule" ? "" : "none";
-      atField.style.display = source.value === "schedule" ? "" : "none";
-      branchField.style.display = source.value === "ci-failures" ? "" : "none";
+      labelField.hidden = source.value !== "issues";
+      taskField.hidden = source.value !== "schedule";
+      atField.hidden = source.value !== "schedule";
+      branchField.hidden = source.value !== "ci-failures";
     };
     showFor();
     const repoField = existing
       ? f("Repository", h("span", { class: "mono" }, existing.github_repo || existing.repoId))
-      : available.length ? f("Repository", repo) : h("p", { class: "status bad", style: { margin: 0 } }, "No connected repository can have a watcher.");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+      : available.length ? f("Repository", repo) : h("p", { class: "status bad flush" }, "No connected repository can have a watcher.");
+    return h("div", { class: "stack" },
       h("datalist", { id: "watcher-flows" }, (flows ?? []).map((x) => h("option", { value: x.name }))),
       repoField,
       !existing && unavailable.length
-        ? h("div", { class: "muted", style: { fontSize: "12.5px" } }, h("div", {}, "Not available:"),
+        ? h("div", { class: "muted text-sm" }, h("div", {}, "Not available:"),
           unavailable.map(({ repo: r, reason }) => h("div", {}, `${r.url} — ${reason}`)))
         : null,
       f("Id", id),
@@ -175,11 +175,11 @@ export function monitorDialog(existing, save) {
     const id = input(w.id, { class: "mono", disabled: !!existing });
     const every = input(w.every, { class: "mono", placeholder: "1h" });
     const enabled = check(w.enabled, "Enabled");
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const go = h("button", { class: "primary", onClick: () =>
       guarded(state, go, err, () => save({ id: id.value.trim(), every: every.value.trim(), enabled: enabled.el.checked }), close)() }, "Save watcher");
-    return h("div", { style: { display: "grid", gap: "12px" } },
-      h("p", { class: "muted", style: { margin: 0 } }, "The monitor checks the Foundry itself for problems. It is saved in config.yaml."),
+    return h("div", { class: "stack" },
+      h("p", { class: "muted flush" }, "The monitor checks the Foundry itself for problems. It is saved in config.yaml."),
       f("Id", id), f("Check every", every, "e.g. 5m, 1h"), enabled.row, err, h("div", { class: "row" }, h("span", { class: "spacer" }), go));
   }, { busy: () => state.busy });
 }

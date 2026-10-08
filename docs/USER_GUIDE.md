@@ -69,6 +69,15 @@ one (twice). The new password follows the same rules (12 to 200 characters, not 
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
+**Appearance: theme and density.** **Appearance** in the top bar, next to **Change password**, opens a
+dialog with two choices. **Theme** is System (follows your device), Light or Dark. **Density** is
+Comfortable or Compact. A choice applies at once, with no reload. The chosen option has a check mark and
+is announced as pressed, so it does not depend on colour. The choice is kept in this browser, per
+account, and is not sent to the server: a second account in the same browser has its own, and another
+browser starts with System and Comfortable. The sign-in form uses the last choice. Other open tabs pick
+up a change when they reload. If the browser blocks storage, the page still works with System and
+Comfortable.
+
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
 The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
@@ -76,14 +85,14 @@ admin for a new one.
 
 | Page | What it is for |
 |---|---|
-| **Your turn** | Only what waits for you, one button each; the app opens here when something waits |
+| **Home** (includes *Your turn*) | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
 | **Board** | Where every story is, in columns per repository |
 | **Flows** | Your flows and the built-in ones: edit, create, run |
 | **Library** | Reusable blocks of steps to drop into flows |
 | **Refinement** | Where a rough idea grows into a story before it goes to the backlog |
 | **Runs** | Everything that ran or is running; the ones that need you on top |
 | **My repositories** | The repositories you work in, and how the Foundry signs in to them |
-| **Repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
+| **All repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
 | **Credentials** | Admin: the stored credentials of all accounts, without any secret |
 | **Watchers** | Automatic runs from GitHub issues, PR comments, red CI, or a schedule |
 | **Models** | Which agents and models are available, and which model runs which step |
@@ -92,7 +101,9 @@ admin for a new one.
 | **Audit** | Who did what, with filters and a CSV export (admins only) |
 | **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
 
-An account with the role `user` works on its own display at `/user/`, with **Start work**, **My runs**, **My repositories** and **Refinement** in the top bar, the account name, **Change password** and **Sign out**. It has no admin links, folder name, sidebar, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories, All repositories, Credentials), Flows (Flows, Library) and Administration (Users, Watchers, Models, Problems, Dashboard, Audit, Settings). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+
+An account with the role `user` works on its own display at `/user/`, with **Start work** in the top bar, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 **Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
@@ -149,6 +160,21 @@ The same rules as for a user apply: only a published flow, only your own reposit
 
 ## 3. Follow, approve and resume runs
 
+### Home
+
+**Home** is the first page. The top shows the counts (for example "2 need you · 1 active") and one button, the best next step: the first thing that needs you, then a problem, then a run that is active, else **Start work**.
+
+- **Needs you:** the same list as [Your turn](#your-turn).
+- **Active:** work that is running or queued. Each row says what happens next.
+- **Problems (admin):** problems of the Foundry that Needs you does not already show.
+- **Recently completed:** closed until you open it.
+- **Metrics (admin):** closed until you open it; a link goes to the Dashboard.
+- **Each row:** one main button and a **Details** link to the run. A section shows 5 rows and "+n more".
+- **Empty and all clear:** with nothing yet, Home offers **Start work**; when nothing needs you it says "Nothing needs you."
+- **Users** see only their own work: no cost, model, health or other accounts.
+
+Home asks again every 30 seconds.
+
 ### Your turn
 
 ![Your turn](images/your-turn.png)
@@ -201,6 +227,8 @@ A line under the top bar of every page says **All good**, or the number of probl
 
 The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
+Problems with skill folders (see [Skill sources](#skill-sources)) count as problems too: one line names the source (for example `administrator`) and the package folder, never a path. A pinned package that changed (with both digests) and an unreadable skill lock (`skill lock`) are listed first; see [Pinned versions and integrity](#pinned-versions-and-integrity). `GET /api/health` lists at most 20 as `skillProblems` (`source`, `root`, optional `package`, `reason`) and the rest as `skillProblemsMore`; `scf skills` lists all of them with full paths.
+
 When the monitor has stored findings, the line also links to the [Problems page](#the-problems-page):
 "N open findings of the monitor", or "Findings of the monitor (none open)". It does not change
 **All good**. In `GET /api/health` this is `monitorFindings` (`open`, `total`, and `unreadable`
@@ -244,6 +272,8 @@ The Status column shows the plain status name (see "Words the Foundry uses"). Pr
 next to it to read what it means and what happens next, and press it again to close it. It
 works with a mouse, the keyboard (Tab, then Enter or Space) and touch. Pressing it does not
 open the run.
+
+Every status pill also shows a small icon before its words (for example a check for done, a clock for waiting, a cross for failed), so you can tell what it means without the colour. The words are unchanged.
 
 **How long will it take?** A run that is not finished shows "Step N of M": the number of its
 step in the flow. It can jump, because steps that only run when another step jumps to them are
@@ -411,6 +441,9 @@ the code", what went wrong and the fix. The causes and fixes:
   "Hotfix" under Branches for what to do.
 - A marker the Foundry could not read (no `PLAN_STATUS` line, no questions to ask, no `SUBTASK`
   lines): resume the run to try the step again.
+- A skill request in the plan that is not valid ("planning failed: the skill request of the plan is
+  not valid"): resuming does not help, because the stored plan is the same. Start the run again so
+  the issue is planned again. The step output says what was wrong.
 - An internal error, an unknown step, or a run that failed before any step ran (workspace, bot
   identity, GitHub App token): fix the setting, or restart or update the Foundry, then resume.
 - A git or gh login error, or a network error, in a command of the flow: log in again (`gh auth
@@ -2205,11 +2238,13 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
-| `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories |
+| `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories, from an idea or from an open issue of it (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it) |
+| `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
 | `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
 | `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
 | `POST /api/refinement/:id/drop` | yes | yes | drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled |
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
+| `POST /api/refinement/:id/source/remove-build-label` | yes | yes | remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403) |
 | `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
 | `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time) |
 | `POST /api/refinement/:id/ask` | yes | yes | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
@@ -2223,9 +2258,12 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
 | `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
-| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again (an admin who is not the owner: 403) |
+| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again, a split original is skipped, and `leftBehind` names split originals that still hold criteria; in a session that came from an issue, the draft that stands for it replaces the title and text of that issue first (one comment holds the old text, labels are added and kept) and is answered as `updated`, and a closed issue or one the Foundry builds is refused (409) with nothing written; when the issue's title or text changed on GitHub since the session read it, nothing is written and the answer is 409 with `changedOnGithub` (both versions and `seen`): send `source: { keep: "mine" | "github", seen }` to choose (an admin who is not the owner: 403) |
 | `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
 | `POST /api/refinement/:id/drafts/:did/split` | yes | yes | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
+| `POST /api/refinement/:id/drafts/:did/split/confirm` | yes | yes | confirm a split of a story draft of your refinement session: each part becomes a new draft and the original is kept as a record; no architect run starts |
+| `POST /api/refinement/:id/drafts/:did/criteria/:cid/move` | yes | yes | move an acceptance criterion between a split story draft of your refinement session and its parts, or between two parts |
+| `POST /api/refinement/:id/drafts/:did/merge` | yes | yes | merge another story draft of your refinement session into this one; the other draft is removed and no architect run starts |
 | `POST /api/refinement/:id/drafts/:did/impact` | yes | yes | ask the architect what a story draft of your refinement session touches, how risky it is and how big it is, or resume a paused one (one architect run per account at a time); no field changes |
 | `POST /api/refinement/:id/drafts/:did/move-to-notes` | yes | yes | move a text of a story draft of your refinement session that has a plan or how remark to the notes for the builder, as a wish |
 | `POST /api/refinement/:id/drafts/:did/ready-check` | yes | yes | check a story draft of your refinement session against the Definition of Ready of its repository: by code, and the architect judges what code cannot decide, or resume a paused check (one architect run per account at a time); no field changes |
@@ -2234,9 +2272,107 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
-| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies; it reads the labels from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
+| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
 
 **What comes later.** Pages for users (starting runs).
+
+### Skill sources
+
+The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). Nothing uses the list yet.
+
+```yaml
+skills:
+  builtin: true        # skills shipped with the Foundry (default: true)
+  roots: []            # more administrator folders, absolute paths (default: none)
+  repository: false    # also read <repo>/.claude-factory/skills (default: false)
+```
+
+- **Sources, highest first:** `<data folder>/skills`, then each entry of `roots` in order, then the built-in skills, then the repository's skills (only when `repository: true`).
+- **Same id and version twice:** the one from the higher source is kept. The other is dropped and reported as a duplicate.
+- **Same id, other version:** the highest source wins and its version is the active one. The other versions stay in the list, marked as shadowed.
+- **Problems are never silent:** a missing, unreadable or refused folder, an invalid package and a symlinked package are each named in health and in `scf skills`.
+- **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
+- **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
+
+#### Pinned versions and integrity
+
+A pin ties one skill version to the exact content you looked at. If the content changes later, the skill stops being usable until you decide again.
+
+- **What the digest covers:** every file in the package folder (path and raw bytes), in a fixed order. Changing one byte, adding, removing or renaming a file changes it. `.DS_Store`, file modes and empty folders do not count. Line-ending conversion changes the bytes, so a Git checkout with CRLF can give another digest than a tarball.
+- **Trust by source:**
+
+  | Source | Trust | Can be pinned |
+  |---|---|---|
+  | Data folder, `skills.roots` | approved | yes, by you with `scf skills pin` |
+  | Built-in | builtin | yes, pinned for you when the server starts |
+  | Repository | unapproved | never |
+
+- **The lock file** is `skills.lock.json` in the data folder. It holds the digest for each `id@version`. Listing skills and the health line only read it.
+- **To pin:** run `scf skills`, check the package, copy its digest, then run `scf skills pin <id@version> <digest>`. Pinning a version that is already pinned with the same digest changes nothing. `scf skills pin --builtin` pins the built-in skills; the server does this at start as well. `scf skills unpin <id@version>` removes a pin.
+- **Pin states** in `scf skills`: `pinned` (matches), `unpinned` (not approved yet), `mismatch` (changed since the pin) and `unverified` (the lock cannot be read).
+- **A mismatch** means the content differs from what you approved. Health and `scf skills` show both digests, and the skill cannot be selected. There are two ways out: give the changed package a new version (the new version starts unpinned), or check the package and run `scf skills pin <id@version> <new digest> --replace`. A built-in skill is never re-pinned automatically; a release that changes one must change its `version`.
+- **An unreadable lock** (bad JSON, wrong version, a symlink or a folder in its place) makes every approved and built-in skill `unverified`, and nothing is pinned or unpinned. Health shows `skill lock`. Fix or delete `skills.lock.json` in the data folder, then pin again. The server still starts.
+- **Runs** must name the exact version (`id@version`). A newer or older version is never used instead. Repository skills can never be selected for unattended runs.
+- **Limit:** the lock detects a change after the pin, not a bad first copy. Anyone who can write the data folder can also change the lock.
+
+### Skill catalogue
+
+The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. Nothing sends it to a planner yet.
+
+```yaml
+skills:
+  catalogue:
+    max_candidates: 20   # most skills in the catalogue (1–50, default 20)
+    max_tokens: 2000     # estimated size limit (100–20000, default 2000)
+    include: []          # skill ids that are always in the catalogue
+    exclude: []          # skill ids that are never in it; wins over include
+```
+
+- **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
+- **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
+- **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
+- **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.
+
+### Skill request
+
+A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version":1,"skills":[…]}`. It names the skills the coder needs. Each skill has an `id`, a one-sentence `reason` and 1–5 `evidence` entries (`catalogue:…`, `issue:…` or `path:<file in the repository>`). At most 20 skills, each id once. A plan that needs no skill writes an empty list.
+
+- **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
+- **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
+- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
+- **Nothing loads the skills yet.** No skill catalogue reaches the planner either, so requests are empty for now. [Skill selection](#skill-selection) can check the ids; a later story will wire it in and load the skills.
+- **`issue-code-daily`** does not get a request: it would have to trust a comment.
+- **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
+
+### Skill selection
+
+The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. Nothing calls it from a run yet, so no skill reaches an agent for now.
+
+```yaml
+skills:
+  selection:
+    max_skills: 6          # most skills in one selection (1–20, default 6)
+    max_skill_tokens: 5000 # largest single skill (100–20000, default 5000)
+    max_tokens: 15000      # total for the set (100–100000, default 15000)
+    include: []            # skill ids that are always selected (mandatory)
+    exclude: []            # skill ids that are never selected; catalogue.exclude applies too
+```
+
+- **Exact versions:** each id resolves to its active version, which must pass the pin check (see [Pinned versions and integrity](#pinned-versions-and-integrity)). Repository skills are never selected.
+- **Dependencies:** a skill's declared dependencies are added before it (sorted by id) and count towards the skill and token limits. A dependency that is missing, too old (`min_version`), excluded, unapproved or in a cycle refuses the skill that needs it.
+- **Refused for:** a role the skill does not allow, a size above `max_skill_tokens`, a conflict with a skill already chosen (the earlier one stays), more than `max_skills`, or more than `max_tokens`. The order is always the same: mandatory ids first, then requested ids sorted by id. The set holds only what was asked for and what it needs.
+- **Mandatory skills** (`include`) are never dropped quietly. If one is refused for any reason, or an `include` or `exclude` entry is not a valid id or the list is too long, the whole selection is blocked: nothing is selected and the other skills are marked `blocked`.
+- **`include` is not a pin.** An included skill still needs an approved, pinned version. The config is refused if an `include` id is also in `exclude` or in `catalogue.exclude`, or if there are more `include` ids than `max_skills`.
+- **Decisions:** every requested, mandatory and added skill gets a decision with a reason code: `mandatory`, `requested` or `dependency` when selected; `excluded`, `unknown`, `unapproved`, `unpinned`, `mismatch`, `unverified`, `role`, `too-large`, `dependency-cycle`, `dependency-unavailable`, `dependency-version`, `conflict`, `over-count`, `over-budget` or `blocked` when refused. The result also has the estimated tokens (description and SKILL.md text; reference files are not counted), so the size is known before an agent starts.
+
+### Skill lock of a run
+
+When a run has a plan that is ready to code, the first agent step resolves the plan's skill request and saves the result as `skill-lock.json` in the run folder. It names each skill by `id@version` and digest, with its source kind (`admin` or `builtin`), reason and evidence, and holds the plan hash and the repository commit. It holds no credentials, no paths and no issue text. `run.json` keeps a short copy (`skillLock`).
+
+- **Resume:** a resumed run uses the locked versions, not the newest ones. The lock is made once per plan; if the run plans again, a new lock is made.
+- **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume.
+- **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
+- **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
 
 ### Access from other computers
 
@@ -2448,6 +2584,10 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
+| `scf skills [--repo dir]` | List skill packages with trust, pin state and digest, plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
+| `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
+| `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
+| `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
@@ -2673,6 +2813,12 @@ The folder of your clone can keep its name.
 
 **Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
 
+**Refine an existing issue.** Click **Refine an existing issue** next to **New session**. Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
+
+**Start from an existing issue (server; the button above uses it).** `POST /api/refinement` also accepts `{ "repo": …, "issue": <number> }` instead of an idea. The issue is read from GitHub with the repository's sign-in; nothing is written to GitHub. The issue's title becomes the session title (up to 256 characters) and its title and text become the idea. The session keeps `source`: the issue number, link, and the title, text and `updated_at` it had when it was read (`GET /api/refinement/:id` returns it). When the text has the story format that Preview writes, the session gets one draft with the fields filled, all marked as typed by a person; text the fields cannot hold goes into the notes under its heading, and "Accepted anyway" is not taken. Without the story format, you get the idea only and no draft. Hidden Foundry markers and the "Refined in Spaghetti Code Foundry by …" note are left out. A text over the idea limit is refused, not cut. It is refused with a reason when the issue does not exist (404), is a pull request (400), is closed (409), or the repository is not yours (403). It is refused with 409 when the Foundry is building or has built the issue: a live or queued run, a Foundry status label (working, waiting, needs info, done; a watcher's own names count), or a run with a pull request, unless that pull request is closed and not merged. An issue with only a failed run, or only the failed label, is accepted. An issue for which you already have an open session is refused with the id of that session. When the issue has the build label, `source.buildLabel` says so. A session from an issue cannot be published yet (409) until write-back exists.
+
+**Backlog readiness.** Click **Backlog readiness** on the Refinement page to see which open issues of a repository are not ready. Choose one of your repositories. The list shows the open issues the Foundry is not building and has not built (the same rule as "Refine an existing issue"), newest first, with the number (a link to GitHub), the title and four marks, done by code only: **Acceptance criteria** (a section with at least one item), **Value sentence** ("As …, I want …, so that …"), **Depends on** (every issue named there exists; hover a ✗ to see which were not found) and **No open questions** (no "Open questions" heading with content, and no unchecked question item). The marks are hints; nothing is blocked by them. Press **Refine** to start a session from that issue and open it. When you already have an open session for the issue, the button reads **Open session**. GitHub's newest 100 issues and pull requests are read; when that page is full, the view says that older open issues may be missing. When GitHub cannot be read, the view says so and tells you to check the repository's sign-in under **My repositories**. The view starts no architect run, writes nothing to GitHub and adds or removes no labels; the watcher is not changed. It is not shown in a preview ("View as user"). Server: `GET /api/refinement/backlog?repo=owner/name` (see the route table); only the owner of the repository can read it.
+
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
 **The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
@@ -2759,6 +2905,14 @@ When the run ends, the checked view (see `ask=impact` below) is stored with the 
 
 **Ways to split a draft.** `POST /api/refinement/:id/drafts/:did/split` starts an architect run of kind `split` and answers 202 with the session. The body is optional; it may be `{ "own": "…" }`, your own way, one text of at most 500 characters (anything else gives 400). The same rules as a review apply: only the owner, a brief is needed, one architect run per account, and a paused run is resumed by the same call. The answer is 409 when the draft has fewer than 2 acceptance criteria. The task lists the criteria as C1, C2, …; your own way goes into the task under a heading that shows its length. A run keeps the $1 limit of a review. Nothing is split by this.
 
+**Confirming a split.** `POST /api/refinement/:id/drafts/:did/split/confirm` takes `{ "way": 0, "parts": [{ "title": "…", "sentence": "…", "criteria": ["<criterion id>"], "dependsOn": [1] }], "unplaced": ["<criterion id>"] }` and answers 201 with the session. No architect run starts. `way` is optional (0 to 2, one of the stored ways). There must be 2 to 6 parts, each with a title. `dependsOn` lists part numbers starting at 1; a part may depend on an earlier part only. Every criterion of the draft goes in exactly one part or in `unplaced`; a draft with no or one criterion can be split by your own plan. Each part becomes a new draft at the end of the list, in plan order, with its criteria and copies of the original's out of scope and notes. The first part also gets copies of the original's dependencies. The original stays as a record: it keeps the unplaced criteria, shows `state: "split"`, is never ready, and is not published. A draft that is already split, is a part, or is published gives 409. There can be at most 20 drafts after the split. Removing a part takes it out of the original's list; removing the original keeps the parts as normal drafts.
+
+**Moving a criterion between the parts of a split.** `POST /api/refinement/:id/drafts/:did/criteria/:cid/move` takes `{ "to": "<draft id>" }` and answers 200 with the session. The criterion goes to the end of the target draft. It works from part to part, from the original to a part and from a part back to the original; this is the one change allowed on a split original. `to` must be another draft of the same split (the original or one of its parts), otherwise 400 `a criterion can only move between a split draft and its parts`. A body without `to` gives 400 `send to: the draft to move the criterion to`. An unknown draft or criterion gives 404, a full target (50 criteria) gives 400, and a draft that is already on GitHub, as source or target, gives 409. The readiness check of both drafts is cleared, and the log gets `criterion-moved` with the criterion text. The view of a split original has `partWarnings` when there are any: `layer` for a part without a criterion, and `same-code` for two parts whose impact areas overlap while neither depends on the other, directly or through other parts (`areas` lists up to 5 of the overlapping areas of the first part).
+
+**Merging two drafts.** `POST /api/refinement/:id/drafts/:did/merge` takes `{ "with": "<draft id>" }`, merges that draft into this one, removes it and answers 200 with the session. It is for undoing a split that went too far. No architect run starts. The first draft keeps its title, who, what and why; an empty one is taken from the second. The criteria of the second come after those of the first (50 at most, otherwise 400). Out of scope and notes: equal texts are kept once; different texts are joined with an empty line, and a joined text that is too long gives 400. Depends-on is the union of both without the two drafts themselves (20 at most, otherwise 400); other drafts that depended on the second now depend on the first. Waiting suggestions, review, impact, split proposal and readiness check of the merged draft are cleared; rejected suggestions of both are kept (the newest 30). If the second was a part of a split, the original is updated. No part may depend on a later part of its split: after a merge such a link is removed and named in the log detail. A split original, or a draft already on GitHub, gives 409; a draft merged with itself gives 400. The log gets `drafts-merged`.
+
+**A split original is read-only.** On a draft that is split, you work on the parts instead. These answer 409 with `this draft is split; its parts are worked on instead` and change nothing: saving fields, accepting or rejecting a suggestion, move to notes, the review label, the readiness check, accept anyway, and removing an "accepted anyway" mark. Asking the architect for a suggestion, a review, an impact view, a readiness judgement or ways to split on the original is 409 too. Removing the original still works. When the last part is removed, the original can be edited again. A part takes suggestion, review and readiness check like any draft. If a run was paused and its draft is split before you resume it, asking again is 409 and the paused run is cancelled and marked failed with `The draft was split while the run was paused`; the next ask in the session is not blocked. If a run is working while its draft is split, its result is not stored and the run fails with `The draft was split while the architect was reading`. Undo is partial: removing a part does not bring back its criteria. They are gone with the part.
+
 When the run ends, the checked ways (see `ask=split` below) are stored with the draft as `split` and replace older ones; the C numbers are stored as criterion ids. No field of the draft and no session state changes. The session answer shows each draft's `split` (`at` and `ways`) and `outOfDate: true` when the draft changed since it was asked. It is not shown while the repository is not in My repositories. A wrong form fails the run with "The architect's answer did not have the agreed form" and the old ways stay; a draft that is gone fails the run with a fixed sentence. The log tells `split-asked` and `architect-split`.
 
 **Size and plan review.** The view of a draft also carries `fit` and, sometimes, `planReview`. Both are worked out each time the session is read, so a changed limit shows at once. Neither blocks a change of the draft or a later publish. You decide.
@@ -2812,11 +2966,25 @@ When the run ends, the checked ways (see `ask=split` below) are stored with the 
 
 **Publishing.** `POST /api/refinement/:id/publish` creates GitHub issues for the ready drafts, with the repository's sign-in. The body is optional: `{ "drafts": [ { "id": "<draft id>", "labels": ["…"], "startBuilding": false } ] }`. Without `drafts`, every ready draft is created with no extra labels. Only the owner may publish (an admin who is not the owner: 403). The answer lists the issues it made or found, with numbers and links.
 - **Order and numbers.** A draft is created after the drafts it depends on, so its "Depends on" lines use the real issue numbers (`- #101`), not "new issue". A draft that has an issue is never created again.
+- **Split originals.** A draft that was split gets no issue and is never marked published; its parts are published instead. A draft that depended on the original is created after all its parts and names each part's issue. The session is *published* when every draft that is not a split original is on GitHub. The answer has `leftBehind: [{ draft, title, criteria }]` for split originals that still hold criteria, like the plan (also when nothing is left to create); the key is absent when there are none. A part that is on GitHub cannot be split again, removed, or lose a criterion by a move (409), so the same criteria never get a second issue.
 - **Labels.** Chosen labels must exist in the repository and are sent in its spelling. The build label is added only when `startBuilding` is true, and needs a watcher on the repository (else 400). The review label is added only for a draft with the review label choice on. You cannot choose the build or review label by hand (400). One unknown label refuses the whole call before anything is created.
 - **Title.** A draft needs a title. If a ready draft has none, the call is refused (409) and nothing is created.
 - **The hidden marker.** Each issue body ends with a hidden line naming the session and the draft. If a call fails halfway, **publish again**: drafts that have an issue are skipped, and an issue made before the answer was lost is found by its marker and taken over, with its text and labels unchanged. After a timeout, wait a moment before you try again: GitHub's list of issues can lag a few seconds, and an issue not listed yet would be created twice. Only the newest 100 issues are searched.
 - **While it runs.** The session cannot be changed while it is being published (409, "try again in a moment"); this includes rename, drop and architect calls. Publish waits (409) while an architect run of the session is queued or running; a paused run does not block it. A second publish at the same time gets 409. A session whose log is full cannot be published.
 - **Afterwards.** A published draft shows `published: { issue, url, at }` and the log has `draft-published`. It cannot be changed any more: edits, ready checks, the review label, suggestions and architect calls on it give 409 naming the issue. While a draft is published, the Epic cannot be changed, a map entry that the draft is tied to cannot be removed, and a draft that a published draft still names cannot be removed. Other drafts work as before. Editing after publishing comes later.
+
+**Publishing on the session page.** The session page shows **Publish** only to the owner, while the repository is in My repositories, and only when at least one draft is ready and not on GitHub yet. An admin who is not the owner does not see it.
+- **Save first.** Text you typed in a draft is saved before the plan is shown. If it cannot be saved, nothing is published. If some text has no place on the page any more, you are asked whether to publish anyway.
+- **The plan.** **Publish** opens a window with the issues in the order they will be created. Each shows its title, text, dependencies (`#12`, or "new issue 2: Title") and labels. Drafts that are not ready are listed with the reason and are not published. Nothing is sent to GitHub until you press **Create the issues**.
+- **Labels.** For each draft you tick labels from the labels of the repository. Nothing is ticked for you, except the review label when the draft asked for it. The build and review labels are not in the list; they are set by the rules.
+- **Start building this story.** Each draft has this tick box, off by default. It names the build label. If the repository has no enabled watcher for issues, the box is not shown and a short sentence says why. If the build label does not exist in the repository, the box is off and cannot be ticked.
+- **The issue changed on GitHub.** In a session that came from an issue, **Create the issues** first reads the issue again. When its title or text is not what the session remembered, nothing is written. The window then shows both versions side by side: the title and text on GitHub now, and the title and text the Foundry would write. Line ends and white space around the text are ignored; a change of labels or comments alone does not ask. Choose one:
+  - **Keep mine** publishes your version and replaces the text on GitHub. The GitHub version you saw is the one kept, folded, in the comment. If GitHub changed again after you saw it, you are asked again with the newer versions.
+  - **Keep GitHub's** writes nothing to the issue and publishes none of the listed stories. The session remembers the GitHub version as its source, so it does not ask again, and the draft stays unpublished: go on editing or drop the session. It is refused (409) while an unfinished update is pending, so the old text is not lost.
+
+  The publish plan shows the same state as `changedOnGithub` before you press the button.
+- **After publishing.** Each published draft shows **On GitHub: #n** with a link to its issue, and its fields are read only. The session shows *Published* when every draft is on GitHub.
+- **After a failure.** The page shows the message of the server and which drafts are on GitHub already. **Publish** is offered again for the rest; drafts that are on GitHub are not created twice.
 
 **Depends on.** Each item is `{ "issue": n }` (a whole number from 1) or `{ "draft": "<id>" }` (another draft of this session). A draft cannot depend on itself, and the same item cannot be in the list twice. Issue numbers are not checked against GitHub yet.
 
@@ -2846,6 +3014,37 @@ An empty part shows as "…"; a full stop is added when the why has none; "Out o
 **Who may do what.** Only the owner changes drafts and the Epic. Another user gets 404, an admin 403 (an admin may read), a dropped session or a repository that is not in My repositories 409. While the repository is not in My repositories the drafts are not shown (`draftsHidden: true`).
 
 **What is logged.** Adding and removing a draft and setting or clearing the Epic. Saving text writes no line. Drafts and the Epic are kept in `refinements.json` like the talk.
+
+### Splitting a draft
+
+A draft with at least 2 acceptance criteria has a **Split** button. It asks the architect for up to 3 ways to cut the story into smaller drafts. It shows the run like the other asks: queued, running, paused (with **Ask again**) or failed (with the reason). Nothing is split and no field changes until you press **Confirm split**.
+
+**The ways.** Each way shows:
+
+- its cut in words (by step, by interface, by data, by rule, or "learn first (spike)");
+- the stories in order, each with its sentence, its criteria and what it depends on;
+- what the first story already delivers;
+- the criteria that fit nowhere;
+- its warnings: a story that delivers nothing a user can see or check, and two stories that touch the same code.
+
+When the draft changed after the ways were asked, the box says "out of date" and offers **Ask again**.
+
+**Describe my own way.** Write a short text and press **Ask with my way**. The architect is asked again, and its first way works out your description.
+
+**The plan.** **Use this way** opens the plan; **Start from an empty plan** opens a plan with no parts. In the plan you can:
+
+- rename parts, add parts and remove parts;
+- move a criterion to another part, or to **Fits nowhere**;
+- change the order of the parts (**Up**, **Down**);
+- set **Depends on** for a part.
+
+The plan is kept in the page only, so reloading the page loses it. **Discard plan** drops it.
+
+**Problems are shown before sending.** The plan names a criterion that is in no list, a part that depends on a later part, a part without a title and fewer than 2 parts. **Confirm split** stays off until the plan is right, and its text says how many drafts it creates. If you type a criterion just before you confirm, the page saves it first and shows it under "In no list" instead of sending.
+
+**After Confirm split.** Each part becomes a new draft, the page opens the first one, and the original stays as a read-only record (see "Moving a criterion between the parts of a split" for moving criteria later).
+
+**Who sees it.** Only people who can edit drafts see the buttons. In "View as user" no button is shown and no changing call leaves the browser; the ways are shown as text.
 
 ### The talk: questions, answers and the map
 
@@ -2950,7 +3149,7 @@ The architect gives no implementation plan, no questions, no proposals, no sugge
 - `unplaced`: the C numbers that fit no story. Every C number of the draft is in exactly one story or in `unplaced`.
 - `warnings`: `{ "kind": "layer", "story": 2, "why": "…" }` when a story delivers nothing a user can see or check, and `{ "kind": "same-code", "stories": [1, 2], "why": "…" }` when two stories touch the same code so heavily that they cannot be built at the same time.
 
-When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. Only the flow exists so far: no page or server route asks for a split yet.
+When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. The draft page asks for it with **Split** (see "Splitting a draft").
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 

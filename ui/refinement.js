@@ -1,7 +1,11 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
+import { renderBacklog } from "./refinement-backlog.js";
+import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
+import { publishSection } from "./refinement-publish.js";
 import { impactLogText } from "./refinement-impact.js";
+import { splitLogText } from "./refinement-split.js";
 import { readyLogText } from "./refinement-ready.js";
 import { reviewLogText } from "./refinement-remarks.js";
 import { suggestLogText } from "./refinement-suggest.js";
@@ -37,6 +41,7 @@ export function logText(entry) {
   const who = entry.who || "Someone";
   if (entry.what === "created") return `${who} started the session`;
   if (entry.what === "renamed") return `${who} renamed it${entry.detail ? ` to "${entry.detail}"` : ""}`;
+  if (entry.what === "source-refreshed") return `${who} kept the GitHub version of the issue${entry.detail ? ` ${entry.detail}` : ""}`;
   if (entry.what === "dropped") return `${who} dropped the session`;
   if (entry.what === "restored") return `${who} restored the session`;
   if (entry.what === "architect-started") return `${who} asked the architect to look at the code`;
@@ -48,7 +53,7 @@ export function logText(entry) {
   if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
   if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
   if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
-  return talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
+  return importLogText(entry) || talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
 }
 
 const ASK = "Ask the architect to look at the code";
@@ -70,7 +75,7 @@ export function activityText(doing, kind = "brief") {
     if (/clone|check out/i.test(t)) return "Getting the code.";
     if (/reads the code/i.test(t)) return "Reading the code.";
     if (kind === "impact" && /issues/i.test(t)) return "Reading the open issues.";
-    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : "Checking the answer.";
+    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : kind === "split" ? "Checking the ways." : "Checking the answer.";
     if (/^getting ready/i.test(t)) return "Getting ready.";
     return "";
   }
@@ -82,8 +87,8 @@ export function activityText(doing, kind = "brief") {
   return t;
 }
 
-const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft.", impact: "Then it looks at what your draft touches.", ready: "Then it judges what code could not decide." };
-const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft.", impact: "The architect is looking at what your draft touches.", ready: "The architect is judging the readiness of your draft." };
+const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft.", impact: "Then it looks at what your draft touches.", ready: "Then it judges what code could not decide.", split: "Then it looks for ways to split your draft." };
+const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft.", impact: "The architect is looking at what your draft touches.", ready: "The architect is judging the readiness of your draft.", split: "The architect is looking for ways to split your draft." };
 
 /** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
 export function architectStatus(a) {
@@ -292,6 +297,25 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     stopPoll();
   };
 
+  if (id === "backlog") {
+    let repos = [];
+    // A preview makes no request: the list is read with the owner's GitHub sign-in.
+    if (!readOnly) {
+      try {
+        repos = (await api.refinement()).repos;
+      } catch (err) {
+        if (!current()) return () => {};
+        throw err;
+      }
+    }
+    if (!current()) return () => {};
+    const leave = await renderBacklog(main, { repos, readOnly, errorText, current, goTo });
+    return () => {
+      leave();
+      cleanup();
+    };
+  }
+
   if (id) {
     const gone = (e) => mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
     let s;
@@ -407,6 +431,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
           h("span", { class: "spacer" }), buttons),
+        ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
         h("h2", {}, "Idea"),
@@ -416,6 +441,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         );
       }
       sections.update(s);
+      publishing.update(s);
       const lowerKey = JSON.stringify(s.log);
       if (lowerKey !== shownLower) {
         shownLower = lowerKey;
@@ -423,9 +449,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       }
     };
     const sections = draftSection({ id, save, send, errorText, statusLine: (a) => statusLine(architectStatus(a)) });
+    const publishing = publishSection({ id, save, errorText, current, saveAll: sections.saveAll, read: async () => seen(await api.refinementSession(id)) });
     leaveDrafts = sections.leave;
     show(s);
-    mount(main, upper, sections.node, lower); // after the first draw, so the focus finds its control again
+    mount(main, upper, sections.node, publishing.node, lower); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 
@@ -440,6 +467,11 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const { repos } = listed;
   const sessions = listed.sessions.map(seen);
   const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
+  const opened = (made) => {
+    if (!made?.id) return;
+    if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);
+    else toast("Refinement session started");
+  };
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
@@ -459,12 +491,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
       h("span", { class: "muted" }, "Where a rough idea grows into a story"),
       h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
+      readOnly ? null : h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
+      readOnly ? null : h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
       readOnly ? null : h("button", { class: "primary", onClick: async () => {
-        await newSessionDialog(repos, (made) => {
-          if (!made?.id) return;
-          if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);
-          else toast("Refinement session started");
-        });
+        await newSessionDialog(repos, opened);
       } }, "New session")),
     shown.length
       ? h("div", { class: "table-box" }, h("table", { class: "table" },

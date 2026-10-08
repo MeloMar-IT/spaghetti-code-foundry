@@ -5,6 +5,9 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
+import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
+import { SkillIdSchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -363,6 +366,78 @@ export const ConfigSchema = z
     watchers: z.array(WatcherSchema).default([]),
     /** Thresholds of the monitor watcher. */
     monitor: MonitorSchema.prefault({}),
+    /** Where approved skill packages are read from. Personal agent folders (.claude, .codex) are never scanned. */
+    skills: z
+      .object({
+        /** Scan the skills shipped with the Foundry. */
+        builtin: z.boolean().default(true),
+        /** Extra administrator-managed folders (absolute). <data folder>/skills is always scanned. */
+        roots: z
+          .array(
+            z
+              .string()
+              .refine((p) => isAbsolute(p), "must be an absolute path")
+              .refine((p) => !p.split(/[\\/]/).some((s) => s === ".claude" || s === ".codex"), "personal agent folders are never scanned"),
+          )
+          .max(20)
+          .default([]),
+        /** Also read <repo>/.claude-factory/skills. Off: repository skills are never loaded. */
+        repository: z.boolean().default(false),
+        /** Limits and pin/exclude lists of the skill catalogue a planner gets. Installation-wide. */
+        catalogue: z
+          .object({
+            max_candidates: z.number().int().min(CATALOGUE_RANGE.maxCandidates[0]).max(CATALOGUE_RANGE.maxCandidates[1]).default(CATALOGUE_DEFAULTS.maxCandidates),
+            max_tokens: z.number().int().min(CATALOGUE_RANGE.maxTokens[0]).max(CATALOGUE_RANGE.maxTokens[1]).default(CATALOGUE_DEFAULTS.maxTokens),
+            /** Skill ids that are always in the catalogue. */
+            include: z.array(SkillIdSchema).max(CATALOGUE_RANGE.include).default([]),
+            /** Skill ids that are never in the catalogue. Wins over include. */
+            exclude: z.array(SkillIdSchema).max(CATALOGUE_RANGE.exclude).default([]),
+          })
+          .strict()
+          .superRefine((c, ctx) => {
+            const dup = (key: "include" | "exclude") =>
+              c[key].forEach((id, i) => {
+                if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
+              });
+            dup("include");
+            dup("exclude");
+            if (c.include.length > c.max_candidates) ctx.addIssue({ code: "custom", path: ["include"], message: "more pinned skills than max_candidates" });
+            if (CATALOGUE_COST.header + CATALOGUE_COST.minimalEntry * c.include.length > c.max_tokens)
+              ctx.addIssue({ code: "custom", path: ["include"], message: "the pinned skills do not fit max_tokens" });
+          })
+          .prefault({}),
+        /** What the skill resolver may select for a plan: limits, mandatory ids (include) and refused ids (exclude). Installation-wide. */
+        selection: z
+          .object({
+            max_skills: z.number().int().min(RESOLVE_RANGE.maxSkills[0]).max(RESOLVE_RANGE.maxSkills[1]).default(RESOLVE_DEFAULTS.maxSkills),
+            max_skill_tokens: z.number().int().min(RESOLVE_RANGE.maxSkillTokens[0]).max(RESOLVE_RANGE.maxSkillTokens[1]).default(RESOLVE_DEFAULTS.maxSkillTokens),
+            max_tokens: z.number().int().min(RESOLVE_RANGE.maxTokens[0]).max(RESOLVE_RANGE.maxTokens[1]).default(RESOLVE_DEFAULTS.maxTokens),
+            /** Skill ids that are always selected. Not an approval: they still need a pin. */
+            include: z.array(SkillIdSchema).max(RESOLVE_RANGE.include).default([]),
+            /** Skill ids that are never selected. */
+            exclude: z.array(SkillIdSchema).max(RESOLVE_RANGE.exclude).default([]),
+          })
+          .strict()
+          .superRefine((c, ctx) => {
+            for (const key of ["include", "exclude"] as const)
+              c[key].forEach((id, i) => {
+                if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
+              });
+            if (c.include.length > c.max_skills) ctx.addIssue({ code: "custom", path: ["include"], message: "more mandatory skills than max_skills" });
+            c.include.forEach((id, i) => {
+              if (c.exclude.includes(id)) ctx.addIssue({ code: "custom", path: ["include", i], message: `"${id}" is also in exclude` });
+            });
+          })
+          .prefault({}),
+      })
+      .strict()
+      .superRefine((s, ctx) => {
+        s.selection.include.forEach((id, i) => {
+          if (s.catalogue.exclude.includes(id))
+            ctx.addIssue({ code: "custom", path: ["selection", "include", i], message: `a mandatory skill is excluded from the catalogue ("${id}")` });
+        });
+      })
+      .prefault({}),
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,
   })
@@ -378,6 +453,7 @@ export const ConfigSchema = z
 export type WatcherConfig = z.infer<typeof WatcherSchema> & { repoId?: string; ownerId?: string };
 export type Config = Omit<z.infer<typeof ConfigSchema>, "watchers"> & { watchers: WatcherConfig[] };
 export type ServerConfig = z.infer<typeof ServerSchema>;
+export type SkillsConfig = Config["skills"];
 export type SelfUpdateConfig = z.infer<typeof SelfUpdateSchema>;
 export type MonitorConfig = z.infer<typeof MonitorSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;

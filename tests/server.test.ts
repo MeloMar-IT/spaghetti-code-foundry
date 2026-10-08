@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { signInAs, type TestSession } from "./helpers/session.js";
+import { fetchUiCss } from "./helpers/ui-css.js";
 
 const port = 20000 + Math.floor(Math.random() * 20000);
 const base = `http://127.0.0.1:${port}`;
@@ -181,7 +182,10 @@ describe("ui server", () => {
     expect(html).toContain("<title>Spaghetti Code Foundry</title>");
     expect(html).toContain('<span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span>');
     expect(html).not.toContain("claude-factory");
-    const css = await text("/style.css");
+    expect(html).toContain('id="side"');
+    expect(html).toContain('id="top-actions"');
+    const css = await fetchUiCss(base);
+    expect(css).toContain("body.drawer-open .side");
     expect(css).toContain(".brand-short { display: none; }");
     expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);
     const app = await text("/app.js");
@@ -505,7 +509,7 @@ steps:
   it("serves the Your turn page", async () => {
     const text = (p: string) => fetch(base + p).then((r) => r.text());
     const html = await text("/");
-    expect(html).toContain('data-nav="your-turn"');
+    expect(html).toContain('data-nav="home"');
     expect(html).toContain('id="turn-badge"');
     expect(html).toContain("<title>Spaghetti Code Foundry</title>");
     expect((await fetch(base + "/turn.js")).status).toBe(200);
@@ -515,7 +519,10 @@ steps:
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "retry" })).status).toBe(404);
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "explode" })).status).toBe(400);
     const app = await text("/app.js");
-    for (const s of ["renderYourTurn", "startHash(", 'section === "your-turn"']) expect(app).toContain(s);
+    for (const s of ["renderAdminHome", "startHash(", 'section === "home"']) expect(app).toContain(s);
+    expect((await fetch(base + "/home.js")).status).toBe(200);
+    expect((await fetch(base + "/home-admin.js")).status).toBe(200);
+    expect(await text("/home-admin.js")).toContain("renderYourTurn");
     expect(await text("/api.js")).toContain("/api/your-turn");
   });
 
@@ -560,8 +567,8 @@ steps:
   it("serves the Since you last looked strip", async () => {
     const text = (p: string) => fetch(base + p).then((r) => r.text());
     expect((await fetch(base + "/since.js")).status).toBe(200);
-    expect(await text("/")).toContain('id="since"');
-    expect(await text("/app.js")).toContain("startSince(");
+    expect(await text("/")).not.toContain('id="since"'); // Home owns the box now
+    expect(await text("/app.js")).toContain("startSince(sinceEl)");
     expect(await text("/api.js")).toContain("/api/since");
   });
 
@@ -721,7 +728,8 @@ steps:
       expect(r.status).toBe(200);
       return r.text();
     };
-    const [next, dashboard, admin, runs, api, css, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/admin.js", "/runs.js", "/api.js", "/style.css", "/health.js", "/", "/app.js"].map(text));
+    const [next, dashboard, admin, runs, api, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/admin.js", "/runs.js", "/api.js", "/health.js", "/", "/app.js"].map(text));
+    const css = await fetchUiCss(base);
     expect(next).toContain("What happens next");
     for (const js of [dashboard, admin, runs, health]) expect(js).toContain("./next.js");
     expect(api).toContain("/api/next");

@@ -15,7 +15,7 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
-| `#/your-turn` | Your turn | `ui/turn.js`, `ui/turn-act.js` | `renderYourTurn` | `your-turn.ts`, `turn-actions.ts`, `api-admin.ts` (tick) | admin display only | Answer, approve, reject or retry what waits for the owner | Show questions / Show plan / Retry (button per item) | Answers by dialog (5 kinds in `dialogs.md`); a second run list next to Runs; polls every 5 s (`turn.js:166`) and every 30 s for the badge (`turn.js:52`) |
+| `#/home` | Home | `ui/turn.js`, `ui/turn-act.js` | `renderYourTurn` | `your-turn.ts`, `turn-actions.ts`, `api-admin.ts` (tick) | admin display only | Answer, approve, reject or retry what waits for the owner | Show questions / Show plan / Retry (button per item) | Answers by dialog (5 kinds in `dialogs.md`); a second run list next to Runs; polls every 5 s (`turn.js:166`) and every 30 s for the badge (`turn.js:52`) |
 | `#/board` | Board | `ui/board.js` | `renderBoard(main, arg)` | `board.ts`, `api-admin.ts` (tick) | admin display only | See where every story of one repository is | Pick a repository, then read the columns | Status shown here again (see F1); polls every 5 s (`board.js:156`) |
 | `#/board/:id` | — | `ui/board.js` | `renderBoard(main, arg)` | `board.ts` | admin display only | Same board for the repository in the address | Read the columns | Same module as the list; the repository id is the only difference |
 | `#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | both displays | Find or start a refinement session | New session | Shares the renderer with the user display via `{ admin }`; 9 buttons in one module |
@@ -28,22 +28,23 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
 | `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and reject use native `prompt` (`runs.js:244-245`); cancel uses `confirm` (`runs.js:258`); 13 inline styles |
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
-| `#/all-repos` | Repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
+| `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
-| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 19 inline styles, 4 native confirms and two pages |
+| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 4 native confirms and two pages |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings; clean workspaces | Save | Shares a file with Watchers (F6); the clean action is a native confirm (`admin.js:227`) |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:44` (`problems.js:88`) |
-| `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 17 inline styles; 3 tables, none inside `.table-box` |
+| `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
-| `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`); 7 inline styles |
+| `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
 | `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
 
 ## User display
 
-The page at `/user/`. 6 route rows. `USER_HASH` allows exactly these (`ui/auth.js:223`); any other hash is replaced by `#/runs` (`userHash`, `ui/auth.js:232`).
+The page at `/user/`. 7 route rows. `USER_HASH` allows exactly these (`ui/auth.js:223`); any other hash is replaced by `#/runs` (`userHash`, `ui/auth.js:232`).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
+| `/user/#/home` | Home | `ui/home.js` | `renderHome` | `api-runs.ts` | user; admin read-only preview | See what needs me, what is running and what finished | Follow the best next action (head button) | Polls every 30 s; groups come from each run's next-step record |
 | `/user/#/start` | Start work | `ui/user/start.js` | `renderStart` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | user; admin read-only preview | Start a run | Start | Needs a published flow and a GitHub repository (`NO_FLOWS`, `NO_REPOS`) |
 | `/user/#/runs` | My runs | `ui/user/runs.js` | `renderMyRuns` | `api-runs.ts` | user; admin read-only preview | Find a run and its next step | Open a run (card link) | Polls every 30 s; Remove asks with `confirmDialog` |
 | `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3); 9 inline styles |
@@ -59,7 +60,7 @@ Admin preview: `/user/?as=<id>` (`ui/view-as.js`) draws these pages for the chos
 |---|---|---|
 | `/` (no hash) | admin | With something waiting, `startHash` sets `#/your-turn` (`ui/turn.js:14`, `ui/app.js:452`); with nothing waiting `route()` draws `#/flows` (`app.js:379`). The address bar stays empty in that case. `#` and `#/` are not "no hash" here: they draw `welcome()` |
 | `/` (unknown hash) | admin | Any section not in `route()` falls to the last `else`: `welcome()` (`app.js:422`); the hash is not changed |
-| `/user/` (no hash) | user | `homeHash` (`ui/user/start.js:14`): `#/start` when there are no runs and the queue is empty, else `#/runs`; any error gives `#/runs`. `#` and `#/` count as no hash (`isNoHash`, `ui/auth.js:226`) |
+| `/user/` (no hash) | user | Always `#/home` (`ui/user/app.js`); Home shows its own empty state with a Start work button. `#` and `#/` count as no hash (`isNoHash`, `ui/auth.js:226`) |
 | `/user/` (unknown hash) | user | `userPage` replaces the address by `#/runs` (`ui/user/app.js:30`) |
 | `#/set-password/:token` | both | A hash route (`linkToken`, `ui/auth.js:12`). The router reloads the page; the sign-in page then shows "Choose your password" (`auth.js:155`) |
 | `/user/?as=<id>` | user | Admin only. Read-only preview of that user (`ui/view-as.js:86`). A user ignores `as`. An admin without `as` is sent to `/` |
@@ -86,7 +87,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
-| `#/your-turn` | `data.empty` text from the server (`turn.js:133`) | errors box | poll 5 s |
+| `#/home` | `data.empty` text from the server (`turn.js`), or `EMPTY` when nothing exists | errors box | poll 5 s (Your turn) and 30 s (runs, queue, health) |
 | `#/board` | `data.empty` (`board.js:77`) | errors box | poll 5 s |
 | `#/board/:id` | `data.empty` | errors box | poll 5 s |
 | `#/refinement` | "No refinement sessions yet..." (`refinement.js:472`) | errors box | none found |
@@ -108,6 +109,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
+| `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` | errors box | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
 | `/user/#/runs/:id` | `NOT_FOUND` card, `NO_STEPS`, `NO_CHANGES` | card with the error and a link back (`user/runs.js:339`) | stream and poll 30 s (`user/runs.js:487`) |
@@ -121,7 +123,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 
 | Route | At 768 (R1 only) | At 390 (R1 and R2) |
 |---|---|---|
-| `#/your-turn` | Cards; 17-link nav is wider than 768 and has no wrap or scroll above 760 | Nav scrolls sideways; sidebar stacks above |
+| `#/home` | Cards; 17-link nav is wider than 768 and has no wrap or scroll above 760 | Nav scrolls sideways; sidebar stacks above |
 | `#/board` | Board columns probably wider than main | Probably clipped; no rule |
 | `#/board/:id` | As `#/board` | As `#/board` |
 | `#/refinement` | Table in `.table-box` scrolls | Same |
@@ -136,13 +138,14 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/repos` | `.table-box` scrolls | Same |
 | `#/all-repos` | Table not in `.table-box`: probably overflows | Probably overflows |
 | `#/credentials` | Table not in `.table-box` | Probably overflows |
-| `#/watchers` | Cards with inline styles | Probably fits |
+| `#/watchers` | Cards | Probably fits |
 | `#/settings` | Form | Probably fits |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
 | `#/users` | Table not in `.table-box` | Probably overflows |
 | `#/audit` | Table not in `.table-box` | Probably overflows |
+| `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |
 | `/user/#/runs` | Cards | Fits |
 | `/user/#/runs/:id` | `.run-grid` one column | Long page |
@@ -158,29 +161,23 @@ Count of `style:` occurrences per file (one line can hold more than one; `runs.j
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 157 in 22 files. Lines that contain one: 156.
+Total 96 in 16 files. Lines that contain one: 95.
 
 | File | Uses |
 |---|---|
-| `ui/admin.js` | 19 |
 | `ui/editor.js` | 18 |
-| `ui/models.js` | 17 |
 | `ui/runs.js` | 13 |
 | `ui/app.js` | 11 |
-| `ui/watcher-form.js` | 10 |
 | `ui/user/runs.js` | 9 |
-| `ui/admin-repos.js` | 8 |
 | `ui/refinement.js` | 7 |
 | `ui/repos.js` | 7 |
-| `ui/users.js` | 7 |
 | `ui/graph.js` | 5 |
 | `ui/step-types.js` | 5 |
-| `ui/dashboard.js` | 4 |
 | `ui/library.js` | 4 |
-| `ui/problems.js` | 3 |
+| `ui/refinement-import.js` | 4 |
+| `ui/refinement-publish.js` | 4 |
 | `ui/refinement-suggest.js` | 3 |
 | `ui/refinement-impact.js` | 2 |
 | `ui/refinement-talk.js` | 2 |
-| `ui/monitor.js` | 1 |
-| `ui/next.js` | 1 |
+| `ui/dashboard.js` | 1 |
 | `ui/refinement-ready.js` | 1 |

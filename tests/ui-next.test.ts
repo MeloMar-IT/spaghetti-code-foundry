@@ -340,24 +340,35 @@ describe("the \"?\" and the status names", () => {
     expect(help!.all("span").find((s) => s.attrs.role === "note")!.textContent).toBe("One. Two.");
     expect(pill!.attrs.class).toContain("who-you");
     expect(pill!.attrs.class).toContain("kind-approval");
+    expect(pill!.attrs.class).toContain("sem-waiting");
+    expect((pill!.children[0] as FakeElement).tag).toBe("svg");
+    expect((pill!.children[0] as FakeElement).attrs["aria-hidden"]).toBe("true");
   });
 
   it("nextStatus uses the record's words for every kind and spins only while working", async () => {
     const { KINDS } = await import("../src/words.js");
+    const { semanticOf } = (await import("../ui/icons.js" as string)) as any;
     for (const kind of KINDS) {
       const n = nextStep(kind, { repo: "o/r", runId: "x" }, { blockers: [{ issue: 1, title: "t" }] as never });
       const [pill, help] = ui.nextStatus(n) as FakeElement[];
       expect(pill!.textContent).toBe(n.status);
       expect(help!.all("span").find((s) => s.attrs.role === "note")!.textContent).toBe(n.help);
-      expect(pill!.all("span").length > 0).toBe(kind === "running");
+      const icons = pill!.all("svg");
+      expect(icons).toHaveLength(1);
+      expect(icons[0]!.attrs.class!.includes("spin")).toBe(kind === "running");
+      expect(pill!.attrs.class).toContain(`sem-${semanticOf(kind)}`);
+      expect(pill!.all("span")).toHaveLength(0);
     }
   });
 
   it("statusMark takes any object with status and help", () => {
     const [pill, help] = ui.statusMark({ status: "active", help: "A. B." }, "state-active");
-    expect(pill.attrs.class).toBe("pill state-active");
+    expect(pill.attrs.class).toBe("pill sem-neutral state-active");
     expect(help).not.toBeNull();
     expect(ui.statusMark({ status: "active" }, "state-active")[1]).toBeNull();
+    expect(ui.statusMark({ status: "a", help: "A. B." }, "")).toHaveLength(2);
+    expect(ui.statusMark({ status: "a" }, "", false, "nope")[0].attrs.class).toBe("pill sem-neutral");
+    expect(ui.statusMark({}, "")[0].attrs.class).toBe("pill sem-neutral");
   });
 
   it("nextParts is flat, has the status and can leave it out", () => {
@@ -451,8 +462,11 @@ describe("the \"?\" and the status names", () => {
     const w = { state: { name: "disabled", status: "disabled", help: "A. B." } };
     const [pill, help] = admin.watcherStateMark(w) as FakeElement[];
     expect(pill!.textContent).toBe("disabled");
-    expect(pill!.attrs.class).toBe("pill state-disabled");
+    expect(pill!.attrs.class).toBe("pill sem-disabled state-disabled");
     expect(help!.textContent).toContain("A. B.");
+    const cls = (name: string) => (admin.watcherStateMark({ state: { name, status: name } }) as FakeElement[])[0]!.attrs.class;
+    expect(cls("active")).toBe("pill sem-success state-active");
+    expect(cls("error")).toBe("pill sem-danger state-error");
     expect(admin.watcherStateMark({})).toBeNull();
   });
 

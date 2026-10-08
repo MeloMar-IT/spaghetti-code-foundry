@@ -1,0 +1,4 @@
+/* tokens.css — where the custom properties live.
+   Belongs here: a pointer to the token file, and nothing else. The values (colours, type, spacing, density, the layer scale
+   --layer-*, the content width --size-form) are in /tokens.css (ui/tokens.css), which both pages link before /style.css.
+   Does not belong here: selectors; any rule that styles an element. */

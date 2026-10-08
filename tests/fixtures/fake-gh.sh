@@ -43,7 +43,8 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   esac
   echo '{}'; exit 0 ;;
 esac
-# REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create makes that call fail.
+# REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create|update makes that call fail.
+# "api repos/…/issues/<n> -X PATCH --input -" sets the title and body of that issue and logs "--- updated issue <n> (api):" with the JSON from stdin.
 # $FAKE_GH_FAIL_CREATE_AT=<n>: the nth create call (the count is kept in $FAKE_GH_LOG.creates) fails with $FAKE_GH_FAIL_TEXT (default "boom").
 api_fail() { [ "$FAKE_GH_FAIL_API" = "$1" ] && { printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; }; }
 case "$all" in
@@ -54,7 +55,7 @@ case "$all" in
       if [ "$cn" = "$FAKE_GH_FAIL_CREATE_AT" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
     fi
     repo=${all#api repos/}; repo=${repo%%/issues*}
-    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const b=JSON.parse(s);const n=Math.max(100,...l.map(x=>x.number))+1;const i={number:n,state:"open",state_reason:null,title:b.title,body:b.body,labels:(b.labels||[]).map(name=>({name})),html_url:"https://github.com/"+process.argv[2]+"/issues/"+n,created_at:new Date().toISOString(),closed_at:null};l.push(i);fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- created issue (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$repo"
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const b=JSON.parse(s);const n=Math.max(100,...l.map(x=>x.number))+1;const i={number:n,state:"open",state_reason:null,title:b.title,body:b.body,labels:(b.labels||[]).map(name=>({name})),html_url:"https://github.com/"+process.argv[2]+"/issues/"+n,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),closed_at:null};l.push(i);fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- created issue (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$repo"
     exit 0 ;;
   "api repos/"*"/issues?"*)
     api_fail list
@@ -62,9 +63,21 @@ case "$all" in
     elif [ -f "$FAKE_GH_LOG.issues.json" ]; then node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).reverse()))' "$FAKE_GH_LOG.issues.json"
     else echo '[]'; fi
     exit 0 ;;
+  # Changes the title and text of an issue of $FAKE_GH_LOG.issues.json from the JSON on stdin (404 when it is not there). $FAKE_GH_FAIL_API=update fails it.
+  "api repos/"*"/issues/"[0-9]*" -X PATCH --input -")
+    api_fail update
+    num=${all#*/issues/}; num=${num%% *}
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}const b=JSON.parse(s);if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;i.updated_at=new Date().toISOString();fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- updated issue "+i.number+" (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$num"
+    exit $? ;;
   "api repos/"*"/issues/"[0-9]*)
     api_fail read
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$FAKE_GH_LOG.issues.json" "${all##*/issues/}"
+    exit $? ;;
+  # A pull request by number, from $FAKE_GH_LOG.pulls.json (a list of { number, state, merged }); 404 when the number is not in it.
+  "api repos/"*"/pulls/"*[!0-9]*) ;; # a sub-path of a pull request (comments, …) is not answered here
+  "api repos/"*"/pulls/"[0-9]*)
+    api_fail read
+    node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const p=l.find(x=>x.number===Number(process.argv[2]));if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify({number:p.number,state:p.state,merged:p.merged===true,merged_at:p.merged===true?"2026-01-01T00:00:00Z":null}))' "$FAKE_GH_LOG.pulls.json" "${all##*/pulls/}"
     exit $? ;;
 esac
 # $FAKE_GH_STORIES=1: the issues made by the REST POST (bug stories) are real to "issue list/view/close" too. Without it, nothing here runs.

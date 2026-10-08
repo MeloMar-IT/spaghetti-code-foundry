@@ -109,11 +109,12 @@ const markOf = (d: Draft, item: ReadyItem): Accepted | undefined => (item.rule =
  * "accepted anyway" mark. An item that is new or reworded since the check has no result, so only a new check makes the draft ready.
  * Publishing must call this again with the current list and must not trust the stored state of the session.
  */
-export const isReady = (d: Draft, list: readonly ReadyItem[]): boolean => d.readiness !== undefined && list.every((item) => (resultOf(d, item) ? resultOf(d, item)!.result === "met" || markOf(d, item) !== undefined : false));
+export const isReady = (d: Draft, list: readonly ReadyItem[]): boolean => !d.splitInto && d.readiness !== undefined && list.every((item) => (resultOf(d, item) ? resultOf(d, item)!.result === "met" || markOf(d, item) !== undefined : false));
 
 /** Why a draft is not ready for this list, as a short sentence; undefined exactly when `isReady(d, list)` is true. */
 export function notReadyReason(d: Draft, list: readonly ReadyItem[]): string | undefined {
   if (isReady(d, list)) return undefined;
+  if (d.splitInto) return "it is split; its parts are published instead";
   if (!d.readiness) return "it has no readiness check yet";
   if (list.some((item) => !resultOf(d, item))) return "the Definition of Ready changed since the check; check readiness again";
   const n = list.filter((item) => resultOf(d, item)!.result !== "met" && markOf(d, item) === undefined).length;
@@ -219,13 +220,15 @@ export function clearChanged(before: DraftState, after: DraftState): Draft[] {
 
 /**
  * The state of a session with these drafts: the first draft starts the drafting, no draft left is exploring again, and a session with
- * at least one draft is `ready` when every draft is ready for the list, else `drafting`. Other states stay.
+ * at least one draft is `ready` when every draft is ready for the list, else `drafting`. A split draft is left out of that: its parts
+ * count instead. Other states stay.
  */
 export function sessionState<T extends string>(cur: T, hadDrafts: boolean, drafts: Draft[], list: readonly ReadyItem[]): T | "exploring" | "drafting" | "ready" {
   let state: string = cur;
   if (state === "exploring" && !hadDrafts && drafts.length) state = "drafting";
   else if ((state === "drafting" || state === "ready") && hadDrafts && !drafts.length) state = "exploring";
-  if (state === "drafting" || state === "ready") state = drafts.length && drafts.every((d) => isReady(d, list)) ? "ready" : "drafting";
+  const live = drafts.filter((d) => !d.splitInto);
+  if (state === "drafting" || state === "ready") state = live.length && live.every((d) => isReady(d, list)) ? "ready" : "drafting";
   return state as T;
 }
 

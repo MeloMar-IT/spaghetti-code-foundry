@@ -348,6 +348,56 @@ describe("the dialog", () => {
     expect(sent).toEqual([]);
     expect(root().textContent).toContain('vars: "oops" should be name=value');
   });
+
+  describe("the parts that depend on the source", () => {
+    const parts = () => {
+      const all = walk(root());
+      return {
+        // The innermost grid: the Flow row wraps it.
+        "Trigger label": all.filter((e) => e.tag === "div" && e.attrs.class === "grid" && e.textContent.includes("Trigger label")).pop()!,
+        Chore: all.find((e) => e.tag === "div" && !e.attrs.class && e.textContent.startsWith("Chore"))!,
+        "Once a day at": all.find((e) => e.tag === "div" && e.attrs.class === "grid" && e.textContent.includes("Once a day at"))!,
+        "Branch to watch": labelled(root(), "Branch to watch"),
+      };
+    };
+    const shown = () => Object.entries(parts()).filter(([, el]) => !el.hidden).map(([name]) => name);
+
+    it("a new watcher (issues) shows only the trigger label", () => {
+      void open();
+      for (const el of Object.values(parts())) expect(el).toBeDefined();
+      expect(shown()).toEqual(["Trigger label"]);
+    });
+
+    it("changing the source shows the matching parts", () => {
+      void open();
+      const source = field(root(), "source")!;
+      source.value = "schedule";
+      source.fire("change");
+      expect(shown()).toEqual(["Chore", "Once a day at"]);
+      source.value = "ci-failures";
+      source.fire("change");
+      expect(shown()).toEqual(["Branch to watch"]);
+      source.value = "issues";
+      source.fire("change");
+      expect(shown()).toEqual(["Trigger label"]);
+    });
+
+    it("a ci-failures watcher shows only the branch", () => {
+      void open({ existing: stored({ source: "ci-failures" }) });
+      expect(shown()).toEqual(["Branch to watch"]);
+    });
+
+    it("a legacy pr-feedback watcher shows none of them", () => {
+      void open({ existing: stored({ source: "pr-feedback" }) });
+      expect(shown()).toEqual([]);
+      for (const el of Object.values(parts())) expect(Object.keys(el.style)).toEqual([]);
+    });
+
+    it("hides with the hidden property, never with an inline style", () => {
+      void open();
+      for (const el of Object.values(parts())) expect(Object.keys(el.style)).toEqual([]);
+    });
+  });
 });
 
 describe("the user side", () => {
@@ -363,7 +413,10 @@ describe("the user side", () => {
     }
   });
 
-  it("the admin page has the Watchers link", () => {
-    expect(readFileSync("ui/index.html", "utf8")).toMatch(/#\/watchers/);
+  it("the admin page has the Watchers link", async () => {
+    // The link moved from the top bar to the Administration secondary row (ui/ia.js).
+    const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers" });
+    expect(ia.subnavFor("user", "administration")).toEqual([]);
   });
 });

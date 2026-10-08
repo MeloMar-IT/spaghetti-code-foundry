@@ -9,7 +9,8 @@ import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
 import { impactView } from "../refinement/draft-impact.js";
-import { splitView } from "../refinement/draft-split.js";
+import { partWarnings } from "../refinement/draft-parts.js";
+import { SPLIT_READ_ONLY, splitView } from "../refinement/draft-split.js";
 import { otherDrafts } from "../refinement/known-areas.js";
 import { acceptedLines, acceptedView, isReady, readinessView, unsureByCode } from "../refinement/draft-ready.js";
 import { reviewView } from "../refinement/draft-review.js";
@@ -26,6 +27,9 @@ import {
   acceptSuggestionOf,
   addDraft,
   checkReadyOf,
+  confirmSplitOf,
+  moveCriterionOf,
+  mergeDraftsOf,
   correctReadyState,
   removeAcceptedOf,
   answerQuestion,
@@ -44,10 +48,12 @@ import {
   isPublishing,
   listSessions,
   purgeDropped,
+  markOf,
   renameSession,
   restoreSession,
 } from "../refinement/store.js";
 import { HttpError, readJson, readOptionalJson, send } from "./http.js";
+import { importIssue, removeBuildLabel } from "./api-refinement-import.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -69,6 +75,11 @@ const STATUS: Record<RefinementErrorCode, number> = {
   "bad-state": 409,
   busy: 409,
   "no-repo": 409,
+  "bad-issue": 400,
+  "no-issue": 404,
+  "issue-closed": 409,
+  building: 409,
+  duplicate: 409,
 };
 
 /** How often the server removes dropped sessions that are past their 30 days, in ms. */
@@ -144,14 +155,16 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
   const split = splitView(d);
   const readiness = readinessView(d, list);
   const accepted = acceptedView(d, list);
+  const warnings = partWarnings(d, s.drafts);
   return {
     ...rest,
-    state: isReady(d, list) ? "ready" : "drafting",
+    state: d.splitInto ? "split" : isReady(d, list) ? "ready" : "drafting",
     preview: preview(d, s, acceptedLines(d, list)),
     remarks: draftRemarks(d),
     ...(review ? { review } : {}),
     ...(impact ? { impact } : {}),
     ...(split ? { split } : {}),
+    ...(warnings.length ? { partWarnings: warnings } : {}),
     ...(readiness ? { readiness } : {}),
     ...(accepted.length ? { acceptedAnyway: accepted } : {}),
   };
@@ -178,6 +191,8 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
+    // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown.
+    ...(s.source ? { source: (({ pending: _pending, draft: _draft, ...rest }) => ({ ...rest, ...(markOf(s) !== undefined ? { draft: markOf(s) } : {}) }))(s.source) } : {}),
     state: s.state,
     // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
     ...(repoAvailable ? { readyList: list } : {}),
@@ -258,6 +273,16 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
+    if (body.issue !== undefined) {
+      let made: Session;
+      try {
+        made = await importIssue(ctx, req, body);
+      } catch (e) {
+        if (e instanceof RefinementError && e.code === "duplicate" && e.session) return send(res, 409, { error: e.message, session: e.session }), true;
+        throw mapped(ctx, e);
+      }
+      return send(res, 201, guarded(ctx, () => view(ctx, made, user))), true;
+    }
     const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title }), user));
     return send(res, 201, s), true;
   }
@@ -287,6 +312,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 3 && seg[2] === "restore" && method === "POST") {
     return send(res, 200, guarded(ctx, () => view(ctx, settled(restoreSession(actor, seg[1]!).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "source" && seg[3] === "remove-build-label" && method === "POST") {
+    const s = await guardedAsync(ctx, () => removeBuildLabel(ctx, req, seg[1]!));
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(s.id), user))), true;
   }
   /** Starts (or resumes) a run of the architect for the session and answers 202 with the session. */
   const startRun = (ask: ArchitectRequest) => {
@@ -334,6 +363,18 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "review" && method === "POST") return startRun({ kind: "review", draft: seg[3]! });
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "impact" && method === "POST") return startRun({ kind: "impact", draft: seg[3]! });
+  if (seg.length === 6 && seg[2] === "drafts" && seg[4] === "split" && seg[5] === "confirm" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 201, guarded(ctx, () => view(ctx, settled(confirmSplitOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
+  if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "criteria" && seg[6] === "move" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(moveCriterionOf(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "merge" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(mergeDraftsOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
+  }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
     // The body is optional: without one there is no own way. A body that is there must be JSON.
     const body = await readOptionalJson(req);
@@ -350,7 +391,18 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "ready-check" && method === "POST") {
     const did = seg[3]!;
     // The code checks come first and are stored; the architect judges only what they left unsure.
-    const checked = guarded(ctx, () => checkReadyOf(actor, seg[1]!, did));
+    const checked = guarded(ctx, () => {
+      try {
+        return checkReadyOf(actor, seg[1]!, did);
+      } catch (e) {
+        // A split original is not checked. A check of it that was paused before the split is ended by the architect code, which refuses with the same sentence.
+        const a = e instanceof RefinementError && e.message === SPLIT_READ_ONLY ? getSession(seg[1]!)?.architect : undefined;
+        if (a?.kind === "ready" && a.draft === did && a.failed === undefined && architectView(deps(ctx), { architect: a }).state === "paused") {
+          askArchitect(deps(ctx), actor, seg[1]!, { kind: "ready", draft: did });
+        }
+        throw e;
+      }
+    });
     const draft = checked.drafts.find((d) => d.id === did);
     if (draft && unsureByCode(draft).length) return startRun({ kind: "ready", draft: did });
     // Code decided everything: a run for this draft that is still there (paused, say) is not needed any more.

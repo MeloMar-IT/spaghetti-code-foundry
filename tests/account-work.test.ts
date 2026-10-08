@@ -412,8 +412,13 @@ interface Srv {
 
 describe("a running server", () => {
   const open: Srv[] = [];
+  // Close each test's servers at once: an open server keeps sweeping the accounts in the shared FACTORY_HOME of the next test
+  // and could take its stop-work request.
+  afterEach(() => {
+    for (const s of open.splice(0)) s.close();
+  });
   afterAll(() => {
-    for (const s of open) s.close();
+    for (const s of open.splice(0)) s.close();
   });
 
   function prepare() {

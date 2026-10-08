@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installFakeDom } from "./helpers/fake-dom.js";
+import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } from "./browser/journeys-baseline.js";
 
 // docs/ui-redesign/ is a research audit of every screen. This test keeps its tables in step with the code:
 // routes, nav links, dialog call sites, native dialogs and inline styles. It does not check wording, the counts
@@ -157,19 +158,26 @@ describe("the inventory matches the code", () => {
     for (const r of userRoutes(authSource)) expect(auth.isUserHash(r.replace(":id", "x-1")), r).toBe(true);
   });
 
-  it("gives every nav link a row with the same label, and every labelled row a nav link", () => {
-    for (const [file, prefix, rows] of [["ui/index.html", "", adminRows], ["ui/user/index.html", "/user/", userRows]] as const) {
-      const links = navLinks(read(file));
-      expect(links.length).toBeGreaterThan(0);
-      for (const l of links) {
-        const row = rows.find((r) => code(r[0]!) === `${prefix}#/${l.name}`);
-        expect(row, `${file}: no row for ${l.name}`).toBeDefined();
-        expect(row![1], `${file}: label of ${l.name}`).toBe(l.text);
-      }
+  it("gives every row the nav label of its page in ui/ia.js (— for a detail page)", async () => {
+    const { PAGES } = (await import("../ui/ia.js" as string)) as { PAGES: { path: string; nav: string; label: Record<string, string> }[] };
+    for (const [role, prefix, rows] of [["admin", "", adminRows], ["user", "/user/", userRows]] as const) {
       for (const r of rows) {
-        if (r[1] === "—") continue;
-        expect(links.some((l) => `${prefix}#/${l.name}` === code(r[0]!) && l.text === r[1]), `${r[0]} claims nav label ${r[1]}`).toBe(true);
+        const page = PAGES.find((p) => p.path === code(r[0]!).slice(prefix.length));
+        expect(page, `${r[0]}: no page in ui/ia.js`).toBeDefined();
+        expect(r[1], `${r[0]}: nav label`).toBe(page!.nav === "detail" ? "—" : page!.label[role] ?? "—");
       }
+    }
+  });
+
+  it("has a data-nav link in each HTML file for every primary destination and action", async () => {
+    const { primaryFor, actionsFor } = (await import("../ui/ia.js" as string)) as {
+      primaryFor: (r: string) => { id: string; label: string }[];
+      actionsFor: (r: string) => { id: string; label: string }[];
+    };
+    for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
+      const links = navLinks(read(file)).map((l) => ({ id: l.name, label: l.text }));
+      const want = [...actionsFor(role), ...primaryFor(role)].map((l) => l.id);
+      expect(links.map((l) => l.id).sort(), file).toEqual(want.sort());
     }
   });
 
@@ -228,12 +236,17 @@ describe("the dialogs match the code", () => {
 });
 
 describe("inline styles", () => {
-  it("names every file with 10 or more style: uses", () => {
-    const text = sectionText(inventory, "## Inline styles");
-    expect(text.length).toBeGreaterThan(0);
-    const heavy = uiFiles().filter((f) => count(read(f), /style\s*:/g) >= 10);
-    expect(heavy.length).toBeGreaterThanOrEqual(5);
-    for (const f of heavy) expect(text, f).toContain(f);
+  it("lists every file with a style: use and its count, both ways", () => {
+    const table: Record<string, number> = {};
+    for (const r of tableRows(inventory, "## Inline styles")) table[code(r[0]!)] = Number(r[1]);
+    const source: Record<string, number> = {};
+    for (const f of uiFiles()) {
+      const n = count(read(f), /style\s*:/g);
+      if (n > 0) source[f] = n;
+    }
+    expect(table).toEqual(source);
+    const total = Object.values(source).reduce((a, b) => a + b, 0);
+    expect(sectionText(inventory, "## Inline styles")).toContain(`Total ${total} in ${Object.keys(source).length} files.`);
   });
 });
 
@@ -266,6 +279,29 @@ describe("the documents", () => {
       expect(r[1], "Nav steps").toMatch(/^\d+$/);
       expect(r[2], "Modelled s").toMatch(/^\d+(\.\d+)?$/);
       expect([r[3], r[4], r[5]], `${r[0]}: measured, errors, confidence are open`).toEqual(["", "", ""]);
+    }
+  });
+
+  it("keeps the browser test's baseline in step with the table in measurement.md", () => {
+    const rows = tableRows(doc("measurement.md"), "## The five tasks");
+    expect(rows.map((r) => r[0])).toEqual(["1", "2", "3", "4", "5"]);
+    for (const r of rows) {
+      const id = Number(r[0]) as TaskId;
+      expect(TASKS[id], `task ${r[0]}`).toBe(r[1]);
+      for (const cell of [r[4], r[5], r[6]]) expect(cell, `task ${r[0]}: a count`).toMatch(/^\d+$/);
+      expect({ nav: Number(r[4]), clicks: Number(r[5]), fields: Number(r[6]) }, `task ${r[0]}`).toEqual(BASELINE[id]);
+    }
+  });
+
+  it("finds the measures that are above the baseline", () => {
+    expect(over({ nav: 2, clicks: 3, fields: 1 }, { nav: 1, clicks: 2, fields: 1 })).toEqual(["nav 2 > 1", "clicks 3 > 2"]);
+    expect(over(BASELINE[4], BASELINE[4])).toEqual([]);
+    expect(effortText(BASELINE[1])).toBe("1 / 2 / 1");
+  });
+
+  it("names a follow-up for every task that is above the baseline, and only for those", () => {
+    for (const id of [1, 2, 3, 4, 5] as TaskId[]) {
+      expect(over(REDESIGN[id], BASELINE[id]).length > 0, `task ${id}`).toBe(KNOWN_OVER[id] !== undefined);
     }
   });
 

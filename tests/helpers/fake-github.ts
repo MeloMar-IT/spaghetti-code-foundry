@@ -16,6 +16,9 @@ export interface FakeIssue {
   html_url: string;
   created_at: string;
   closed_at: string | null;
+  updated_at?: string;
+  /** Set to make the "issue" a pull request. */
+  pull_request?: unknown;
 }
 
 /** One call of the fake gh as the auth log has it ("-" when a token was not set). */
@@ -119,9 +122,14 @@ export function fakeGithub() {
     bugIssues: (): FakeIssue[] => (existsSync(issuesFile) ? (JSON.parse(readFileSync(issuesFile, "utf8")) as FakeIssue[]) : []),
     /** Replaces them (close, reopen, set state_reason and closed_at, remove a label, add an issue). */
     setBugIssues: (list: FakeIssue[]) => writeFileSync(issuesFile, JSON.stringify(list)),
+    /** The pull requests the fake gh knows (`api repos/…/pulls/<n>`); a number that is not here is a 404. */
+    setPulls: (list: { number: number; state: "open" | "closed"; merged?: boolean }[]) => writeFileSync(`${ghLog}.pulls.json`, JSON.stringify(list)),
     /** The title and text of every issue the fake gh was asked to make through the REST API, as sent on stdin. */
     createdBodies: (): { title: string; body: string; labels: string[] }[] =>
       [...readFileSync(ghLog, "utf8").matchAll(/^--- created issue \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => JSON.parse(m[1]!)),
+    /** The number, title and text of every issue the fake gh was asked to change through the REST API (PATCH), as sent on stdin. */
+    updatedBodies: (): { issue: number; title: string; body: string }[] =>
+      [...readFileSync(ghLog, "utf8").matchAll(/^--- updated issue (\d+) \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => ({ issue: Number(m[1]), ...JSON.parse(m[2]!) })),
     /** The names of the labels that exist in the fake repository. */
     labels: (): string[] => (existsSync(labelsFile) ? readFileSync(labelsFile, "utf8").split("\n").filter(Boolean) : []),
     setLabels: (list: string[]) => writeFileSync(labelsFile, list.map((l) => `${l}\n`).join("")),

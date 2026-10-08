@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -134,6 +135,16 @@ describe("pure functions", () => {
     expect(ui.activityText("Only for ask=impact: read the newest 50 open issues", "impact")).toBe("Reading the open issues.");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "impact", reason: "x" } }))).toBe("");
     expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "impact", reason: "x" } }))).toBe("Refresh");
+  });
+  it("architectStatus, askLabel and logText for a split run", () => {
+    expect(ui.architectStatus({ state: "queued", kind: "split" })).toMatchObject({ busy: true, detail: "Then it looks for ways to split your draft." });
+    expect(ui.architectStatus({ state: "running", kind: "split", doing: "Check the form of the architect's answer and pass it on" }))
+      .toMatchObject({ busy: true, text: "The architect is looking for ways to split your draft.", detail: "Checking the ways." });
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "paused", kind: "split", reason: "x" } }))).toBe("");
+    expect(ui.askLabel(session({ brief: BRIEF, architect: { state: "failed", kind: "split", reason: "x" } }))).toBe("Refresh");
+    expect(ui.logText({ what: "split-asked", who: "Ann" })).toBe("Ann asked the architect for ways to split a story draft");
+    expect(ui.logText({ what: "architect-split", detail: "2" })).toBe("The architect proposed 2 ways to split a story draft");
+    expect(ui.logText({ what: "draft-split", who: "Ann", detail: "3" })).toBe("Ann split a story draft into 3 drafts");
   });
   it("the brief part draws no line for a review run", async () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
@@ -459,7 +470,7 @@ describe("the Runs list", () => {
     expect(link(runs.queueRow({ runId: "r1", kind: "run" }, () => {}))).toBeUndefined();
   });
   it("is wired: style rule and API call", async () => {
-    expect(readFileSync("ui/style.css", "utf8")).toContain(".pill.refinement");
+    expect(readUiCss()).toContain(".pill.refinement");
     await api.askArchitect("a b");
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/a%20b/architect", body: {} }]);
   });

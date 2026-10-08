@@ -341,8 +341,9 @@ describe("the page", () => {
 });
 
 describe("the pages", () => {
-  it("the admin page links to Problems and the user page does not", () => {
-    expect(readFileSync("ui/index.html", "utf8")).toContain('<a href="#/problems" data-nav="problems">Problems</a>');
+  it("the admin page links to Problems and the user page does not", async () => {
+    const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "problems", href: "#/problems", label: "Problems" });
     expect(readFileSync("ui/user/index.html", "utf8")).not.toContain("#/problems");
   });
 });

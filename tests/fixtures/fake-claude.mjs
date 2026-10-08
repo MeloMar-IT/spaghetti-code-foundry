@@ -232,6 +232,10 @@ if (canned && prompt.includes("SIZE: <number of files changed>") && /PLAN_STATUS
 if (canned && prompt.includes("RISK_SCORE: <0-100>") && /PLAN_STATUS: READY/.test(canned) && !/RISK_SCORE/.test(canned)) {
   canned = canned.replace(/PLAN_STATUS: READY/, `## Risk\nsmall\nRISK_SCORE: ${process.env.FAKE_RISK ?? 20}\nRISK_REASON: ${process.env.FAKE_RISK_REASON ?? "small local change"}\nPLAN_STATUS: READY`);
 }
+// Plans asked for a skill request get one (FAKE_SKILL_REQUEST, default the empty request; NONE writes no line) before the PLAN_STATUS line.
+if (canned && prompt.includes('SKILL_REQUEST: {"version":1') && /PLAN_STATUS: READY/.test(canned) && !/^SKILL_REQUEST:/m.test(canned) && process.env.FAKE_SKILL_REQUEST !== "NONE") {
+  canned = canned.replace(/PLAN_STATUS: READY/, `SKILL_REQUEST: ${process.env.FAKE_SKILL_REQUEST ?? '{"version":1,"skills":[]}'}\nPLAN_STATUS: READY`);
+}
 const resumed = args[args.indexOf("--resume") + 1];
 const isError = prompt.includes("ERROR");
 emit({

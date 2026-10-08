@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readUiCss } from "./helpers/ui-css.js";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
@@ -9,17 +10,20 @@ const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "use
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
-    for (const id of ["main", "user", "modal-root", "toast", "view-as"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "account"]) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain("health-btn");
   });
-  it("has exactly four links with the user pages", () => {
+  it("has exactly five links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(links).toEqual([
-      ["#/start", "start", "Start work"],
+      ["#/start", "start", "Start work"], // the top action comes first in the document
+      ["#/home", "home", "Home"], // the first link of the sidebar
       ["#/runs", "runs", "My runs"],
       ["#/repos", "repos", "My repositories"],
       ["#/refinement", "refinement", "Refinement"],
     ]);
-    expect(html.split("data-nav=").length - 1).toBe(4);
+    expect(html.split("data-nav=").length - 1).toBe(5);
+    expect(html).toContain('<a class="brand" href="#/home">');
   });
   it("has nothing of the admin page", () => {
     for (const bad of ['id="repo"', 'id="health"', 'id="since"', 'id="sidebar"', "<aside", "turn-badge"]) expect(html, bad).not.toContain(bad);
@@ -58,7 +62,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -81,10 +85,11 @@ describe("ui/user/app.js", () => {
     expect(app).toContain("else cleanup = done;");
   });
 
-  it("routes Start work and decides the empty address behind the generation guard", () => {
-    expect(app).toContain('if (page.section === "start") done = await renderStart(box, { readOnly });');
-    expect(app).toContain("isNoHash(");
-    expect(app.indexOf("const mine = ++generation;")).toBeLessThan(app.indexOf("await homeHash()"));
+  it("routes Home and Start work, and the empty address opens Home", () => {
+    expect(app).toContain('if (page.section === "home") done = await renderHome(box, { readOnly });');
+    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly });');
+    expect(app).toContain('if (isNoHash(hash)) hash = "#/home";');
+    expect(app).not.toContain("homeHash");
     expect(app.match(/\+\+generation/g)).toHaveLength(1);
   });
 
@@ -100,11 +105,17 @@ describe("ui/user/app.js", () => {
 });
 
 describe("ui/style.css", () => {
-  const css = read("style.css");
+  const css = readUiCss();
   it("wraps the user top bar, scrolls tables in a box and marks the keyboard focus", () => {
     expect(css).toMatch(/\.user-display \.top \{[^}]*flex-wrap: wrap/);
     expect(css).toContain(".table-box { overflow-x: auto; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
     expect(css).toContain(".view-bar {");
+  });
+  it("hides the shell when signed out and turns the sidebar into a drawer on a narrow screen", () => {
+    const shellCss = css;
+    expect(shellCss).toContain(".signed-out .side");
+    expect(shellCss).toMatch(/@media \(max-width: 760px\) \{[^@]*\.side \{ display: none; position: fixed;/);
+    expect(shellCss).toContain("body.drawer-open .side");
   });
 });

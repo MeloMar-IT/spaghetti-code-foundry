@@ -4,7 +4,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 
 Three mechanisms draw a dialog:
 
-- **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 23 sites in 14 files.
+- **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 24 calls in 12 files (second table).
 
@@ -21,11 +21,14 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
 | `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
+| `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
 | `ui/monitor.js` | Mute a finding | Button on a finding | reason, duration | Mute | `modal` |
 | `ui/monitor.js` | Mute a detector | Button on a detector | detector (when picked here), reason, duration | Mute | `modal` |
+| `ui/refinement-import.js` | Refine an existing issue | Refine an existing issue on `#/refinement` | repository, issue number; with no repository it shows a link to `#/repos` | Refine issue | `modal` |
+| `ui/refinement-publish.js` | Publish to GitHub | Publish on the session page | per ready draft: labels, "Start building this story" | Create the issues | `modal` |
 | `ui/refinement-ready.js` | Accept anyway | Button on a failed ready check | reason (required) | Accept | `modal` |
 | `ui/refinement-suggest.js` | Edit and accept | Button on a suggestion | edited text | Accept | `modal` |
 | `ui/refinement-suggest.js` | Reject suggestion | Button on a suggestion | reason (optional) | Reject | `modal` |
@@ -66,27 +69,28 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/admin.js:44` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
-| `ui/admin.js:154` | confirm | Delete watcher <id>? | Delete a watcher (button) |
-| `ui/admin.js:159` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
-| `ui/admin.js:227` | confirm | Remove these workspaces now? | Clean workspaces |
-| `ui/app.js:90` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:253` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:274` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:295` | confirm | Run without a task description? | Run (inside the Run dialog) |
-| `ui/health.js:44` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
+| `ui/admin.js:45` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
+| `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (button) |
+| `ui/admin.js:160` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
+| `ui/admin.js:228` | confirm | Remove these workspaces now? | Clean workspaces |
+| `ui/app.js:94` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:257` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:278` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:299` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/health.js:49` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
 | `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
-| `ui/refinement-draft.js:464` | confirm | Remove this story draft? | Remove a draft |
-| `ui/refinement-draft.js:519` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
+| `ui/refinement-draft.js:437` | confirm | Remove this story draft? | Remove a draft |
+| `ui/refinement-draft.js:543` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
+| `ui/refinement-publish.js:306` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
 | `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:240` | confirm | Remove this entry from the map? | Remove a map entry |
-| `ui/refinement.js:387` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
+| `ui/refinement.js:411` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:244` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:245` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:254` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:258` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:245` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:246` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:255` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:259` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

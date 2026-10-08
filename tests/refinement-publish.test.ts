@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { preview, type Draft } from "../src/refinement/draft.js";
 import { isReady, notReadyReason } from "../src/refinement/draft-ready.js";
 import { RefinementError } from "../src/refinement/errors.js";
-import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
+import { isBot, isStatusComment } from "../src/github.js";
+import { changedSections, endsWithMarker, updateComment, updateMarker, chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, parseSourceChoice, sameVersion, versionHash, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
 import type { ReadyItem } from "../src/refinement/ready-list.js";
 
 const LIST: ReadyItem[] = [{ id: "out-of-scope", text: "it says what is out of scope" }];
@@ -150,6 +151,104 @@ describe("planOf", () => {
   });
 });
 
+/** Original `o` split into parts `p`: the original keeps no criteria unless `over` gives some. */
+function splitOf(o: number, p: number[], over: Partial<Draft> = {}): Draft[] {
+  return [mk(o, { splitInto: p.map(uid), criteria: [], ...over }), ...p.map((n) => mk(n, { part: { of: uid(o) } }))];
+}
+
+describe("withoutSplits", () => {
+  it("returns the same drafts without a split", () => {
+    const d = [mk(1), mk(2)];
+    const r = withoutSplits(d);
+    expect(r).toEqual(d);
+    expect(r[0]).toBe(d[0]);
+  });
+  it("leaves out the original and keeps the session order", () => {
+    expect(ids(withoutSplits([mk(5), ...splitOf(1, [2, 3]), mk(4)]))).toEqual([uid(5), uid(2), uid(3), uid(4)]);
+  });
+  it("gives a dependant one item per part, with the id and from of the replaced item", () => {
+    const x = mk(9, { dependsOn: [issueDep(7), { ...dep(1), from: "accepted" as const }] });
+    const r = withoutSplits([...splitOf(1, [2, 3]), x]).find((d) => d.id === uid(9))!;
+    expect(r.dependsOn).toEqual([issueDep(7), { id: uid(201), draft: uid(2), from: "accepted" }, { id: uid(201), draft: uid(3), from: "accepted" }]);
+  });
+  it("names no draft twice", () => {
+    for (const dependsOn of [[dep(2), dep(1)], [dep(1), dep(2)]]) {
+      const r = withoutSplits([...splitOf(1, [2, 3]), mk(9, { dependsOn })]).find((d) => d.id === uid(9))!;
+      expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(2), uid(3)]);
+    }
+  });
+  it("never makes a part depend on itself", () => {
+    const parts = splitOf(1, [2, 3]);
+    parts[1] = mk(2, { part: { of: uid(1) }, dependsOn: [dep(1)] });
+    const r = withoutSplits(parts).find((d) => d.id === uid(2))!;
+    expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(3)]);
+  });
+  it("expands two originals", () => {
+    const r = withoutSplits([...splitOf(1, [2, 3]), ...splitOf(4, [5, 6]), mk(9, { dependsOn: [dep(1), dep(4)] })]).at(-1)!;
+    expect(r.dependsOn.map((x) => x.draft)).toEqual([uid(2), uid(3), uid(5), uid(6)]);
+  });
+  it("does not change its input", () => {
+    const drafts = [...splitOf(1, [2, 3]), mk(9, { dependsOn: [dep(1)] })];
+    const before = JSON.stringify(drafts);
+    withoutSplits(drafts);
+    expect(JSON.stringify(drafts)).toBe(before);
+    expect(drafts[3]!.dependsOn[0]!.draft).toBe(uid(1));
+  });
+});
+
+describe("leftBehind", () => {
+  it("is empty without a split, and for an original without criteria", () => {
+    expect(leftBehind([mk(1)])).toEqual([]);
+    expect(leftBehind(splitOf(1, [2, 3]))).toEqual([]);
+  });
+  it("names an original with criteria, in session order", () => {
+    const two = [{ id: uid(501), text: "a", from: "typed" as const }, { id: uid(502), text: "b", from: "typed" as const }];
+    const untitled = splitOf(4, [5, 6], { criteria: [two[0]!] });
+    delete untitled[0]!.title;
+    expect(leftBehind([...splitOf(1, [2, 3], { criteria: two }), ...untitled])).toEqual([
+      { draft: uid(1), title: "Story 1", criteria: 2 },
+      { draft: uid(4), title: "…", criteria: 1 },
+    ]);
+  });
+});
+
+describe("planOf with splits", () => {
+  const parts = () => [...splitOf(1, [2, 3]).slice(0, 1), mk(2, { ready: true, part: { of: uid(1) } }), mk(3, { ready: true, part: { of: uid(1) }, dependsOn: [dep(2)] })];
+  it("has no item for the original and numbers the rest", () => {
+    const r = plan([...parts(), mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    expect(r.items.map((i) => [i.n, i.draft])).toEqual([[1, uid(2)], [2, uid(3)], [3, uid(9)]]);
+    expect(r.willCreate).toEqual([uid(2), uid(3), uid(9)]);
+    expect(r.leftBehind).toEqual([]);
+    const x = r.items[2]!;
+    expect(x.dependsOn).toEqual([{ item: 1, title: "Story 2" }, { item: 2, title: "Story 3" }]);
+    expect(x.body).toContain("- new issue 1: Story 2");
+    expect(x.body).toContain("- new issue 2: Story 3");
+    expect(x.body).not.toContain("Story 1");
+  });
+  it("uses the issue number of a part on GitHub", () => {
+    const x = plan([...parts(), mk(9, { ready: true, dependsOn: [dep(1)] })], { onGithub: new Map([[uid(2), 12]]) }).items.find((i) => i.draft === uid(9))!;
+    expect(x.dependsOn[0]).toEqual({ issue: 12 });
+    expect(x.body).toContain("- #12");
+  });
+  it("names the part that is not ready, never the original", () => {
+    const d = parts();
+    d[1] = mk(2, { part: { of: uid(1) } });
+    const r = plan([...d, mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    expect(r.items.find((i) => i.draft === uid(3))!.reason).toBe('it depends on "Story 2", which is not ready');
+    expect(r.items.find((i) => i.draft === uid(9))!.reason).toMatch(/depends on "Story [23]"/);
+  });
+  it("finds a circle through a split", () => {
+    const d = parts();
+    d[1] = mk(2, { ready: true, part: { of: uid(1) }, dependsOn: [dep(9)] });
+    const r = plan([...d, mk(9, { ready: true, dependsOn: [dep(1)] })]);
+    for (const n of [2, 9]) expect(r.items.find((i) => i.draft === uid(n))).toMatchObject({ state: "not-ready", reason: "it depends on itself through other drafts" });
+  });
+  it("reports what stays behind", () => {
+    expect(plan(splitOf(1, [2, 3], { title: { text: "Story O", from: "typed" } })).leftBehind).toEqual([]);
+    expect(plan(splitOf(1, [2, 3], { title: { text: "Story O", from: "typed" }, criteria: [{ id: uid(501), text: "a", from: "typed" }] })).leftBehind).toEqual([{ draft: uid(1), title: "Story O", criteria: 1 }]);
+  });
+});
+
 describe("issueText", () => {
   it("has the Epic, the accepted lines, the note, and never (draft)", () => {
     const a = mk(1, { dependsOn: [dep(2)] });
@@ -242,6 +341,39 @@ describe("parsePublishInput", () => {
   });
 });
 
+describe("versions of an issue", () => {
+  it("hashes the canonical form: stable, 64 hex characters, different for a different title or text", () => {
+    const v = { title: "a", body: "b\nc" };
+    expect(versionHash(v)).toMatch(/^[0-9a-f]{64}$/);
+    expect(versionHash({ ...v })).toBe(versionHash(v));
+    expect(versionHash({ ...v, title: "x" })).not.toBe(versionHash(v));
+    expect(versionHash({ ...v, body: "x" })).not.toBe(versionHash(v));
+    expect(versionHash({ title: "a", body: "b\nc" })).not.toBe(versionHash({ title: "a\nb", body: "c" }));
+  });
+  it("sameVersion ignores line ends and surrounding white space, and the hash agrees", () => {
+    const a = { title: "T", body: "one\ntwo" };
+    const b = { title: "T ", body: "one\r\ntwo\r\n" };
+    expect(sameVersion(a, b)).toBe(true);
+    expect(versionHash(a)).toBe(versionHash(b));
+    expect(sameVersion(a, { ...a, title: "Other" })).toBe(false);
+    expect(sameVersion(a, { ...a, body: "one\ntwo!" })).toBe(false);
+  });
+  const seen = "a".repeat(64);
+  it("parseSourceChoice: nothing without source, both keeps accepted", () => {
+    expect(parseSourceChoice({})).toBeUndefined();
+    expect(parseSourceChoice({ source: { keep: "mine", seen } })).toEqual({ keep: "mine", seen });
+    expect(parseSourceChoice({ source: { keep: "github", seen, extra: 1 } })).toEqual({ keep: "github", seen });
+  });
+  it("parseSourceChoice refuses what is not a choice", () => {
+    for (const source of [null, "mine", [], {}, { keep: "both", seen }, { keep: "mine" }, { keep: "mine", seen: "abc" }, { keep: "mine", seen: "A".repeat(64) }, { keep: "mine", seen: 1 }]) {
+      expect(code(() => parseSourceChoice({ source }))).toBe("bad-draft");
+    }
+  });
+  it("parsePublishInput ignores source", () => {
+    expect(parsePublishInput({ source: { keep: "mine", seen } }, [mk(1)]).size).toBe(0);
+  });
+});
+
 describe("chosenLabels", () => {
   const choice = (labels: string[] = [], startBuilding = false) => ({ labels, startBuilding });
   it("gives the labels in the spelling of the repository, and needs no draft", () => {
@@ -278,5 +410,108 @@ describe("labelsFor", () => {
     const same = rules({ reviewLabel: "factory_go" });
     expect(code(() => labelsFor(choice(), mk(1, { addReviewLabel: true }), same))).toBe("bad-draft");
     expect(labelsFor(choice([], true), mk(1, { addReviewLabel: true }), same)).toEqual(["Factory_go"]);
+  });
+});
+
+describe("planOf with the issue a session came from", () => {
+  const src = (draft?: string) => ({ source: { issue: 12, ...(draft ? { draft } : {}) } });
+  it("shows the marked draft as updating the issue, and keeps it out of willCreate", () => {
+    const p = plan([mk(1, { ready: true }), mk(2, { ready: true, dependsOn: [dep(1)] })], src(uid(1)));
+    expect(p.items.map((i) => i.updates)).toEqual([12, undefined]);
+    expect(p.willUpdate).toEqual([uid(1)]);
+    expect(p.willCreate).toEqual([uid(2)]);
+    expect(p.notChanged).toBeUndefined();
+    expect(p.items[1]!.dependsOn).toEqual([{ issue: 12 }]);
+    expect(p.items[1]!.body).toContain("- #12");
+  });
+  it("does not offer the marked draft when it is not ready, and blocks the one that depends on it", () => {
+    const p = plan([mk(1), mk(2, { ready: true, dependsOn: [dep(1)] })], src(uid(1)));
+    expect(p.willUpdate).toEqual([]);
+    expect(p.items[0]!.updates).toBe(12);
+    expect(p.items[1]!.state).toBe("not-ready");
+    expect(p.willCreate).toEqual([]);
+  });
+  it("waits with the marked draft when it depends on a draft that is not on GitHub yet", () => {
+    const p = plan([mk(1, { ready: true, dependsOn: [dep(2)] }), mk(2, { ready: true })], src(uid(1)));
+    expect(p.willUpdate).toEqual([]);
+    expect(p.willCreate).toEqual([uid(2)]);
+    expect(p.items.find((i) => i.draft === uid(1))!.reason).toMatch(/publish that first/);
+    const later = plan([mk(1, { ready: true, dependsOn: [dep(2)] }), mk(2, { ready: true })], { ...src(uid(1)), onGithub: new Map([[uid(2), 40]]) });
+    expect(later.willUpdate).toEqual([uid(1)]);
+    expect(later.items.find((i) => i.draft === uid(1))!.dependsOn).toEqual([{ issue: 40 }]);
+  });
+  it("says the issue is not changed when the marked draft is gone or split, or there is no mark", () => {
+    const gone = plan([mk(2, { ready: true })], src(uid(1)));
+    expect(gone.notChanged).toBe(12);
+    expect(gone.willUpdate).toEqual([]);
+    expect(gone.willCreate).toEqual([uid(2)]);
+    const split = plan([mk(1, { splitInto: [uid(3)] }), mk(3, { ready: true })], src(uid(1)));
+    expect(split.notChanged).toBe(12);
+    expect(split.items.some((i) => i.updates !== undefined)).toBe(false);
+    expect(plan([mk(2, { ready: true })], src()).notChanged).toBe(12);
+  });
+  it("leaves a published marked draft as on GitHub", () => {
+    const p = plan([mk(1, { ready: true })], { ...src(uid(1)), onGithub: new Map([[uid(1), 12]]) });
+    expect(p.items[0]).toMatchObject({ state: "on-github", issue: 12 });
+    expect(p.items[0]!.updates).toBeUndefined();
+    expect(p.notChanged).toBeUndefined();
+    expect(p.willUpdate).toEqual([]);
+  });
+  it("has no update and no notChanged without a source", () => {
+    const p = plan([mk(1, { ready: true })]);
+    expect(p.willUpdate).toEqual([]);
+    expect("notChanged" in p).toBe(false);
+  });
+});
+
+describe("changedSections", () => {
+  const story = (crit: string, extra = "") => `As a, I want b, so that c.\n\n### Acceptance criteria\n- [ ] ${crit}\n${extra}`;
+  it("is empty for the same text, also with markers and the refined note", () => {
+    const a = story("one");
+    expect(changedSections(a, a)).toEqual([]);
+    expect(changedSections(a, `${a}\n---\nRefined in Spaghetti Code Foundry by Ann on 2026-01-01.\n\n${refinedMarker("s", "d")}`)).toEqual([]);
+  });
+  it("names a changed, a new and a removed section", () => {
+    expect(changedSections(story("one"), story("two"))).toEqual(["Acceptance criteria"]);
+    expect(changedSections(story("one"), story("one", "\n### Out of scope\nx"))).toEqual(["Out of scope (new)"]);
+    expect(changedSections(story("one", "\n### Out of scope\nx"), story("one"))).toEqual(["Out of scope (removed)"]);
+  });
+  it("calls a plain old text Story and the new sections new", () => {
+    expect(changedSections("Please fix it.", story("one"))).toEqual(["Story", "Acceptance criteria (new)"]);
+  });
+  it("does not take a heading inside a code fence", () => {
+    const fenced = "As a, I want b, so that c.\n\n```\n### Not a heading\n```\n\n### Acceptance criteria\n- [ ] one";
+    expect(changedSections(fenced, fenced.replace("Not a heading", "Still not"))).toEqual(["Story"]);
+  });
+});
+
+describe("updateComment", () => {
+  const o = { by: "Ann", date: "2026-10-07", oldTitle: "Old", oldBody: "Please fix it.", newTitle: "New", newBody: "As a, I want b, so that c.\n\n### Acceptance criteria\n- [ ] one", marker: updateMarker("s", "d") };
+  it("says who, what changed, and folds the old title and text", () => {
+    const c = updateComment(o);
+    expect(c).toContain("by Ann on 2026-10-07");
+    expect(c).toContain("- Title: changed");
+    expect(c).toContain("- Sections changed: Story, Acceptance criteria (new)");
+    expect(c).toContain("<details>");
+    expect(c).toContain("```text\nOld\n```");
+    expect(c).toContain("```text\nPlease fix it.\n```");
+    expect(updateComment({ ...o, newTitle: "Old" })).toContain("- Title: not changed");
+    expect(updateComment({ ...o, oldBody: o.newBody, newBody: o.newBody })).toContain("- Sections changed: none");
+  });
+  it("ends with the marker, which is ours and not a status comment, whatever the old text ends with", () => {
+    const c = updateComment({ ...o, oldBody: "text\n<!-- claude-factory status -->" });
+    expect(c.trimEnd().split("\n").at(-1)).toBe(o.marker);
+    expect(isBot({ body: c })).toBe(true);
+    expect(isStatusComment({ body: c })).toBe(false);
+    expect(endsWithMarker(c, o.marker)).toBe(true);
+    expect(endsWithMarker(`> ${o.marker}\nthanks`, o.marker)).toBe(false);
+  });
+  it("uses a longer fence than any in the old text", () => {
+    const c = updateComment({ ...o, oldBody: "a ```` b\n```js\nx\n```" });
+    expect(c).toContain("`````text\na ```` b");
+  });
+  it("keeps the marker of the update apart from the one of the issue", () => {
+    expect(updateMarker("s", "d")).not.toBe(refinedMarker("s", "d"));
+    expect(refinedHashIn(updateMarker("s", "d"))).toBeUndefined();
   });
 });

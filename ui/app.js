@@ -1,8 +1,11 @@
 import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
+import { flowNameMark } from "./icons.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
+import { resolve } from "./ia.js";
+import { initShell, showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
@@ -20,7 +23,8 @@ import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
-import { renderYourTurn, startBadge, startHash } from "./turn.js";
+import { renderAdminHome } from "./home-admin.js";
+import { startBadge, startHash } from "./turn.js";
 
 const sidebar = document.getElementById("sidebar");
 const main = document.getElementById("main");
@@ -82,7 +86,7 @@ function renderSidebar() {
       current && !current.name ? h("li", {}, h("a", { href: "#/new", class: "active" }, h("span", { class: "n" }, current.obj?.name ?? "new flow", h("span", { class: "pill claude" }, "unsaved")))) : null,
       S.flows.map((f) => h("li", { class: f.error ? "bad" : null },
         h("a", { href: `#/flows/${f.name}`, class: current?.name === f.name ? "active" : null },
-          h("span", { class: "n" }, h("span", {}, f.name, current?.name === f.name && current.dirty ? " •" : ""), f.published ? h("span", { class: "pill ok" }, "published") : null, h("span", { class: "pill" }, f.scope)),
+          h("span", { class: "n" }, h("span", {}, flowNameMark(f), current?.name === f.name && current.dirty ? " •" : ""), f.published ? h("span", { class: "pill ok" }, "published") : null, h("span", { class: "pill" }, f.scope)),
           h("span", { class: "d" }, f.error ? "invalid flow" : f.description ?? ""))))));
 }
 
@@ -371,12 +375,17 @@ function welcome() {
 }
 
 let routeGen = 0;
+// The "since you last looked" box: Home places it; it stays hidden until there is something to say.
+const sinceEl = h("div", { class: "since" });
+sinceEl.hidden = true;
 
 async function route() {
   const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
-  const hash = location.hash || "#/flows";
+  const to = resolve("admin", location.hash);
+  if (to.hash !== location.hash) history.replaceState(null, "", to.hash);
+  const hash = to.hash;
   const [, section, arg] = hash.split("/").map(decodeURIComponent);
   const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && hash !== "#/new";
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
@@ -387,9 +396,17 @@ async function route() {
   S.lastHash = hash;
   S.cleanup?.();
   S.cleanup = null;
-  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === (section === "new" ? "flows" : section)));
+  showPage("admin", to);
+  document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
-    if (section === "your-turn") S.cleanup = await renderYourTurn(main);
+    if (section === "home") {
+      // Draws into its own box, so a slow load that ends after a hash change leaves nothing running.
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderAdminHome(box, { since: sinceEl });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
     else if (section === "board") S.cleanup = renderBoard(main, arg);
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);
@@ -438,6 +455,7 @@ document.addEventListener("keydown", (e) => {
 // A user never gets past this line: enterDisplay sends that account to /user/ and does not return.
 const me = await enterDisplay("admin");
 S.me = me.id;
+initShell("admin", { user: me });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 await startAdmin();
@@ -452,5 +470,5 @@ async function startAdmin() {
   const to = startHash(location.hash, await startBadge());
   if (to) history.replaceState(null, "", to);
   route();
-  startSince(document.getElementById("since"));
+  startSince(sinceEl);
 }

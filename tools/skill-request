@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+// Checks the skill request of a final plan and prints it in the form the flows use.
+// Input (stdin): the planner's answer, with at most one line "SKILL_REQUEST: {"version":1,"skills":[…]}".
+// Output: a "## Required skills" section, then the canonical request line as the LAST line (exit 0);
+// or "skill request: <problem>" and "planning failed: the skill request of the plan is not valid" (exit 1).
+// No arguments, no environment, no network. Nothing from the input is printed except validated fields.
+// The rules mirror src/skills/request.ts — keep the two the same (tests/skill-request.test.ts checks it).
+import { readFileSync } from "node:fs";
+
+const MARKER = "SKILL_REQUEST: ";
+const LIMITS = { lineBytes: 8000, skills: 20, reasonChars: 300, evidence: 5, evidenceChars: 200 };
+const ID_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN = /[\u0000-\u001f\u007f<>`]/;
+const KEY_RE = /^[\w-]{1,40}$/;
+// A marker with something around it (indent, quote, bold) or without the space: not a proper line.
+const DECORATED = /^[^A-Za-z0-9]*SKILL_REQUEST[^A-Za-z0-9]{0,3}:/;
+
+/** The one proper request line of the text: { line }, { problem }, or {} when the text has none. */
+function extract(text) {
+  const lines = text.split("\n").map((l) => l.trimEnd());
+  const proper = lines.filter((l) => l.startsWith(MARKER));
+  if (proper.length > 1) return { problem: "more than one SKILL_REQUEST line" };
+  if (proper.length === 1) return { line: proper[0] };
+  if (lines.some((l) => DECORATED.test(l))) return { problem: "the SKILL_REQUEST line is not on its own line" };
+  return {};
+}
+
+const isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Unknown or missing keys of an object, as a problem text. */
+function keyProblem(obj, keys) {
+  for (const k of Object.keys(obj)) if (!keys.includes(k)) return KEY_RE.test(k) ? `unknown key "${k}"` : "unknown key";
+  for (const k of keys) if (!(k in obj)) return `missing key "${k}"`;
+  return undefined;
+}
+
+function pathProblem(p) {
+  if (p === "" || p.includes("\0") || p.includes("\\") || p.startsWith("/") || /^[A-Za-z]:/.test(p)) return true;
+  return p.split("/").some((s) => s === "" || s === "." || s === "..");
+}
+
+function goodEvidence(e) {
+  if (typeof e !== "string") return false;
+  const t = e.trim();
+  if (t.length > LIMITS.evidenceChars || FORBIDDEN.test(t)) return false;
+  const prefix = ["catalogue:", "issue:", "path:"].find((p) => t.startsWith(p));
+  if (!prefix) return false;
+  const rest = t.slice(prefix.length);
+  if (rest.trim() === "") return false;
+  return prefix === "path:" ? !pathProblem(rest) : true;
+}
+
+/** { request } with trimmed text and the skills sorted by id, or { problem }. */
+function validate(line) {
+  if (Buffer.byteLength(line) > LIMITS.lineBytes) return { problem: "too long" };
+  let obj;
+  try {
+    obj = JSON.parse(line.slice(MARKER.length));
+  } catch {
+    return { problem: "not valid JSON" };
+  }
+  if (!isObject(obj)) return { problem: "not valid JSON" };
+  const top = keyProblem(obj, ["version", "skills"]);
+  if (top) return { problem: top };
+  if (obj.version !== 1) return { problem: "unknown version" };
+  if (!Array.isArray(obj.skills)) return { problem: "not valid JSON" };
+  if (obj.skills.length > LIMITS.skills) return { problem: "too many skills" };
+  const skills = [];
+  for (const [i, s] of obj.skills.entries()) {
+    const n = i + 1;
+    if (!isObject(s)) return { problem: `skill ${n}: bad id` };
+    const bad = keyProblem(s, ["id", "reason", "evidence"]);
+    if (bad) return { problem: bad };
+    if (typeof s.id !== "string" || !ID_RE.test(s.id)) return { problem: `skill ${n}: bad id` };
+    const reason = typeof s.reason === "string" ? s.reason.trim() : "";
+    if (reason === "" || reason.length > LIMITS.reasonChars || FORBIDDEN.test(reason)) return { problem: `skill ${n}: bad reason` };
+    if (!Array.isArray(s.evidence) || s.evidence.length < 1 || s.evidence.length > LIMITS.evidence || !s.evidence.every(goodEvidence)) return { problem: `skill ${n}: bad evidence` };
+    skills.push({ id: s.id, reason, evidence: s.evidence.map((e) => e.trim()) });
+  }
+  const seen = new Set();
+  for (const s of skills) {
+    if (seen.has(s.id)) return { problem: `duplicate skill "${s.id}"` };
+    seen.add(s.id);
+  }
+  skills.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { request: { version: 1, skills } };
+}
+
+/** The section and the canonical line. `named` is false when the plan had no line at all. */
+function render(request, named) {
+  const body = request.skills.length
+    ? request.skills.map((s) => `- \`${s.id}\` — ${s.reason} Evidence: ${s.evidence.map((e) => `\`${e}\``).join(", ")}`)
+    : [named ? "None." : "None — the plan did not name any."];
+  return ["## Required skills", "", ...body, `${MARKER}${JSON.stringify(request)}`].join("\n");
+}
+
+const found = extract(readFileSync(0, "utf8"));
+const result = found.problem ? found : found.line ? validate(found.line) : { request: { version: 1, skills: [] } };
+if (result.problem) {
+  console.log(`skill request: ${result.problem}`);
+  console.log("planning failed: the skill request of the plan is not valid");
+  process.exit(1);
+}
+console.log(render(result.request, found.line !== undefined));

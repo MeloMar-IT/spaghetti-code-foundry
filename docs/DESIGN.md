@@ -486,6 +486,64 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 
+### UI styles
+
+`ui/style.css` is only a list of `@import url("/css/…")` lines. The rules live in small modules under `ui/css/`. There is no build step: the browser follows the imports. `/css/…` is served like `/style.css` (static, no sign-in, `text/css`), and the CSP allows same-origin `@import`. `ui/index.html` and `ui/user/index.html` link `/tokens.css` (the token values) and then `/style.css`.
+
+**Modules and who owns what.** Every module starts with a comment that says what belongs in it and what does not.
+
+| File | Owns |
+|---|---|
+| `tokens.css` | Only a pointer: the custom properties (colours, type, spacing, density, the `--layer-*` scale, `--size-form`) are in `ui/tokens.css`, which is linked before `/style.css`. No selectors. |
+| `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
+| `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
+| `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
+| `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+
+**Where a new rule goes.**
+1. A custom property: `tokens.css`.
+2. A bare element: `reset.css`.
+3. A control or box used on more than one page, or a variant of one: `components.css`.
+4. A one-purpose helper: `utilities.css`.
+5. Anything else: the page file of the area that uses it. A page file does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page.
+
+Use a token, not a number, for z-index and for the widths below. Keep rules that override each other in the same module and in the same order.
+
+**Import order, and why.** Tokens, reset, layout, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. The shell rules at the end of `pages/shell.css` (for example `.spacer`) come after `utilities.css` on purpose.
+
+**z-index scale** (`--layer-*` in `ui/tokens.css`; a test fails on a `z-index` that is not a layer token):
+
+| Token | Value | Used by |
+|---|---|---|
+| `--layer-sticky` | 10 | `.top` |
+| `--layer-menu` | 40 | the account menu, `.scrim`, the drawer sidebar (+1) |
+| `--layer-overlay` | 50 | `.backdrop`, and so every `.modal` |
+| `--layer-toast` | 60 | `#toast`, `.skip` |
+
+**Utility classes.** Defined once in `ui/css/utilities.css`; each has exactly the declarations of the inline style it replaces. Build the class string in place with `h()`, for example `class: "row tight text-sm mt-8"`. There is no `style` helper.
+
+| Group | Classes |
+|---|---|
+| Stacking | `.stack` (grid, gap 12px), `.stack.tight` (gap 6px), `.row.tight` (gap 6px), `.row.tighter` (gap 4px), `.row.center` |
+| Margin and padding | `.flush` (margin 0), `.mt-4/6/8/10/16/22`, `.mt-neg-6`, `.mb-4/6/8/10/12/14/16`, `.mx-12`, `.px-12` |
+| Width | `.fit` (auto), `.full` (100%), `.w-70`, `.w-80`, `.w-90`, `.maxw-520` |
+| Text size | `.text-sm` 12.5px, `.text-xs` 12px, `.text-2xs` 11.5px, `.text-3xs` 11px (built from the type tokens) |
+| Text flow | `.pre-wrap`, `.wrap-anywhere`, `.break-all`, `.select-all`, `.block` |
+| Grid | `.span-all` (`grid-column: 1 / -1`) |
+
+`.flush` comes before the margin classes, so `flush mt-4` gives `margin: 4px 0 0`. A compound margin such as `4px 12px` becomes `mt-4 mb-4 mx-12`.
+
+**Inline style only for values computed from data.** Use a utility class for any fixed value. Use `style:` or `.style.` only when the value comes from data, such as the chart tip position and the rate bar width in `ui/dashboard.js`. To show or hide a part, set the `hidden` property; `ui/css/reset.css` has `[hidden] { display: none !important; }` so it also works on `.field` and other grid elements. `tests/ui-inline-styles.test.ts` lists every `style:` and `.style.` in `ui/**/*.js`, fails for a cleaned file unless the line is on its allow-list with a reason, and checks that every utility class used exists in the CSS.
+
+**Content widths.** `--size-form` (640px, in `ui/tokens.css`) is used by `.start-form` and `.modal`; `.modal:has(.block-grid)` is 900px.
+
+**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--layer-sticky`; static in the user display on narrow screens) and `.graph-pane` in the editor (sticks under the top bar). The sidebar `.side` is sticky below the top bar too.
+
+**Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. On a narrow screen the sidebar is a drawer (`.side` with `body.drawer-open`) at `--layer-menu` plus one; it scrolls itself.
+
+**Tests.** `readUiCss()` in `tests/helpers/ui-css.ts` follows the imports and returns the whole stylesheet, for tests that read CSS. It fails on an import that does not resolve and on a `.css` file under `ui/css/` that is not imported. `tests/ui-css.test.ts` checks the import order, that the rule set equals the frozen `tests/fixtures/ui-style-baseline.css`, the tokens, the z-index rule, the module comments, and that no page file starts a rule with a shared component class.
+
 ---
 
 ## 16. Tests
@@ -496,6 +554,39 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 - Each test run has its own temporary data folder.
 - Documents are checked too: flow examples in the authoring guide must validate, and the error
   texts in the user guide must match the code.
+- **Browser tests (separate).** `npm run test:ui` runs Playwright specs (`tests/browser/*.spec.ts`)
+  against the real server in a real browser. `npm test` does not run them and passes with no
+  browser installed. Install the browser once with `npx playwright install chromium`.
+  - A launcher (`tests/browser/server.ts`) starts the server on a free port with a temporary data
+    folder, one admin, one user and seeded data: a run in each main status, a repository, a
+    refinement session and a watcher (`tests/browser/seed.ts`).
+  - `tests/browser/widths.ts` defines the widths once: 360, 768, 1024 and 1440 px.
+    `openAs(browser, role, width)` opens a signed-in page; `expectNoSidewaysScroll(page)` fails when
+    the document is wider than the viewport.
+  - The navigation spec checks every primary link on both displays at all four widths. At 360 px
+    it goes through the menu button and drawer.
+  - Pages keep an event stream open, so the tests never wait for "network idle".
+  - Two cases (admin display at 360 and 768 px) are `test.fixme`: they show sideways scroll that
+    UI quality 1b (part 2 of #264) fixes.
+  - **Visual check.** `tests/browser/visual.spec.ts` compares screenshots (`toHaveScreenshot`) with
+    committed baselines. `tests/browser/visual-matrix.ts` defines the matrix once: 12 pages (the
+    gallery stand-in `docs/ui-redesign/visual-system-demo.html` opened from disk, admin, user and
+    sign-in pages), each in theme (light, dark) × density (default, compact) at 1440 px, plus
+    light/default at 360, 768 and 1024 px. `tests/visual-matrix.test.ts` (vitest) checks the matrix.
+    - `openAs` takes an options argument for theme, density and a fixed clock. Theme and density are
+      set as `data-theme` / `data-density` on `<html>` before page scripts run.
+    - Captures are deterministic: animations off, caret hidden, fixed height (`VIEW_HEIGHT`), scale
+      factor 1, wait for the page's ready text. Changing parts (run ids, times, the live running
+      run) are masked.
+    - A changed area above `MAX_DIFF_PIXEL_RATIO` (in `playwright.config.ts`) fails the test.
+      Expected, actual and diff images are written to `tests/browser/test-results/`. A harness test
+      injects one style change and checks that the comparison fails.
+    - Baselines live in `tests/browser/__screenshots__/{platform}/`. Only `darwin` has baselines; on
+      other platforms the visual spec is skipped with a message, as it is on a Mac with no
+      baseline folder.
+    - **Update baselines** with `npm run test:ui -- --update-snapshots`, check every changed image,
+      and commit them. A story that changes the look on purpose does this and lists the changed
+      images in its pull request.
 
 ---
 
@@ -555,6 +646,12 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
   keeps free the log lines its end needs. The talk — rounds, answers, waiting proposals and the map — is stored in the session (`src/refinement/talk.ts`); `recordRound` is the way in for a round's result.) Help people write good stories before they reach the backlog, in the role of
   an architect — asking, checking against a Definition of Ready, showing impact and risk. The
   person stays the author.
+  A split is confirmed by `confirmSplit` in `src/refinement/draft-parts.ts`: the parts are new drafts appended in plan
+  order, and the original keeps `splitInto` (the part ids) while each part has `part: { of, hint? }`. Order is by
+  position: a part may depend only on an earlier part, never on a later one or on its original (`partOrderProblem`,
+  checked by the schema, `saveTyped` and `acceptSuggestion`). A draft with `splitInto` is never ready and is never
+  published: the plan and the publish call use `withoutSplits` (`publish.ts`), which drops the original and points drafts that depended on it at each of its parts, in memory only, and `leftBehind` reports originals that still hold criteria; a part cannot be split again; a published draft cannot be split. The import rule: `draft-parts.ts` may
+  import values from `draft.ts` and `draft-split.ts`, but `draft-split.ts` imports only types from `draft.ts`.
 - **Multi-user completion:** separate watchers per repository, runs with the repository's own
   credentials, fair-use limits.
 - **Later:** e-mail, per-user agent accounts, more than one machine.

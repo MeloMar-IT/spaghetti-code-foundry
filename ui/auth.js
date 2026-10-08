@@ -1,5 +1,6 @@
 import { api, setCsrf } from "./api.js";
 import { h, modal, mount, toast } from "./dom.js";
+import { appearanceButton, initPrefs } from "./prefs.js";
 
 const PASSWORD_MIN = 12;
 
@@ -90,7 +91,7 @@ export function changePasswordDialog(a = api) {
       toast("Password changed. Your other sessions are signed out.");
       close(true);
     };
-    return h("form", { class: "stack", onSubmit },
+    return h("form", { onSubmit },
       h("p", { class: "muted" }, `At least ${PASSWORD_MIN} characters. Your other sessions are signed out.`),
       fields.map((f) => h("div", {}, h("label", {}, f.label), f.el)),
       error,
@@ -198,6 +199,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
     return new Promise(() => {});
   }
   setCsrf(session.csrfToken);
+  initPrefs(session.user);
   const out = h(
     "button",
     {
@@ -212,7 +214,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
   );
   const box = document.getElementById("user");
   const change = h("button", { class: "small", type: "button", onClick: () => changePasswordDialog(a) }, "Change password");
-  mount(box, h("span", {}, session.user.name), change, out);
+  mount(box, h("span", {}, session.user.name), appearanceButton(session.user), change, out);
   box.hidden = false;
   return session.user;
 }
@@ -220,12 +222,12 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
+const USER_HASH = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
 
 /** True when the address names no page at all: no hash, "#" or "#/". */
 export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
 
-/** True for a hash the user display has a page for: Start work, Runs, one run, My repositories, Refinement, one session. */
+/** True for a hash the user display has a page for: Home, Start work, Runs, one run, My repositories, Refinement, one session. */
 export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
 
 /** The hash the user display draws: the given one when it has that page, else the Runs list. */

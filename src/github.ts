@@ -300,6 +300,9 @@ export interface RestIssue {
   html_url: string;
   created_at: string;
   closed_at?: string | null;
+  updated_at?: string;
+  /** Set when the "issue" is a pull request. */
+  pull_request?: unknown;
   labels: ({ name?: string } | string)[];
 }
 
@@ -307,10 +310,20 @@ const errorText = (e: unknown) => `${String((e as { stderr?: string }).stderr ??
 
 /** One call to the issue list of a repository: the answer as a list, pull requests left out. */
 async function listIssues(repo: string, query: string, timeoutMs?: number): Promise<RestIssue[]> {
+  return (await listPage(repo, query, timeoutMs)).issues;
+}
+
+async function listPage(repo: string, query: string, timeoutMs?: number): Promise<{ issues: RestIssue[]; full: boolean }> {
   const out = (await gh(["api", `repos/${repo}/issues?${query}state=all&per_page=100&sort=created&direction=desc`], undefined, timeoutMs)).trim();
   const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
   if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
-  return list.filter((i) => !i.pull_request);
+  return { issues: list.filter((i) => !i.pull_request), full: list.length >= 100 };
+}
+
+/** Like listNewestIssues, and whether GitHub's page was full (100 issues and pull requests), so that older ones may be missing. */
+export async function listNewestIssuesCut(repo: string, timeoutMs?: number): Promise<{ issues: RestIssue[]; cut: boolean }> {
+  const { issues, full } = await listPage(repo, "", timeoutMs);
+  return { issues, cut: full };
 }
 
 /** The newest issues (not pull requests) with a label, open and closed: one call, at most 100. */
@@ -330,12 +343,39 @@ export async function restIssue(repo: string, issue: number, timeoutMs?: number)
   }
 }
 
+/**
+ * The state of a pull request: "closed" only when GitHub says it is closed and not merged; "gone" when GitHub says it does not exist;
+ * "unknown" when the answer is not clear (so a caller can treat it as not closed).
+ */
+export async function pullState(repo: string, pr: number, timeoutMs?: number): Promise<"open" | "merged" | "closed" | "gone" | "unknown"> {
+  let p: { state?: unknown; merged?: unknown; merged_at?: unknown };
+  try {
+    p = JSON.parse((await gh(["api", `repos/${repo}/pulls/${pr}`], undefined, timeoutMs)).trim());
+  } catch (e) {
+    if (/not found|HTTP 404/i.test(errorText(e))) return "gone";
+    throw e;
+  }
+  if (!p || typeof p !== "object") return "unknown";
+  if (p.merged === true || (typeof p.merged_at === "string" && p.merged_at)) return "merged";
+  if (p.state === "open") return "open";
+  if (p.state === "closed" && p.merged === false) return "closed";
+  return "unknown";
+}
+
 /** Makes an issue. Title and text go through stdin as JSON, never into the command line. */
 export async function createIssue(repo: string, o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<RestIssue> {
   const out = await gh(["api", `repos/${repo}/issues`, "-X", "POST", "--input", "-"], undefined, timeoutMs, JSON.stringify(o));
   const made = JSON.parse(out.trim()) as RestIssue;
   if (!made || !Number.isSafeInteger(made.number) || made.number < 1) throw new Error("GitHub did not report the new issue");
   return made;
+}
+
+/** Replaces the title and text of an issue. Title and text go through stdin as JSON, never into the command line. */
+export async function updateIssue(repo: string, issue: number, o: { title: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
+  const out = await gh(["api", `repos/${repo}/issues/${issue}`, "-X", "PATCH", "--input", "-"], undefined, timeoutMs, JSON.stringify({ title: o.title, body: o.body }));
+  const changed = JSON.parse(out.trim()) as RestIssue;
+  if (!changed || changed.number !== issue) throw new Error("GitHub did not report the changed issue");
+  return changed;
 }
 
 /** Makes a label when it is missing; an existing one is left as it is (no --force). Rejects on any other error. */

@@ -7,6 +7,7 @@ import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
 import { usesTask } from "../src/flow/publish.js";
+import { planSkillRequest } from "../src/skills/request.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { buildStamp, RESTART_CODE, supervise } from "../src/supervise.js";
@@ -18,7 +19,7 @@ import { claudeBin, closing, fakeGithub, first, flowPath } from "./helpers/fake-
 const REPO = "acme/app";
 const LABELS = { working: "Factory_working", done: "Factory_done", needs_info: "Factory_needs_info", waiting: "Factory_waiting", failed: "Factory_ERROR" };
 const VARS = { test_cmd: "! grep -q BUG feature.txt 2>/dev/null", forbidden_paths: "connector-geni/", docs_required: "docs/CHANGELOG.md" };
-const FAKES = ["FAKE_GH_CLOSED_ISSUES", "FAKE_GH_PARENT", "FAKE_RISK", "FAKE_CODEX_RISK", "FAKE_CODEX_VERDICT", "FAKE_GH_ISSUE_LABELS", "FAKE_QUESTIONS_FOR", "FAKE_GH_COMMENTS", "FAKE_GH_PERMISSION", "FAKE_ISSUE_PLAN"];
+const FAKES = ["FAKE_GH_CLOSED_ISSUES", "FAKE_GH_PARENT", "FAKE_RISK", "FAKE_CODEX_RISK", "FAKE_CODEX_VERDICT", "FAKE_GH_ISSUE_LABELS", "FAKE_QUESTIONS_FOR", "FAKE_GH_COMMENTS", "FAKE_GH_PERMISSION", "FAKE_ISSUE_PLAN", "FAKE_SKILL_REQUEST"];
 
 beforeAll(() => {
   process.env.FACTORY_CODEX_BIN = resolve("tests/fixtures/fake-codex.mjs");
@@ -78,6 +79,93 @@ describe("deliver pipeline", () => {
     expect(result.split("\n").at(-1)).toBe(`<!-- claude-factory run=${run.runId} -->`);
     expect(prs()).toHaveLength(1);
     expect(log).toMatch(/gh issue edit 5 .*--remove-label Factory_go.*--add-label Factory_done/);
+  });
+
+  const REQUEST_LINE = /^SKILL_REQUEST:/m;
+  const TS_REQUEST = { version: 1, skills: [{ id: "typescript", reason: "The change is in src/*.ts.", evidence: ["path:src/skills/request.ts"] }] };
+
+  it("posts the skill section in the plan comment and ends the gate output with the checked request", async () => {
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.status).toBe("succeeded");
+    const comment = gh.comments().find((c) => c.body.includes("Coding starts now"))!.body;
+    expect(comment).toContain("## Required skills\n\nNone.\n");
+    expect(comment).not.toMatch(REQUEST_LINE);
+    const gate = run.history.find((h) => h.id === "risk_gate")!.output;
+    expect(gate.split("\n").filter((l) => l.startsWith("SKILL_REQUEST:"))).toEqual(['SKILL_REQUEST: {"version":1,"skills":[]}']);
+    expect(gate.trimEnd().split("\n").at(-1)).toBe('SKILL_REQUEST: {"version":1,"skills":[]}');
+    expect(planSkillRequest(run)).toEqual({ version: 1, skills: [] });
+  });
+
+  it("lists a requested skill in the plan comment and reads it back", async () => {
+    process.env.FAKE_SKILL_REQUEST = JSON.stringify(TS_REQUEST);
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.status).toBe("succeeded");
+    const comment = gh.comments().find((c) => c.body.includes("Coding starts now"))!.body;
+    expect(comment).toContain("- `typescript` — The change is in src/*.ts. Evidence: `path:src/skills/request.ts`");
+    expect(comment).not.toMatch(REQUEST_LINE);
+    expect(planSkillRequest(run)).toEqual(TS_REQUEST);
+  });
+
+  it("fails at the gate for a request that is not valid: no plan comment, no coding", async () => {
+    process.env.FAKE_SKILL_REQUEST = '{"version":2,"skills":[]}';
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.status).toBe("failed");
+    expect(run.reason).toContain('step "risk_gate" failed');
+    expect(run.history.find((h) => h.id === "risk_gate")!.output).toBe("skill request: unknown version\nplanning failed: the skill request of the plan is not valid\n");
+    expect(run.history.some((h) => h.id === "implement")).toBe(false);
+    expect(gh.comments().some((c) => c.body.includes("Spaghetti Code Foundry plan**"))).toBe(false);
+  });
+
+  it("keeps the whole plan and the largest request in the gate output", async () => {
+    const skills = Array.from({ length: 20 }, (_, i) => ({ id: `skill-${i}`, reason: "r".repeat(300), evidence: ["issue:x"] }));
+    const request = JSON.stringify({ version: 1, skills });
+    expect(Buffer.byteLength(`SKILL_REQUEST: ${request}`)).toBeLessThanOrEqual(8000);
+    process.env.FAKE_SKILL_REQUEST = request;
+    process.env.FAKE_ISSUE_PLAN = `## Goal\nSTART-OF-THE-PLAN\n${"A long line of the plan.\n".repeat(1100)}PLAN_STATUS: READY`;
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.status).toBe("succeeded");
+    const gate = run.history.find((h) => h.id === "risk_gate")!.output;
+    expect(gate.length).toBeGreaterThan(20_000 + 1000);
+    expect(gate).toContain("START-OF-THE-PLAN");
+    expect(planSkillRequest(run)?.skills).toHaveLength(20);
+  });
+
+  it("writes no request line into the issues of a split, and has no request for a split run", async () => {
+    process.env.FAKE_ISSUE_PLAN = SPLIT(20).replace("SPLIT_RISK: 20", 'SKILL_REQUEST: {"version":1,"skills":[]}\nSPLIT_RISK: 20');
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.status).toBe("succeeded");
+    const log = gh.ghLog();
+    expect(log).toContain("created issue: issue create");
+    expect(log).not.toMatch(REQUEST_LINE);
+    expect(gh.comments().some((c) => REQUEST_LINE.test(c.body))).toBe(false);
+    expect(planSkillRequest(run)).toBeUndefined();
+  });
+
+  it("posts no request line when the issue is sent back for information", async () => {
+    process.env.FAKE_ISSUE_PLAN = 'Which format?\nSKILL_REQUEST: {"version":1,"skills":[]}\nPLAN_STATUS: NEEDS_INFO';
+    issues([5, ["Factory_go"]]);
+    await watcher().tick();
+    await settle();
+    const run = runOf("issue-deliver", "5")!;
+    expect(run.history.some((h) => h.id === "send_back")).toBe(true);
+    expect(gh.comments().some((c) => c.body.includes("Which format?"))).toBe(true);
+    expect(gh.comments().some((c) => REQUEST_LINE.test(c.body))).toBe(false);
+    expect(planSkillRequest(run)).toBeUndefined();
   });
 
   it("keeps adding issues to the open factory pull request instead of waiting for the merge", async () => {
@@ -203,6 +291,14 @@ describe("deliver pipeline", () => {
   const runSplit = (extra: Record<string, string> = {}) =>
     spawnSync(process.execPath, [resolve("tools/create-split")], { input: SPLIT(20), encoding: "utf8",
       env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r1", ...extra } });
+
+  it("keeps a stray request line out of the created issues when the tool is called directly", () => {
+    const r = spawnSync(process.execPath, [resolve("tools/create-split")], { input: SPLIT(20).replace("SPLIT_RISK: 20", 'SKILL_REQUEST: {"version":1,"skills":[]}\nSPLIT_RISK: 20'), encoding: "utf8",
+      env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r2" } });
+    expect(r.status).toBe(0);
+    expect(gh.ghLog()).toContain("created issue: issue create");
+    expect(gh.ghLog()).not.toContain("SKILL_REQUEST");
+  });
 
   it("recognises its own comment with the first line on a second run", () => {
     expect(runSplit({ FACTORY_FIRST_INFO: reportFirst("info") }).status).toBe(0);

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
-import { END_NO_SPLIT_DRAFT } from "../src/refinement/draft-split.js";
+import { END_NO_SPLIT_DRAFT, SPLIT_READ_ONLY } from "../src/refinement/draft-split.js";
 import { END_BAD_FORM, refinementsPath } from "../src/refinement/store.js";
 import { OWN_WAY_HEADING } from "../src/refinement/split-text.js";
 import { TALK_FIRST_LINE } from "../src/refinement/talk-text.js";
@@ -281,5 +281,372 @@ describe("split", () => {
     expect(s.draftsHidden).toBe(true);
     expect(s.drafts).toBeUndefined();
     expect(s.log.find((l: any) => l.what === "architect-split").detail).toBeUndefined();
+  });
+});
+
+describe("confirming a split", () => {
+  const confirm = (id: string, did: string, body?: unknown, who = ann) => call(who, "POST", url(id, `drafts/${did}/split/confirm`), body);
+  const plan = async (id: string) => {
+    const c = (await draftOf(id)).criteria.map((x: any) => x.id);
+    return { parts: [{ title: "First", sentence: "Do first.", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn: [1] }], unplaced: [] };
+  };
+  const publish = async (id: string, index: number) => {
+    started!.close();
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    f.sessions.find((s: any) => s.id === id).drafts[index].published = { issue: 42, url: "https://github.com/acme/app/issues/42", at: "2026-01-01T00:00:00.000Z" };
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+    started = await startServer(opts());
+    await get(id);
+  };
+
+  it("answers 201, adds the parts, marks the original as split and starts no run", async () => {
+    const { id, did } = await withDraft();
+    const before = (await get(id)).architect;
+    const r = await confirm(id, did, await plan(id));
+    expect(r.status).toBe(201);
+    const s = r.json();
+    expect(s.drafts).toHaveLength(3);
+    expect(s.drafts[0]).toMatchObject({ id: did, state: "split", splitInto: [s.drafts[1].id, s.drafts[2].id] });
+    expect(s.drafts[1]).toMatchObject({ state: "drafting", part: { of: did, hint: "Do first." } });
+    expect(s.drafts[2].dependsOn[0].draft).toBe(s.drafts[1].id);
+    expect(s.architect).toEqual(before);
+    expect(whats(s).at(-1)).toBe("draft-split");
+  });
+
+  it("answers 400 for a bad plan", async () => {
+    const { id, did } = await withDraft();
+    const ok = await plan(id);
+    const msg = async (body: unknown) => {
+      const r = await confirm(id, did, body);
+      expect(r.status).toBe(400);
+      return r.error();
+    };
+    expect(await msg({ ...ok, parts: [ok.parts[0]] })).toBe("a split has 2 to 6 parts");
+    expect(await msg({ ...ok, parts: [{ ...ok.parts[0], title: "" }, ok.parts[1]] })).toBe("each part needs a title");
+    expect(await msg({ parts: ok.parts })).toMatch(/unplaced/);
+    expect(await msg({ ...ok, way: 0 })).toBe("no such way; ask for ways to split again");
+    expect(await msg({ ...ok, parts: [ok.parts[0], { ...ok.parts[1], dependsOn: [5] }] })).toBe("no such part");
+    expect(await msg({ ...ok, unplaced: [ok.parts[0].criteria[0]] })).toBe('a criterion is in the plan twice: "It exports a file"');
+    expect((await call(ann, "POST", url(id, `drafts/${did}/split/confirm`), "x", { "content-type": "text/plain" })).status).toBe(415);
+    expect((await get(id)).drafts).toHaveLength(1);
+  });
+
+  it("answers 409 for a split draft, a part and a published draft, also when asking for ways", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    for (const [target, why] of [
+      [did, "this draft is split; its parts are worked on instead"],
+      [s.drafts[1].id, "a part of a split cannot be split again"],
+    ] as const) {
+      const c = await confirm(id, target, {});
+      expect(c.status).toBe(409);
+      expect(c.error()).toBe(why);
+      const a = await split(id, target);
+      expect(a.status).toBe(409);
+      expect(a.error()).toBe(why);
+    }
+    const p = await withDraft();
+    await publish(p.id, 0);
+    const c = await confirm(p.id, p.did, {});
+    expect(c.status).toBe(409);
+    expect(c.error()).toMatch(/on GitHub as issue #42/);
+    expect((await split(p.id, p.did)).status).toBe(409);
+  });
+
+  it("is for the owner only, and needs an existing draft and session", async () => {
+    const { id, did } = await withDraft();
+    const body = await plan(id);
+    expect((await confirm(id, did, body, bob)).status).toBe(404);
+    expect((await confirm(id, did, body, admin)).status).toBe(403);
+    expect((await confirm(id, "00000000-0000-4000-8000-000000000000", body)).status).toBe(404);
+  });
+
+  it("does not remove a published part or its original, and strips part from the parts of a removed original", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    await publish(id, 2);
+    expect((await call(ann, "DELETE", url(id, `drafts/${s.drafts[2].id}`))).status).toBe(409);
+    expect((await call(ann, "DELETE", url(id, `drafts/${did}`))).status).toBe(409);
+    const other = await withDraft();
+    await confirm(other.id, other.did, await plan(other.id));
+    const r = await call(ann, "DELETE", url(other.id, `drafts/${other.did}`));
+    expect(r.status).toBe(200);
+    expect(r.json().drafts.every((d: any) => d.part === undefined)).toBe(true);
+  });
+
+  it("refuses a link from a part to a later part", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    const r = await call(ann, "PUT", url(id, `drafts/${s.drafts[1].id}`), { dependsOn: [{ draft: s.drafts[2].id }] });
+    expect(r.status).toBe(400);
+    expect(r.error()).toBe("a part cannot depend on a later part");
+  });
+
+  it("answers 409 for every change of the original and writes nothing", async () => {
+    const { id, did } = await withDraft();
+    await confirm(id, did, await plan(id));
+    const before = readFileSync(refinementsPath(), "utf8");
+    const sid = "22222222-2222-4222-8222-222222222222";
+    const calls: [string, string, unknown?][] = [
+      ["PUT", `drafts/${did}`, { title: "X" }],
+      ["POST", `drafts/${did}/suggestions/${sid}/accept`, {}],
+      ["POST", `drafts/${did}/suggestions/${sid}/reject`, {}],
+      ["POST", `drafts/${did}/move-to-notes`, { field: "what" }],
+      ["PUT", `drafts/${did}/review-label`, {}],
+      ["POST", `drafts/${did}/ready-check`],
+      ["POST", `drafts/${did}/ready/value/accept`, { reason: "r" }],
+      ["DELETE", `drafts/${did}/ready/value/accept`],
+      ["POST", `drafts/${did}/suggest`, { field: "who" }],
+      ["POST", `drafts/${did}/review`],
+      ["POST", `drafts/${did}/impact`],
+    ];
+    for (const [method, path, body] of calls) {
+      const r = await call(ann, method, url(id, path), body);
+      expect([method, path, r.status, r.error()]).toEqual([method, path, 409, SPLIT_READ_ONLY]);
+    }
+    expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
+    expect((await get(id)).architect.state).toBe("idle");
+  });
+
+  for (const [name, path, body] of [
+    ["review", "review", undefined],
+    ["impact", "impact", undefined],
+    ["suggest", "suggest", { field: "who" }],
+  ] as const) {
+    it(`ends a paused ${name} run whose draft was split, and does not block the next ask`, async () => {
+      const { id, did } = await withDraft({ title: "CLAUDE_LIMIT please", who: "an admin", what: "to export a report", why: "to share it", outOfScope: "Printing", criteria: TWO });
+      const first = await call(ann, "POST", url(id, `drafts/${did}/${path}`), body);
+      expect(first.status).toBe(202);
+      const runId = first.json().architect.runId;
+      await until(id, (s) => s.architect.state === "paused");
+      expect((await confirm(id, did, await plan(id))).status).toBe(201);
+      const again = await call(ann, "POST", url(id, `drafts/${did}/${path}`), body);
+      expect(again.status).toBe(409);
+      expect(again.error()).toBe(SPLIT_READ_ONLY);
+      expect((await get(id)).architect).toMatchObject({ state: "failed", reason: "The draft was split while the run was paused" });
+      expect(runJson(runId).status).toBe("cancelled");
+      expect(runJson(runId).resumes ?? 0).toBe(0);
+      expect((await call(ann, "POST", url(id, "architect"))).status).toBe(202);
+      await idle(id);
+    });
+  }
+
+  it("lets a part take a suggestion, a review and a readiness check", async () => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id))).json();
+    const part = s.drafts[1].id;
+    expect((await call(ann, "POST", url(id, `drafts/${part}/suggest`), { field: "who" })).status).toBe(202);
+    await idle(id);
+    expect((await call(ann, "POST", url(id, `drafts/${part}/review`))).status).toBe(202);
+    await idle(id);
+    const r = await call(ann, "POST", url(id, `drafts/${part}/ready-check`));
+    expect([200, 202]).toContain(r.status);
+    await until(id, (x) => x.architect.state === "idle" || x.architect.state === "failed");
+    expect((await draftOf(id, 1)).readiness).toBeDefined();
+  });
+
+  it("fails a split run that is still running when the plan is confirmed", async () => {
+    const { id, did } = await withDraft();
+    process.env.FAKE_GH_SLEEP = "2";
+    await split(id, did);
+    expect((await confirm(id, did, await plan(id))).status).toBe(201);
+    delete process.env.FAKE_GH_SLEEP;
+    expect((await failed(id)).architect.reason).toBe(END_NO_SPLIT_DRAFT);
+    expect((await call(ann, "GET", `/api/refinement/${id}`)).status).toBe(200);
+  });
+});
+
+describe("moving a criterion of a split", () => {
+  const confirm = (id: string, did: string, body?: unknown) => call(ann, "POST", url(id, `drafts/${did}/split/confirm`), body);
+  const move = (id: string, did: string, cid: string, body?: unknown, who = ann) => call(who, "POST", url(id, `drafts/${did}/criteria/${cid}/move`), body);
+  const UNKNOWN = "00000000-0000-4000-8000-000000000000";
+  const plan = async (id: string, dependsOn: number[] = [1]) => {
+    const c = (await draftOf(id)).criteria.map((x: any) => x.id);
+    return { parts: [{ title: "First", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn }], unplaced: [] };
+  };
+  const split2 = async (dependsOn?: number[]) => {
+    const { id, did } = await withDraft();
+    const s = (await confirm(id, did, await plan(id, dependsOn))).json();
+    return { id, did, p1: s.drafts[1], p2: s.drafts[2] };
+  };
+  /** Stops the server, changes the file and starts it again. */
+  const rewrite = async (id: string, fn: (s: any) => void) => {
+    started!.close();
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    fn(f.sessions.find((s: any) => s.id === id));
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+    started = await startServer(opts());
+    await get(id);
+  };
+
+  it("answers 200, moves the criterion to the end of the target and logs it", async () => {
+    const { id, p1, p2 } = await split2();
+    const c = p1.criteria[0];
+    const r = await move(id, p1.id, c.id, { to: p2.id });
+    expect(r.status).toBe(200);
+    const s = r.json();
+    expect(s.drafts[1].criteria).toEqual([]);
+    expect(s.drafts[2].criteria.at(-1)).toEqual(c);
+    expect(whats(s).at(-1)).toBe("criterion-moved");
+    expect(s.log.at(-1).detail).toBe(c.text);
+  });
+
+  it("moves between the original and a part, and shows a layer warning only while a part is empty", async () => {
+    const { id, did, p1, p2 } = await split2();
+    expect((await draftOf(id)).partWarnings).toBeUndefined();
+    const c = p1.criteria[0];
+    const out = await move(id, p1.id, c.id, { to: did });
+    expect(out.status).toBe(200);
+    expect(out.json().drafts[0].criteria.map((x: any) => x.id)).toEqual([c.id]);
+    expect(out.json().drafts[0].partWarnings).toEqual([{ kind: "layer", part: p1.id, why: "This part has no acceptance criterion." }]);
+    expect(out.json().drafts[1].partWarnings).toBeUndefined();
+    expect(out.json().drafts[2].partWarnings).toBeUndefined();
+    const back = await move(id, did, c.id, { to: p1.id });
+    expect(back.status).toBe(200);
+    expect(back.json().drafts[0].partWarnings).toBeUndefined();
+    expect(back.json().drafts[0].splitInto).toEqual([p1.id, p2.id]);
+  });
+
+  it("shows a same-code warning for unrelated parts that touch the same code", async () => {
+    const { id, p1, p2 } = await split2([]);
+    const impact = (area: string) => ({
+      at: "2026-01-01T00:00:00.000Z",
+      mark: "0".repeat(64),
+      areas: [{ area, files: [], basis: "estimate", why: "It is touched." }],
+      dependsOn: [],
+      dependents: [],
+      risks: [],
+      size: { size: "small", files: 1, lines: 1, why: "It is small." },
+      overlaps: [],
+      sensitive: [],
+    });
+    await rewrite(id, (s) => {
+      s.drafts[1].impact = impact("src/a");
+      s.drafts[2].impact = impact("src/a/b");
+    });
+    expect((await draftOf(id)).partWarnings).toEqual([{ kind: "same-code", parts: [p1.id, p2.id], areas: ["src/a"], why: "Both parts touch the same code and neither depends on the other." }]);
+  });
+
+  it("answers 400 for a wrong body or a wrong target", async () => {
+    const { id, p1 } = await split2();
+    const c = p1.criteria[0].id;
+    const plain = (await call(ann, "POST", url(id, "drafts"), {})).json().drafts.at(-1).id;
+    for (const body of [{}, { to: 1 }]) {
+      const r = await move(id, p1.id, c, body);
+      expect(r.status).toBe(400);
+      expect(r.error()).toBe("send to: the draft to move the criterion to");
+    }
+    for (const to of [UNKNOWN, p1.id, plain]) {
+      const r = await move(id, p1.id, c, { to });
+      expect(r.status).toBe(400);
+      expect(r.error()).toBe("a criterion can only move between a split draft and its parts");
+    }
+  });
+
+  it("answers 404 for an unknown draft, criterion or session", async () => {
+    const { id, p1, p2 } = await split2();
+    expect((await move(id, UNKNOWN, UNKNOWN, { to: p2.id })).status).toBe(404);
+    expect((await move(id, p1.id, UNKNOWN, { to: p2.id })).status).toBe(404);
+    expect((await move(UNKNOWN, p1.id, p1.criteria[0].id, { to: p2.id })).status).toBe(404);
+  });
+
+  it("answers 400 for a full target", async () => {
+    const { id, p1, p2 } = await split2();
+    const full = Array.from({ length: 50 }, (_, i) => ({ text: `Criterion ${i}` }));
+    expect((await call(ann, "PUT", url(id, `drafts/${p2.id}`), { criteria: full })).status).toBe(200);
+    const r = await move(id, p1.id, p1.criteria[0].id, { to: p2.id });
+    expect(r.status).toBe(400);
+    expect(r.error()).toBe("at most 50 acceptance criteria");
+  });
+
+  it("answers 409 when the source or the target is on GitHub", async () => {
+    const { id, p1, p2 } = await split2();
+    await rewrite(id, (s) => (s.drafts[2].published = { issue: 42, url: "https://github.com/acme/app/issues/42", at: "2026-01-01T00:00:00.000Z" }));
+    for (const [from, to] of [[p1, p2], [p2, p1]]) {
+      const r = await move(id, from!.id, from!.criteria[0].id, { to: to!.id });
+      expect(r.status).toBe(409);
+      expect(r.error()).toMatch(/on GitHub as issue #42/);
+    }
+  });
+
+  it("is for the owner only", async () => {
+    const { id, p1, p2 } = await split2();
+    const c = p1.criteria[0].id;
+    expect((await move(id, p1.id, c, { to: p2.id }, bob)).status).toBe(404);
+    expect((await move(id, p1.id, c, { to: p2.id }, admin)).status).toBe(403);
+    expect((await draftOf(id, 1)).criteria).toHaveLength(1);
+  });
+});
+
+describe("merging two drafts", () => {
+  const confirm = (id: string, did: string, body?: unknown) => call(ann, "POST", url(id, `drafts/${did}/split/confirm`), body);
+  const merge = (id: string, did: string, body?: unknown, who = ann) => call(who, "POST", url(id, `drafts/${did}/merge`), body);
+  const UNKNOWN = "00000000-0000-4000-8000-000000000000";
+  const split2 = async () => {
+    const { id, did } = await withDraft();
+    const c = (await draftOf(id)).criteria.map((x: any) => x.id);
+    const plan = { parts: [{ title: "First", criteria: [c[0]], dependsOn: [] }, { title: "Second", criteria: [c[1]], dependsOn: [1] }], unplaced: [] };
+    const s = (await confirm(id, did, plan)).json();
+    return { id, did, p1: s.drafts[1], p2: s.drafts[2] };
+  };
+
+  it("answers 200 for two parts, removes the second and starts no run", async () => {
+    const { id, did, p1, p2 } = await split2();
+    const r = await merge(id, p1.id, { with: p2.id });
+    expect(r.status).toBe(200);
+    const s = r.json();
+    expect(s.drafts).toHaveLength(2);
+    expect(s.drafts[1].id).toBe(p1.id);
+    expect(s.drafts[1].criteria).toHaveLength(2);
+    expect(s.drafts[1].dependsOn).toEqual([]);
+    expect(s.drafts[0].splitInto).toEqual([p1.id]);
+    expect(s.drafts[0].id).toBe(did);
+    expect(whats(s).at(-1)).toBe("drafts-merged");
+    expect(s.architect.state).toBe("idle");
+  });
+
+  it("answers 200 for two ordinary drafts", async () => {
+    const { id, did } = await withDraft();
+    const second = (await call(ann, "POST", url(id, "drafts"), {})).json().drafts.at(-1).id;
+    const r = await merge(id, did, { with: second });
+    expect(r.status).toBe(200);
+    expect(r.json().drafts).toHaveLength(1);
+    expect(r.json().drafts[0].title).toMatchObject({ text: "Export" });
+    expect(whats(r.json()).at(-1)).toBe("drafts-merged");
+  });
+
+  it("answers 400 for a wrong body, itself and too many criteria", async () => {
+    const { id, did } = await withDraft();
+    const second = (await call(ann, "POST", url(id, "drafts"), {})).json().drafts.at(-1).id;
+    expect((await merge(id, did, {})).status).toBe(400);
+    expect((await merge(id, did, { with: did })).status).toBe(400);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ text: `Criterion ${i}` }));
+    expect((await call(ann, "PUT", url(id, `drafts/${did}`), { criteria: many(30) })).status).toBe(200);
+    expect((await call(ann, "PUT", url(id, `drafts/${second}`), { criteria: many(21) })).status).toBe(200);
+    expect((await merge(id, did, { with: second })).status).toBe(400);
+    expect((await get(id)).drafts).toHaveLength(2);
+  });
+
+  it("answers 404 for an unknown session, draft and with", async () => {
+    const { id, did } = await withDraft();
+    expect((await merge(UNKNOWN, did, { with: did })).status).toBe(404);
+    expect((await merge(id, UNKNOWN, { with: did })).status).toBe(404);
+    expect((await merge(id, did, { with: UNKNOWN })).status).toBe(404);
+  });
+
+  it("answers 409 for the split original, as draft and as with", async () => {
+    const { id, did, p1 } = await split2();
+    for (const [target, other] of [[did, p1.id], [p1.id, did]] as const) {
+      const r = await merge(id, target, { with: other });
+      expect(r.status).toBe(409);
+      expect(r.error()).toBe(SPLIT_READ_ONLY);
+    }
+  });
+
+  it("is for the owner only", async () => {
+    const { id, p1, p2 } = await split2();
+    expect((await merge(id, p1.id, { with: p2.id }, bob)).status).toBe(404);
+    expect((await merge(id, p1.id, { with: p2.id }, admin)).status).toBe(403);
+    expect((await get(id)).drafts).toHaveLength(3);
   });
 });

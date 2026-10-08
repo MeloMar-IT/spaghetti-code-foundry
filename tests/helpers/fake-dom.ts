@@ -16,6 +16,11 @@ export class FakeElement extends FakeNode {
     add: (n: string) => void this.classList.names.add(n),
     remove: (n: string) => void this.classList.names.delete(n),
     contains: (n: string) => this.classList.names.has(n),
+    toggle: (n: string, force?: boolean) => {
+      const on = force ?? !this.classList.names.has(n);
+      if (on) this.classList.names.add(n); else this.classList.names.delete(n);
+      return on;
+    },
   };
   listeners: Record<string, Listener[]> = {};
   parent?: FakeElement;
@@ -24,7 +29,9 @@ export class FakeElement extends FakeNode {
     super();
   }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  removeAttribute(k: string) { delete this.attrs[k]; }
   addEventListener(type: string, fn: Listener) { (this.listeners[type] ??= []).push(fn); }
+  removeEventListener(type: string, fn: Listener) { this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l !== fn); }
   /** Calls the listeners of an event type (a submit, for example) with `event`. */
   fire(type: string, event: unknown = {}): void {
     for (const fn of this.listeners[type] ?? []) fn(event);
@@ -83,6 +90,15 @@ export class FakeElement extends FakeNode {
     walk(this);
     return out;
   }
+  /** The nearest element from this one upwards that matches `tag[attr]` or `tag`. */
+  closest(selector: string): FakeElement | null {
+    const m = /^([a-z0-9]*)(?:\[([a-z-]+)\])?$/.exec(selector);
+    if (!m || !selector) throw new Error(`fake closest: unsupported selector "${selector}"`);
+    for (let el: FakeElement | undefined = this; el; el = el.parent) {
+      if ((!m[1] || m[1] === el.tag) && (!m[2] || m[2] in el.attrs)) return el;
+    }
+    return null;
+  }
   querySelector(selector: string): FakeElement | null { return this.querySelectorAll(selector)[0] ?? null; }
   all(tag: string): FakeElement[] {
     return this.children.flatMap((c) => (c instanceof FakeElement ? [...(c.tag === tag ? [c] : []), ...c.all(tag)] : []));
@@ -98,6 +114,7 @@ export function installFakeDom(): () => void {
   const listeners: Record<string, Listener[]> = {};
   g.document = {
     body: make("body"),
+    documentElement: make("html"),
     createElement: make,
     createElementNS: (_ns: string, tag: string) => make(tag),
     getElementById: (id: string) => byId.get(id) ?? byId.set(id, make("div")).get(id),

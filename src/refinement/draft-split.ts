@@ -4,7 +4,7 @@ import { TIME, draftMark, sentences } from "./draft-impact.js";
 import { RefinementError } from "./errors.js";
 import { HAS_CONTROL, chars } from "./talk.js";
 
-// This file may import from draft.ts only types: draft.ts imports SplitSchema from here as a value.
+// This file may import from draft.ts only types: draft.ts imports SplitSchema, SPLIT_TEXT_MAX and partOrderProblem from here as values.
 
 export const SPLIT_MAX = { ways: 3, storiesMin: 2, stories: 6 } as const;
 export const SPLIT_TITLE_MAX = 120;
@@ -13,6 +13,7 @@ export const SPLIT_OWN_MAX = 500;
 export const SPLIT_MIN_CRITERIA = 2;
 export const SPLIT_CUTS = ["step", "interface", "data", "rule", "spike"] as const;
 export const END_NO_SPLIT_DRAFT = "The story draft for the split could not be found";
+export const END_SPLIT_PAUSED = "The draft was split while the run was paused";
 
 const LINE_BREAK = new RegExp(`[\\n\\r\\v\\f\\u0085${String.fromCharCode(0x2028, 0x2029)}]`);
 // The rules of checkSplit in tools/refine-round-check, so a forged or damaged answer cannot store what the tool would refuse.
@@ -91,9 +92,36 @@ export function ownWay(input: unknown): string | undefined {
   return t;
 }
 
-/** Why this draft cannot be split, or undefined. A published draft is refused before this, in `askArchitect`; more reasons (already split) are added here when that state exists. */
-export function splitRefusal(d: Pick<Draft, "criteria">): string | undefined {
+export const SPLIT_READ_ONLY = "this draft is split; its parts are worked on instead";
+
+/** Why a split of this draft cannot be confirmed (or asked for) because of its state, or undefined. */
+export function confirmRefusal(d: Pick<Draft, "splitInto" | "part" | "published">): string | undefined {
+  if (d.splitInto) return SPLIT_READ_ONLY;
+  if (d.part) return "a part of a split cannot be split again";
+  if (d.published !== undefined) return "a published draft cannot be split";
+  return undefined;
+}
+
+/** Throws bad-state when the draft is the original of a split: it is read-only. Nothing for an unknown draft. */
+export function refuseSplit(st: DraftState, draftId: string): void {
+  if (st.drafts.find((d) => d.id === draftId)?.splitInto) throw new RefinementError("bad-state", SPLIT_READ_ONLY);
+}
+
+/** Why this draft cannot be split (asked for ways), or undefined: the state reasons of confirmRefusal, then the criteria count. */
+export function splitRefusal(d: Pick<Draft, "criteria" | "splitInto" | "part" | "published">): string | undefined {
+  const state = confirmRefusal(d);
+  if (state) return state;
   if (d.criteria.length < SPLIT_MIN_CRITERIA) return `a draft needs at least ${SPLIT_MIN_CRITERIA} acceptance criteria to be split`;
+  return undefined;
+}
+
+/** Why this part may not depend on these drafts: not on a later part of its split and not on the draft it was split from. */
+export function partOrderProblem(d: Pick<Draft, "id" | "part" | "dependsOn">, drafts: readonly Pick<Draft, "id" | "splitInto">[]): string | undefined {
+  if (!d.part) return undefined;
+  if (d.dependsOn.some((x) => x.draft === d.part!.of)) return "a part cannot depend on the draft it was split from";
+  const order = drafts.find((x) => x.id === d.part!.of)?.splitInto ?? [];
+  const me = order.indexOf(d.id);
+  if (d.dependsOn.some((x) => x.draft !== undefined && order.indexOf(x.draft) > me)) return "a part cannot depend on a later part";
   return undefined;
 }
 
@@ -105,6 +133,7 @@ export function splitRefusal(d: Pick<Draft, "criteria">): string | undefined {
 export function setSplit(st: DraftState, draftId: string, output: unknown, refs: SplitRefs | undefined, at: string): DraftChange | undefined {
   const d = st.drafts.find((x) => x.id === draftId);
   if (!d || !refs) return undefined;
+  if (confirmRefusal(d)) return undefined;
   const parsed = AnswerSchema.safeParse(output);
   if (!parsed.success) throw bad("the architect's ways have the wrong form");
   const all = Object.keys(refs.criteria);

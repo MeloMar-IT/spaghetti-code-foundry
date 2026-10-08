@@ -198,10 +198,12 @@ const EXAMPLES: Record<string, Example> = {
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
+  "GET refinement/backlog": { path: "refinement/backlog", user: 400, admin: 400 },
   "GET refinement/:id": { path: `refinement/${UNKNOWN}`, user: 404, admin: 404 },
   "PUT refinement/:id": { path: `refinement/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drop": { path: `refinement/${UNKNOWN}/drop`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/restore": { path: `refinement/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/source/remove-build-label": { path: `refinement/${UNKNOWN}/source/remove-build-label`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/architect": { path: `refinement/${UNKNOWN}/architect`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/round": { path: `refinement/${UNKNOWN}/round`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/ask": { path: `refinement/${UNKNOWN}/ask`, body: {}, user: 404, admin: 404 },
@@ -216,6 +218,9 @@ const EXAMPLES: Record<string, Example> = {
   "POST refinement/:id/drafts/:did/suggest": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/suggest`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/review": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/split": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/merge": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/merge`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/criteria/:cid/move": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/criteria/${UNKNOWN}/move`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/drafts/:did/split/confirm":{ path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/split/confirm`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/impact": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/impact`, body: {}, user: 404, admin: 404 },
   "PUT refinement/:id/drafts/:did/review-label": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/review-label`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drafts/:did/move-to-notes": { path: `refinement/${UNKNOWN}/drafts/${UNKNOWN}/move-to-notes`, body: {}, user: 404, admin: 404 },
@@ -264,6 +269,9 @@ describe("the table", () => {
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "review"])?.path).toBe("refinement/:id/drafts/:did/review");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "impact"])?.path).toBe("refinement/:id/drafts/:did/impact");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "split"])?.path).toBe("refinement/:id/drafts/:did/split");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "criteria", "0002", "move"])?.path).toBe("refinement/:id/drafts/:did/criteria/:cid/move");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "merge"])?.path).toBe("refinement/:id/drafts/:did/merge");
+    expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "split", "confirm"])?.path).toBe("refinement/:id/drafts/:did/split/confirm");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "move-to-notes"])?.path).toBe("refinement/:id/drafts/:did/move-to-notes");
     expect(findRule("PUT", ["refinement", "0000", "drafts", "0001", "review-label"])?.path).toBe("refinement/:id/drafts/:did/review-label");
     expect(findRule("POST", ["refinement", "0000", "drafts", "0001", "ready-check"])?.path).toBe("refinement/:id/drafts/:did/ready-check");
@@ -287,7 +295,9 @@ describe("the table", () => {
     expect(findRule("GET", ["audit", "export"])?.path).toBe("audit/export");
     expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
     expect(findRule("POST", ["audit"])).toBeUndefined();
+    expect(findRule("GET", ["refinement", "backlog"])?.path).toBe("refinement/backlog");
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
+    expect(findRule("POST", ["refinement", "a", "source", "remove-build-label"])?.path).toBe("refinement/:id/source/remove-build-label");
     expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
     expect(findRule("POST", ["refinement", "a", "round"])?.path).toBe("refinement/:id/round");
     expect(findRule("POST", ["refinement", "a", "ask"])?.path).toBe("refinement/:id/ask");

@@ -174,6 +174,7 @@ describe("pure functions", () => {
   it("draftStateText", () => {
     expect(rd.draftStateText({ state: "ready" })).toBe("Ready");
     expect(rd.draftStateText({ state: "drafting" })).toBe("Drafting");
+    expect(rd.draftStateText({ state: "split" })).toBe("Split");
     expect(rd.draftStateText({})).toBe("Drafting");
   });
   it("readyRows", () => {

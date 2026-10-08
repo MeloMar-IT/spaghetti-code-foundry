@@ -8,11 +8,13 @@ import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } fro
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
-import { END_NO_SPLIT_DRAFT, setSplit, type SplitRefs } from "./draft-split.js";
+import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
+import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
-import { DRAFT_LOG_KINDS, DraftsSchema, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
+import { draftFromStory, type StoryFields } from "./issue-import.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, ISSUE_URL, MERGE_DETAIL_MAX, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
@@ -27,6 +29,10 @@ export const refinementsPath = () => join(dataHome(), "refinements.json");
 export const SESSION_LIMIT = 200;
 export const IDEA_MAX = 10_000;
 export const TITLE_MAX = 120;
+/** A session that came from an issue keeps the title of the issue; GitHub allows 256 characters. */
+export const SESSION_TITLE_MAX = 256;
+/** The longest issue text a session keeps as its source (GitHub's own limit). */
+export const SOURCE_BODY_MAX = 65_536;
 /** A session keeps at most this many log entries; the last one is kept free so the session can still be dropped. */
 export const LOG_LIMIT = 1000;
 /** A dropped session is removed after this long. */
@@ -42,12 +48,12 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed", "source-refreshed"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
   .superRefine((l, ctx) => {
-    if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > TITLE_MAX) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
+    if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > (l.what === "drafts-merged" ? MERGE_DETAIL_MAX : TITLE_MAX)) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
   });
 
 const RUN_ID = z.string().regex(/^[\w-]+$/).max(100);
@@ -59,13 +65,41 @@ const ArchitectSchema = z
     a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" || a.kind === "ready" || a.kind === "split" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
   );
 
+/** Where a session came from: the issue, and its title, text and `updated_at` when it was read. */
+const SourceSchema = z
+  .object({
+    issue: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    url: z.string().max(300).regex(ISSUE_URL),
+    title: z.string().min(1).max(SESSION_TITLE_MAX),
+    body: z.string().max(SOURCE_BODY_MAX),
+    updatedAt: z.iso.datetime(),
+    buildLabel: z.string().min(1).max(100).optional(),
+    /** The draft that stands for the issue: published, it changes the issue. Set at import, or at the first draft of a session without one. */
+    draft: z.uuid().optional(),
+    /** The title and text the issue had right before the Foundry replaced them; kept until the update is recorded, so a retry can still fold them. */
+    pending: z
+      .object({
+        title: z.string().max(SESSION_TITLE_MAX),
+        body: z.string().max(SOURCE_BODY_MAX),
+        /** The draft that replaces the issue, and the title and text (without the marker) it was sent with: a retry finishes from these. */
+        draft: z.uuid().optional(),
+        newTitle: z.string().max(SESSION_TITLE_MAX).optional(),
+        newBody: z.string().max(SOURCE_BODY_MAX).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+export type IssueSource = z.infer<typeof SourceSchema>;
+
 const SessionSchema = z
   .object({
     id: z.uuid(),
     owner: z.uuid(),
     repo: z.string().refine(validGithubName),
-    title: z.string().min(1).max(TITLE_MAX),
+    title: z.string().min(1).max(SESSION_TITLE_MAX),
     idea: z.string().min(1).max(IDEA_MAX),
+    source: SourceSchema.optional(),
     state: z.enum(STATES),
     stateBefore: z.enum(OPEN_STATES as [string, ...string[]]).optional(),
     droppedAt: z.iso.datetime().optional(),
@@ -201,7 +235,22 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
   const idea = checkIdea(input.idea);
   const title = input.title === undefined || input.title === null || (typeof input.title === "string" && !input.title.trim()) ? undefined : checkTitle(input.title);
   if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
-  const given = input.repo;
+  return insertSession(owner, input.repo, opts, (repo, at) => ({
+    id: randomUUID(),
+    owner,
+    repo,
+    title: title ?? titleFromIdea(idea),
+    idea,
+    state: "exploring",
+    drafts: [],
+    log: [{ at, by: owner, what: "created" }],
+    created: at,
+    updated: at,
+  }));
+}
+
+/** Checks the owner and the repository and the session limit under the lock, then saves the session `make` builds. */
+function insertSession(owner: string, given: string, opts: CreateOptions, make: (repo: string, at: string, kept: Session[]) => Session): Session {
   return withAuthLock(() => {
     if (!(opts.ownerOk ?? defaultOwnerOk)(owner)) throw new RefinementError("no-owner", "no such account");
     const repo = (opts.repoName ?? defaultRepoName)(owner, given);
@@ -212,21 +261,72 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
     if (kept.filter((s) => s.owner === owner).length >= SESSION_LIMIT) {
       throw new RefinementError("limit", `at most ${SESSION_LIMIT} sessions; dropped sessions count until they are removed after 30 days`);
     }
-    const at = now.toISOString();
+    const session = make(repo, now.toISOString(), kept);
+    save([...kept, session]);
+    return copy(session);
+  });
+}
+
+const openOfIssue = (s: Session, owner: string, repo: string, issue: number) =>
+  s.owner === owner && s.source?.issue === issue && s.repo.toLowerCase() === repo.toLowerCase() && s.state !== "dropped" && s.state !== "published";
+
+/** The open (not dropped, not published, not expired) session of `owner` that came from this issue. */
+export function openSessionOfIssue(owner: string, repo: string, issue: number, opts: StoreOptions = {}): Session | undefined {
+  const now = clock(opts);
+  const s = read().sessions.find((x) => !expired(x, now) && openOfIssue(x, owner, repo, issue));
+  return s ? copy(s) : undefined;
+}
+
+/** The open sessions of `owner` that came from an issue of `repo`: issue number → session id. */
+export function openSessionsOfRepo(owner: string, repo: string, opts: StoreOptions = {}): Map<number, string> {
+  const now = clock(opts);
+  const found = new Map<number, string>();
+  for (const s of read().sessions) {
+    const n = s.source?.issue;
+    if (n !== undefined && !found.has(n) && !expired(s, now) && openOfIssue(s, owner, repo, n)) found.set(n, s.id);
+  }
+  return found;
+}
+
+export interface NewIssueSession {
+  repo: unknown;
+  title: string;
+  idea: string;
+  source: IssueSource;
+  story?: StoryFields;
+}
+
+/**
+ * A session from an issue that was read: the idea is its title and text; a text in the story format gives one draft, every field typed.
+ * `beforeSave` runs under the lock, right before the write; it may throw to refuse.
+ */
+export function createSessionFromIssue(owner: string, input: NewIssueSession, opts: CreateOptions & Pick<TalkOptions, "readyList"> & { beforeSave?: () => void } = {}): Session {
+  const idea = checkIdea(input.idea);
+  const title = input.title.trim();
+  if (!title || title.length > SESSION_TITLE_MAX || CONTROL.test(title)) throw new RefinementError("bad-title", "the title of the issue cannot be used");
+  if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
+  return insertSession(owner, input.repo, opts, (repo, at, kept) => {
+    const dup = kept.find((s) => openOfIssue(s, owner, repo, input.source.issue));
+    if (dup) throw new RefinementError("duplicate", `issue #${input.source.issue} already has an open refinement session: "${dup.title}"`, dup.id);
+    opts.beforeSave?.();
+    const drafts = input.story ? [draftFromStory(input.story)] : [];
+    const list = (opts.readyList ?? defaultReadyList)(owner, repo);
     const session: Session = {
       id: randomUUID(),
       owner,
       repo,
-      title: title ?? titleFromIdea(idea),
+      title,
       idea,
-      state: "exploring",
-      drafts: [],
-      log: [{ at, by: owner, what: "created" }],
+      source: drafts[0] ? { ...input.source, draft: drafts[0].id } : input.source,
+      state: stateOf("exploring", false, drafts, list),
+      drafts,
+      ...(input.story?.epic !== undefined ? { epic: input.story.epic } : {}),
+      log: [{ at, by: owner, what: "imported", detail: `#${input.source.issue}` }],
       created: at,
       updated: at,
     };
-    save([...kept, session]);
-    return copy(session);
+    // A wrong import never reaches the file.
+    return SessionSchema.parse(session);
   });
 }
 
@@ -288,6 +388,20 @@ export function renameSession(actor: Actor, id: string, title: unknown, opts: St
   });
 }
 
+/**
+ * Forgets that the source issue has the build label, after it was removed on GitHub. Only the owner; refused for a dropped session
+ * (checked again here, under the lock) unless `removed` says the label is gone on GitHub already, so the session never keeps a wrong
+ * warning. The log line is skipped when the log has no room beyond what a run still needs.
+ */
+export function clearSourceBuildLabel(actor: Actor, id: string, opts: StoreOptions = {}, removed = false): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    if (s.state === "dropped" && !removed) throw new RefinementError("bad-state", "a dropped session cannot change its issue; restore it first");
+    if (!s.source?.buildLabel) throw new RefinementError("bad-state", "there is no build label to remove");
+    const { buildLabel, ...source } = s.source;
+    return { ...s, source, updated: at, log: logged(s, at, "source-label-removed", buildLabel, reservedFor(s)) };
+  });
+}
+
 export function dropSession(actor: Actor, id: string, opts: StoreOptions = {}): Session {
   return change(actor, id, opts, true, (s, at) => {
     if (s.state === "dropped") throw new RefinementError("bad-state", "that session is dropped already");
@@ -300,6 +414,9 @@ export function restoreSession(actor: Actor, id: string, opts: StoreOptions = {}
   return change(actor, id, opts, false, (s, at) => {
     if (s.state !== "dropped" || s.stateBefore === undefined) throw new RefinementError("bad-state", "that session is not dropped");
     room(s, LOG_LIMIT - 1);
+    // Another open session for the same issue may have been made while this one was dropped.
+    const other = s.source ? read().sessions.find((x) => x.id !== s.id && !expired(x, new Date(at)) && openOfIssue(x, s.owner, s.repo, s.source!.issue)) : undefined;
+    if (other) throw new RefinementError("duplicate", `issue #${s.source!.issue} has another open refinement session: "${other.title}"; drop it first`, other.id);
     const { stateBefore, droppedAt: _droppedAt, ...rest } = s;
     return { ...rest, state: stateBefore as SessionState, updated: at, log: [...s.log, { at, by: actor.id, what: "restored" }] };
   });
@@ -362,6 +479,7 @@ export const END_NO_DRAFT = "The story draft for the suggestion could not be fou
 export const END_NO_REVIEW_DRAFT = "The story draft for the review could not be found";
 export const END_NO_READY_DRAFT = "The story draft for the readiness check could not be found";
 export const END_ON_GITHUB = "The story draft is on GitHub already";
+export const END_SPLIT_DURING = "The draft was split while the architect was reading";
 export const END_READY_CHANGED = "The draft changed while the architect judged it; check readiness again";
 
 export interface ArchitectAsk {
@@ -442,6 +560,8 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
     if ("failed" in end) return fail(end.failed);
     // A draft that is on GitHub is not changed by the end of a run.
     if (a.draft && s.drafts.find((d) => d.id === a.draft)?.published) return fail(END_ON_GITHUB);
+    // The original of a split is read-only: a run that ends after the split does not store its result there.
+    if (a.draft && !("split" in end) && s.drafts.find((d) => d.id === a.draft)?.splitInto) return fail(END_SPLIT_DURING);
     const { architect: _gone, ...rest } = s;
     if ("brief" in end) {
       const tooLong = end.brief.text.length > BRIEF_MAX;
@@ -623,7 +743,9 @@ const onGithub = (d: Draft): string => `a story draft that is on GitHub as issue
  * drafts that are not on GitHub. Without a list (the repository is not there) only the first rule applies.
  */
 function stateOf(cur: SessionState, hadDrafts: boolean, drafts: Draft[], list: readonly ReadyItem[] | undefined): SessionState {
-  if (drafts.length && drafts.every((d) => d.published)) return "published";
+  // A split original is never published; its parts are.
+  const publishable = drafts.filter((d) => !d.splitInto);
+  if (publishable.length && publishable.every((d) => d.published)) return "published";
   if (!list) return cur;
   return sessionState(cur, hadDrafts, drafts.filter((d) => !d.published), list);
 }
@@ -634,6 +756,8 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     if (guard.add && s.state === "published") throw new RefinementError("bad-state", "every story draft of this session is on GitHub; start a new session for more");
     const target = guard.draft === undefined ? undefined : s.drafts.find((d) => d.id === guard.draft);
     if (target?.published) throw new RefinementError("bad-state", `${onGithub(target)}; it cannot be changed here`);
+    // The issue was replaced with this draft and the publish is not finished: the draft stays as it was sent until it is.
+    if (target && s.source?.pending?.draft === target.id) throw new RefinementError("bad-state", `this draft replaced issue #${s.source.issue} and its publish is not finished; publish again first`);
     const lock = guard.epic ? s.drafts.find((d) => d.published) : undefined;
     if (lock) throw new RefinementError("bad-state", `${onGithub(lock)}; the Epic cannot be changed any more`);
     const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
@@ -648,32 +772,37 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     const held = s.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
     if (held) throw new RefinementError("bad-state", `${onGithub(held)} would change by this; it cannot be done here`);
     const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
-    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
-    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
+    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, c.line.what === "drafts-merged" ? MERGE_DETAIL_MAX : TITLE_MAX) } : {}) }] : [];
+    // The first draft of a session from an issue that has none yet stands for the issue; the mark is set once and never moves.
+    const mark = guard.add && s.source && s.source.draft === undefined && !s.drafts.length && drafts[0] && !s.log.some((l) => l.what === "draft-removed") ? { source: { ...s.source, draft: drafts[0].id } } : {};
+    return { ...rest, ...mark, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
 
 export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft, { add: true });
-export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => saveTyped(st, draftId, input), { draft: draftId });
+export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), saveTyped(st, draftId, input)), { draft: draftId });
 export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
-export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => acceptSuggestion(st, draftId, sid, input), { draft: draftId });
+export const confirmSplitOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => confirmSplit(st, draftId, input), { draft: draftId });
+export const moveCriterionOf = (actor: Actor, id: string, draftId: string, criterionId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveCriterion(st, draftId, criterionId, input), { draft: draftId });
+export const mergeDraftsOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => mergeDrafts(st, draftId, input), { draft: draftId });
+export const acceptSuggestionOf =(actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), acceptSuggestion(st, draftId, sid, input)), { draft: draftId });
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => rejectSuggestion(st, draftId, sid, input), { draft: draftId });
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), rejectSuggestion(st, draftId, sid, input)), { draft: draftId });
 /** The person moves the text of a field (or one criterion) that has a plan or how remark to the notes for the builder, as a wish. */
-export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveToNotes(st, draftId, input), { draft: draftId });
+export const moveToNotesOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), moveToNotes(st, draftId, input)), { draft: draftId });
 export const setReviewLabelOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st) => setReviewLabel(st, draftId, input), { draft: draftId });
+  changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), setReviewLabel(st, draftId, input)), { draft: draftId });
 export const setEpic = (actor: Actor, id: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => changeEpic(st, input), { epic: true });
 
 // ---- the Definition of Ready -----------------------------------------------------------------------
 
 /** The person checks a draft against the Definition of Ready of the repository, by code: only `readiness` of the draft changes. */
-export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => checkReady(st, x.talk, draftId, x.list, x.at), { draft: draftId });
+export const checkReadyOf = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), checkReady(st, x.talk, draftId, x.list, x.at)), { draft: draftId });
 /** The person accepts an item of the list anyway, with a reason. */
 export const acceptAnywayOf = (actor: Actor, id: string, draftId: string, itemId: string, input: unknown, opts: TalkOptions = {}): Session =>
-  changeDrafts(actor, id, opts, (st, x) => acceptAnyway(st, draftId, itemId, input, x.list, x.at), { draft: draftId });
-export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => removeAccepted(st, draftId, itemId, x.list), { draft: draftId });
+  changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), acceptAnyway(st, draftId, itemId, input, x.list, x.at)), { draft: draftId });
+export const removeAcceptedOf = (actor: Actor, id: string, draftId: string, itemId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st, x) => (refuseSplit(st, draftId), removeAccepted(st, draftId, itemId, x.list)), { draft: draftId });
 
 // ---- publishing ------------------------------------------------------------------------------------
 
@@ -692,6 +821,8 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
       if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
       const d = s.drafts.find((x) => x.id === draftId);
       if (!d) throw new RefinementError("not-found", "no such story draft");
+      // A split original is never published; its parts are.
+      if (d.splitInto) throw new RefinementError("bad-state", "a split draft is not published; its parts are");
       if (d.published) {
         if (d.published.issue === issue.issue) return undefined;
         throw new RefinementError("bad-state", `${onGithub(d)} already; it is not recorded as #${issue.issue}`);
@@ -700,7 +831,71 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
       const drafts = s.drafts.map((x) => (x === d ? { ...x, published: { issue: issue.issue, url: issue.url, at } } : x));
       const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
       const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
-      return { ...s, drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+      // The update is recorded: the text kept for a retry is not needed any more.
+      const source = s.source?.pending ? (({ pending: _p, ...rest }) => rest)(s.source) : s.source;
+      return { ...s, ...(source ? { source } : {}), drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+    },
+    true,
+  );
+}
+
+/**
+ * The draft that stands for the issue a session came from, or undefined when none does. Sessions made since the mark exists have it in
+ * `source.draft`. An older session is worked out from what it kept (nothing is written): it is the first draft, when it is not a part and
+ * no draft was ever removed; else it is not known, and nothing stands for the issue.
+ */
+export function markOf(s: Pick<Session, "source" | "drafts" | "log">): string | undefined {
+  if (!s.source) return undefined;
+  if (s.source.draft !== undefined) return s.source.draft;
+  if (s.log.some((l) => l.what === "draft-removed")) return undefined;
+  const first = s.drafts[0];
+  return first && !first.part ? first.id : undefined;
+}
+
+/** Forgets the pending update (the replacement did not reach GitHub). Only while the session is being published. */
+export function clearPendingUpdate(actor: Actor, id: string, opts: StoreOptions = {}): Session {
+  return change(actor, id, opts, false, (s) => (s.source?.pending ? { ...s, source: (({ pending: _p, ...rest }) => rest)(s.source) } : undefined), true);
+}
+
+/**
+ * Keeps what a retry needs when the replacement of an issue is sent: the title and text the issue has right before, the draft and the text
+ * sent. Only while the session is being published. A record that is there is replaced. The draft cannot be changed until it is recorded.
+ */
+export function recordPendingUpdate(actor: Actor, id: string, old: { title: string; body: string; draft: string; newTitle: string; newBody: string }, opts: StoreOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s) => {
+      if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
+      return { ...s, source: { ...s.source, pending: { ...old } } };
+    },
+    true,
+  );
+}
+
+/**
+ * Remembers the title and text the issue has on GitHub now as the source of the session ("Keep GitHub's"). The draft is not touched.
+ * Only while the session is being published. Refused while an update is pending: its record holds the old text a retry must still fold.
+ */
+export function refreshSource(actor: Actor, id: string, now: { title: string; body: string; updatedAt: string }, opts: StoreOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s, at) => {
+      if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
+      if (s.source.pending) throw new RefinementError("bad-state", "an update of the issue is not finished; the source cannot be refreshed");
+      if (!now.title.trim() || now.title.length > SESSION_TITLE_MAX || now.body.length > SOURCE_BODY_MAX) throw new RefinementError("bad-state", "the title or text of the issue cannot be kept in the session");
+      room(s, LOG_LIMIT - 1);
+      return {
+        ...s,
+        source: { ...s.source, title: now.title, body: now.body, updatedAt: now.updatedAt },
+        updated: at,
+        log: [...s.log, { at, by: actor.id, what: "source-refreshed", detail: `#${s.source.issue}` }],
+      };
     },
     true,
   );
