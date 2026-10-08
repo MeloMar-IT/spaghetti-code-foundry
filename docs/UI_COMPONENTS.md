@@ -86,3 +86,32 @@ The kit is a small set of plain JavaScript modules in `ui/kit/` that build commo
 - **Element:** `<label class="scf-checkbox">` holding a native `<input type="checkbox">` and a `span` with the label text.
 - **Keyboard:** Tab to focus; Space toggles.
 - **Accessible name:** the label text.
+
+## The gallery
+
+The gallery shows every kit component with made-up data. It is a development aid and is off by default.
+
+**Open it.** Start the server with the switch, then open `/gallery/`:
+
+```bash
+scf ui --dev       # or: scf serve --dev
+# http://localhost:4777/gallery/
+```
+
+Without `--dev`, every path under `/gallery` answers 404. The files ship in the package (`ui/` is in `files`); the switch keeps the gallery out of normal installs. Static files need no sign-in, so do not leave `--dev` on a shared server. The gallery holds no data and makes no API call.
+
+**Control bar.** Theme (`light`, `dark`), density (`comfortable`, `compact`) and width (`wide`, `narrow`, a 390 px frame). The choice is kept in the address query, for example `/gallery/?theme=dark&density=compact&width=narrow`. Theme and density are the `data-theme` and `data-density` attributes on the root element.
+
+**Files.** `ui/gallery/index.html` (no inline script or style), `gallery.js` (entry), `view.js` (query, bar, drawing), `registry.js` (the sections).
+
+**Add a section.** When you add an exported function to a `ui/kit/*.js` module, add one object to `sections` in `ui/gallery/registry.js`:
+
+```js
+{ id: "button", title: "Button", component: "button",
+  examples: [{ name: "Variants", build: () => button({ variant: "primary" }, "Save") }] }
+```
+
+- `component` is the export name. `build` returns one node and uses made-up text.
+- Give an example for each variant, plus `Long content`, `Disabled` (where the component has it) and `Error` (where it has it).
+- `tests/ui-gallery.test.ts` fails when a kit export has no section, and builds every example in both themes and both densities on the fake DOM. `tests/ui-gallery-server.test.ts` checks that `/gallery/` is served with `dev` and answers 404 without it.
+- The tests check structure, not looks. Open the gallery in a browser to check variants, long content, errors, keyboard focus and the narrow frame.

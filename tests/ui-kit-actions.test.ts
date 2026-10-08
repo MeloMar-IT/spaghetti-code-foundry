@@ -111,6 +111,27 @@ describe("link", () => {
     expect(e.getAttribute("rel")).toBe("noopener noreferrer");
     expect(e.getAttribute("target")).toBe("_blank");
   });
+  it("disabled has no href and says aria-disabled", () => {
+    const a = kit.link({ href: "/x", external: true, disabled: true }, "x") as FakeElement;
+    expect(a.getAttribute("href")).toBeNull();
+    expect(a.getAttribute("target")).toBeNull();
+    expect(a.getAttribute("aria-disabled")).toBe("true");
+    expect(a.getAttribute("role")).toBe("link");
+    expect(cls(a)).toBe("scf-link scf-link--disabled");
+  });
+  it("disabled cannot be activated or focused, whatever the caller passes", () => {
+    const onClick = vi.fn();
+    const onKeydown = vi.fn();
+    const a = kit.link({ href: "/x", disabled: true, onClick, onKeydown, tabindex: "0" }, "x") as FakeElement;
+    expect(a.getAttribute("tabindex")).toBe("-1");
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    a.fire("click", event);
+    a.fire("keydown", event);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(onKeydown).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+  });
   it("needs an href", () => {
     expect(() => kit.link({}, "x")).toThrow(/href/);
     expect(() => kit.link({ href: " " }, "x")).toThrow(/href/);

@@ -167,6 +167,17 @@ export function str(body: Record<string, unknown>, key: string, required = true)
   return v;
 }
 
+/** True when a request path points into the development gallery (ui/gallery/), however it is spelled: `..`, `\`, case. */
+export function isGalleryPath(path: string): boolean {
+  const parts: string[] = [];
+  for (const seg of path.replace(/\\/g, "/").split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") parts.pop();
+    else parts.push(seg);
+  }
+  return parts[0]?.toLowerCase() === "gallery";
+}
+
 export function serveStatic(res: ServerResponse, root: string, rel: string) {
   const file = normalize(join(root, rel));
   if (!(file === root || file.startsWith(root + sep)) || !existsSync(file) || !statSync(file).isFile()) {

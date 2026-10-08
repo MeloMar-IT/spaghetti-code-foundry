@@ -49,8 +49,9 @@ Usage:
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
   scf new <name> [--from <flow>] [--global]      Create your own flow (copies a template)
-  scf ui [--port 4777] [--no-open]               Web UI + queue + watchers from config.yaml
-  scf serve [--port 4777]                        Same without opening a browser (for services)
+  scf ui [--port 4777] [--no-open] [--dev]       Web UI + queue + watchers from config.yaml
+  scf serve [--port 4777] [--dev]                Same without opening a browser (for services)
+                                                 --dev also serves the component gallery at /gallery/
   scf user create [--admin] [--name n] [--email e]
                                                  Create an account (the first one: --admin)
   scf user list                                  List accounts
@@ -178,6 +179,7 @@ async function main(argv: string[]): Promise<number> {
       from: { type: "string" },
       note: { type: "string" },
       "no-open": { type: "boolean" },
+      dev: { type: "boolean" },
       admin: { type: "boolean" },
       replace: { type: "boolean" },
       builtin: { type: "boolean" },
@@ -359,11 +361,12 @@ async function main(argv: string[]): Promise<number> {
       const { url, ctx } = await startServer({
         repo,
         port,
+        dev: values.dev === true,
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
         log: (m) => process.stdout.write(`${new Date().toISOString()} ${m}\n`),
       });
       const n = ctx.config().watchers.filter((w) => w.enabled).length;
-      process.stdout.write(`Spaghetti Code Foundry → ${url}\n  repo: ${repo}\n  data: ${FACTORY_HOME}\n  watchers: ${n}\n  Ctrl+C to stop\n`);
+      process.stdout.write(`Spaghetti Code Foundry → ${url}\n  repo: ${repo}\n  data: ${FACTORY_HOME}\n  watchers: ${n}\n${values.dev ? `  gallery: ${url}/gallery/\n` : ""}  Ctrl+C to stop\n`);
       const { adminHint } = await import("./auth/cli.js");
       const hint = adminHint();
       if (hint) process.stdout.write(`  ${hint}\n`);

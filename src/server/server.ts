@@ -18,7 +18,7 @@ import { credentialRoutes } from "./api-credentials.js";
 import { monitorRoutes } from "./api-monitor.js";
 import { flowRoutes } from "./api-flows.js";
 import { runRoutes } from "./api-runs.js";
-import { HttpError, send, serveStatic } from "./http.js";
+import { HttpError, isGalleryPath, send, serveStatic } from "./http.js";
 import { areaWait, forgetHistory, nextRoutes, type RestartState } from "./next.js";
 import { healthRoutes } from "./health.js";
 import type { UpdateView } from "../self-update.js";
@@ -62,6 +62,8 @@ export interface ServerOptions {
   claudeBin?: string;
   /** Run the watchers (default true). */
   watchers?: boolean;
+  /** Development aids (default false): serve the component gallery at /gallery/. */
+  dev?: boolean;
   log?: (msg: string) => void;
   /** How often an open response re-checks its session, in ms (default 4000). */
   sessionRecheckMs?: number;
@@ -311,7 +313,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       return;
     }
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
-    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
+    // The gallery is a development aid: without `dev` every path under /gallery answers 404.
+    if (opts.dev !== true && isGalleryPath(path)) return void res.writeHead(404).end("not found");
+    serveStatic(res, UI_DIR, path === "/gallery" || path === "/gallery/" ? "gallery/index.html" : path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
   });
 
   await new Promise<void>((ok, fail) => {
