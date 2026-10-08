@@ -173,6 +173,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   for (const p of WRITABLE_DEVICES) out.push(`(allow file-write* (literal ${quote(p)}))`);
   // what the server alone writes
   out.push(`(deny file-write* (literal ${quote(join(runDir, "run.json"))}) (literal ${quote(join(runDir, "live.log"))}) (subpath ${quote(join(runDir, "logs"))}))`);
+  out.push(`(deny file-write* (literal ${quote(join(runDir, "skill-lock.json"))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed
   out.push(`(deny file-write* (literal ${quote(runDir)}) (literal ${quote(lockDir)}))`);
