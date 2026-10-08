@@ -538,7 +538,7 @@ describe("runs of older versions", () => {
   it("are given to the admin after a run that was live has ended", async () => {
     const p = prepare();
     mkdirSync(p.home, { recursive: true });
-    const flow = parseFlow("name: sleepy\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: 'sleep 1'}\n");
+    const flow = parseFlow("name: sleepy\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: 'sleep 4'}\n");
     writeFileSync(join(p.home, "queue.json"), JSON.stringify([{ runId: "20260101-000000-live", job: { kind: "run", flow, task: "", repo: p.repo, vars: {} }, enqueuedAt: new Date().toISOString() }]));
     const s = await boot(p, { adoptEveryMs: 50 });
     expect(await until(() => existsSync(join(p.runsDir, "20260101-000000-live", "run.json")))).toBe(true);
