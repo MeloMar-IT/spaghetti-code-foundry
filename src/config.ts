@@ -294,6 +294,8 @@ export const ConfigSchema = z
     isolate_agents: z.boolean().default(true),
     /** Block pushes whose new commits add secrets (API keys, private keys, .env files). */
     secret_scan: z.boolean().default(true),
+    /** The redesigned pages (still being built); off by default. */
+    ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),

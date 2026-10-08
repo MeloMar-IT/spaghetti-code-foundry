@@ -810,6 +810,18 @@ steps:
     expect(info.dailyBudget).toBe(5);
   });
 
+  it("tells whether the redesign is on, and refuses unknown keys under ui", async () => {
+    const cfg = (await (await json("GET", "/api/config")).json()) as Record<string, unknown>;
+    const redesign = async () => ((await (await json("GET", "/api/info")).json()) as { redesign: boolean }).redesign;
+    expect(await redesign()).toBe(false);
+    expect((await json("PUT", "/api/config", { ...cfg, ui: { redesign: true } })).status).toBe(200);
+    expect(await redesign()).toBe(true);
+    expect((await json("PUT", "/api/config", { ...cfg, ui: { nope: 1 } })).status).toBe(400);
+    expect(await redesign()).toBe(true);
+    await json("PUT", "/api/config", { ...cfg, ui: { redesign: false } });
+    expect(await redesign()).toBe(false);
+  });
+
   it("saves the notification settings and checks the times", async () => {
     const cfg = (await (await json("GET", "/api/config")).json()) as Record<string, unknown>;
     const notify = { macos: false, successes: true, throttle_minutes: 1, quiet_hours: { from: "22:00", to: "07:00" }, daily_summary_at: "09:00" };

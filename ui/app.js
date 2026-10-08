@@ -20,6 +20,7 @@ import { renderUsers } from "./users.js";
 import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
+import { renderWork } from "./work.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
 import { renderYourTurn, startBadge, startHash } from "./turn.js";
@@ -395,7 +396,7 @@ async function route() {
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
     if (section === "home") S.cleanup = await renderYourTurn(main);
-    else if (section === "board") S.cleanup = renderBoard(main, arg);
+    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg);
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);
     else if (section === "watchers") await renderWatchers(main);

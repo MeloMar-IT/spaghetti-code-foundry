@@ -88,6 +88,24 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → Redesign", () => {
+  const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
+
+  it("has the checkbox, off by default and on when the config says so", async () => {
+    expect(!!box((await render({})).main).checked).toBe(false);
+    expect(box((await render({}, "127.0.0.1", 200, { ui: { redesign: true } })).main).checked).toBe(true);
+  });
+
+  it("saves the choice and keeps the other settings", async () => {
+    const { main, puts } = await render({});
+    box(main).checked = true;
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].ui).toEqual({ redesign: true });
+    expect(puts[0].concurrency).toBe(2);
+  });
+});
+
 describe("Settings → GitHub App", () => {
   const appCard = (main: FakeElement) => main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "GitHub App")!;
   const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;

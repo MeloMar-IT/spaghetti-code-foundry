@@ -28,6 +28,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       spentToday: spentToday(opts.runsDir),
       dailyBudget: config.cost_limits ? config.daily_budget_usd : undefined,
       costLimits: config.cost_limits,
+      redesign: config.ui.redesign,
       listening: ctx.listen,
       clickThrough: process.platform === "darwin" ? clickThrough() : undefined,
     }), true;

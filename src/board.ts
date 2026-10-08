@@ -192,6 +192,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
         }),
       };
     }),
-    ...(repos.length ? {} : { empty: EMPTY_BOARD }),
+    // No story at all: say so, even when repositories are configured (they stay in the answer).
+    ...(cards.size ? {} : { empty: EMPTY_BOARD }),
   };
 }

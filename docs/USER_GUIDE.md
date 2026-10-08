@@ -224,6 +224,18 @@ when the findings file cannot be read): counts only, never a name.
 - **Updates:** the page asks every 5 seconds, so what the Foundry knows shows within 5 seconds. Changes on GitHub show after the watcher's next check; when you come back from a GitHub link, the watcher checks at once.
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
 
+### Work page (redesign, off by default)
+
+The redesigned pages are still being built. An admin turns them on in **Settings → Redesign** with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
+
+With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows the **Work** page as a list of stories.
+
+- **Filter:** by repository, owner, status (any of the nine columns), who has the next move, and a text box that matches the title and `#issue`. **N of M stories** shows when a filter hides some. If nothing matches you see "No story matches the filters." and **Clear filters**.
+- **Group and order:** group by status (default), repository, owner, next move or none. Order by issue number (default), age (oldest first) or title. Done stays newest first when grouped by status and ordered by issue number. Each group heading shows a count.
+- **Rows:** issue link to GitHub, title, repository (when more than one shows), status, who has the next move and what to do, the stories it waits for, owner and age. Click a row, or press Enter on it, to open its run.
+- **Saved choices:** your filters, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
+- **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.

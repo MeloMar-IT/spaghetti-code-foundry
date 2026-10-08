@@ -278,11 +278,13 @@ export async function renderSettings(main) {
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
+  const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
   const err = h("div");
 
   const save = async () => {
     const next = {
       ...c,
+      ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
@@ -321,6 +323,9 @@ export async function renderSettings(main) {
       h("div", { class: "grid" },
         f("Daily budget ($)", budget, `Spent today: $${info.spentToday.toFixed(2)}. When reached, runs pause (stopped) and resume the next day.`),
         f("Runs at the same time", conc))),
+    section("Redesign",
+      redesign.row,
+      h("p", { class: "muted" }, "Off by default. Applies after you reload the page.")),
     section("Network",
       h("p", { class: "muted", style: { margin: 0 } }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
       info.listening && info.listening !== net.listen ? h("p", { class: "status bad", style: { margin: 0 } }, `Now listening on ${info.listening} — restart the server to use ${net.listen}`) : null,
