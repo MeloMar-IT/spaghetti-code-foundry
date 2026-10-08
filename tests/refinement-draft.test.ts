@@ -27,6 +27,8 @@ import {
   checkRefinements,
   acceptProposal,
   createSession,
+  createSessionFromIssue,
+  refreshSource,
   dropSession,
   endArchitectRun,
   getSession,
@@ -758,4 +760,39 @@ describe("the file", () => {
       expect(() => checkRefinements()).toThrow();
     });
   }
+});
+
+describe("refreshSource", () => {
+  const source = { issue: 12, url: "https://github.com/acme/app/issues/12", title: "Old", body: "Old text", updatedAt: "2026-02-03T04:05:06.000Z" };
+  const fromIssue = () => createSessionFromIssue(ANN, { repo: "acme/app", title: "Old", idea: "Old\n\nOld text", source }, OK).id;
+  const now = { title: "New", body: "New text", updatedAt: "2026-03-01T00:00:00.000Z" };
+
+  it("sets the title, text and time, keeps the rest, and adds one log line", () => {
+    const id = fromIssue();
+    const before = getSession(id)!;
+    const s = refreshSource(ann, id, now, T);
+    expect(s.source).toEqual({ ...before.source, title: "New", body: "New text", updatedAt: now.updatedAt });
+    expect(s.source!.issue).toBe(12);
+    expect(s.source!.url).toBe(source.url);
+    expect(s.drafts).toEqual(before.drafts);
+    expect(s.log).toHaveLength(before.log.length + 1);
+    expect(s.log.at(-1)).toMatchObject({ what: "source-refreshed", detail: "#12" });
+    expect(() => checkRefinements()).not.toThrow();
+  });
+  it("works while the session is being published", () => {
+    const id = fromIssue();
+    expect(beginPublishing(id)).toBe(true);
+    expect(refreshSource(ann, id, now, T).source!.title).toBe("New");
+    endPublishing(id);
+  });
+  it("refuses a session without a source, a pending update, and a title or text that does not fit", () => {
+    expect(code(() => refreshSource(ann, make(), now, T))).toBe("bad-state");
+    const id = fromIssue();
+    expect(code(() => refreshSource(ann, id, { ...now, title: "  " }, T))).toBe("bad-state");
+    expect(code(() => refreshSource(ann, id, { ...now, title: "x".repeat(257) }, T))).toBe("bad-state");
+    expect(code(() => refreshSource(ann, id, { ...now, body: "x".repeat(65_537) }, T))).toBe("bad-state");
+    edit((f) => (f.sessions.find((x: any) => x.id === id).source.pending = { title: "a", body: "b" }));
+    expect(code(() => refreshSource(ann, id, now, T))).toBe("bad-state");
+    expect(getSession(id)!.source!.pending).toEqual({ title: "a", body: "b" });
+  });
 });

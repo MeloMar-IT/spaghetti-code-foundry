@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { BOT_MARKER } from "../github.js";
-import { cleanBody, splitSections } from "./issue-import.js";
+import { BOT_MARKER } from "../github.js";import { cleanBody, splitSections } from "./issue-import.js";
 import { bad, isObject, oneLine, preview, type Draft } from "./draft.js";
 import { chars } from "./talk.js";
 import { acceptedLines, notReadyReason } from "./draft-ready.js";
@@ -314,6 +313,45 @@ export function parsePublishInput(input: unknown, drafts: readonly Draft[]): Map
     out.set(e.draft, { labels, startBuilding: e.startBuilding === true });
   }
   return out;
+}
+
+// ---- the issue changed on GitHub -------------------------------------------------------------------
+
+/** The title and text of an issue. */
+export interface IssueVersion {
+  title: string;
+  body: string;
+}
+/** The choice of a person when the issue changed on GitHub: `seen` is the `versionHash` of the GitHub version that was shown. */
+export interface SourceChoice {
+  keep: "mine" | "github";
+  seen: string;
+}
+/** The answer of the server when the issue changed: the version on GitHub now, the one the Foundry would write, and the hash of the first. */
+export interface ChangedOnGithub {
+  issue: number;
+  github: IssueVersion;
+  mine: IssueVersion;
+  seen: string;
+}
+
+/** One canonical form for comparing and hashing: line ends (`\r\n`) and surrounding white space do not count. */
+const canon = (t: string): string => t.replace(/\r\n/g, "\n").trim();
+
+/** Whether two versions are the same title and text, in the sense of `sameBody`. */
+export const sameVersion = (a: IssueVersion, b: IssueVersion): boolean => canon(a.title) === canon(b.title) && canon(a.body) === canon(b.body);
+
+/** The hash of a version, over the canonical form: two versions that are `sameVersion` have the same hash. */
+export const versionHash = (v: IssueVersion): string => createHash("sha256").update(JSON.stringify([canon(v.title), canon(v.body)])).digest("hex");
+
+/** The `source` of a publish request, checked; undefined when it is not sent. Throws bad-draft for anything else. */
+export function parseSourceChoice(input: unknown): SourceChoice | undefined {
+  if (!isObject(input) || input.source === undefined) return undefined;
+  const e = input.source;
+  if (!isObject(e) || (e.keep !== "mine" && e.keep !== "github") || typeof e.seen !== "string" || !/^[0-9a-f]{64}$/.test(e.seen)) {
+    throw bad('source is { keep: "mine" or "github", seen }');
+  }
+  return { keep: e.keep, seen: e.seen };
 }
 
 export type LabelRules = { repo: string; repoLabels: readonly string[]; buildLabel?: string; reviewLabel?: string };

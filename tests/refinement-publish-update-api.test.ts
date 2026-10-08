@@ -133,6 +133,12 @@ async function imported(n = 12, o: Partial<FakeIssue> & { labels?: string[] } = 
   }
   return { id, did: did! };
 }
+/** The issue changed on GitHub: the first publish asks, the second keeps the Foundry's version, as the person confirmed what was shown. */
+const keepMine = async (id: string, body: Record<string, unknown> = {}) => {
+  const asked = await publish(id, body);
+  expect(asked.status).toBe(409);
+  return publish(id, { ...body, source: { keep: "mine", seen: asked.json().changedOnGithub.seen } });
+};
 const watch = () => {
   addRepoWatcher(annRepo().id, { id: "app-w", label: "Factory_go" });
   started!.ctx.watchers.sync();
@@ -275,7 +281,7 @@ describe("publishing a session that came from an issue", () => {
     const { id } = await imported();
     change(12, { title: "Edited on GitHub", body: "Edited on GitHub after the import." });
     process.env.FAKE_GH_FAIL = "issue comment";
-    expect((await publish(id)).status).toBe(502);
+    expect((await keepMine(id)).status).toBe(502);
     delete process.env.FAKE_GH_FAIL;
     expect((await publish(id)).status).toBe(200);
     const c = commentsOf(12);
@@ -410,7 +416,7 @@ describe("publishing a session that came from an issue", () => {
   it("copes with an issue whose text was removed after the import", async () => {
     const { id } = await imported();
     change(12, { body: null as unknown as string });
-    const r = await publish(id);
+    const r = await keepMine(id);
     expect(r.status).toBe(200);
     expect(commentsOf(12)[0]!.body).toContain("```text\n\n```");
   });
@@ -418,7 +424,7 @@ describe("publishing a session that came from an issue", () => {
   it("refuses before writing when the old text does not fit in the comment", async () => {
     const { id } = await imported();
     change(12, { body: "x".repeat(65_500) });
-    const r = await publish(id);
+    const r = await keepMine(id);
     expect(r.status).toBe(409);
     expect(r.error()).toMatch(/too long to keep in a comment/);
     nothingWritten();

@@ -48,7 +48,7 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed", "source-refreshed"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
@@ -870,6 +870,32 @@ export function recordPendingUpdate(actor: Actor, id: string, old: { title: stri
     (s) => {
       if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
       return { ...s, source: { ...s.source, pending: { ...old } } };
+    },
+    true,
+  );
+}
+
+/**
+ * Remembers the title and text the issue has on GitHub now as the source of the session ("Keep GitHub's"). The draft is not touched.
+ * Only while the session is being published. Refused while an update is pending: its record holds the old text a retry must still fold.
+ */
+export function refreshSource(actor: Actor, id: string, now: { title: string; body: string; updatedAt: string }, opts: StoreOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s, at) => {
+      if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
+      if (s.source.pending) throw new RefinementError("bad-state", "an update of the issue is not finished; the source cannot be refreshed");
+      if (!now.title.trim() || now.title.length > SESSION_TITLE_MAX || now.body.length > SOURCE_BODY_MAX) throw new RefinementError("bad-state", "the title or text of the issue cannot be kept in the session");
+      room(s, LOG_LIMIT - 1);
+      return {
+        ...s,
+        source: { ...s.source, title: now.title, body: now.body, updatedAt: now.updatedAt },
+        updated: at,
+        log: [...s.log, { at, by: actor.id, what: "source-refreshed", detail: `#${s.source.issue}` }],
+      };
     },
     true,
   );

@@ -41,7 +41,7 @@ async function req(method, url, body, stay = false, plain = false) {
     viewEnded = true;
     onViewEnded?.();
   }
-  if (!r.ok) throw Object.assign(new Error(data.error || `${r.status} ${r.statusText}`), { status: r.status });
+  if (!r.ok) throw Object.assign(new Error(data.error || `${r.status} ${r.statusText}`), { status: r.status, data });
   return data;
 }
 

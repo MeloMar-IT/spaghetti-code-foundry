@@ -19,6 +19,8 @@ export class HttpError extends Error {
     message: string,
     /** Extra response headers, e.g. `Retry-After`. */
     public headers?: Record<string, string>,
+    /** Extra fields of the error body, next to `error`. */
+    public extra?: Record<string, unknown>,
   ) {
     super(message);
   }
