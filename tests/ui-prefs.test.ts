@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -323,6 +324,6 @@ describe("ui/prefs-boot.js", () => {
       expect(html.indexOf(tag)).toBeGreaterThan(html.indexOf("<head>"));
       expect(html.indexOf(tag)).toBeLessThan(html.indexOf('<link rel="stylesheet"'));
     }
-    expect(readFileSync("ui/style.css", "utf8")).toContain(".prefs");
+    expect(readUiCss()).toContain(".prefs");
   });
 });
