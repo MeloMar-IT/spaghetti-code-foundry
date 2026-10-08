@@ -1,5 +1,6 @@
 import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
+import { flowNameMark } from "./icons.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
@@ -85,7 +86,7 @@ function renderSidebar() {
       current && !current.name ? h("li", {}, h("a", { href: "#/new", class: "active" }, h("span", { class: "n" }, current.obj?.name ?? "new flow", h("span", { class: "pill claude" }, "unsaved")))) : null,
       S.flows.map((f) => h("li", { class: f.error ? "bad" : null },
         h("a", { href: `#/flows/${f.name}`, class: current?.name === f.name ? "active" : null },
-          h("span", { class: "n" }, h("span", {}, f.name, current?.name === f.name && current.dirty ? " •" : ""), f.published ? h("span", { class: "pill ok" }, "published") : null, h("span", { class: "pill" }, f.scope)),
+          h("span", { class: "n" }, h("span", {}, flowNameMark(f), current?.name === f.name && current.dirty ? " •" : ""), f.published ? h("span", { class: "pill ok" }, "published") : null, h("span", { class: "pill" }, f.scope)),
           h("span", { class: "d" }, f.error ? "invalid flow" : f.description ?? ""))))));
 }
 

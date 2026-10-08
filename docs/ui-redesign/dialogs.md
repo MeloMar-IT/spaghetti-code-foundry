@@ -68,10 +68,10 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/admin.js:44` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
-| `ui/admin.js:154` | confirm | Delete watcher <id>? | Delete a watcher (button) |
-| `ui/admin.js:159` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
-| `ui/admin.js:227` | confirm | Remove these workspaces now? | Clean workspaces |
+| `ui/admin.js:45` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
+| `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (button) |
+| `ui/admin.js:160` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
+| `ui/admin.js:228` | confirm | Remove these workspaces now? | Clean workspaces |
 | `ui/app.js:93` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
 | `ui/app.js:256` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
 | `ui/app.js:277` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
@@ -89,7 +89,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement.js:390` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:244` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:245` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:254` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:258` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:245` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:246` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:255` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:259` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

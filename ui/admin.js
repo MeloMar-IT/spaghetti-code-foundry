@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { monitorLists } from "./monitor.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
+import { watcherSemanticOf } from "./icons.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
 import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
 
@@ -90,7 +91,7 @@ async function saveConfig(mutate, okMsg) {
 // ── watchers ──
 
 /** The watcher's own state with its "?". */
-export const watcherStateMark = (w) => (w.state ? statusMark(w.state, `state-${w.state.name}`) : null);
+export const watcherStateMark = (w) => (w.state ? statusMark(w.state, `state-${w.state.name}`, false, watcherSemanticOf(w.state.name)) : null);
 
 const DEFAULT_FLOWS = { issues: "issue-gitflow", schedule: "release-daily" };
 /** A monitor has no repository, flow, labels or owner: only these fields are saved (a changed source drops the rest). */
