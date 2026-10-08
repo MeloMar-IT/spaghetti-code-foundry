@@ -46,3 +46,4 @@
 .select-all { user-select: all; }
 .block { display: block; }
 .span-all { grid-column: 1 / -1; }
+.cols-2 { grid-template-columns: 1fr 1fr; }

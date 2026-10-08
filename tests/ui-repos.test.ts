@@ -128,7 +128,7 @@ const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c i
 const byClass = (el: FakeElement, cls: string) => walk(el).filter((e) => (e.attrs.class ?? "").split(" ").includes(cls));
 const field = (el: FakeElement, name: string) => walk(el).find((e) => e.attrs.name === name);
 const button = (el: FakeElement, text: string) => walk(el).find((e) => e.tag === "button" && e.textContent === text);
-const errLine = (el: FakeElement) => byClass(el, "status").filter((e) => e.attrs.class === "status bad");
+const errLine = (el: FakeElement) => byClass(el, "status").filter((e) => (e.attrs.class ?? "").split(" ").includes("bad"));
 const press = (el: FakeElement | undefined) => {
   expect(el, "control").toBeDefined();
   el!.click();
@@ -446,8 +446,8 @@ describe("the page", () => {
   it("spaces the dialog like the other dialogs", async () => {
     await show();
     press(button(main(), "+ Add repository"));
-    expect(field(root(), "url")!.parent!.parent!.style).toMatchObject({ display: "grid", gap: "12px" });
-    expect(field(root(), "token")!.parent!.parent!.style).toMatchObject({ display: "grid", gap: "12px" });
+    expect(field(root(), "url")!.parent!.parent!.attrs.class).toBe("stack");
+    expect(field(root(), "token")!.parent!.parent!.attrs.class).toBe("stack");
   });
 
   it.each([
@@ -792,7 +792,7 @@ describe("the SSH deploy key", () => {
     press(button(main(), "Copy"));
     await flush();
     expect(toastText()).toBe("Could not copy. Select the key and copy it yourself.");
-    expect(keyOf(r)!.style).toMatchObject({ userSelect: "all" });
+    expect(keyOf(r)!.attrs.class!.split(" ")).toContain("select-all");
   });
 
   it("generates a new key only after a confirmation, and shows it", async () => {

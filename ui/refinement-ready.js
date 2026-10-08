@@ -88,7 +88,7 @@ function acceptDialog(act, row) {
       close(ok ? true : undefined);
     };
     const accept = h("button", { class: "primary", onClick: run }, ACCEPT);
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("p", { class: "said" }, row.text),
       h("label", { class: "field" }, h("span", {}, "Reason"), area), error, h("div", { class: "row" }, h("span", { class: "spacer" }), accept));
   }, { busy: () => busy });

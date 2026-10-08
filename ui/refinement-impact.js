@@ -102,9 +102,9 @@ export function viewNodes(s, d, act) {
   return out;
 }
 
-const labelBox = (d, act, text) => h("label", { class: "check", style: { display: "flex", gap: "6px", alignItems: "center" } },
+const labelBox = (d, act, text) => h("label", { class: "check check-row" },
   h("input", {
-    type: "checkbox", checked: d.addReviewLabel === true, "data-focus": "review-label", style: { width: "auto" },
+    type: "checkbox", checked: d.addReviewLabel === true, "data-focus": "review-label", class: "fit",
     onChange: (e) => act.setLabel(e.currentTarget, e.currentTarget.checked),
   }), text);
 

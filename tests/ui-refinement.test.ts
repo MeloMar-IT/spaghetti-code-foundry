@@ -97,7 +97,7 @@ const press = (el: FakeElement | undefined) => {
   expect(el, "control").toBeDefined();
   el!.click();
 };
-const bad = (el: FakeElement) => walk(el).filter((e) => e.attrs.class === "status bad").map((e) => e.textContent);
+const bad = (el: FakeElement) => walk(el).filter((e) => (e.attrs.class ?? "").split(" ").includes("status") && (e.attrs.class ?? "").split(" ").includes("bad")).map((e) => e.textContent);
 const showList = async (admin = false) => void (await ui.renderRefinement(main(), { admin }));
 const showPage = async (id = "s1", admin = false) => {
   (globalThis as any).location.hash = `#/refinement/${id}`;

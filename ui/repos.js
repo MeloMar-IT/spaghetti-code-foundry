@@ -186,8 +186,8 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
     // the address of the record is not a field value; the SSH address input starts empty
     delete values.url;
     let els = {};
-    const area = h("div", { style: { display: "grid", gap: "12px" } });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const area = h("div", { class: "stack" });
+    const err = h("p", { class: "status bad flush" });
     const draw = () => {
       const m = methodOf(methods, select.value);
       els = {};
@@ -252,7 +252,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       })();
     };
     const save = h("button", { class: "primary", onClick: run }, repo ? "Save" : "Add repository");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       repo ? h("p", { class: "mono" }, repo.url) : h("label", { class: "field" }, h("span", {}, "Repository URL"), urlInput),
       h("label", { class: "field" }, h("span", {}, "Authentication"), select),
       options && !appAvailable(options) ? h("small", {}, "GitHub App is not available: the administrator has not set up the app (Settings → GitHub App).") : null,
@@ -279,7 +279,7 @@ export async function readyView(repo) {
   } catch (e) {
     return toast(plainError(e), "error");
   }
-  return modal("Definition of Ready", () => h("div", { style: { display: "grid", gap: "12px" } },
+  return modal("Definition of Ready", () => h("div", { class: "stack" },
     h("p", { class: "mono" }, repo.url),
     h("ol", {}, (ready.items ?? []).map((i) => h("li", {}, i.text))),
     h("small", {}, ready.isDefault ? "The default list." : "Set by your administrator.")));
@@ -350,13 +350,13 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       return reload();
     });
   };
-  const keyBlock = (repo) => h("div", { class: "field", style: { marginTop: "6px", maxWidth: "520px" } },
+  const keyBlock = (repo) => h("div", { class: "field mt-6 maxw-520" },
     h("span", {}, "Public key"),
-    h("code", { class: "mono", style: { wordBreak: "break-all", userSelect: "all" } }, repo.publicKey),
+    h("code", { class: "mono break-all select-all" }, repo.publicKey),
     h("button", { class: "small", onClick: () => copy(repo.publicKey) }, "Copy"),
     h("small", {}, DEPLOY_KEY_HINT));
   const appBlock = () => appAvailable(options) || !options
-    ? h("div", { class: "field", style: { marginTop: "6px", maxWidth: "520px" } },
+    ? h("div", { class: "field mt-6 maxw-520" },
       installLink(options),
       h("small", {}, "Install the app on this repository, or change which repositories it may use. Then press Test connection."))
     : h("div", { class: "status bad" }, "The administrator removed the GitHub App. Choose another authentication.");

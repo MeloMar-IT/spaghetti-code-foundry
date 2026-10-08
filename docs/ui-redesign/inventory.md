@@ -26,7 +26,7 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 | `#/library` | Library | `ui/library.js` | `renderLibrary` | `api-flows.ts` (blocks) | admin display only | Browse, save and delete reusable step blocks | Insert from library / Save step as block | A third entry point to flow editing (F8); 2 native confirms |
 | `#/start` | Start work | `ui/user/start.js` | `renderStart` with `admin: true` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | both displays | Start a run of a published flow on a repository | Start | The user page drawn for the admin (`app.js:410-417`); needs a published flow (`NO_FLOWS_ADMIN`) |
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
-| `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and reject use native `prompt` (`runs.js:244-245`); cancel uses `confirm` (`runs.js:258`); 13 inline styles |
+| `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and reject use native `prompt` (`runs.js:244-245`); cancel uses `confirm` (`runs.js:258`) |
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
 | `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
@@ -47,7 +47,7 @@ The page at `/user/`. 7 route rows. `USER_HASH` allows exactly these (`ui/auth.j
 | `/user/#/home` | Home | `ui/home.js` | `renderHome` | `api-runs.ts` | user; admin read-only preview | See what needs me, what is running and what finished | Follow the best next action (head button) | Polls every 30 s; groups come from each run's next-step record |
 | `/user/#/start` | Start work | `ui/user/start.js` | `renderStart` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | user; admin read-only preview | Start a run | Start | Needs a published flow and a GitHub repository (`NO_FLOWS`, `NO_REPOS`) |
 | `/user/#/runs` | My runs | `ui/user/runs.js` | `renderMyRuns` | `api-runs.ts` | user; admin read-only preview | Find a run and its next step | Open a run (card link) | Polls every 30 s; Remove asks with `confirmDialog` |
-| `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3); 9 inline styles |
+| `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3) |
 | `/user/#/repos` | My repositories | `ui/repos.js` | `renderRepos` with `admin: false` | `api-repos.ts` | user; admin read-only preview | Add and manage own repositories | Add repository | Same module as the admin page, so the same 10 buttons |
 | `/user/#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | user; admin read-only preview | Find or start a session | New session | Shared with the admin display |
 | `/user/#/refinement/:id` | — | `ui/refinement.js` and six `refinement-*.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | user; admin read-only preview | Refine an idea | Ask the architect | Longest page, see `#/refinement/:id` above |
@@ -155,24 +155,17 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 
 ## Inline styles
 
-Count of `style:` occurrences per file (one line can hold more than one; `runs.js:89` has two). Repeat with:
+Count of `style:` occurrences per file (one line can hold more than one). Repeat with:
 
 ```
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 53 in 11 files. Lines that contain one: 52.
+Total 5 in 2 files. Lines that contain one: 5.
 
 | File | Uses |
 |---|---|
-| `ui/runs.js` | 13 |
-| `ui/user/runs.js` | 9 |
-| `ui/refinement.js` | 7 |
-| `ui/repos.js` | 7 |
 | `ui/refinement-import.js` | 4 |
-| `ui/refinement-publish.js` | 4 |
-| `ui/refinement-suggest.js` | 3 |
-| `ui/refinement-impact.js` | 2 |
-| `ui/refinement-talk.js` | 2 |
 | `ui/dashboard.js` | 1 |
-| `ui/refinement-ready.js` | 1 |
+
+Three lines stay inline for good, all in `ui/dashboard.js`: `tip.style.left` and `tip.style.top` (the chart tip position, computed from the bar) and the `rate-fill` width (computed from the data). Only the last is a `style:` use, so the grep counts 1 for `ui/dashboard.js`. The runs, repositories and refinement pages (except `ui/refinement-import.js`) and the editor files are clean.

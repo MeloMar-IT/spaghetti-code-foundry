@@ -458,6 +458,7 @@ button.icon { justify-content: center; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
 .pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
+.check-row { display: flex; gap: 6px; align-items: center; }
 .drafts .remark { font-size: var(--text-small); color: var(--muted); }
 .drafts .remark > small { margin-left: 6px; }
 .drafts li.entry { flex-wrap: wrap; }
@@ -577,6 +578,7 @@ body.side-closed .side { display: none; }
 .select-all { user-select: all; }
 .block { display: block; }
 .span-all { grid-column: 1 / -1; }
+.cols-2 { grid-template-columns: 1fr 1fr; }
 
 @media (max-width: 760px) {
   .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
