@@ -430,6 +430,9 @@ the code", what went wrong and the fix. The causes and fixes:
   "Hotfix" under Branches for what to do.
 - A marker the Foundry could not read (no `PLAN_STATUS` line, no questions to ask, no `SUBTASK`
   lines): resume the run to try the step again.
+- A skill request in the plan that is not valid ("planning failed: the skill request of the plan is
+  not valid"): resuming does not help, because the stored plan is the same. Start the run again so
+  the issue is planned again. The step output says what was wrong.
 - An internal error, an unknown step, or a run that failed before any step ran (workspace, bot
   identity, GitHub App token): fix the setting, or restart or update the Foundry, then resume.
 - A git or gh login error, or a network error, in a command of the flow: log in again (`gh auth
@@ -2294,6 +2297,17 @@ skills:
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Pinned (`include`) skills are never dropped. The catalogue says how many skills were left out.
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the pinned skills do not fit the limits.
+
+### Skill request
+
+A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version":1,"skills":[…]}`. It names the skills the coder needs. Each skill has an `id`, a one-sentence `reason` and 1–5 `evidence` entries (`catalogue:…`, `issue:…` or `path:<file in the repository>`). At most 20 skills, each id once. A plan that needs no skill writes an empty list.
+
+- **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
+- **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
+- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
+- **Nothing loads the skills yet.** No skill catalogue reaches the planner either, so requests are empty for now. A later story will check the ids and load the skills.
+- **`issue-code-daily`** does not get a request: it would have to trust a comment.
+- **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
 ### Access from other computers
 

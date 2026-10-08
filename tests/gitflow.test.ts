@@ -7,6 +7,7 @@ import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { Scheduler } from "../src/queue/scheduler.js";
+import { planSkillRequest } from "../src/skills/request.js";
 import { steppedAsideFor, Watcher } from "../src/queue/watcher.js";
 import { reportFirst } from "../src/next-step.js";
 import { claudeBin, closing, fakeGithub, first } from "./helpers/fake-github.js";
@@ -16,7 +17,7 @@ import { claudeBin, closing, fakeGithub, first } from "./helpers/fake-github.js"
 const REPO = "acme/app";
 const LABELS = { working: "Factory_working", done: "Factory_done", needs_info: "Factory_needs_info", waiting: "Factory_waiting", failed: "Factory_ERROR" };
 const VARS = { test_cmd: "! grep -q BUG feature.txt 2>/dev/null", docs_required: "docs/CHANGELOG.md", union_merge_files: "docs/CHANGELOG.md" };
-const FAKES = ["FAKE_CODEX_VERDICT", "FAKE_CODEX_PLAN_VERDICT", "FAKE_CODEX_CODE_VERDICT", "FAKE_SIZE", "FAKE_AREAS", "FAKE_RISK", "FAKE_GH_COMMENTS", "FAKE_GH_ISSUE_LABELS", "FAKE_ISSUE_PLAN"];
+const FAKES = ["FAKE_CODEX_VERDICT", "FAKE_CODEX_PLAN_VERDICT", "FAKE_CODEX_CODE_VERDICT", "FAKE_SIZE", "FAKE_AREAS", "FAKE_RISK", "FAKE_GH_COMMENTS", "FAKE_GH_ISSUE_LABELS", "FAKE_ISSUE_PLAN", "FAKE_SKILL_REQUEST"];
 
 beforeAll(() => {
   process.env.FACTORY_CODEX_BIN = resolve("tests/fixtures/fake-codex.mjs");
@@ -369,6 +370,22 @@ describe("gitflow pipeline", () => {
     expect(run.history.find((h) => h.id === "size_gate")!.output).toContain("40 files, 3000 lines of production code (limit 15 files, 800 lines)");
     expect(gh.ghLog()).toContain("created issue: issue create --repo acme/app --title Small part one");
     expect(run.history.some((h) => h.id === "implement")).toBe(false);
+    expect(planSkillRequest(run)).toBeUndefined();
+    expect(gh.ghLog()).not.toMatch(/^SKILL_REQUEST:/m);
+  });
+
+  it("reads the skill request of a normal plan and posts the section", async () => {
+    const request = { version: 1, skills: [{ id: "typescript", reason: "The change is in src/*.ts.", evidence: ["path:src/a.ts"] }] };
+    process.env.FAKE_SKILL_REQUEST = JSON.stringify(request);
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("succeeded");
+    expect(planSkillRequest(run)).toEqual(request);
+    const comment = gh.comments().find((c) => c.body.includes("Foundry plan**"))!.body;
+    expect(comment).toContain("## Required skills\n\n- `typescript` — The change is in src/*.ts. Evidence: `path:src/a.ts`");
+    expect(comment).not.toMatch(/^SKILL_REQUEST:/m);
   });
 
   it("opens one release pull request develop → main that closes the merged issues", async () => {

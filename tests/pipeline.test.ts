@@ -7,6 +7,7 @@ import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { explainError } from "../src/errors.js";
 import { commentFirst, commentText, firstLine, nextStep, reportFirst } from "../src/next-step.js";
+import { planSkillRequest } from "../src/skills/request.js";
 import { userRun } from "../src/server/user-view.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { minutesNow, Watcher } from "../src/queue/watcher.js";
@@ -31,7 +32,7 @@ describe("label-driven issue pipeline", () => {
   beforeEach(() => {
     gh = fakeGithub();
     scheduler = new Scheduler({ runsDir: runsDir(), config: () => config, claudeBin });
-    for (const k of ["FAKE_IMPL_BUG", "FAKE_FIX_NOOP", "FAKE_CODEX_VERDICT", "FAKE_ISSUE_PLAN", "FAKE_REVISE", "FAKE_REVISE_COST"]) delete process.env[k];
+    for (const k of ["FAKE_IMPL_BUG", "FAKE_FIX_NOOP", "FAKE_CODEX_VERDICT", "FAKE_ISSUE_PLAN", "FAKE_REVISE", "FAKE_REVISE_COST", "FAKE_SKILL_REQUEST"]) delete process.env[k];
   });
   afterEach(() => gh.restore());
 
@@ -108,6 +109,56 @@ describe("label-driven issue pipeline", () => {
     expect(log).toContain("## Goal\nAdd feature.txt\n");
     expect(log).toContain("## Codex review notes (not yet worked in)\n\nThe plan misses an edge case.");
     expect(log).not.toContain("half a plan");
+  });
+
+  describe("the skill request", () => {
+    const REQ = (id: string) => JSON.stringify({ version: 1, skills: [{ id, reason: "because", evidence: ["issue:asks for it"] }] });
+    const DRAFT = (id: string) => `## Goal\nAdd feature.txt\nSKILL_REQUEST: ${REQ(id)}\nPLAN_STATUS: READY`;
+    const planned = async () => {
+      issues([5, ["Factory_ready"]]);
+      await planWatcher().tick();
+      await settle();
+      const run = runOf("issue-plan", "5")!;
+      expect(run.status).toBe("succeeded");
+      const comment = gh.comments().find((c) => c.issue === 5 && c.body.includes("Foundry plan**"))!.body;
+      return { run, comment, out: run.history.find((h) => h.id === "post_plan")!.output };
+    };
+    const markers = (text: string) => text.split("\n").filter((l) => l.startsWith("SKILL_REQUEST:"));
+
+    it("replaces the draft's request with the revision's", async () => {
+      process.env.FAKE_CODEX_VERDICT = "Needs work.\nVERDICT: CHANGES";
+      process.env.FAKE_ISSUE_PLAN = DRAFT("a-skill");
+      process.env.FAKE_REVISE = `## Goal\nAdd feature.txt (revised)\nSKILL_REQUEST: ${REQ("b-skill")}\nPLAN_STATUS: READY`;
+      const { run, comment, out } = await planned();
+      expect(comment).toContain("- `b-skill` — because Evidence: `issue:asks for it`");
+      expect(comment).not.toContain("a-skill");
+      expect(comment).not.toMatch(/^SKILL_REQUEST:/m);
+      expect(markers(out)).toEqual([`SKILL_REQUEST: ${REQ("b-skill")}`]);
+      expect(out).not.toContain("a-skill");
+      expect(planSkillRequest(run)?.skills.map((s) => s.id)).toEqual(["b-skill"]);
+    });
+
+    it("uses the empty request when a finished revision has no line, not the draft's", async () => {
+      process.env.FAKE_CODEX_VERDICT = "Needs work.\nVERDICT: CHANGES";
+      process.env.FAKE_ISSUE_PLAN = DRAFT("a-skill");
+      process.env.FAKE_REVISE = "## Goal\nAdd feature.txt (revised)\nPLAN_STATUS: READY";
+      process.env.FAKE_SKILL_REQUEST = "NONE";
+      const { comment, out } = await planned();
+      expect(comment).toContain("None — the plan did not name any.");
+      expect(markers(out)).toEqual(['SKILL_REQUEST: {"version":1,"skills":[]}']);
+      expect(out).not.toContain("a-skill");
+    });
+
+    it("uses the draft's request when the revision did not finish, and keeps a line in Codex's notes out", async () => {
+      process.env.FAKE_CODEX_VERDICT = `Needs work.\nSKILL_REQUEST: ${REQ("review-skill")}\nVERDICT: CHANGES`;
+      process.env.FAKE_ISSUE_PLAN = DRAFT("a-skill");
+      process.env.FAKE_REVISE = "half a plan";
+      const { comment, out } = await planned();
+      expect(comment).toContain("## Codex review notes (not yet worked in)\n\nNeeds work.");
+      expect(comment).toContain("- `a-skill` — because");
+      expect(comment).not.toContain("review-skill");
+      expect(markers(out)).toEqual([`SKILL_REQUEST: ${REQ("a-skill")}`]);
+    });
   });
 
   it("waits to plan an issue until the story it depends on is done", async () => {

@@ -192,8 +192,14 @@ export const tokenRefused = (output: string): boolean => TOKEN_REFUSED.test(outp
  * 60,000 characters, up to twice that escaped. Only that step gets it: no later step copies it into its environment.
  */
 export const ROUND_CHECK_MAX_OUTPUT = 150_000;
-export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined =>
-  flowName === "refine-round" && step.id === "check_round" && depth === 0 ? ROUND_CHECK_MAX_OUTPUT : undefined;
+/** The plan gate of the code flows prints the whole plan, the review notes and the skill request line (up to 8,000 bytes) as the coder's plan: none of it may be cut. */
+export const PLAN_GATE_MAX_OUTPUT = 60_000;
+export const stepMaxOutput = (step: Pick<Step, "id">, depth: number, flowName: string): number | undefined => {
+  if (depth !== 0) return undefined;
+  if (flowName === "refine-round" && step.id === "check_round") return ROUND_CHECK_MAX_OUTPUT;
+  if ((flowName === "issue-deliver" || flowName === "issue-gitflow") && step.id === "risk_gate") return PLAN_GATE_MAX_OUTPUT;
+  return undefined;
+};
 
 /** The grant: the repository read steps of a refinement flow, at the top level, in a run the server started for a refinement session. */
 export function isRepoReadStep(step: Pick<Step, "id">, depth: number, flowName: string, source: string | undefined): boolean {
