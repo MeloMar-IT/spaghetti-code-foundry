@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, setRunArchived, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -82,6 +82,8 @@ export interface SchedulerOptions {
 }
 
 const ID_TRIES = 20;
+
+export type ArchiveResult = "done" | "same" | "busy" | "missing";
 
 export interface AccountInfo {
   id: string;
@@ -276,6 +278,35 @@ export class Scheduler {
     return true;
   }
 
+  /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */
+  setArchived(runId: string, archived: boolean, by: string): ArchiveResult {
+    if (this.isActive(runId) || this.isQueued(runId)) return "busy";
+    let s: RunSummary | undefined;
+    try {
+      s = this.get(runId);
+    } catch {
+      return "missing";
+    }
+    if (!s) return "missing";
+    if (!["succeeded", "failed", "cancelled", "stopped"].includes(s.status)) return "busy";
+    if ((typeof s.archivedAt === "string") === archived) return "same";
+    if (!setRunArchived(join(this.o.runsDir, runId), archived ? new Date().toISOString() : null, by)) {
+      // Not written: look again. The file may be gone, or someone else already made the wanted state.
+      let now: RunSummary | undefined;
+      try {
+        now = this.get(runId);
+      } catch {
+        return "missing";
+      }
+      if (!now) return "missing";
+      if (["succeeded", "failed", "cancelled", "stopped"].includes(now.status) && (typeof now.archivedAt === "string") === archived) return "same";
+      return "busy";
+    }
+    const summary = this.get(runId);
+    if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
+    return "done";
+  }
+
   /** Cancel a run that waits for approval (no process runs for it). */
   private cancelWaiting(runId: string): boolean {
     const summary = cancelWaitingRun(this.o.runsDir, runId, this.o.config());
@@ -405,6 +436,11 @@ export class Scheduler {
   }
 
   private liveBrief(b: RunBrief): RunBrief {
+    // A queued or active run is never listed as archived (its resume clears the mark when it starts).
+    if (b.archived && (this.active.has(b.runId) || this.isQueued(b.runId))) {
+      const { archived: _archived, ...rest } = b;
+      b = rest;
+    }
     const live = this.active.get(b.runId)?.summary;
     if (live) return { ...b, status: live.status };
     // An interrupted run ended when its run.json was last written: a time that stays the same.

@@ -63,6 +63,9 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   if (!id && method === "GET") {
     let ownerParam: string | undefined;
+    const archivedParam = new URL(req.url ?? "/", "http://x").searchParams.get("archived");
+    if (archivedParam !== null && archivedParam !== "1") throw new HttpError(400, "invalid archived");
+    const wantArchived = archivedParam === "1";
     if (admin) {
       const o = new URL(req.url ?? "/", "http://x").searchParams.get("owner");
       if (o !== null) {
@@ -71,10 +74,19 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       }
     }
     const want = admin ? ownerParam : user.id;
-    const runs = want
-      // Loaded by folder name; the runId and owner inside the file must agree, else the run is left out.
-      ? scheduler.briefs().filter((b) => b.owner === want).slice(0, 200).map((b) => ({ dir: b.dirName, s: scheduler.get(b.dirName) })).filter((x): x is { dir: string; s: RunSummary } => !!x.s && x.s.runId === x.dir && x.s.owner === want).map((x) => x.s)
-      : scheduler.list(200);
+    // The archive choice and the owner are applied before the cap. Loaded by folder name; with an owner, the runId and
+    // owner inside the file must agree with it, else the run is left out.
+    const runs = scheduler.briefs()
+      .filter((b) => (!want || b.owner === want) && !!b.archived === wantArchived)
+      .slice(0, 200)
+      .flatMap((b) => {
+        try {
+          const s = scheduler.get(b.dirName);
+          return s && (!want || (s.runId === b.dirName && s.owner === want)) ? [s] : [];
+        } catch {
+          return []; // a run.json that cannot be read is left out
+        }
+      });
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
     const names = admin ? ownerNames() : undefined;
@@ -159,6 +171,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (!id || !/^[\w-]+$/.test(id)) throw new HttpError(400, "invalid run id");
   const action = seg[2];
 
+  if ((action === "archive" || action === "unarchive") && method === "POST") {
+    const archived = action === "archive";
+    const result = scheduler.setArchived(id, archived, user.id);
+    if (result === "missing") throw new HttpError(404, "run not found");
+    if (result === "busy") throw new HttpError(409, "only a finished run can be archived; this run is running, waiting or queued");
+    auditAction(ctx.diagLog, user.id, archived ? "run-archive" : "run-unarchive", id);
+    return send(res, 200, { runId: id, archived }), true;
+  }
   if (action === "cancel" && method === "POST") {
     const cancelled = scheduler.cancel(id);
     if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
