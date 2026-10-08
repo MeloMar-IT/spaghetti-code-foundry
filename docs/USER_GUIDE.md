@@ -113,6 +113,19 @@ An account with the role `user` works on its own display at `/user/`, with **Sta
 
 **Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box.
 
+| Where | Keys |
+|---|---|
+| Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. There are no single-key shortcuts. |
+| Dialogs | Escape closes. Tab stays inside. Focus returns to the button that opened it. |
+| Help mark (**?**) | Enter or Space opens, Escape closes. |
+| Board | Tab to a card, Enter opens it. |
+| Runs table | Tab to the status link in the first cell, Enter opens the run. |
+| Run log | Tab to the log, then the arrow keys, Page Up/Down, Home and End scroll it. |
+| Editor | Tab moves between fields. Escape closes its dialogs. |
+| Forms | Tab moves between fields. The arrow keys change a select. Enter sends the form. |
+
+**Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive.
+
 **Under the top bar of the admin page** (not on the user display) is the health line. It says "All good", or names what is wrong with the
 Foundry itself, and on the right when each repository was last checked.
 

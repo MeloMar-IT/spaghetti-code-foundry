@@ -289,7 +289,7 @@ describe("the \"?\" and the status names", () => {
     expect(btn.attrs.tabindex).toBeUndefined();
     expect(btn.attrs.disabled).toBeUndefined();
     expect(note.attrs.role).toBe("note");
-    expect(Object.keys(btn.listeners)).toEqual(["click"]);
+    expect(Object.keys(btn.listeners)).toEqual(["click", "keydown"]);
     expect(Object.keys(m.listeners)).toEqual(["click"]);
     expect(Object.keys(note.listeners)).toEqual([]);
     expect(note.hidden).toBe(true);
@@ -394,7 +394,7 @@ describe("the \"?\" and the status names", () => {
     expect(waiting.textContent).toContain("waiting for you — approval");
     expect(waiting.textContent).not.toContain("waiting for approval");
     const none = runs.runRow(run({ next: undefined })) as FakeElement;
-    expect(none.all("td")[0]!.textContent).toBe("");
+    expect(none.all("td")[0]!.textContent).toBe("Open");
   });
 
   it("queueRow shows the status with a ? and removes on request", () => {

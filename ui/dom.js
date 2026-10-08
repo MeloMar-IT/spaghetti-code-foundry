@@ -44,7 +44,13 @@ export function mount(target, ...nodes) {
   const active = document.activeElement;
   const name = active && target.contains(active) ? active.getAttribute("data-focus") : null;
   target.replaceChildren(...nodes.flat().filter(Boolean));
-  if (name) [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name)?.focus();
+  if (!name) return;
+  const same = [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name);
+  if (same) return same.focus();
+  // The control is gone: the heading of this part takes the focus, so it never drops to `<body>`.
+  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3") ?? target;
+  heading.setAttribute("tabindex", "-1");
+  heading.focus();
 }
 
 export function debounce(fn, ms) {

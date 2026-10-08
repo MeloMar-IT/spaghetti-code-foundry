@@ -29,6 +29,7 @@ export class FakeElement extends FakeNode {
   constructor(public tag: string) {
     super();
   }
+  get localName(): string { return this.tag; }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   removeAttribute(k: string) { delete this.attrs[k]; }
   addEventListener(type: string, fn: Listener) { (this.listeners[type] ??= []).push(fn); }

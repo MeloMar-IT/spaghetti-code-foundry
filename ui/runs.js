@@ -23,12 +23,28 @@ export const ownerRow = (s, names) => {
 };
 
 /** The mark of an architect run: a pill that opens its refinement session, not the run. */
-export const refinementMark = (id) => h("a", { class: "pill refinement", href: `#/refinement/${encodeURIComponent(id)}`, title: "Open the refinement session", onClick: (e) => e.stopPropagation() }, "refinement");
+export const refinementMark = (id, focus) => h("a", { class: "pill refinement", href: `#/refinement/${encodeURIComponent(id)}`, title: "Open the refinement session", "data-focus": focus, onClick: (e) => e.stopPropagation() }, "refinement");
 
-/** A row of the Runs list: the status name of the record with its "?", then flow, task, steps, cost, start. */
-export const runRow = (r, { owner = false, cost = true } = {}) => h("tr", { class: "link", onClick: () => (location.hash = `#/runs/${r.runId}`) },
-  h("td", {}, r.next ? nextStatus(r.next) : null),
-  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), r.refinement ? [" ", refinementMark(r.refinement)] : null, what(r) ? h("div", { class: "muted mono text-2xs" }, what(r)) : null),
+/** True when a select or a text field inside `box` has the focus: a page that redraws itself must not take it away. */
+export function fieldFocused(box) {
+  const el = document.activeElement;
+  if (!el || !box.contains(el)) return false;
+  if (el.localName === "select" || el.localName === "textarea") return true;
+  return el.localName === "input" && !["checkbox", "radio", "button", "submit"].includes(el.getAttribute("type"));
+}
+
+/**
+ * A row of the Runs list: the status name of the record (a link to the run, so the keyboard can open it) with its "?",
+ * then flow, task, steps, cost, start. The row click is a pointer shortcut. `scope` keeps the focus names of a run
+ * unique when a page shows it twice.
+ */
+export const runRow = (r, { owner = false, cost = true, scope = "run" } = {}) => {
+  const [pill, help] = r.next ? nextStatus(r.next, `${scope}-help-${r.runId}`) : [];
+  return h("tr", { class: "link", onClick: () => (location.hash = `#/runs/${r.runId}`) },
+  h("td", {},
+    h("a", { href: `#/runs/${r.runId}`, "data-focus": `${scope}-${r.runId}`, "aria-label": `${r.next?.status ?? "Open"} — open run ${r.flow}`, onClick: (e) => e.stopPropagation() }, pill ?? "Open"),
+    help),
+  h("td", {}, h("b", {}, r.flow), r.refinement ? [" ", refinementMark(r.refinement, `${scope}-ref-${r.runId}`)] : null, what(r) ? h("div", { class: "muted mono text-2xs" }, what(r)) : null),
   h("td", { class: "task", title: r.task }, r.task || h("span", { class: "muted" }, "—"),
     r.next ? h("div", { class: "muted", title: r.next.text }, r.next.text) : null,
     r.next && whenParts(r.next).length ? h("div", { class: "next-parts timing" }, whenParts(r.next)) : null),
@@ -36,19 +52,20 @@ export const runRow = (r, { owner = false, cost = true } = {}) => h("tr", { clas
   h("td", { class: "mono" }, r.history?.length ?? 0),
   cost ? h("td", { class: "mono" }, money(r.totalCostUsd)) : null,
   h("td", { class: "muted" }, timeAgo(r.startedAt)));
+};
 
 /** "2 runs ahead of you": other accounts' queued runs in front of a user's own. */
 export const aheadText = (n) => `${n} ${n === 1 ? "run" : "runs"} ahead of you`;
 
 /** A queued job: its status with "?", id, details, link and a Remove button. */
 export const queueRow = (p, onRemove) => h("div", { class: "row" },
-  p.next ? nextStatus(p.next) : null, p.priority ? h("span", { class: "pill first" }, "goes first") : null, p.refinement ? refinementMark(p.refinement) : null, h("span", { class: "mono" }, p.runId), h("span", { class: "muted" }, [p.kind, p.source, p.next?.text].filter(Boolean).join(" · ")),
+  p.next ? nextStatus(p.next, `queue-help-${p.runId}`) : null, p.priority ? h("span", { class: "pill first" }, "goes first") : null, p.refinement ? refinementMark(p.refinement, `queue-ref-${p.runId}`) : null, h("span", { class: "mono" }, p.runId), h("span", { class: "muted" }, [p.kind, p.source, p.next?.text].filter(Boolean).join(" · ")),
   p.ahead ? h("span", { class: "muted" }, aheadText(p.ahead)) : null,
   ownerLabel(p.ownerName) ? h("span", { class: "muted", title: "Owner" }, ownerLabel(p.ownerName)) : null,
   ...(p.next ? whenParts(p.next) : []),
-  p.next ? whereLink(p.next.where) : null,
+  p.next ? whereLink(p.next.where, `queue-where-${p.runId}`) : null,
   h("span", { class: "spacer" }),
-  h("button", { class: "small", onClick: onRemove }, "Remove"));
+  h("button", { class: "small", "data-focus": `queue-remove-${p.runId}`, onClick: onRemove }, "Remove"));
 
 /** The step row of the run page: the step the run is at (or resumes at) and what that step is. Never the id alone. */
 export function stepRow(s) {
@@ -64,16 +81,20 @@ export async function renderRunsList(main, { admin = true } = {}) {
   mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading runs…"));
   let timer;
   let owner = "";
-  const draw = async () => {
+  // `timed`: the redraw of the timer. It waits while a select or text field of the page has the focus, before it asks
+  // and again before it draws (the focus may arrive while the answers are on their way).
+  const draw = async (timed = false) => {
+    if (timed && fieldFocused(main)) return;
     // A user gets their own runs and queue; the owner filter and its options are for admins.
     const [runs, queue, owners] = await Promise.all([api.runs(admin ? owner : ""), api.queue(), admin ? api.runOwners() : []]);
     if (!main.isConnected) return;
+    if (timed && fieldFocused(main)) return;
     const yours = needsYou(runs);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
-    const table = (list) => h("div", { class: "table-box" }, h("table", { class: "table" },
+    const table = (list, scope) => h("div", { class: "table-box" }, h("table", { class: "table" },
       h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
-      h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin })))));
-    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", onChange: (e) => { owner = e.target.value; draw(); } },
+      h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })))));
+    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => { owner = e.target.value; draw(); } },
       h("option", { value: "" }, "All owners"),
       owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
 
@@ -83,16 +104,38 @@ export async function renderRunsList(main, { admin = true } = {}) {
         filter,
         h("span", { class: "spacer" }),
         h("span", { class: "muted text-xs" }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
-        h("button", { onClick: () => draw() }, "↻ Refresh")),
+        h("button", { "data-focus": "refresh", onClick: () => draw() }, "↻ Refresh")),
       queue.pending.length ? h("div", { class: "card mb-16" },
         h("h3", {}, "Queue"),
         queue.pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); draw(); }))) : null,
-      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours)) : null,
-      runs.length ? table(runs) : h("div", { class: "empty" }, owner ? "No runs of this account." : admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
+      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
+      runs.length ? table(runs, "run") : h("div", { class: "empty" }, owner ? "No runs of this account." : admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
   };
   await draw();
-  timer = setInterval(() => draw().catch(() => {}), REFRESH_MS);
+  timer = setInterval(() => draw(true).catch(() => {}), REFRESH_MS);
   return () => clearInterval(timer);
+}
+
+/** The run log: a labelled live region that the keyboard can reach and scroll. */
+export const logBox = () => h("pre", { class: "log", role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0", "data-focus": "log" });
+
+/**
+ * A polite status region for a run page: `say(summary)` reads the new status of the run out, once. The first status is
+ * only remembered (the page was just opened), and the same status again says nothing.
+ */
+export function statusAnnouncer() {
+  const el = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
+  let last = null;
+  return {
+    el,
+    say(summary) {
+      const t = summary?.next?.status ?? summary?.status;
+      if (!t || t === last) return;
+      const first = last === null;
+      last = t;
+      if (!first) el.textContent = `Run status: ${t}`;
+    },
+  };
 }
 
 export function logLine(line) {
@@ -161,8 +204,8 @@ export function failureCard(s, { onStep } = {}) {
       n.action ? row("Do first", n.action) : null),
     h("b", {}, "Your options"),
     h("ul", { class: "options" }, f.options.map((o) => h("li", {}, o))),
-    onStep ? h("button", { class: "small", onClick: onStep }, "Show the failed step") : null,
-    s.reason ? h("details", { class: "raw" }, h("summary", {}, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
+    onStep ? h("button", { class: "small", "data-focus": "failed-step", onClick: onStep }, "Show the failed step") : null,
+    s.reason ? h("details", { class: "raw" }, h("summary", { "data-focus": "raw-details" }, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
 
 /** One finished step: summary line, the raw error under "Details", and the output or transcript when opened. `open`: shown opened. */
@@ -195,7 +238,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
     open: open || null,
     onToggle: (e) => { if (e.target.open) load(); },
   },
-    h("summary", {},
+    h("summary", { "data-focus": `step-${i}` },
       h("span", { class: `pill ${s.ok ? "ok" : "fail"}` }, s.ok ? "✔" : "✘"),
       h("b", { class: "mono" }, s.id),
       s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
@@ -242,31 +285,33 @@ export function actions(s) {
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
   const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { class: "primary", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
-    b.push(h("button", { class: "danger", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
+    b.push(h("button", { class: "primary", "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
+    b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
-    b.push(h("button", { class: "primary", onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, `↻ Resume at ${s.state.next}`));
+    b.push(h("button", { class: "primary", "data-focus": "act-resume", onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, `↻ Resume at ${s.state.next}`));
   }
   if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length && !closed) {
-    b.push(h("select", { class: "small-select", title: "Re-run from a step", onChange: (e) => {
+    b.push(h("select", { class: "small-select", title: "Re-run from a step", "aria-label": "Re-run from a step", "data-focus": "act-retry-from", onChange: (e) => {
       const from = e.target.value;
       e.target.value = "";
       if (from && confirm(`Re-run this run from "${from}"? Earlier step outputs are kept.`)) act(() => api.resumeRun(s.runId, from), `Re-running from ${from}`);
     } }, h("option", { value: "" }, "Retry from step…"), s.flowDef.steps.map((st) => h("option", { value: st.id }, st.id))));
   }
   if (["running", "waiting"].includes(s.status)) {
-    b.push(h("button", { class: "danger", onClick: () => confirm("Cancel this run? You can resume it later.") && act(() => api.cancelRun(s.runId)) }, "■ Cancel"));
+    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => confirm("Cancel this run? You can resume it later.") && act(() => api.cancelRun(s.runId)) }, "■ Cancel"));
   }
   return b;
 }
 
 /** Live run page. Returns a cleanup function that closes the event stream. */
 export function renderRunDetail(main, runId, { admin = true } = {}) {
-  const logEl = h("pre", { class: "log" });
+  const logEl = logBox();
+  const status = statusAnnouncer();
   const head = h("div");
   const tabBody = h("div");
   let summary;
+  let held = null; // an update that came while a field of the head had the focus: drawn when the focus leaves
   let tab = "log";
   let follow = true;
   let names = null;
@@ -294,24 +339,35 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
       return b;
     }));
 
-  mount(main, head, tabs, tabBody);
+  mount(main, head, status.el, tabs, tabBody);
   mount(tabBody, logEl);
 
+  // The select of "Retry from step…" must not be replaced under the reader's hands. The timeout lets the next control take the focus first.
+  head.addEventListener("focusout", () => setTimeout(() => {
+    if (!open || !held || fieldFocused(head)) return;
+    const s = held;
+    held = null;
+    draw(s);
+  }, 0));
+
   const draw = (s) => {
+    status.say(s);
+    if (fieldFocused(head)) { held = s; return; }
+    held = null;
     const prev = summary;
     summary = s;
     const failedIdx = s.status === "failed" ? failedStepIndex(s) : -1;
     const card = s.status === "failed" ? failureCard(s, failedIdx >= 0 ? { onStep: () => { picked = true; showTab("steps", failedIdx); } } : {}) : null;
     mount(head,
       h("div", { class: "toolbar" },
-        h("a", { href: "#/runs", class: "btn ghost" }, "←"),
+        h("a", { href: "#/runs", class: "btn ghost", "data-focus": "back", "aria-label": "Back to Runs" }, "←"),
         h("h1", {}, s.flow),
-        s.next ? nextStatus(s.next) : null,
+        s.next ? nextStatus(s.next, "status-help") : null,
         admin ? h("span", { class: "muted mono" }, money(s.totalCostUsd)) : null,
         s.resumes ? h("span", { class: "muted" }, `resumed ${s.resumes}×`) : null,
         h("span", { class: "spacer" }),
         ...actions(s),
-        admin ? h("a", { class: "btn", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
+        admin ? h("a", { class: "btn", "data-focus": "open-flow", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
       card ?? (s.next ? nextBlock(s.next) : null),
       retiredLine(s),
       h("div", { class: "card mb-16" },
@@ -331,7 +387,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     if (tab === "steps" && (!prev || prev.history.length !== s.history.length)) showTab("steps");
   };
 
-  if (admin) api.users().then((list) => { names = ownerNames(list); if (open && summary) draw(summary); }).catch(() => {});
+  if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});
 
   const es = api.events(runId);
   es.addEventListener("update", (e) => {

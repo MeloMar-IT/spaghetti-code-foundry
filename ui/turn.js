@@ -75,14 +75,21 @@ export function sinceText(iso, now = new Date()) {
 const stories = (n) => `${n} ${n === 1 ? "story" : "stories"}`;
 
 /** A bug story as a link (only for an https address), else "#12" as text. */
-function storyLink(s) {
+function storyLink(s, focus) {
   return typeof s.url === "string" && s.url.startsWith("https://")
-    ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, `#${s.issue}`)
+    ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer", "data-focus": focus }, `#${s.issue}`)
     : h("span", {}, `#${s.issue}`);
 }
 
 function itemView(item, { onDismiss, onLeave, onAct }) {
   const n = item.next;
+  const k = item.key;
+  // The buttons of an item are named by what they say, so a button that appears or goes does not change the others' names.
+  const slug = (el) => el.textContent.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const named = (btn) => {
+    btn.setAttribute("data-focus", `turn-act-${slug(btn)}-${k}`);
+    return btn;
+  };
   const issueOk = n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
   const target = whereTarget(n.where);
   const acts = item.acts?.length > 0 && onAct;
@@ -90,27 +97,27 @@ function itemView(item, { onDismiss, onLeave, onAct }) {
   const action = !target
     ? h("span", { class: "muted" }, n.where?.label ?? "")
     : target.external
-      ? h("a", { class: cls, href: target.href, target: "_blank", rel: "noopener", onClick: () => onLeave(item) }, `${n.where.label} ↗`)
-      : h("a", { class: cls, href: target.href }, n.where.label);
+      ? h("a", { class: cls, href: target.href, target: "_blank", rel: "noopener", "data-focus": `turn-open-${k}`, onClick: () => onLeave(item) }, `${n.where.label} ↗`)
+      : h("a", { class: cls, href: target.href, "data-focus": `turn-open-${k}` }, n.where.label);
   const since = sinceText(item.since);
   return h("div", { class: "turn-item" },
     h("div", { class: "turn-main" },
       h("div", {},
-        issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", onClick: () => onLeave(item) }, `#${n.issue}`) : null,
+        issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": `turn-issue-${k}`, onClick: () => onLeave(item) }, `#${n.issue}`) : null,
         issueOk ? " " : null,
         h("b", {}, item.what)),
       h("div", {}, h("span", { class: "hold-action" }, n.action)),
       h("div", { class: "muted" }, n.why),
       n.issueUnchecked ? h("div", { class: "muted" }, ISSUE_UNCHECKED) : null,
       n.evidence?.length ? h("div", { class: "muted" }, n.evidence.map((l) => h("div", {}, l))) : null,
-      n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s)])) : null,
+      n.stories?.length ? h("div", {}, "Bug stories: ", n.stories.flatMap((s, i) => [i ? ", " : null, storyLink(s, `turn-story-${k}-${s.issue}`)])) : null,
       item.unblocks > 0 ? h("div", { class: "muted" }, `${stories(item.unblocks)} ${item.unblocks === 1 ? "waits" : "wait"} for this`) : null,
       since ? h("div", { class: "muted", title: new Date(item.since).toLocaleString() }, since) : null,
       ownerLabel(item.ownerName) ? h("div", { class: "muted" }, `Owner: ${ownerLabel(item.ownerName)}`) : null),
     h("div", { class: "turn-side" },
-      ...(acts ? actButtons(item, onAct) : []),
+      ...(acts ? actButtons(item, onAct).map(named) : []),
       action,
-      item.dismissable ? h("button", { class: "ghost small", onClick: () => onDismiss(item.key) }, "Dismiss") : null));
+      item.dismissable ? h("button", { class: "ghost small", "data-focus": `turn-dismiss-${k}`, onClick: () => onDismiss(item.key) }, "Dismiss") : null));
 }
 
 /** An item the user acted on: no buttons, the Foundry carries on by itself. */
@@ -120,7 +127,7 @@ function continuingView(item) {
   return h("div", { class: "turn-item" },
     h("div", { class: "turn-main" },
       h("div", {},
-        issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono" }, `#${n.issue}`) : null,
+        issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": `turn-done-issue-${item.key}` }, `#${n.issue}`) : null,
         issueOk ? " " : null,
         h("b", {}, item.what)),
       ownerLabel(item.ownerName) ? h("div", { class: "muted" }, `Owner: ${ownerLabel(item.ownerName)}`) : null,
@@ -140,7 +147,7 @@ export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embed
       ? h("div", { class: "card turn-group" }, h("h3", {}, "Done — continuing"), ...data.continuing.map(continuingView))
       : null,
     data.dismissed > 0
-      ? h("p", { class: "muted" }, `${data.dismissed} dismissed `, h("button", { class: "small", onClick: () => onRestore() }, "Show again"))
+      ? h("p", { class: "muted" }, `${data.dismissed} dismissed `, h("button", { class: "small", "data-focus": "turn-restore", onClick: () => onRestore() }, "Show again"))
       : null,
   ];
 }
@@ -159,13 +166,32 @@ export async function renderYourTurn(main, { embedded = false, onData } = {}) {
       await refresh(async () => data);
     },
   };
+  // A dialog opened from an item remembers its button to give the focus back: no redraw while it is open. The newest
+  // answer is kept and drawn when the dialog is closed.
+  let held = null;
+  let closed = false;
+  let waiting;
+  const dialogOpen = () => (document.getElementById("modal-root")?.children?.length ?? 0) > 0;
   const mine = (data) => {
+    if (dialogOpen()) {
+      held = data;
+      if (!waiting && !closed) waiting = setTimeout(function again() {
+        if (closed) return;
+        if (dialogOpen()) { waiting = setTimeout(again, 250); return; }
+        waiting = undefined;
+        const d = held;
+        held = null;
+        if (d) mine(d);
+      }, 250);
+      return;
+    }
+    held = null;
     mount(main, turnView(data, handlers, { embedded }));
     onData?.(data);
   };
   page = mine;
   // Only clear the hook if it is still ours: a newer page may have taken it over.
-  const release = () => { if (page === mine) page = null; };
+  const release = () => { closed = true; clearTimeout(waiting); if (page === mine) page = null; };
   try {
     await refresh();
   } catch (e) {

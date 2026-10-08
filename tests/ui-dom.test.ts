@@ -215,14 +215,34 @@ describe("mount", () => {
     dom.mount(target, draw("add"));
     expect(doc().activeElement).toBe(target.querySelector("button"));
   });
-  it("does nothing when the name is gone, the focus was outside, or the control has no name", () => {
+  it("moves the focus to the first heading of the target when the control is gone", () => {
     const target = dom.h("div", {});
+    dom.mount(target, dom.h("h2", {}, "Part"), draw("add"));
+    (target.querySelector("button") as FakeElement).focus();
+    dom.mount(target, dom.h("h2", {}, "Part"), draw("other"));
+    const heading = target.querySelector("h2") as FakeElement;
+    expect(doc().activeElement).toBe(heading);
+    expect(heading.attrs.tabindex).toBe("-1");
+  });
+  it("uses a heading of the parent, else the target itself, when the target has none", () => {
+    const parent = dom.h("section", {}, dom.h("h1", {}, "Page"));
+    const target = dom.h("div", {});
+    parent.append(target);
     dom.mount(target, draw("add"));
     (target.querySelector("button") as FakeElement).focus();
-    const before = doc().activeElement;
     dom.mount(target, draw("other"));
-    expect(doc().activeElement).toBe(before);
+    expect(doc().activeElement).toBe(parent.querySelector("h1"));
 
+    const alone = dom.h("div", {});
+    dom.mount(alone, draw("add"));
+    (alone.querySelector("button") as FakeElement).focus();
+    dom.mount(alone, draw("other"));
+    expect(doc().activeElement).toBe(alone);
+    expect(alone.attrs.tabindex).toBe("-1");
+  });
+  it("does nothing when the focus was outside, or the control has no name", () => {
+    const target = dom.h("div", {});
+    dom.mount(target, draw("add"));
     const outside = dom.h("button", {});
     outside.focus();
     dom.mount(target, draw("add"));

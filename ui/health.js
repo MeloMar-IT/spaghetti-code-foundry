@@ -8,6 +8,9 @@ const NO_ANSWER = "The Foundry server does not answer. Check that it is still ru
 
 const findingsLink = ({ open, unreadable }) => (unreadable ? "Findings of the monitor (the file cannot be read)" : open > 0 ? `${open} open finding${open === 1 ? "" : "s"} of the monitor` : "Findings of the monitor (none open)");
 
+/** A name for a problem that stays the same between answers: what it is, where, and which text it carries. */
+const problemKey = (n) => [n.kind, n.runId, n.repo, n.issue, n.title, n.action].filter((x) => x != null && x !== "").join("|");
+
 /** Draws the line for one answer of GET /api/health; `health` null: the server did not answer. */
 export function renderHealth(el, health, { onCancel } = {}) {
   el.hidden = false;
@@ -23,13 +26,13 @@ export function renderHealth(el, health, { onCancel } = {}) {
   mount(el,
     h("b", {}, health.summary),
     problems.length ? h("ul", { class: "holds" }, problems.map((n) => h("li", {},
-      nextParts(n, { status: false }),
-      n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
+      nextParts(n, { status: false, focus: `health-${problemKey(n)}` }),
+      n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", "data-focus": `health-cancel-${n.runId}`, onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
     skills.length ? h("ul", { class: "holds" }, [
       ...skills.map((p) => h("li", {}, `Skills (${p.root}${p.package ? " / " + p.package : ""}): ${p.reason}`)),
       health.skillProblemsMore > 0 ? h("li", {}, `and ${health.skillProblemsMore} more skill problem${health.skillProblemsMore === 1 ? "" : "s"}: run "scf skills" to see all`) : null,
     ]) : null,
-    health.monitorFindings ? h("a", { class: "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
+    health.monitorFindings ? h("a", { class: "health-findings", "data-focus": "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,
     health.version || health.update ? h("span", { class: "health-version muted" },
       health.version ? `Version ${String(health.version.commit).slice(0, 7)} · ${new Date(health.version.date).toLocaleString()}` : "",
