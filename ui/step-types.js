@@ -58,8 +58,8 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
       return [
         field("Run these steps at the same time", h("div", { class: "checks" },
           candidates.length
-            ? candidates.map((s) => h("label", { class: "row", style: { gap: "6px" } },
-                h("input", { type: "checkbox", style: { width: "auto" }, checked: step.steps.includes(s.id), onChange: (e) => {
+            ? candidates.map((s) => h("label", { class: "row tight" },
+                h("input", { type: "checkbox", class: "fit", checked: step.steps.includes(s.id), onChange: (e) => {
                   step.steps = e.target.checked ? [...step.steps, s.id] : step.steps.filter((x) => x !== s.id);
                   rerender();
                 } }),
@@ -89,8 +89,8 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
 }
 
 function checkbox(obj, key, label, onChange, inherited) {
-  return h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px" } },
-    h("input", { type: "checkbox", style: { width: "auto" }, checked: obj[key] ?? !!inherited, onChange: (e) => { setKey(obj, key, e.target.checked || (inherited ? false : "")); onChange(); } }),
+  return h("label", { class: "row tight text-sm" },
+    h("input", { type: "checkbox", class: "fit", checked: obj[key] ?? !!inherited, onChange: (e) => { setKey(obj, key, e.target.checked || (inherited ? false : "")); onChange(); } }),
     h("span", {}, label));
 }
 
@@ -110,7 +110,7 @@ export function stepAdvanced(flow, step, { onChange, rerender, targets }) {
           opts.map(([v, l]) => h("option", { value: v, selected: r.goto === v }, l))),
         h("button", { class: "icon", onClick: () => { routes.splice(j, 1); setRoutes(routes); rerender(); } }, "✕")))),
     h("button", { class: "small", onClick: () => { step.routes = [...routes, { if: "", goto: "" }]; rerender(); } }, "+ Route"),
-    h("small", { class: "muted", style: { display: "block", margin: "6px 0 10px" } }, "Checked on success, before “On success”. First match wins."),
+    h("small", { class: "muted block mt-6 mb-10" }, "Checked on success, before “On success”. First match wins."),
     field("When resumed after stopping here, restart at",
       select(step, "resume_from", flow.steps.filter((s) => s !== step).map((s) => [s.id, s.id]), () => { onChange(); rerender(); }, { emptyLabel: step.jump_only ? "the step that jumped here" : "this step" })));
 }

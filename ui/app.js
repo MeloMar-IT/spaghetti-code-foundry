@@ -123,14 +123,14 @@ function renderFlowView() {
   renderSidebar();
   ui = {
     title: h("h1", {}, c.obj?.name ?? c.name ?? "flow"),
-    dirty: h("span", { class: "dirty-dot", title: "Unsaved changes", style: { visibility: c.dirty ? "visible" : "hidden" } }),
+    dirty: h("span", { class: c.dirty ? "dirty-dot" : "dirty-dot clean", title: "Unsaved changes" }),
     status: h("span", { class: "status" }),
     errors: h("div"),
     body: h("div"),
     graph: h("div"),
   };
   const seg = (mode, label) => h("button", { class: c.mode === mode ? "on" : null, onClick: () => setMode(mode) }, label);
-  const scopeSel = h("select", { style: { width: "auto" }, title: "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
+  const scopeSel = h("select", { class: "fit", title: "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
     h("option", { value: "repo", selected: c.saveScope === "repo" }, "this repo"),
     h("option", { value: "global", selected: c.saveScope === "global" }, "global"));
 
@@ -142,13 +142,13 @@ function renderFlowView() {
       ui.status,
       h("span", { class: "spacer" }),
       h("button", { onClick: () => generateDialog(true), title: "Describe a change and let Claude edit this flow" }, "✨ Ask Claude"),
-      h("span", { class: "muted", style: { fontSize: "12px" } }, "save to"), scopeSel,
+      h("span", { class: "muted text-xs" }, "save to"), scopeSel,
       h("button", { onClick: save, title: "⌘S" }, "Save"),
       h("button", { class: "primary", onClick: runDialog }, "▶ Run"),
       c.name && c.scope !== "builtin" ? h("button", { class: "icon", title: "Delete flow", onClick: remove }, "🗑") : null),
-    c.scope === "builtin" ? h("p", { class: "muted", style: { marginTop: "-6px" } }, "Built-in flow — saving creates your own copy that overrides it.") : null,
+    c.scope === "builtin" ? h("p", { class: "muted mt-neg-6" }, "Built-in flow — saving creates your own copy that overrides it.") : null,
     ui.errors,
-    h("div", { class: "editor" }, ui.body, h("div", { class: "graph-pane" }, h("h3", { style: { marginBottom: "8px" } }, "Flow"), ui.graph)));
+    h("div", { class: "editor" }, ui.body, h("div", { class: "graph-pane" }, h("h3", { class: "mb-8" }, "Flow"), ui.graph)));
   drawBody();
   drawGraph();
   validate();
@@ -175,7 +175,7 @@ function drawBody() {
   }
   const lostComments = /^\s*#/m.test(c.yaml);
   mount(ui.body,
-    lostComments ? h("p", { class: "muted", style: { marginTop: 0 } }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
+    lostComments ? h("p", { class: "muted mt-0" }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
     renderEditor(c.obj, {
       selected: c.selected,
       onChange: () => {
@@ -228,7 +228,7 @@ function setMode(mode) {
 
 function changed() {
   S.cur.dirty = true;
-  ui.dirty.style.visibility = "visible";
+  ui.dirty.classList.toggle("clean", !S.cur.dirty);
   ui.title.textContent = S.cur.obj?.name ?? "flow";
   drawGraph();
   validateSoon();
@@ -294,7 +294,7 @@ async function runDialog() {
     const task = h("textarea", { rows: 5, placeholder: "Describe the task, e.g. “Add a --json flag to the export command”" });
     const repo = h("input", { class: "mono", value: S.info.repo });
     const vars = Object.entries(flow.vars).map(([k, v]) => [k, h("input", { class: "mono", value: v })]);
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const start = h("button", { class: "primary", onClick: async () => {
       if (!task.value.trim() && flow.workspace !== "empty" && !confirm("Run without a task description?")) return;
       start.disabled = true;
@@ -311,7 +311,7 @@ async function runDialog() {
       }
     } }, "▶ Start run");
     task.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && start.click());
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, flow.workspace === "empty" ? "Extra instructions (optional)" : "Task"), task,
         !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null),
       flow.workspace === "empty"
@@ -348,7 +348,7 @@ async function generateDialog(modify) {
       }
     } }, modify ? "✨ Apply" : "✨ Draft");
     ta.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && go.click());
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       ta,
       h("small", { class: "muted" }, "Uses your local claude CLI (sonnet). You review the result before saving."),
       h("div", { class: "row" }, status, h("span", { class: "spacer" }), go));
@@ -367,9 +367,9 @@ async function generateDialog(modify) {
 
 function welcome() {
   mount(main, h("div", { class: "empty" },
-    h("h1", { style: { marginBottom: "8px" } }, "Welcome to Spaghetti Code Foundry"),
+    h("h1", { class: "mb-8" }, "Welcome to Spaghetti Code Foundry"),
     h("p", {}, "Build your own coding flows: pick a flow on the left, start from a blank one, or describe what you want and let Claude draft it."),
-    h("div", { class: "row", style: { justifyContent: "center", marginTop: "16px" } },
+    h("div", { class: "row center mt-16" },
       h("button", { class: "primary", onClick: () => generateDialog(false) }, "✨ Draft flow with Claude"),
       h("button", { onClick: () => openNew() }, "+ Blank flow"))));
 }

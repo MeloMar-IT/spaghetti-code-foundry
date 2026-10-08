@@ -3,6 +3,7 @@
    Does not belong here: card and pill variants; shared helpers (components.css). */
 
 .dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-round); background: var(--accent); display: inline-block; }
+.dirty-dot.clean { visibility: hidden; }
 .graph-pane { position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
 .card-head { display: flex; align-items: center; gap: 8px; }
 .card-head .num { font-family: var(--mono); color: var(--muted); font-size: var(--text-meta); width: 22px; }
@@ -47,6 +48,11 @@
 .graph .lbl.fail { fill: var(--fail); }
 .legend { display: flex; gap: 12px; font-size: var(--text-meta); color: var(--muted); margin-top: 8px; }
 .legend i { display: inline-block; width: 14px; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.legend i.seq { border-color: var(--muted); }
+.legend i.ok { border-color: var(--ok); }
+.legend i.fail { border-color: var(--fail); border-top-style: dashed; }
+.legend i.route { border-color: var(--route); }
+.legend i.par { border-color: var(--muted); border-top-style: dotted; }
 
 /* ── block library ── */
 .block-group { margin-bottom: 18px; }

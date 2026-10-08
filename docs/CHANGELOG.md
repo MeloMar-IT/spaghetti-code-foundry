@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
+  - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
+  - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.
+  - **Legend.** The five legend lines take colour and line style from `.legend i.seq`, `.ok`, `.fail` (dashed), `.route` and `.par` (dotted) in `ui/css/pages/editor.css`.
+  - **Checkbox row.** One combination everywhere: `row tight text-sm` on the label, `fit` on the input, plus `mt-4`, `mt-6` or `mt-8` where a top margin was needed. New utility `.mt-0` in `ui/css/utilities.css`.
+  - **Tests and inventory.** The five files are off the "not cleaned yet" list in `tests/ui-inline-styles.test.ts`; `tests/ui-editor-styles.test.ts` is new; the style baseline is updated. `docs/ui-redesign/inventory.md` now counts 53 uses in 11 files.
 - Skill runtime 1 — persist a versioned skill lock in run state (#176).
   - **Lock.** At the first agent step after a checked, ready plan, the run resolves the plan's skill request (role `coder`) and writes `<run folder>/skill-lock.json` (mode 0600, atomic, version 1). Per skill: id, version, digest, source (`admin` or `builtin`, never a path), role, selection reason, the planner's reason and evidence, `requiredBy` and context estimate. Per lock: plan hash, repository commit (when readable), total estimate. The lock is made once per plan and never resolved again, so a resume uses the pinned versions, not the registry's current defaults.
   - **No private data.** Free text that looks like a host path or a secret is left out; `issue:` evidence is kept only as a number (or `issue:omitted`), so no issue text is stored. Code: `src/skills/run-lock.ts` (new), `src/engine/skill-lock.ts` (new).
