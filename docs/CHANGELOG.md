@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Guide screenshots 2 — run pages, dialogs, Settings, Dashboard, repositories and watchers (#411). `npm run test:ui -- --grep @guide` now also writes `run-dialog`, `run-log`, `run-steps`, `run-diff`, `run-waiting`, `settings`, `dashboard`, `repos`, `watchers` and `watcher-form`. `run-diff` is taken on the large test server. `tests/screenshot-manifest.test.ts` checks the placeholders and that a `{diffRun}` shot uses the large server.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
   - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.

@@ -57,7 +57,8 @@ for (const shot of GUIDE ? SHOTS : []) {
   test(`guide shot: ${shot.name} @guide`, async ({ browser }) => {
     const prep = PREPARE[shot.name] ?? {};
     const s = seed(prep.large ? "large" : "default");
-    const ids = { ...s.runs, repoId: s.repoId, sessionId: s.sessionId, watcherId: s.watcherId };
+    const big = prep.large ? seed("large").large : undefined;
+    const ids: Record<string, string> = { ...s.runs, repoId: s.repoId, sessionId: s.sessionId, watcherId: s.watcherId, ...(big ? { diffRun: big.diffRun } : {}) };
     const { display, hash } = splitPath(fillPath(shot.path, ids));
     const opts = {
       theme: "light" as const, density: "default" as const, fixedNow: FIXED_NOW, large: prep.large,

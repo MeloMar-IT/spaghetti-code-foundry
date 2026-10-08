@@ -22,8 +22,31 @@ describe("screenshot manifest", () => {
   it("the real manifest is valid", () => {
     expect(validateManifest(SHOTS)).toEqual([]);
     expect(validateManifest(SHOTS, PREPARE)).toEqual([]);
-    expect(SHOTS.map((s) => s.name)).toEqual(["sign-in", "board", "runs", "flows", "flow-yaml", "library", "models"]);
-    expect(Object.keys(PREPARE)).toEqual(["flow-yaml"]);
+    expect(SHOTS.map((s) => s.name)).toEqual(["sign-in", "board", "runs", "flows", "flow-yaml", "library", "models",
+      "run-dialog", "run-log", "run-steps", "run-diff", "run-waiting", "settings", "dashboard", "repos", "watchers", "watcher-form"]);
+    expect(Object.keys(PREPARE)).toEqual(["flow-yaml", "run-dialog", "run-log", "run-steps", "run-diff", "watcher-form"]);
+  });
+  it("uses only known placeholders", () => {
+    for (const s of SHOTS) {
+      for (const m of s.path.matchAll(/\{([^}]+)\}/g)) {
+        expect(["waiting", "diffRun"], `${s.name} uses {${m[1]}}`).toContain(m[1]);
+      }
+    }
+  });
+  it("a shot with {diffRun} opens on the large server", () => {
+    const withDiff = SHOTS.filter((s) => s.path.includes("{diffRun}"));
+    expect(withDiff.length).toBeGreaterThan(0);
+    for (const s of withDiff) expect(PREPARE[s.name]?.large, s.name).toBe(true);
+  });
+  it("only {diffRun} shots use the large server", () => {
+    for (const [name, p] of Object.entries(PREPARE)) {
+      if (p.large) expect(SHOTS.find((s) => s.name === name)?.path, name).toContain("{diffRun}");
+    }
+  });
+  it("every prepare entry of this part has a step", () => {
+    for (const n of ["run-dialog", "run-log", "run-steps", "run-diff", "watcher-form"]) {
+      expect(typeof PREPARE[n]?.act, n).toBe("function");
+    }
   });
   it("reports a bad shot name", () => {
     expect(validateManifest([shot("Bad_Name")])).toEqual(["bad shot name: Bad_Name"]);
