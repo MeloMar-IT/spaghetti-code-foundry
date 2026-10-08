@@ -3,7 +3,7 @@ import { h, mount, toast } from "./dom.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
-const section = (title, ...children) => h("div", { class: "card", style: { marginBottom: "14px" } }, h("h3", {}, title), ...children);
+const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
 const okPill = (ok, text) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, text ?? (ok ? "ready" : "not ready"));
 
 /** Model specs to suggest in every model field. */
@@ -57,7 +57,7 @@ function testBox(defaultSpec) {
 
 function agentsCard(agents) {
   return section("Coding agents",
-    h("p", { class: "muted", style: { margin: 0 } }, "Agent steps run on Claude Code or on OpenAI's Codex CLI (with your ChatGPT account). Pick one per step, per flow, or with routing rules below."),
+    h("p", { class: "muted flush" }, "Agent steps run on Claude Code or on OpenAI's Codex CLI (with your ChatGPT account). Pick one per step, per flow, or with routing rules below."),
     h("table", { class: "table compact" },
       h("tbody", {}, agents.map((a) => h("tr", {},
         h("td", {}, h("b", {}, a.agent === "claude" ? "Claude Code" : "Codex (ChatGPT)")),
@@ -65,7 +65,7 @@ function agentsCard(agents) {
         h("td", { class: "mono muted" }, a.version ?? ""),
         h("td", { class: "muted" }, a.detail))))),
     agents.find((a) => a.agent === "codex" && (!a.installed || a.loggedIn === false))
-      ? h("p", { class: "muted", style: { margin: 0 } }, "To use ChatGPT: run ", h("code", {}, "npm i -g @openai/codex"), " then ", h("code", {}, "codex login"), " in a terminal, and reload this page.")
+      ? h("p", { class: "muted flush" }, "To use ChatGPT: run ", h("code", {}, "npm i -g @openai/codex"), " then ", h("code", {}, "codex login"), " in a terminal, and reload this page.")
       : null);
 }
 
@@ -90,23 +90,23 @@ function providersCard(cfg, providers, reload) {
     reload();
   };
   return section("Providers",
-    h("p", { class: "muted", style: { margin: 0 } }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
+    h("p", { class: "muted flush" }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
     h("table", { class: "table compact" },
       h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models", ""].map((x) => h("th", {}, x)))),
       h("tbody", {}, providers.map((p) => h("tr", {},
-        h("td", {}, h("b", { class: "mono" }, p.name), h("div", { class: "muted mono", style: { fontSize: "11px" } }, p.base_url ?? p.kind)),
-        h("td", {}, okPill(p.ok, p.ok ? "ok" : "unreachable"), h("div", { class: "muted", style: { fontSize: "11.5px" } }, p.detail)),
+        h("td", {}, h("b", { class: "mono" }, p.name), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
+        h("td", {}, okPill(p.ok, p.ok ? "ok" : "unreachable"), h("div", { class: "muted text-2xs" }, p.detail)),
         h("td", { class: "muted" }, p.agents.join(", ")),
-        h("td", {}, p.models.length ? h("div", { class: "row", style: { gap: "4px" } }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")),
+        h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")),
         h("td", {}, custom.has(p.name) ? h("button", { class: "small danger", onClick: () => remove(p.name) }, "Remove") : null))))),
     providers.some((p) => p.kind === "ollama" && p.ok && !p.models.some((m) => /coder|gpt-oss|devstral/.test(m)))
-      ? h("p", { class: "muted", style: { margin: 0 } }, "Tip: general chat models are weak at tool use. Pull a coding model, e.g. ", h("code", {}, "ollama pull qwen3-coder:30b"), " or ", h("code", {}, "ollama pull gpt-oss:20b"), ".")
+      ? h("p", { class: "muted flush" }, "Tip: general chat models are weak at tool use. Pull a coding model, e.g. ", h("code", {}, "ollama pull qwen3-coder:30b"), " or ", h("code", {}, "ollama pull gpt-oss:20b"), ".")
       : null,
     f("Try a model", testBox(providers.find((p) => p.kind === "ollama" && p.models.length) ? `ollama:${providers.find((p) => p.kind === "ollama").models[0]}` : "haiku"),
       "Sends one tiny read-only prompt through the agent and provider."),
     h("details", {}, h("summary", {}, "Add a provider (another Ollama/LM Studio host, or an Anthropic-compatible API)"),
-      h("div", { class: "grid", style: { marginTop: "10px" } }, f("Name", name), f("Kind", kind), f("Base URL", url), f("API key env var", keyEnv), f("Default model", defModel)),
-      h("div", { class: "row", style: { marginTop: "8px" } }, h("button", { class: "primary", onClick: add }, "Add provider"))));
+      h("div", { class: "grid mt-10" }, f("Name", name), f("Kind", kind), f("Base URL", url), f("API key env var", keyEnv), f("Default model", defModel)),
+      h("div", { class: "row mt-8" }, h("button", { class: "primary", onClick: add }, "Add provider"))));
 }
 
 const PRESETS = (local) => [
@@ -120,8 +120,8 @@ function routingCard(cfg, specs, localSpec) {
   const body = h("tbody");
   const defModel = input(cfg.default_model ?? "", { class: "mono", list: "models", placeholder: "Claude Code's default" });
   const fallback = input(cfg.router.fallback.join(", "), { class: "mono", placeholder: `e.g. codex, ${localSpec ?? "ollama:qwen3-coder"}` });
-  const onRate = h("input", { type: "checkbox", style: { width: "auto" }, checked: cfg.router.fallback_on.includes("rate_limit") });
-  const onBudget = h("input", { type: "checkbox", style: { width: "auto" }, checked: cfg.router.fallback_on.includes("budget") });
+  const onRate = h("input", { type: "checkbox", class: "fit", checked: cfg.router.fallback_on.includes("rate_limit") });
+  const onBudget = h("input", { type: "checkbox", class: "fit", checked: cfg.router.fallback_on.includes("budget") });
 
   const cell = (r, key, attrs) => h("td", {}, input(r[key] ?? "", { class: "mono", ...attrs, onInput: (e) => {
     const v = e.target.value.trim();
@@ -131,7 +131,7 @@ function routingCard(cfg, specs, localSpec) {
   const draw = () => mount(body, rules.length ? rules.map((r, i) => h("tr", {},
     cell(r, "step", { placeholder: "any step (regex)" }),
     cell(r, "flow", { placeholder: "any flow (regex)" }),
-    cell(r, "min_visit", { type: "number", min: 1, style: { width: "70px" }, placeholder: "1" }),
+    cell(r, "min_visit", { type: "number", min: 1, class: "mono w-70", placeholder: "1" }),
     cell(r, "model", { list: "models", placeholder: "model spec" }),
     h("td", {}, h("button", { class: "small", title: "Move up", disabled: i === 0, onClick: () => { rules.splice(i - 1, 0, rules.splice(i, 1)[0]); draw(); } }, "↑"),
       h("button", { class: "small danger", onClick: () => { rules.splice(i, 1); draw(); } }, "✕")))) :
@@ -152,19 +152,19 @@ function routingCard(cfg, specs, localSpec) {
   };
 
   return section("Routing",
-    h("p", { class: "muted", style: { margin: 0 } },
+    h("p", { class: "muted flush" },
       "A model spec picks agent, provider and model: ", h("code", {}, "sonnet"), " · ", h("code", {}, "codex"), " · ", h("code", {}, "codex:gpt-5"), " · ",
       h("code", {}, "ollama:qwen3-coder"), " · ", h("code", {}, "codex:ollama:gpt-oss:20b"),
       ". The first matching rule wins — even over models set in flows and blocks. Otherwise: the step's model, the flow's default, then the default below."),
     f("Default model", defModel),
-    h("div", {}, h("div", { class: "row", style: { marginBottom: "6px" } }, h("b", {}, "Rules"), h("span", { class: "spacer" }),
+    h("div", {}, h("div", { class: "row mb-6" }, h("b", {}, "Rules"), h("span", { class: "spacer" }),
       ...PRESETS(localSpec).map((p) => h("button", { class: "small", onClick: () => { rules.push(...p.rules.map((r) => ({ ...r }))); draw(); } }, `+ ${p.label}`)),
       h("button", { class: "small", onClick: () => { rules.push({ model: "" }); draw(); } }, "+ Rule")),
       h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Model", ""].map((x) => h("th", {}, x)))), body)),
     f("Fallback models", fallback, "Comma-separated, tried in order."),
     h("div", { class: "row" },
-      h("label", { class: "row", style: { gap: "6px" } }, onRate, h("span", {}, "Use them when a model hits a rate or usage limit")),
-      h("label", { class: "row", style: { gap: "6px" } }, onBudget, h("span", {}, "Continue on the first free one (local / ChatGPT) when a budget runs out, instead of pausing"))),
+      h("label", { class: "row tight" }, onRate, h("span", {}, "Use them when a model hits a rate or usage limit")),
+      h("label", { class: "row tight" }, onBudget, h("span", {}, "Continue on the first free one (local / ChatGPT) when a budget runs out, instead of pausing"))),
     h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { class: "primary", onClick: save }, "Save routing")));
 }
 

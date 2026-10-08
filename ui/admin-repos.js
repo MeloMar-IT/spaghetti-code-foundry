@@ -60,13 +60,13 @@ export function settingsDialog(repo) {
     };
     els.docs.value = (s.docs ?? []).join("\n");
     els.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const save = h("button", { class: "primary", onClick: () =>
       sendFrom({
         button: save, err, close, state, done: "Settings saved",
         send: () => api.setRepoSettings(repo.id, settingsBody(Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value])))),
       }) }, "Save");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       field("Test command", els.testCommand),
       field("Docs to update (one path per line)", els.docs),
@@ -103,9 +103,9 @@ export function readyDialog(repo) {
   const shown = modal("Definition of Ready", (close) => {
     let rows = (repo.ready?.items ?? READY_DEFAULTS).map((i) => ({ id: i.id, text: i.text }));
     let inputs = [];
-    const list = h("div", { style: { display: "grid", gap: "6px" } });
-    const extra = h("div", { class: "row", style: { flexWrap: "wrap" } });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const list = h("div", { class: "stack tight" });
+    const extra = h("div", { class: "row" });
+    const err = h("p", { class: "status bad flush" });
     const take = () => rows.forEach((r, i) => { r.text = inputs[i].value; });
     // every button: copy what was typed, change the rows, draw again
     const change = (fn) => () => {
@@ -142,7 +142,7 @@ export function readyDialog(repo) {
       if (rows.some((r) => !String(r.text).trim())) return void (err.textContent = "Fill in every item, or remove it.");
       sendFrom({ button: save, err, close, state, done: "Definition of Ready saved", send: () => api.setRepoReady(repo.id, readyBody(rows)) });
     } }, "Save");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       list, extra,
       h("div", { class: "row" }, back, h("small", {}, "Back to the default drops the items you added and your wording.")),
@@ -157,7 +157,7 @@ export function transferDialog(repo) {
   const state = { busy: false, closed: false, pending: null };
   const shown = modal("Transfer repository", (close) => {
     const email = h("input", { name: "email", type: "text", placeholder: "name@example.com", autocomplete: "off" });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const note = repo.method === "github-token" || repo.method === "https-token"
       ? "The stored token is deleted. The new owner must set the authentication again. If the new owner is an admin, the repository uses the server's own access until then."
       : repo.method !== "none" ? "The sign-in of this repository stays with it." : null;
@@ -167,7 +167,7 @@ export function transferDialog(repo) {
       if (!to) return void (err.textContent = "Fill in the e-mail of the new owner.");
       sendFrom({ button: go, err, close, state, done: "Repository transferred", send: () => api.transferRepo(repo.id, to) });
     } }, "Transfer");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       h("p", {}, `Owner now: ${ownerText(repo)}`),
       field("E-mail of the new owner", email),

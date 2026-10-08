@@ -90,7 +90,7 @@ export function changePasswordDialog(a = api) {
       toast("Password changed. Your other sessions are signed out.");
       close(true);
     };
-    return h("form", { class: "stack", onSubmit },
+    return h("form", { onSubmit },
       h("p", { class: "muted" }, `At least ${PASSWORD_MIN} characters. Your other sessions are signed out.`),
       fields.map((f) => h("div", {}, h("label", {}, f.label), f.el)),
       error,
