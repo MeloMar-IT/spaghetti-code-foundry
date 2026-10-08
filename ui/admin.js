@@ -9,8 +9,8 @@ import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
 const check = (checked, label) => {
-  const el = h("input", { type: "checkbox", style: { width: "auto" }, checked: !!checked });
-  return { el, row: h("label", { class: "row", style: { gap: "6px" } }, el, h("span", {}, label)) };
+  const el = h("input", { type: "checkbox", class: "fit", checked: !!checked });
+  return { el, row: h("label", { class: "row tight" }, el, h("span", {}, label)) };
 };
 const num = (el) => (el.value.trim() === "" ? undefined : Number(el.value));
 
@@ -178,15 +178,15 @@ export async function renderWatchers(main) {
         h("span", { class: "muted" }, describeWatcher(w)),
         h("span", { class: "spacer" }),
         buttons(w, kind)),
-      w.problem ? h("p", { class: "status bad", style: { margin: "4px 0" } }, w.problem) : null,
-      kind === "file" ? h("div", { class: "muted", style: { fontSize: "12.5px" } }, "still in config.yaml: it moves to its repository when the server starts; the server log says why if it stays") : null,
-      h("div", { class: "muted", style: { fontSize: "12.5px" } },
+      w.problem ? h("p", { class: "status bad mt-4 mb-4" }, w.problem) : null,
+      kind === "file" ? h("div", { class: "muted text-sm" }, "still in config.yaml: it moves to its repository when the server starts; the server log says why if it stays") : null,
+      h("div", { class: "muted text-sm" },
         w.source === "monitor" ? `every ${w.every}` : w.source === "schedule" ? (w.at ? `checks every ${w.every}` : `max 1 run per ${w.every}`) : `every ${w.every} · max ${w.max_per_tick} per check`,
         w.exclude_labels?.length ? ` · skips ${w.exclude_labels.join(", ")}` : "",
         w.pause_while_pr_open ? ` · pauses while a ${w.pause_while_pr_open}* PR is open` : "",
         w.enabled ? lastOkText(st) : "",
         st?.nextTick ? ` · next ${new Date(st.nextTick).toLocaleTimeString()}` : ""),
-      w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted", style: { fontSize: "12.5px", marginTop: "6px" } }, "What happens next:"), nextList(watcherNext(w))) : null,
+      w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted text-sm mt-6" }, "What happens next:"), nextList(watcherNext(w))) : null,
       w.source === "monitor" ? storiesRow(mon, reload) : null,
       w.source === "monitor" ? monitorLists(mon, reload) : null,
       watcherNotes(st),
@@ -205,14 +205,14 @@ export async function renderWatchers(main) {
       add()),
     watchers.length ? [
       ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
-        h("p", { class: "muted", style: { margin: "0 0 6px" } }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null))),
+        h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null))),
       section("Repository not connected any more", gone, "gone"),
       section("The Foundry itself", monitor, "monitor"),
       section("From config.yaml", file, "file"),
     ] : h("div", { class: "empty" },
       h("p", {}, "No watchers yet. A watcher checks a GitHub repo on a schedule and runs a flow: for labelled issues, review comments, red CI on the default branch, or a recurring chore."),
       add()),
-    h("p", { class: "muted", style: { marginTop: "16px" } },
+    h("p", { class: "muted mt-16" },
       "Watchers run inside this server. To keep them running after you close the terminal or restart your Mac: ",
       h("code", {}, "scf service install")));
 }
@@ -220,7 +220,7 @@ export async function renderWatchers(main) {
 // ── disk ──
 
 function diskSection(section) {
-  const days = input("7", { type: "number", min: 0, style: { width: "90px" } });
+  const days = input("7", { type: "number", min: 0, class: "w-90" });
   const purge = check(false, "Also delete run logs");
   const paused = check(false, "Include stopped / waiting runs (they can't be resumed afterwards)");
   const out = h("div");
@@ -228,7 +228,7 @@ function diskSection(section) {
     if (!dryRun && !confirm("Remove these workspaces now? Branches in your repos are kept.")) return;
     try {
       const r = await api.clean({ olderThanDays: Number(days.value), purge: purge.el.checked, includePaused: paused.el.checked, dryRun });
-      mount(out, h("p", { class: dryRun ? "muted" : "status ok", style: { margin: 0 } },
+      mount(out, h("p", { class: dryRun ? "muted flush" : "status ok flush" },
         `${dryRun ? "Would remove" : "Removed"} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""} · ${r.freedMb} MB`,
         r.kept.length ? ` · keeping ${r.kept.length} paused/running` : ""));
     } catch (e) {
@@ -236,7 +236,7 @@ function diskSection(section) {
     }
   };
   return section("Disk",
-    h("p", { class: "muted", style: { margin: 0 } }, "Each run keeps its workspace (worktree or clone) so you can inspect or resume it. Clean up old ones here or with ", h("code", {}, "scf clean"), "."),
+    h("p", { class: "muted flush" }, "Each run keeps its workspace (worktree or clone) so you can inspect or resume it. Clean up old ones here or with ", h("code", {}, "scf clean"), "."),
     h("div", { class: "row" }, h("span", {}, "Runs finished more than"), days, h("span", {}, "days ago")),
     purge.row, paused.row,
     h("div", { class: "row" }, h("button", { onClick: () => go(true) }, "Preview"), h("button", { class: "danger", onClick: () => go(false) }, "Clean up"), out));
@@ -312,24 +312,24 @@ export async function renderSettings(main) {
     }
   };
 
-  const section = (title, ...children) => h("div", { class: "card", style: { marginBottom: "14px" } }, h("h3", {}, title), ...children);
+  const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), h("button", { class: "primary", onClick: save }, "Save")),
     err,
     section("Budget & capacity",
       limits.row,
-      h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } }, "Off: costs are still recorded and shown (Dashboard, runs), but no run is ever stopped because of money — for fixed-price subscriptions. Claude's and Codex's own usage limits still pause runs."),
+      h("p", { class: "muted text-sm mt-4 mb-10" }, "Off: costs are still recorded and shown (Dashboard, runs), but no run is ever stopped because of money — for fixed-price subscriptions. Claude's and Codex's own usage limits still pause runs."),
       h("div", { class: "grid" },
         f("Daily budget ($)", budget, `Spent today: $${info.spentToday.toFixed(2)}. When reached, runs pause (stopped) and resume the next day.`),
         f("Runs at the same time", conc))),
     section("Network",
-      h("p", { class: "muted", style: { margin: 0 } }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
-      info.listening && info.listening !== net.listen ? h("p", { class: "status bad", style: { margin: 0 } }, `Now listening on ${info.listening} — restart the server to use ${net.listen}`) : null,
+      h("p", { class: "muted flush" }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
+      info.listening && info.listening !== net.listen ? h("p", { class: "status bad flush" }, `Now listening on ${info.listening} — restart the server to use ${net.listen}`) : null,
       h("div", { class: "grid" },
         f("Listen on", listenSel, "127.0.0.1: this Mac only. 0.0.0.0 and :: reach all networks (needs an admin account). Needs a restart."),
         f("Allowed host names", hostsIn, "Names people type, comma-separated, e.g. mymac.local.")),
       insecure.row,
-      h("p", { class: "muted", style: { margin: "4px 0 0", fontSize: "12.5px" } }, "Warning: with plain HTTP, passwords and session cookies cross the network unencrypted. Use it only on a network you trust.")),
+      h("p", { class: "muted text-sm flush mt-4" }, "Warning: with plain HTTP, passwords and session cookies cross the network unencrypted. Use it only on a network you trust.")),
     section("Safety",
       f("Protected branches", protectedB, "Pushes to these are refused during runs (glob patterns, comma-separated). Also enable branch protection on GitHub."),
       secrets.row,
@@ -338,12 +338,12 @@ export async function renderSettings(main) {
       f("Repository the Foundry may update from", selfRepo, "owner/name. Updates come only when the checkout's origin is this repository. Needs one stop and start of the Foundry after upgrading."),
       sbxClaude.row,
       sbxOff.row,
-      h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } }, "Off by default. Without the sandbox, a shell step of a user's run can read this Mac account's files."),
+      h("p", { class: "muted text-sm mt-4 mb-10" }, "Off by default. Without the sandbox, a shell step of a user's run can read this Mac account's files."),
       f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted."),
       f("Keep the audit log for … days", auditDays, "1 to 3650. Older lines are removed when the server starts and once a day.")),
     section("Notifications",
       macos.row,
-      h("p", { class: "muted", style: { margin: "4px 0 10px", fontSize: "12.5px" } },
+      h("p", { class: "muted text-sm mt-4 mb-10" },
         "Tells you only when something waits for you. ",
         info.clickThrough === true ? "A click opens the item." : info.clickThrough === false ? "Install terminal-notifier (brew install terminal-notifier) and restart to open the item with a click." : ""),
       successes.row,
@@ -355,7 +355,7 @@ export async function renderSettings(main) {
       h("div", { class: "grid" }, f("Slack webhook", slack), f("Command", cmd, "Runs with $FACTORY_STATUS, $FACTORY_RUN_ID, $FACTORY_MESSAGE.")),
       h("div", { class: "row" }, h("span", { class: "muted" }, "Run the command when a run is:"), on.map(([, x]) => x.row))),
     section("Bot identity",
-      h("p", { class: "muted", style: { margin: 0 } }, "By default commits and comments are made as you (your git config and gh login)."),
+      h("p", { class: "muted flush" }, "By default commits and comments are made as you (your git config and gh login)."),
       h("div", { class: "grid" }, f("Commit author name", botName), f("Commit author email", botEmail), f("Env var with the bot's GitHub token", botToken, "Used as GH_TOKEN for gh and git pushes."))),
     diskSection(section),
     section("GitHub App",

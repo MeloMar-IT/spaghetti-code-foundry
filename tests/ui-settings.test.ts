@@ -42,7 +42,7 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
   };
   const main = new FakeElement("main");
   await ui.renderSettings(main);
-  const cards = main.all("div").filter((d) => d.attrs.class === "card");
+  const cards = main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card"));
   const card = cards.find((c) => c.all("h3")[0]?.textContent === "Network")!;
   return { main, card, puts };
 }
@@ -89,7 +89,7 @@ describe("Settings → Network", () => {
 });
 
 describe("Settings → GitHub App", () => {
-  const appCard = (main: FakeElement) => main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "GitHub App")!;
+  const appCard = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "GitHub App")!;
   const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;
   const save = async (main: FakeElement) => {
     main.all("button").find((b) => b.textContent === "Save")!.click();
@@ -197,7 +197,7 @@ describe("Settings → Safety: audit log", () => {
   it("shows 180 by default, inside the Safety card", async () => {
     const { main } = await render({});
     expect(field(main).value).toBe("180");
-    const safety = main.all("div").find((d) => d.attrs.class === "card" && d.all("h3")[0]?.textContent === "Safety")!;
+    const safety = main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Safety")!;
     expect(safety.textContent).toContain("Keep the audit log for … days");
   });
 

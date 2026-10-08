@@ -233,6 +233,16 @@ describe("run source and briefs", () => {
     expect("source" in runJson(none.runDir)).toBe(false);
   });
 
+  it("a run.json without a skill lock (older version) loads, resumes and gets no lock without a checked plan", async () => {
+    const s = await runFlow(parseFlow(yaml), { task: "t", repo, runsDir: join(tmp, "runs"), claudeBin });
+    expect("skillLock" in runJson(s.runDir)).toBe(false);
+    writeFileSync(join(repo, "ok"), "");
+    const { resumeRun } = await import("../src/engine/runner.js");
+    expect((await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin })).status).toBe("succeeded");
+    expect("skillLock" in runJson(s.runDir)).toBe(false);
+    expect(existsSync(join(s.runDir, "skill-lock.json"))).toBe(false);
+  });
+
   it("an interrupted run ends when run.json was last written, not when it started", async () => {
     const { Scheduler } = await import("../src/queue/scheduler.js");
     const { ConfigSchema } = await import("../src/config.js");

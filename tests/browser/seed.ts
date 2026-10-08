@@ -25,6 +25,8 @@ export interface SeedData {
   repoId: string;
   sessionId: string;
   watcherId: string;
+  /** Only with `startSeeded({ large: true })`: 500 plain runs, a run with a 5,000 line log and a run with a 1,000 line diff. */
+  large?: { runs: number; logRun: string; diffRun: string };
 }
 
 export interface Seeded extends SeedData {
@@ -56,11 +58,53 @@ steps:
 
 const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** True when the launcher is asked for the large data set (UI_TEST_LARGE=1). */
+export const largeFromEnv = (env: NodeJS.ProcessEnv): boolean => env.UI_TEST_LARGE === "1";
+
+/** Writes runs/<id>/run.json for a finished run; `extra` is merged last (reason, workdir, baseSha …). */
+export function writeRunFile(runsDir: string, repo: string, id: string, owner: string, status: string, extra: Record<string, unknown> = {}): void {
+  mkdirSync(join(runsDir, id), { recursive: true });
+  writeFileSync(join(runsDir, id, "run.json"), JSON.stringify({
+    runId: id, flow: "gate", task: `Seeded ${status} run`, vars: {}, repo, source: "ui", status, owner, runDir: join(runsDir, id),
+    startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:05:00.000Z", totalCostUsd: 0, history: [],
+    state: { next: null, steps: {}, visits: {} }, ...extra,
+  }));
+}
+
+/**
+ * The data for the performance checks: 500 runs (`big-0001` … `big-0500`), a run with a 5,000 line live log and a run whose
+ * workspace has a 1,000 line file changed in every line (uncommitted). Synchronous; `workRoot` gets the `diff-work` repository.
+ */
+export function seedLarge(runsDir: string, workRoot: string, owner: string, repo: string): { runs: number; logRun: string; diffRun: string } {
+  const statuses = ["succeeded", "failed", "cancelled"];
+  const runs = 500;
+  for (let n = 1; n <= runs; n++) {
+    writeRunFile(runsDir, repo, `big-${String(n).padStart(4, "0")}`, owner, statuses[(n - 1) % statuses.length]!, { task: `Large seeded run ${n}` });
+  }
+  const logRun = "ui-big-log";
+  writeRunFile(runsDir, repo, logRun, owner, "succeeded", { task: "Large seeded log run" });
+  writeFileSync(join(runsDir, logRun, "live.log"), Array.from({ length: 5000 }, (_, i) => `line ${i + 1} of the large log`).join("\n") + "\n");
+
+  const diffRun = "ui-big-diff";
+  const work = join(workRoot, "diff-work");
+  mkdirSync(work, { recursive: true });
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: work, stdio: "pipe" });
+  git("init", "-q");
+  const lines = (word: string) => Array.from({ length: 1000 }, (_, i) => `${word} line ${i + 1}`).join("\n") + "\n";
+  writeFileSync(join(work, "big.txt"), lines("old"));
+  git("add", "big.txt");
+  git("commit", "-q", "-m", "base");
+  const baseSha = git("rev-parse", "HEAD").toString().trim();
+  writeFileSync(join(work, "big.txt"), lines("new"));
+  writeRunFile(runsDir, repo, diffRun, owner, "succeeded", { task: "Large seeded diff run", workdir: work, baseSha });
+  return { runs, logRun, diffRun };
+}
+
 /**
  * Starts the real server on a free port with its own temporary data folder (FACTORY_HOME is set to it and put back on close),
  * two accounts and seeded data. Do not run two at the same time in one process: they would share process.env.
  */
-export async function startSeeded(): Promise<Seeded> {
+export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seeded> {
   const saved = { home: process.env.FACTORY_HOME, lock: process.env.FACTORY_LOCK_DIR, path: process.env.PATH };
   // what is set up so far; close() undoes exactly this, also after a failure half way
   let tmp: string | undefined;
@@ -132,20 +176,15 @@ export async function startSeeded(): Promise<Seeded> {
     const admin = await signInAs(url, { create: false });
     const user = await signInAs(url, { name: "Ann", email: "ann@example.com", role: "user", create: false });
 
-    const writeRun = (id: string, owner: string, status: string, reason?: string) => {
-      mkdirSync(join(runsDir, id), { recursive: true });
-      writeFileSync(join(runsDir, id, "run.json"), JSON.stringify({
-        runId: id, flow: "gate", task: `Seeded ${status} run`, vars: {}, repo, source: "ui", status, owner, runDir: join(runsDir, id),
-        startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:05:00.000Z", totalCostUsd: 0, history: [],
-        state: { next: null, steps: {}, visits: {} }, ...(reason ? { reason } : {}),
-      }));
-    };
+    const writeRun = (id: string, owner: string, status: string, reason?: string) =>
+      writeRunFile(runsDir, repo, id, owner, status, reason ? { reason } : {});
     writeRun("ui-succeeded", admin.user.id, "succeeded");
     writeRun("ui-failed", admin.user.id, "failed", "boom");
     writeRun("ui-cancelled", admin.user.id, "cancelled");
     writeRun("ui-stopped", admin.user.id, "stopped", "daily budget reached");
     writeRun("ui-user-succeeded", user.user.id, "succeeded");
     writeRun("ui-user-failed", user.user.id, "failed", "boom");
+    const large = opts.large ? seedLarge(runsDir, tmp, admin.user.id, repo) : undefined;
 
     const send = (method: string, path: string, body: unknown) =>
       fetch(url + path, { method, headers: { "content-type": "application/json", ...admin.headers(method) }, body: JSON.stringify(body) });
@@ -178,6 +217,7 @@ export async function startSeeded(): Promise<Seeded> {
       repoId: rec.id,
       sessionId: session.id,
       watcherId: "ui-w",
+      ...(large ? { large } : {}),
       close,
     };
   } catch (e) {

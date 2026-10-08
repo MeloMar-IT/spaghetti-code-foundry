@@ -1,5 +1,5 @@
 /* reset.css — defaults for bare elements.
-   Belongs here: body, headings, links, code, pre, details; the helper for monospace text because it shares the code rule.
+   Belongs here: body, headings, links, code, pre, details, the hidden attribute; the helper for monospace text because it shares the code rule.
    Does not belong here: classes; anything for one page. */
 
 * { box-sizing: border-box; }
@@ -13,3 +13,4 @@ h3 { font-size: var(--text-small); text-transform: uppercase; letter-spacing: .0
 code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
 details > summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); user-select: none; }
 details[open] > summary { margin-bottom: 10px; }
+[hidden] { display: none !important; }

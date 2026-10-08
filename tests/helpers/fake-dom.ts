@@ -10,6 +10,7 @@ export class FakeElement extends FakeNode {
   style: Record<string, string> = {};
   hidden = false;
   value = "";
+  checked = false;
   disabled = false;
   classList = {
     names: new Set<string>(),

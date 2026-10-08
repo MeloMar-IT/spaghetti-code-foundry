@@ -2365,6 +2365,15 @@ skills:
 - **`include` is not a pin.** An included skill still needs an approved, pinned version. The config is refused if an `include` id is also in `exclude` or in `catalogue.exclude`, or if there are more `include` ids than `max_skills`.
 - **Decisions:** every requested, mandatory and added skill gets a decision with a reason code: `mandatory`, `requested` or `dependency` when selected; `excluded`, `unknown`, `unapproved`, `unpinned`, `mismatch`, `unverified`, `role`, `too-large`, `dependency-cycle`, `dependency-unavailable`, `dependency-version`, `conflict`, `over-count`, `over-budget` or `blocked` when refused. The result also has the estimated tokens (description and SKILL.md text; reference files are not counted), so the size is known before an agent starts.
 
+### Skill lock of a run
+
+When a run has a plan that is ready to code, the first agent step resolves the plan's skill request and saves the result as `skill-lock.json` in the run folder. It names each skill by `id@version` and digest, with its source kind (`admin` or `builtin`), reason and evidence, and holds the plan hash and the repository commit. It holds no credentials, no paths and no issue text. `run.json` keeps a short copy (`skillLock`).
+
+- **Resume:** a resumed run uses the locked versions, not the newest ones. The lock is made once per plan; if the run plans again, a new lock is made.
+- **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume.
+- **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
+- **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
+
 ### Access from other computers
 
 By default the Foundry answers only on the Mac it runs on. Colleagues can reach it from their own
@@ -3036,6 +3045,23 @@ The plan is kept in the page only, so reloading the page loses it. **Discard pla
 **After Confirm split.** Each part becomes a new draft, the page opens the first one, and the original stays as a read-only record (see "Moving a criterion between the parts of a split" for moving criteria later).
 
 **Who sees it.** Only people who can edit drafts see the buttons. In "View as user" no button is shown and no changing call leaves the browser; the ways are shown as text.
+
+#### After the split: parts, moving and merging
+
+**The original.** It shows **Split into …** with a button for each part, and it is read-only. Criteria that fit nowhere are listed under **Fits nowhere**; each has **Move to …** with the parts. In the session, the original has the state word **Split** and does not count for "ready".
+
+**A part.** It shows **Part n of m of …** with a link back to the original. Below it:
+
+- the hint sentence, marked as a hint from the architect and not part of the story;
+- its warnings: "delivers nothing a user can see or check" and "touches the same code as …; build one after the other".
+
+**Move a criterion.** Each criterion of a part has **Move to …** with the other parts and the original. Text you typed in the draft is saved first. The criterion moves, it is not copied.
+
+**Depends on.** The list of a part does not offer later parts of the same split, or the original.
+
+**Merge with ….** A draft lists the other drafts of the session (not a split original). The page asks you to confirm and says what happens to the fields: dependencies are repointed or removed, accepted-anyway marks and readiness are cleared, and the draft gets the review label. A merge is blocked while the other draft has unsaved text.
+
+**Log.** The log says "criterion moved" and "drafts merged" in plain words. Dependencies that no longer fit the split are listed when they are removed.
 
 ### The talk: questions, answers and the map
 

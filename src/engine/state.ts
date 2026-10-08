@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Flow, Step } from "../flow/schema.js";
+import type { RunSkillLockSummary } from "../skills/run-lock.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -87,6 +88,8 @@ export interface RunSummary {
   owner?: string;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
+  /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */
+  skillLock?: RunSkillLockSummary;
 }
 
 /** An answer a person gave on the run page to the questions a run stopped with. */

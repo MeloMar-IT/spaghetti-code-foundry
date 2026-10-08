@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installFakeDom } from "./helpers/fake-dom.js";
+import { code, tableRows } from "./helpers/md-table.js";
 import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } from "./browser/journeys-baseline.js";
 
 // docs/ui-redesign/ is a research audit of every screen. This test keeps its tables in step with the code:
@@ -10,30 +11,6 @@ import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } 
 const DIR = "docs/ui-redesign";
 const read = (p: string) => readFileSync(p, "utf8");
 const doc = (name: string) => read(`${DIR}/${name}`);
-
-/** Rows of the first markdown table under a heading; cells trimmed; header and separator dropped. */
-function tableRows(text: string, heading: string): string[][] {
-  const lines = text.split("\n");
-  const at = lines.findIndex((l) => l.trim() === heading);
-  if (at < 0) return [];
-  const rows: string[][] = [];
-  let started = false;
-  for (const line of lines.slice(at + 1)) {
-    if (/^#{1,6} /.test(line)) break;
-    if (!line.trim().startsWith("|")) {
-      if (started) break;
-      continue;
-    }
-    started = true;
-    rows.push(line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")));
-  }
-  return rows.slice(2); // header and separator
-}
-
-/** The text inside the first pair of backticks of a cell. */
-function code(cell: string): string {
-  return /`([^`]*)`/.exec(cell)?.[1] ?? "";
-}
 
 /** Both directions of a set comparison. */
 function diff(docItems: string[], source: string[]): { missing: string[]; extra: string[] } {
@@ -236,12 +213,17 @@ describe("the dialogs match the code", () => {
 });
 
 describe("inline styles", () => {
-  it("names every file with 10 or more style: uses", () => {
-    const text = sectionText(inventory, "## Inline styles");
-    expect(text.length).toBeGreaterThan(0);
-    const heavy = uiFiles().filter((f) => count(read(f), /style\s*:/g) >= 10);
-    expect(heavy.length).toBeGreaterThanOrEqual(5);
-    for (const f of heavy) expect(text, f).toContain(f);
+  it("lists every file with a style: use and its count, both ways", () => {
+    const table: Record<string, number> = {};
+    for (const r of tableRows(inventory, "## Inline styles")) table[code(r[0]!)] = Number(r[1]);
+    const source: Record<string, number> = {};
+    for (const f of uiFiles()) {
+      const n = count(read(f), /style\s*:/g);
+      if (n > 0) source[f] = n;
+    }
+    expect(table).toEqual(source);
+    const total = Object.values(source).reduce((a, b) => a + b, 0);
+    expect(sectionText(inventory, "## Inline styles")).toContain(`Total ${total} in ${Object.keys(source).length} files.`);
   });
 });
 

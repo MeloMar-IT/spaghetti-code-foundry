@@ -72,7 +72,7 @@ const rec = (over: object = {}) => ({
   ...over,
 });
 const show = () => ui.renderAllRepos(main());
-const errText = (el: FakeElement) => byClass(el, "status").filter((e) => e.attrs.class === "status bad").map((e) => e.textContent).join("");
+const errText = (el: FakeElement) => byClass(el, "status").filter((e) => (e.attrs.class ?? "").split(" ").includes("bad")).map((e) => e.textContent).join("");
 
 describe("pure functions", () => {
   it("settingsBody sends every setting, trimmed", () => {

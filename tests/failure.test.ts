@@ -57,7 +57,9 @@ describe("classifyFailure", () => {
     [[KEY_NOT_READY, APP_UNREACHABLE_RUN, APP_RATE_LIMIT_RUN, APP_FAILED_RUN, APP_TOKEN_EXPIRED], "the repository's sign-in was not available for the step", "resume the run"],
     [[NO_COMMIT_IDENTITY], "the account that owns the run is gone", "set the bot name and e-mail in Settings, then resume the run"],
     [[SIGN_IN_NOT_REMOVED], "the sign-in folder of the run could not be removed", 'ask an admin to delete the folder "sign-in" in the run folder, then resume the run'],
-  ])("is factory for the sentences of a deploy key or the GitHub App: %#", (errors, what, fix) => {
+    [["skill integrity: a@1.0.0 is missing; this run locked it (sha256:x)", "skill integrity: the skill lock of this run is missing or was changed"], "a skill this run locked is missing or changed", "restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills"],
+    [["skill selection is blocked: a (unpinned)"], "a mandatory skill cannot be used", "pin the skill or change skills.selection.include, then resume the run"],
+  ])("is factory for the sentences of a deploy key, the GitHub App or a skill lock: %#", (errors, what, fix) => {
     for (const error of errors) {
       const h = [rec({ id: "marked", output: error, error })];
       expect(classifyFailure(run("failed", `step "marked" failed: ${error}`, h)), error).toMatchObject({ cause: "factory", what, fix });

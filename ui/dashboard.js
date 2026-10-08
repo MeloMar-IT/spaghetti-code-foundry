@@ -105,7 +105,7 @@ export function byUserCard(list) {
       h("td", {}, of(String(u.active ?? 0), lim.maxConcurrent, lim.maxConcurrent)),
       h("td", { class: "mono" }, of(usd(u.today?.costUsd), lim.dailyBudgetUsd, lim.dailyBudgetUsd === undefined ? "" : usdLimit(lim.dailyBudgetUsd))));
   };
-  return h("div", { class: "card", style: { gridColumn: "1 / -1" } }, h("h3", {}, "By user"),
+  return h("div", { class: "card span-all" }, h("h3", {}, "By user"),
     list.length ? h("table", { class: "table compact" },
       h("thead", {}, h("tr", {}, ["Name", "Runs", "Cost", "Runs today", "Active now", "Cost today"].map((x) => h("th", {}, x)))),
       h("tbody", {}, list.map(row))) : h("p", { class: "muted" }, "No runs yet."));
@@ -126,7 +126,7 @@ export async function renderDashboard(main) {
     api.runs().catch(() => []), api.clarity().catch(() => null)]);
   const { yours, rest } = waitingGroups(watchers);
   const group = ({ w, records }) => h("div", { class: "hold-group" },
-    h("div", { class: "muted", style: { fontSize: "12.5px" } }, h("b", { class: "mono" }, w.id), ` · ${w.github_repo}${w.source === "issues" ? ` · label ${w.label}` : ""}`),
+    h("div", { class: "muted text-sm" }, h("b", { class: "mono" }, w.id), ` · ${w.github_repo}${w.source === "issues" ? ` · label ${w.label}` : ""}`),
     nextList(records));
   const t = s.totals;
   const budget = info.dailyBudget;
@@ -159,7 +159,7 @@ export async function renderDashboard(main) {
         s.failingSteps.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Failures", "Runs"].map((x) => h("th", {}, x)))),
           h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")),
-      h("div", { class: "card", style: { gridColumn: "1 / -1" } }, h("h3", {}, "Evaluations"),
+      h("div", { class: "card span-all" }, h("h3", {}, "Evaluations"),
         evals.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Suite", "When", "Variant", "Runs", "Pass", "Avg cost", "Avg tokens", "Avg time", "Fix loops"].map((x) => h("th", {}, x)))),
           h("tbody", {}, evals.flatMap((e) => e.summary.map((v, i) => h("tr", {},

@@ -268,10 +268,10 @@ describe("ui/style.css", () => {
 });
 
 describe("pages", () => {
-  it("load /tokens.css before /style.css", () => {
+  it("load /tokens.css, /style.css, then /kit/kit.css", () => {
     for (const p of ["ui/index.html", "ui/user/index.html"]) {
       const hrefs = [...read(p).matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-      expect(hrefs, p).toEqual(["/tokens.css", "/style.css"]);
+      expect(hrefs, p).toEqual(["/tokens.css", "/style.css", "/kit/kit.css"]);
     }
   });
 });

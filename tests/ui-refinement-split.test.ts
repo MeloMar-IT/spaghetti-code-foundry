@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RefinementError } from "../src/refinement/errors.js";
 import { draftMark } from "../src/refinement/draft-impact.js";
-import { newDraft, preview, saveTyped } from "../src/refinement/draft.js";
-import { confirmSplit } from "../src/refinement/draft-parts.js";
+import { dropDraft, newDraft, preview, saveTyped } from "../src/refinement/draft.js";
+import { confirmSplit, mergeDrafts, moveCriterion, partWarnings } from "../src/refinement/draft-parts.js";
 import { SPLIT_CUTS, splitView } from "../src/refinement/draft-split.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -11,6 +11,7 @@ let restore: () => void;
 let ui: any;
 let dr: any;
 let sp: any;
+let pt: any;
 let tk: any;
 let api: any;
 let apiMod: any;
@@ -19,6 +20,7 @@ beforeAll(async () => {
   ui = await import("../ui/refinement.js" as string);
   dr = await import("../ui/refinement-draft.js" as string);
   sp = await import("../ui/refinement-split.js" as string);
+  pt = await import("../ui/refinement-parts.js" as string);
   tk = await import("../ui/refinement-talk.js" as string);
   apiMod = await import("../ui/api.js" as string);
   api = apiMod.api;
@@ -33,6 +35,9 @@ let sent: { method: string; url: string; body: any }[];
 let mode: "ok" | number;
 let modeFor: RegExp;
 let cleanup: (() => void) | undefined;
+const realConfirm = (globalThis as any).confirm;
+let confirmAnswer = true;
+let asked: string[] = [];
 
 const D1 = "11111111-1111-4111-8111-111111111111";
 const C1 = "c1111111-1111-4111-8111-111111111111";
@@ -46,9 +51,10 @@ const view = () => ({
   drafts: over.draftsHidden
     ? undefined
     : state.drafts.map((d) => {
-      const { split: _s, ...rest } = d;
+      const { split: _s, partWarnings: _w, ...rest } = d;
       const v = splitView(d);
-      return { ...rest, state: d.splitInto ? "split" : "drafting", preview: preview(d, state as any), remarks: [], ...(v ? { split: v } : {}) };
+      const w = d.partWarnings ?? partWarnings(d, state.drafts);
+      return { ...rest, state: d.splitInto ? "split" : "drafting", preview: preview(d, state as any), remarks: [], ...(v ? { split: v } : {}), ...(w.length ? { partWarnings: w } : {}) };
     }),
   log: [{ at: new Date().toISOString(), what: "created", who: "Ann" }], created: "x", updated: "x", mine: true, ...over,
 });
@@ -65,6 +71,12 @@ beforeEach(() => {
   dr.opened.clear();
   sp.splitLocal.clear();
   reload.mockClear();
+  confirmAnswer = true;
+  asked = [];
+  (globalThis as any).confirm = (q: string) => {
+    asked.push(q);
+    return confirmAnswer;
+  };
   (document as any).getElementById("toast").textContent = "";
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
@@ -80,7 +92,12 @@ beforeEach(() => {
     try {
       const body = init.body ? JSON.parse(init.body) : {};
       const m = /\/drafts\/([^/]+)(?:\/(split\/confirm|split))?$/.exec(url);
-      if (m?.[2] === "split/confirm") apply(confirmSplit(state as any, m[1]!, body));
+      const mv = /\/drafts\/([^/]+)\/criteria\/([^/]+)\/move$/.exec(url);
+      const mg = /\/drafts\/([^/]+)\/merge$/.exec(url);
+      if (mv) apply(moveCriterion(state as any, mv[1]!, mv[2]!, body));
+      else if (mg) apply(mergeDrafts(state as any, mg[1]!, body));
+      else if (init.method === "DELETE") apply(dropDraft(state as any, m![1]!));
+      else if (m?.[2] === "split/confirm") apply(confirmSplit(state as any, m[1]!, body));
       else if (m?.[2] === "split") over = { ...over, architect: { state: "running", kind: "split", draft: m[1], doing: "x" } };
       else if (init.method === "PUT") apply(saveTyped(state as any, m![1]!, body));
       else apply(newDraft(state as any));
@@ -96,6 +113,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
+  (globalThis as any).confirm = realConfirm;
   apiMod.setViewAs("");
 });
 
@@ -620,5 +638,266 @@ describe("read-only", () => {
     const s = { id: "s1", brief: BRIEF, drafts: [one] };
     expect(sp.splitState({ ...s, architect: run("failed") }, one)).toEqual({ kind: "line", again: "" });
     expect(sp.splitState({ ...s, architect: run("paused") }, one)).toEqual({ kind: "line", again: "" });
+  });
+});
+
+// ---- after the split: parts, moving a criterion, merging ----
+const P1 = "p1111111-1111-4111-8111-111111111111";
+const P2 = "p2222222-2222-4222-8222-222222222222";
+const P3 = "p3333333-3333-4333-8333-333333333333";
+const HINT = "Users can export rows to a file.";
+const family = (warn?: any[]) => {
+  state.drafts = [
+    { id: D1, title: t("Export rows"), criteria: [crit[2]], dependsOn: [], splitInto: [P1, P2], ...(warn ? { partWarnings: warn } : {}) },
+    { id: P1, title: t("Export a file"), criteria: [crit[0]], dependsOn: [], part: { of: D1, hint: HINT } },
+    { id: P2, title: t("Choose columns"), criteria: [crit[1]], dependsOn: [{ id: "l1", draft: P1, from: "typed" }], part: { of: D1 } },
+  ];
+};
+const openDraft = (id: string) => press(buttons().find((b) => b.attrs["data-focus"] === `open-${id}`));
+const textareas = () => walk(section()).filter((e) => e.tag === "textarea").map((e) => e.value);
+const selects = () => walk(section()).filter((e) => e.tag === "select");
+const moveSelect = (text: string) => selects().find((e) => e.attrs["aria-label"] === `Move to: ${text}`)!;
+const choose = async (sel: FakeElement, v: string) => {
+  sel.value = v;
+  sel.fire("change");
+  await flush();
+};
+const options = (sel: FakeElement) => sel.children.map((o: any) => o.textContent);
+const partCards = () => walk(main()).filter((e) => e.attrs.class === "card parts");
+
+describe("parts: pure functions", () => {
+  const dd = () => (family(), state.drafts);
+  const s = () => ({ id: "s1", drafts: dd() });
+  it("titleOf follows the draft list", () => {
+    expect(pt.titleOf({ title: t("Typed"), preview: { title: "Shown" } })).toBe(dr.draftTitle({ title: t("Typed"), preview: { title: "Shown" } }));
+    expect(pt.titleOf({ title: t("Typed") })).toBe("Typed");
+    expect(pt.titleOf({})).toBe(dr.draftTitle({}));
+    expect(pt.titleOf({})).toBe("Untitled draft");
+  });
+  it("partPlace", () => {
+    const [o, p1, p2] = dd();
+    expect(pt.partPlace(p2, [o, p1, p2])).toMatchObject({ n: 2, m: 2, original: o });
+    expect(pt.partPlace(o, [o, p1, p2])).toBeNull();
+    expect(pt.partPlace(p2, [p1, p2])).toBeNull();
+  });
+  it("mayDependOn", () => {
+    const all = dd();
+    const [o, p1, p2] = all;
+    const other = { id: P3, criteria: [], dependsOn: [] };
+    expect(pt.mayDependOn(p1, p2, all)).toBe(false);
+    expect(pt.mayDependOn(p2, p1, all)).toBe(true);
+    expect(pt.mayDependOn(p1, o, all)).toBe(false);
+    expect(pt.mayDependOn(other, p1, all)).toBe(true);
+    expect(pt.mayDependOn(p1, other, [...all, other])).toBe(true);
+  });
+  it("moveTargets", () => {
+    const [o, p1, p2] = dd();
+    expect(pt.moveTargets(s(), o).map((x: any) => x.label)).toEqual(["Part 1: Export a file", "Part 2: Choose columns"]);
+    expect(pt.moveTargets(s(), p1).map((x: any) => x.label)).toEqual(["Part 2: Choose columns", "Fits nowhere (the original)"]);
+    const pub = { drafts: [o, p1, { ...p2, published: { issue: 5 } }] };
+    expect(pt.moveTargets(pub, p1).map((x: any) => x.id)).toEqual([D1]);
+    expect(pt.moveTargets({ drafts: [{ id: P3, criteria: [] }] }, { id: P3, criteria: [] })).toEqual([]);
+  });
+  it("mergeTargets", () => {
+    const [o, p1, p2] = dd();
+    const free = { id: P3, criteria: [], dependsOn: [] };
+    const sess = { drafts: [o, p1, { ...p2, published: { issue: 5 } }, free] };
+    expect(pt.mergeTargets(sess, p1).map((x: any) => x.id)).toEqual([P3]);
+    expect(pt.mergeTargets(sess, free).map((x: any) => x.id)).toEqual([P1]);
+    expect(pt.mergeTargets(sess, o)).toEqual([]);
+  });
+  it("mergeAsk says what happens", () => {
+    const [, p1, p2] = dd();
+    const q = pt.mergeAsk(p1, p2);
+    expect(q).toContain('"Choose columns" into "Export a file"');
+    expect(q).toContain("keeps its title, who, what and why");
+    expect(q).toContain("is removed");
+    expect(q).toContain("depended on it now depend on");
+    expect(q).toContain("accepted-anyway");
+    expect(q).toContain("review label");
+    expect(q).toContain("later part or to the original");
+  });
+  it("partWarningTexts", () => {
+    const all = dd();
+    all[0].partWarnings = [{ kind: "layer", part: P2, why: "x" }, { kind: "same-code", parts: [P1, P2], areas: ["src/export", "src/a"], why: "y" }, { kind: "layer", part: P3, why: "x" }];
+    const sess = { drafts: all };
+    expect(pt.partWarningTexts(sess, all[2])).toEqual([
+      "This part delivers nothing a user can see or check.",
+      'This part touches the same code as "Export a file" (src/export, src/a); build one after the other.',
+    ]);
+    expect(pt.partWarningTexts(sess, all[1])).toEqual(['This part touches the same code as "Choose columns" (src/export, src/a); build one after the other.']);
+    expect(pt.partWarningTexts(sess, all[0])).toEqual([]);
+  });
+  it("splitLogText for a move and a merge", () => {
+    expect(sp.splitLogText({ what: "criterion-moved", who: "Ann", detail: "Old formats work" })).toBe('Ann moved a criterion to another draft: "Old formats work"');
+    expect(sp.splitLogText({ what: "criterion-moved", who: "Ann" })).toBe("Ann moved a criterion to another draft");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann" })).toBe("Ann merged two story drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"Export a file" + "Choose columns"' })).toBe('Ann merged two story drafts: "Export a file" and "Choose columns"');
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B"; removed "C" → "D", "C" → "E"' })).toBe(
+      'Ann merged two story drafts: "A" and "B". Dependencies that no longer fit the split were removed: "C" → "D", "C" → "E"');
+    // titles that hold the delimiters: the plain sentence, never a wrong one
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B" + "C"' })).toBe("Ann merged two story drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A; removed x" + "B"' })).toBe("Ann merged two story drafts");
+    expect(sp.splitLogText({ what: "drafts-merged", who: "Ann", detail: '"A + B" + "C"' })).toBe('Ann merged two story drafts: "A + B" and "C"');
+    expect(ui.logText({ what: "drafts-merged", who: "Ann", detail: '"A" + "B"' })).toBe('Ann merged two story drafts: "A" and "B"');
+    expect(ui.logText({ what: "criterion-moved", who: "Ann" })).toBe("Ann moved a criterion to another draft");
+  });
+});
+
+describe("parts: api", () => {
+  it("sends the right requests", async () => {
+    await api.moveCriterion("s1", D1, C1, P1).catch(() => {});
+    await api.mergeDrafts("s1", P1, P2).catch(() => {});
+    expect(sent.map((x) => [x.method, x.url, x.body])).toEqual([
+      ["POST", `/api/refinement/s1/drafts/${D1}/criteria/${C1}/move`, { to: P1 }],
+      ["POST", `/api/refinement/s1/drafts/${P1}/merge`, { with: P2 }],
+    ]);
+  });
+  it("a 401 does not reload the page", async () => {
+    mode = 401;
+    await expect(api.moveCriterion("s1", D1, C1, P1)).rejects.toMatchObject({ status: 401 });
+    await expect(api.mergeDrafts("s1", P1, P2)).rejects.toMatchObject({ status: 401 });
+    expect(reload).not.toHaveBeenCalled();
+  });
+  it("in a view, both are refused before fetch", async () => {
+    apiMod.setViewAs("u1");
+    const calls: string[] = [];
+    (globalThis as any).fetch = async (u: string) => {
+      calls.push(u);
+      return reply({});
+    };
+    await expect(api.moveCriterion("s1", D1, C1, P1)).rejects.toMatchObject({ preview: true });
+    await expect(api.mergeDrafts("s1", P1, P2)).rejects.toMatchObject({ preview: true });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("parts: the split original", () => {
+  it("shows what it was split into and what fits nowhere", async () => {
+    family();
+    await show();
+    await openDraft(D1);
+    const text = section().textContent;
+    for (const x of ["Split into", "Part 1: Export a file", "Part 2: Choose columns", "Fits nowhere", "Old formats work", "This draft was split."]) expect(text).toContain(x);
+    expect(field("title")).toBeUndefined();
+    expect(textareas()).toEqual([]);
+    expect(selects().every((e) => (e.attrs["aria-label"] ?? "").startsWith("Move to"))).toBe(true);
+    expect(options(moveSelect("Old formats work"))).toEqual(["Move to…", "Part 1: Export a file", "Part 2: Choose columns"]);
+  });
+  it("a part button opens the part", async () => {
+    family();
+    await show();
+    await openDraft(D1);
+    await press(button("Part 2: Choose columns"));
+    expect(field("title").value).toBe("Choose columns");
+    expect(section().textContent).toContain("Part 2 of 2 of");
+  });
+  it("moving a criterion: the call and the page after it", async () => {
+    family();
+    await show();
+    await openDraft(D1);
+    await choose(moveSelect("Old formats work"), P1);
+    expect(sent.map((x) => [x.method, x.url.replace(/^.*\/drafts\//, ""), x.body])).toEqual([["POST", `${D1}/criteria/${C3}/move`, { to: P1 }]]);
+    expect(section().textContent).toContain("Every criterion has a place.");
+    await openDraft(P1);
+    expect(textareas()).toContain("Old formats work");
+  });
+  it("a refused move leaves the criterion listed and says why", async () => {
+    family();
+    await show();
+    await openDraft(D1);
+    mode = 409;
+    modeFor = /move$/;
+    await choose(moveSelect("Old formats work"), P1);
+    expect(toastText()).toContain("The server said no");
+    expect(section().textContent).toContain("Old formats work");
+    expect(section().textContent).not.toContain("Every criterion has a place.");
+  });
+});
+
+describe("parts: a part", () => {
+  it("shows its place, the hint as a hint, and no hint when there is none", async () => {
+    family();
+    await show();
+    await openDraft(P1);
+    for (const x of ["Part 1 of 2 of", "Export rows", "Hint from the architect", HINT, "(not part of the story)"]) expect(section().textContent).toContain(x);
+    await openDraft(P1);
+    await openDraft(P2);
+    expect(section().textContent).toContain("Part 2 of 2 of");
+    expect(section().textContent).not.toContain("Hint from the architect");
+  });
+  it("shows the warnings about it", async () => {
+    family([{ kind: "layer", part: P2, why: "x" }, { kind: "same-code", parts: [P1, P2], areas: ["src/export"], why: "y" }]);
+    await show();
+    await openDraft(P2);
+    expect(section().textContent).toContain("delivers nothing a user can see or check");
+    expect(section().textContent).toContain('touches the same code as "Export a file" (src/export); build one after the other.');
+  });
+  it("shows a hint as text", async () => {
+    family();
+    state.drafts[1].part.hint = "<b>x</b>";
+    await show();
+    await openDraft(P1);
+    expect(section().textContent).toContain("<b>x</b>");
+    expect(walk(section()).filter((e) => e.tag === "b" && e.textContent.includes("<b>x</b>"))).toEqual([]);
+  });
+  it("a published part still shows its head, hint and warnings", async () => {
+    family([{ kind: "layer", part: P1, why: "x" }]);
+    state.drafts[1].published = { issue: 9, url: "https://github.com/a/b/issues/9" };
+    await show();
+    await openDraft(P1);
+    for (const x of ["Part 1 of 2 of", HINT, "delivers nothing a user can see or check"]) expect(section().textContent).toContain(x);
+  });
+  it("the title of the original in the head opens the original", async () => {
+    family();
+    await show();
+    await openDraft(P1);
+    await press(buttons().find((b) => b.attrs["data-focus"] === `part-open-${D1}`));
+    expect(section().textContent).toContain("Split into");
+  });
+});
+
+describe("parts: the state word", () => {
+  it("the original says Split and does not count for ready", async () => {
+    family();
+    over = { state: "ready" };
+    await show();
+    const pills = walk(section()).filter((e) => e.attrs.class === "pill state-split");
+    expect(pills.map((e) => e.textContent)).toEqual(["Split"]);
+    expect(main().textContent).toContain("Ready");
+  });
+});
+
+describe("parts: read-only", () => {
+  const check = () => {
+    const cards = partCards();
+    expect(cards.length).toBe(3);
+    const text = cards.map((c) => c.textContent).join("|");
+    for (const x of ["Split into", "Part 1 of 2 of", HINT, "Fits nowhere", "Old formats work"]) expect(text).toContain(x);
+    for (const c of cards) expect(walk(c).filter((e) => e.tag === "button" || e.tag === "select")).toEqual([]);
+    expect(sent).toEqual([]);
+  };
+  it("not mine", async () => {
+    family();
+    over = { mine: false };
+    await show();
+    check();
+  });
+  it("dropped", async () => {
+    family();
+    over = { state: "dropped" };
+    await show();
+    check();
+  });
+  it("a read-only view", async () => {
+    family();
+    cleanup = await ui.renderRefinement(main(), { id: "s1", readOnly: true });
+    check();
+  });
+  it("hidden drafts show nothing", async () => {
+    family();
+    over = { draftsHidden: true };
+    await show();
+    expect(section().textContent).not.toContain("Split into");
   });
 });

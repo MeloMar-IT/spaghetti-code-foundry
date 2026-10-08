@@ -5,6 +5,7 @@ import { resolveClaudeBin, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { ensureSkillLock } from "../engine/skill-lock.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
@@ -203,6 +204,12 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   let models = 0;
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   for (;;) {
+    // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
+    const refused = ensureSkillLock(engine);
+    if (refused) {
+      engine.accessFailed = true;
+      return { ok: false, output: refused, error: refused, ...tries() };
+    }
     tried.add(target.label);
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };

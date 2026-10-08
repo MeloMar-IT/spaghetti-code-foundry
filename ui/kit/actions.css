@@ -1,0 +1,54 @@
+/* ui/kit/actions.css — buttons and links of the component kit.
+   Belongs here: .scf-btn and .scf-link rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
+
+.scf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--control-pad-y) var(--control-pad-x);
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+.scf-btn:hover { background: var(--color-surface-2); }
+.scf-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-btn:disabled, .scf-btn[aria-disabled="true"] {
+  color: var(--color-disabled);
+  background: var(--color-disabled-soft);
+  cursor: default;
+  opacity: 1;
+}
+
+.scf-btn--primary, .scf-btn--primary:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: var(--weight-medium);
+}
+.scf-btn--primary:disabled, .scf-btn--primary[aria-disabled="true"] {
+  color: var(--color-disabled);
+  background: var(--color-disabled-soft);
+  border-color: var(--color-border);
+}
+
+.scf-btn--danger { color: var(--color-danger); }
+.scf-btn--danger:hover { color: var(--color-danger); background: var(--color-danger-soft); }
+.scf-btn--danger:disabled, .scf-btn--danger[aria-disabled="true"] { color: var(--color-disabled); background: var(--color-disabled-soft); }
+
+.scf-btn--ghost { background: transparent; border-color: transparent; }
+.scf-btn--ghost:hover { background: var(--color-surface-2); border-color: transparent; }
+.scf-btn--ghost:disabled, .scf-btn--ghost[aria-disabled="true"] { background: transparent; border-color: transparent; }
+
+.scf-btn--small { padding: var(--space-2xs) var(--space-md); font-size: var(--text-small); }
+.scf-btn--icon { padding: var(--space-xs); }
+
+.scf-link { color: var(--color-accent); text-decoration: underline; }
+.scf-link:hover, .scf-link:focus-visible { color: var(--color-accent); text-decoration: underline; }
+.scf-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }

@@ -22,5 +22,9 @@ export default defineConfig({
   updateSnapshots: "none",
   expect: { toHaveScreenshot: { maxDiffPixelRatio: MAX_DIFF_PIXEL_RATIO, animations: "disabled", caret: "hide", scale: "css" } },
   use: { trace: "retain-on-failure" },
-  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
+  projects: [
+    { name: "chromium", testIgnore: "performance.spec.ts", use: { browserName: "chromium" } },
+    // after everything else and in one worker, so other specs do not skew the times
+    { name: "performance", testMatch: "performance.spec.ts", dependencies: ["chromium"], fullyParallel: false, use: { browserName: "chromium" } },
+  ],
 });

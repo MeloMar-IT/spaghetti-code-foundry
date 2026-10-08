@@ -30,12 +30,12 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
 | `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
-| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 19 inline styles, 4 native confirms and two pages |
+| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 4 native confirms and two pages |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings; clean workspaces | Save | Shares a file with Watchers (F6); the clean action is a native confirm (`admin.js:227`) |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:44` (`problems.js:88`) |
-| `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 17 inline styles; 3 tables, none inside `.table-box` |
+| `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
-| `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`); 7 inline styles |
+| `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
 | `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
 
 ## User display
@@ -138,7 +138,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/repos` | `.table-box` scrolls | Same |
 | `#/all-repos` | Table not in `.table-box`: probably overflows | Probably overflows |
 | `#/credentials` | Table not in `.table-box` | Probably overflows |
-| `#/watchers` | Cards with inline styles | Probably fits |
+| `#/watchers` | Cards | Probably fits |
 | `#/settings` | Form | Probably fits |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
@@ -161,29 +161,23 @@ Count of `style:` occurrences per file (one line can hold more than one; `runs.j
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 157 in 22 files. Lines that contain one: 156.
+Total 96 in 16 files. Lines that contain one: 95.
 
 | File | Uses |
 |---|---|
-| `ui/admin.js` | 19 |
 | `ui/editor.js` | 18 |
-| `ui/models.js` | 17 |
 | `ui/runs.js` | 13 |
 | `ui/app.js` | 11 |
-| `ui/watcher-form.js` | 10 |
 | `ui/user/runs.js` | 9 |
-| `ui/admin-repos.js` | 8 |
 | `ui/refinement.js` | 7 |
 | `ui/repos.js` | 7 |
-| `ui/users.js` | 7 |
 | `ui/graph.js` | 5 |
 | `ui/step-types.js` | 5 |
-| `ui/dashboard.js` | 4 |
 | `ui/library.js` | 4 |
-| `ui/problems.js` | 3 |
+| `ui/refinement-import.js` | 4 |
+| `ui/refinement-publish.js` | 4 |
 | `ui/refinement-suggest.js` | 3 |
 | `ui/refinement-impact.js` | 2 |
 | `ui/refinement-talk.js` | 2 |
-| `ui/monitor.js` | 1 |
-| `ui/next.js` | 1 |
+| `ui/dashboard.js` | 1 |
 | `ui/refinement-ready.js` | 1 |

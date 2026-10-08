@@ -95,7 +95,7 @@ function switchRow(m, reload) {
       h("span", { class: "spacer" }),
       h("button", { class: "small", onClick: click }, wantOn ? "Switch the monitor on" : "Switch the monitor off"),
       h("button", { class: "small", title: "Reload", onClick: reload }, "↻")),
-    h("p", { class: "muted", style: { margin: "4px 0 0" } }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
+    h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
 }
 
 function detailRow(f, cache, cols) {
@@ -146,7 +146,7 @@ function findingsTable(m, reload, redraw, cache) {
   const body = rows.flatMap((f) => {
     const row = h("tr", {},
       h("td", {}, SEVERITY[f.severity] ?? f.severity),
-      h("td", {}, f.summary, h("div", { class: "muted", style: { fontSize: "12px" } }, f.detector)),
+      h("td", {}, f.summary, h("div", { class: "muted text-xs" }, f.detector)),
       h("td", {}, when(f.firstSeen)),
       h("td", {}, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`),
       h("td", {}, stateText(f)),
@@ -166,7 +166,7 @@ function detectorsTable(m, reload) {
   const rows = (m.detectors ?? []).map((d) => {
     const mute = (m.mutes ?? []).find((x) => x.kind === "detector" && x.detector === d.name);
     const err = h("span", { class: "status bad" });
-    const inputs = Object.entries(d.thresholds ?? {}).map(([k, v]) => ({ key: k, el: h("input", { type: "number", step: "any", value: String(v), style: { width: "80px" }, "aria-label": `${d.name} ${thresholdLabel(k)}` }), label: thresholdLabel(k) }));
+    const inputs = Object.entries(d.thresholds ?? {}).map(([k, v]) => ({ key: k, el: h("input", { type: "number", step: "any", value: String(v), class: "w-80", "aria-label": `${d.name} ${thresholdLabel(k)}` }), label: thresholdLabel(k) }));
     const save = async () => {
       err.textContent = "";
       const values = {};
