@@ -51,6 +51,8 @@ export async function loadHealth(el) {
       loadHealth(el);
     },
   });
+  last = { health };
+  showHealth(el, document.getElementById("health-btn"), health);
 }
 
 /** Loads the line now, on every page change and every 30 seconds; returns a stop function. */
@@ -59,8 +61,29 @@ export function startHealth(el, { every = REFRESH_MS } = {}) {
   load();
   const timer = setInterval(load, every);
   globalThis.addEventListener?.("hashchange", load);
+  const chip = document.getElementById("health-btn");
+  const toggle = () => {
+    open = !open;
+    if (last) showHealth(el, chip, last.health);
+  };
+  chip?.addEventListener?.("click", toggle);
   return () => {
     clearInterval(timer);
     globalThis.removeEventListener?.("hashchange", load);
+    chip?.removeEventListener?.("click", toggle);
+    open = false;
   };
+}
+
+let open = false; // the person pressed the chip
+let last = null; // { health } of the newest answer
+
+/** Sets the chip in the top bar and hides the line when all is good and it was not asked for. */
+export function showHealth(el, chip, health, isOpen = open) {
+  el.hidden = !!health?.ok && !isOpen;
+  if (!chip) return;
+  chip.hidden = false;
+  chip.textContent = health ? health.summary : "No answer";
+  chip.setAttribute("class", health?.ok ? "health-chip ok" : "health-chip bad");
+  chip.setAttribute("aria-expanded", String(!el.hidden));
 }

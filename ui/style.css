@@ -13,10 +13,7 @@ code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
 .brand { font-weight: 650; text-decoration: none; display: flex; gap: 8px; align-items: center; white-space: nowrap; }
 .logo { color: var(--accent); }
 .brand-short { display: none; }
-.top nav { display: flex; gap: 4px; }
-.top nav a { text-decoration: none; padding: 6px 12px; border-radius: var(--radius-md); color: var(--muted); }
-.top nav a.active { background: var(--panel-2); color: var(--text); }
-.repo { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo { color: var(--muted); font-family: var(--mono); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 body { display: flex; flex-direction: column; }
 body > * { flex: none; }
@@ -28,10 +25,9 @@ body > * { flex: none; }
 .health-repos { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-left: auto; }
 .health-version { flex: 1 1 100%; }
 .user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-small); white-space: nowrap; }
-.signed-out .top nav, .signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
-.top nav a[data-nav="start"] { border: 1px solid var(--border); color: var(--text); }
-.top nav .nav-gap { width: 1px; background: var(--border); margin: 4px 8px; }
-.top nav a.setup { font-size: var(--text-small); opacity: 0.8; }
+.signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
+.top a[data-nav="start"] { border: 1px solid var(--border); color: var(--text); text-decoration: none; padding: 6px 12px; border-radius: var(--radius-md); white-space: nowrap; }
+.top a[data-nav="start"].active { background: var(--panel-2); }
 .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
 .subnav a { text-decoration: none; padding: 4px 10px; border-radius: var(--radius-md); color: var(--muted); }
 .subnav a.active { background: var(--panel-2); color: var(--text); }
@@ -258,7 +254,7 @@ pre.diff .file { font-weight: 700; display: block; }
   aside { border-right: none; border-bottom: 1px solid var(--border); }
   main { padding: min(var(--page-pad-y), var(--space-xl)) min(var(--page-pad-x), var(--space-xl)); }
   .repo { display: none; }
-  .top { gap: 10px; overflow-x: auto; }
+  .top { gap: 10px; }
   .route { grid-template-columns: 1fr 1fr; }
 }
 
@@ -332,7 +328,6 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 
 /* ── the user display (ui/user/) ── */
 .user-display .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; padding-bottom: 6px; }
-.user-display .top nav { flex-wrap: wrap; }
 .user-display .user { margin-left: auto; flex-wrap: wrap; white-space: normal; min-width: 0; }
 .user-display .user > span { overflow-wrap: anywhere; min-width: 0; }
 .user-display main { overflow-wrap: break-word; }

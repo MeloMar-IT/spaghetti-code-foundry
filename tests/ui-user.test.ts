@@ -9,7 +9,8 @@ const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "use
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
-    for (const id of ["main", "user", "modal-root", "toast", "view-as"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "account"]) expect(html).toContain(`id="${id}"`);
+    expect(html).not.toContain("health-btn");
   });
   it("has exactly four links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
@@ -106,5 +107,11 @@ describe("ui/style.css", () => {
     expect(css).toContain(".table-box { overflow-x: auto; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
     expect(css).toContain(".view-bar {");
+  });
+  it("shell.css hides the shell when signed out and turns the sidebar into a drawer on a narrow screen", () => {
+    const shellCss = read("shell.css");
+    expect(shellCss).toContain(".signed-out .side");
+    expect(shellCss).toMatch(/@media \(max-width: 760px\) \{[^@]*\.side \{ display: none; position: fixed;/);
+    expect(shellCss).toContain("body.drawer-open .side");
   });
 });

@@ -50,6 +50,9 @@ export const DESTINATIONS = [
   { id: "administration", label: { admin: "Administration" }, landing: "users", group: "setup", roles: A },
 ];
 
+/** The groups of the sidebar, in order. */
+export const GROUPS = [{ id: "work", label: "Work" }, { id: "setup", label: "Setup" }];
+
 export const ALIASES = [{ from: "#/your-turn", to: "#/home", roles: A }];
 
 const forRole = (role) => (x) => x.roles.includes(role);

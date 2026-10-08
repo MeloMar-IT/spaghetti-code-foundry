@@ -5,7 +5,7 @@ import { renderRefinement } from "/refinement.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { homeHash, renderStart } from "/user/start.js";
-import { showPage } from "/shell.js";
+import { initShell, showPage } from "/shell.js";
 import { beginView } from "/view-as.js";
 
 const main = document.getElementById("main");
@@ -56,6 +56,7 @@ async function route() {
 // and gets the read-only preview. A user ignores it.
 const as = new URLSearchParams(location.search).get("as") || "";
 const me = await enterDisplay("user", { viewAs: as });
+initShell("user", { user: me });
 const view = beginView(as, me, {
   box: document.getElementById("view-as"),
   main,

@@ -6,21 +6,39 @@
   <title>Spaghetti Code Foundry</title>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/shell.css">
 </head>
 <body class="user-display signed-out">
-  <header class="top">
+  <button type="button" id="skip" class="skip">Skip to content</button>
+  <header class="top" id="top">
+    <button type="button" id="menu-btn" class="menu-btn" aria-controls="side" aria-expanded="true" aria-label="Menu"><span aria-hidden="true">☰</span><span id="menu-count" class="badge" hidden></span></button>
     <a class="brand" href="#/runs"><span class="logo">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
-    <nav aria-label="Pages">
+    <span id="page-title" class="page-title"></span>
+    <span class="spacer"></span>
+    <span id="top-actions" class="top-actions">
       <a href="#/start" data-nav="start">Start work</a>
+      <span id="ask-scf" class="ask-scf" hidden></span>
+    </span>
+    <details id="account" class="account">
+      <summary id="account-summary" aria-label="Account"><span id="account-name" class="account-name">Account</span></summary>
+      <span id="user" class="user" hidden></span>
+    </details>
+  </header>
+  <div id="scrim" class="scrim" hidden></div>
+  <div class="shell">
+    <nav id="side" class="side" aria-label="Pages">
+      <button type="button" id="side-close" class="side-close">Close menu</button>
       <a href="#/runs" data-nav="runs">My runs</a>
       <a href="#/repos" data-nav="repos">My repositories</a>
       <a href="#/refinement" data-nav="refinement">Refinement</a>
     </nav>
-    <span id="user" class="user" hidden></span>
-  </header>
-  <nav id="crumbs" class="crumbs" aria-label="Breadcrumb" hidden></nav>
-  <div id="view-as" class="view-bar" hidden></div>
-  <main id="main"></main>
+    <div id="content" class="content">
+      <nav id="crumbs" class="crumbs" aria-label="Breadcrumb" hidden></nav>
+      <div id="view-as" class="view-bar" hidden></div>
+      <main id="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
   <div id="toast"></div>
   <script type="module" src="/user/app.js"></script>
