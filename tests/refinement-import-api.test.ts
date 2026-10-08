@@ -147,6 +147,7 @@ describe("start a session from an issue", () => {
       title: "Export a report",
       body: STORY,
       updatedAt: "2026-02-03T04:05:06.000Z",
+      draft: s.drafts[0].id,
     });
     expect(s.source.body).toContain("<!-- claude-factory refined=0123 -->");
     expect((await call(ann, "GET", `/api/refinement/${s.id}`)).json().source).toEqual(s.source);
@@ -379,13 +380,78 @@ describe("the build label and old data", () => {
     expect(got.json().log[0].what).toBe("created");
   });
 
-  it("does not publish a session that came from an issue", async () => {
-    setIssues(issue(70, { title: "Export", body: STORY }));
-    const id = (await importIssue(70)).json().id;
-    const plan = await call(ann, "GET", `/api/refinement/${id}/publish`);
-    expect(plan.status).toBe(409);
-    expect(plan.error()).toMatch(/#70/);
-    expect((await call(ann, "POST", `/api/refinement/${id}/publish`, {})).status).toBe(409);
-    expect(gh.createdBodies()).toEqual([]);
+});
+
+describe("the draft that stands for the issue", () => {
+  const draftsOf = (id: string) => `/api/refinement/${id}/drafts`;
+  /** Writes the stored session back without the mark, as the 9a build stored it. */
+  const unmark = (id: string) => {
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    delete f.sessions.find((s: any) => s.id === id).source.draft;
+    writeFileSync(refinementsPath(), JSON.stringify(f));
+  };
+  const planOf = async (id: string) => (await call(ann, "GET", `/api/refinement/${id}/publish`)).json();
+
+  it("marks the one draft of a story import", async () => {
+    setIssues(issue(80, { title: "Export", body: STORY }));
+    const s = (await importIssue(80)).json();
+    expect(stored(s.id).source.draft).toBe(s.drafts[0].id);
+  });
+
+  it("marks the first draft made in a plain-text import, and no other", async () => {
+    setIssues(issue(81));
+    const s = (await importIssue(81)).json();
+    expect("draft" in stored(s.id).source).toBe(false);
+    const first = (await call(ann, "POST", draftsOf(s.id))).json().drafts.at(-1).id;
+    expect(stored(s.id).source.draft).toBe(first);
+    await call(ann, "POST", draftsOf(s.id));
+    expect(stored(s.id).source.draft).toBe(first);
+    expect((await call(ann, "GET", `/api/refinement/${s.id}`)).json().source.draft).toBe(first);
+    expect(JSON.stringify((await call(ann, "GET", `/api/refinement/${s.id}`)).json())).not.toContain("pending");
+  });
+
+  it("does not move the mark when the marked draft is dropped and a new one is made", async () => {
+    setIssues(issue(82, { title: "Export", body: STORY }));
+    const s = (await importIssue(82)).json();
+    const marked = s.drafts[0].id;
+    await call(ann, "DELETE", `${draftsOf(s.id)}/${marked}`);
+    await call(ann, "POST", draftsOf(s.id));
+    expect(stored(s.id).source.draft).toBe(marked);
+    expect((await planOf(s.id)).notChanged).toBe(82);
+  });
+
+  it("works out the mark for sessions stored before it existed", async () => {
+    // Untouched, edited: the one draft of a story import is the one.
+    setIssues(issue(83, { title: "Export", body: STORY }), issue(84, { title: "Export", body: STORY }));
+    const a = (await importIssue(83)).json();
+    const b = (await importIssue(84)).json();
+    await call(ann, "PUT", `${draftsOf(b.id)}/${b.drafts[0].id}`, { title: "Export more" });
+    unmark(a.id);
+    unmark(b.id);
+    expect((await call(ann, "GET", `/api/refinement/${a.id}`)).json().source.draft).toBe(a.drafts[0].id);
+    expect((await planOf(a.id)).items[0].updates).toBe(83);
+    expect((await planOf(b.id)).items[0].updates).toBe(84);
+    // Added to: the imported draft is still the first.
+    await call(ann, "POST", draftsOf(a.id));
+    unmark(a.id);
+    expect((await planOf(a.id)).items.filter((x: any) => x.updates !== undefined).map((x: any) => x.draft)).toEqual([a.drafts[0].id]);
+    // Dropped: nothing stands for the issue, and a new draft does not take the mark.
+    await call(ann, "DELETE", `${draftsOf(b.id)}/${b.drafts[0].id}`);
+    await call(ann, "POST", draftsOf(b.id));
+    unmark(b.id);
+    const plan = await planOf(b.id);
+    expect(plan.notChanged).toBe(84);
+    expect(plan.items.some((x: any) => x.updates !== undefined)).toBe(false);
+  });
+
+  it("does not say which draft is meant in a legacy session when the first one is a part", async () => {
+    setIssues(issue(85, { title: "Export", body: STORY }));
+    const s = (await importIssue(85)).json();
+    unmark(s.id);
+    const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
+    f.sessions.find((x: any) => x.id === s.id).drafts[0].part = { of: s.drafts[0].id, n: 1 };
+    // The stored shape of a part is not needed in full: the mark is only worked out from the first draft, which is a part here.
+    const { markOf } = await import("../src/refinement/store.js");
+    expect(markOf(f.sessions.find((x: any) => x.id === s.id))).toBeUndefined();
   });
 });

@@ -360,6 +360,14 @@ export async function createIssue(repo: string, o: { title: string; body: string
   return made;
 }
 
+/** Replaces the title and text of an issue. Title and text go through stdin as JSON, never into the command line. */
+export async function updateIssue(repo: string, issue: number, o: { title: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
+  const out = await gh(["api", `repos/${repo}/issues/${issue}`, "-X", "PATCH", "--input", "-"], undefined, timeoutMs, JSON.stringify({ title: o.title, body: o.body }));
+  const changed = JSON.parse(out.trim()) as RestIssue;
+  if (!changed || changed.number !== issue) throw new Error("GitHub did not report the changed issue");
+  return changed;
+}
+
 /** Makes a label when it is missing; an existing one is left as it is (no --force). Rejects on any other error. */
 export async function createLabelIfMissing(repo: string, name: string, color: string, description: string, timeoutMs?: number): Promise<void> {
   try {

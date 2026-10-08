@@ -74,6 +74,20 @@ const SourceSchema = z
     body: z.string().max(SOURCE_BODY_MAX),
     updatedAt: z.iso.datetime(),
     buildLabel: z.string().min(1).max(100).optional(),
+    /** The draft that stands for the issue: published, it changes the issue. Set at import, or at the first draft of a session without one. */
+    draft: z.uuid().optional(),
+    /** The title and text the issue had right before the Foundry replaced them; kept until the update is recorded, so a retry can still fold them. */
+    pending: z
+      .object({
+        title: z.string().max(SESSION_TITLE_MAX),
+        body: z.string().max(SOURCE_BODY_MAX),
+        /** The draft that replaces the issue, and the title and text (without the marker) it was sent with: a retry finishes from these. */
+        draft: z.uuid().optional(),
+        newTitle: z.string().max(SESSION_TITLE_MAX).optional(),
+        newBody: z.string().max(SOURCE_BODY_MAX).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type IssueSource = z.infer<typeof SourceSchema>;
@@ -292,7 +306,7 @@ export function createSessionFromIssue(owner: string, input: NewIssueSession, op
       repo,
       title,
       idea,
-      source: input.source,
+      source: drafts[0] ? { ...input.source, draft: drafts[0].id } : input.source,
       state: stateOf("exploring", false, drafts, list),
       drafts,
       ...(input.story?.epic !== undefined ? { epic: input.story.epic } : {}),
@@ -717,6 +731,8 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     if (guard.add && s.state === "published") throw new RefinementError("bad-state", "every story draft of this session is on GitHub; start a new session for more");
     const target = guard.draft === undefined ? undefined : s.drafts.find((d) => d.id === guard.draft);
     if (target?.published) throw new RefinementError("bad-state", `${onGithub(target)}; it cannot be changed here`);
+    // The issue was replaced with this draft and the publish is not finished: the draft stays as it was sent until it is.
+    if (target && s.source?.pending?.draft === target.id) throw new RefinementError("bad-state", `this draft replaced issue #${s.source.issue} and its publish is not finished; publish again first`);
     const lock = guard.epic ? s.drafts.find((d) => d.published) : undefined;
     if (lock) throw new RefinementError("bad-state", `${onGithub(lock)}; the Epic cannot be changed any more`);
     const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
@@ -732,7 +748,9 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     if (held) throw new RefinementError("bad-state", `${onGithub(held)} would change by this; it cannot be done here`);
     const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
     const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, c.line.what === "drafts-merged" ? MERGE_DETAIL_MAX : TITLE_MAX) } : {}) }] : [];
-    return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
+    // The first draft of a session from an issue that has none yet stands for the issue; the mark is set once and never moves.
+    const mark = guard.add && s.source && s.source.draft === undefined && !s.drafts.length && drafts[0] && !s.log.some((l) => l.what === "draft-removed") ? { source: { ...s.source, draft: drafts[0].id } } : {};
+    return { ...rest, ...mark, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
 
@@ -788,7 +806,45 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
       const drafts = s.drafts.map((x) => (x === d ? { ...x, published: { issue: issue.issue, url: issue.url, at } } : x));
       const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
       const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
-      return { ...s, drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+      // The update is recorded: the text kept for a retry is not needed any more.
+      const source = s.source?.pending ? (({ pending: _p, ...rest }) => rest)(s.source) : s.source;
+      return { ...s, ...(source ? { source } : {}), drafts, state, updated: at, log: [...s.log, { at, by: actor.id, what: "draft-published", detail: cut(`#${issue.issue} ${d.title?.text ?? ""}`.trim(), TITLE_MAX) }] };
+    },
+    true,
+  );
+}
+
+/**
+ * The draft that stands for the issue a session came from, or undefined when none does. Sessions made since the mark exists have it in
+ * `source.draft`. An older session is worked out from what it kept (nothing is written): it is the first draft, when it is not a part and
+ * no draft was ever removed; else it is not known, and nothing stands for the issue.
+ */
+export function markOf(s: Pick<Session, "source" | "drafts" | "log">): string | undefined {
+  if (!s.source) return undefined;
+  if (s.source.draft !== undefined) return s.source.draft;
+  if (s.log.some((l) => l.what === "draft-removed")) return undefined;
+  const first = s.drafts[0];
+  return first && !first.part ? first.id : undefined;
+}
+
+/** Forgets the pending update (the replacement did not reach GitHub). Only while the session is being published. */
+export function clearPendingUpdate(actor: Actor, id: string, opts: StoreOptions = {}): Session {
+  return change(actor, id, opts, false, (s) => (s.source?.pending ? { ...s, source: (({ pending: _p, ...rest }) => rest)(s.source) } : undefined), true);
+}
+
+/**
+ * Keeps what a retry needs when the replacement of an issue is sent: the title and text the issue has right before, the draft and the text
+ * sent. Only while the session is being published. A record that is there is replaced. The draft cannot be changed until it is recorded.
+ */
+export function recordPendingUpdate(actor: Actor, id: string, old: { title: string; body: string; draft: string; newTitle: string; newBody: string }, opts: StoreOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s) => {
+      if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
+      return { ...s, source: { ...s.source, pending: { ...old } } };
     },
     true,
   );

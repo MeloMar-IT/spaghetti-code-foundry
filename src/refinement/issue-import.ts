@@ -64,7 +64,7 @@ interface Section {
 }
 
 /** The text before the first `### ` heading, and the sections. A heading inside a code fence is not one. */
-function split(text: string): { before: string[]; sections: Section[] } {
+export function splitSections(text: string): { before: string[]; sections: Section[] } {
   const before: string[] = [];
   const sections: Section[] = [];
   // The open fence: its character and how many it has. Only the same character, at least as many, closes it.
@@ -102,7 +102,7 @@ const part = (t: string): string | undefined => (t.trim() === "…" ? undefined 
  */
 export function parseStory(title: string, text: string): StoryFields | undefined {
   const clean = cleanBody(text);
-  const { before, sections } = split(clean);
+  const { before, sections } = splitSections(clean);
   const extras: string[] = [];
 
   // The sentence: the first paragraph of the text before the first heading that is one line and has the three parts.

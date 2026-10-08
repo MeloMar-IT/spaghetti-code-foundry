@@ -81,7 +81,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
 | `ui/refinement-draft.js:437` | confirm | Remove this story draft? | Remove a draft |
 | `ui/refinement-draft.js:543` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
-| `ui/refinement-publish.js:223` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
+| `ui/refinement-publish.js:269` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
 | `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:240` | confirm | Remove this entry from the map? | Remove a map entry |

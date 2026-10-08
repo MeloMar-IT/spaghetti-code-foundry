@@ -43,7 +43,8 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   esac
   echo '{}'; exit 0 ;;
 esac
-# REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create makes that call fail.
+# REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create|update makes that call fail.
+# "api repos/…/issues/<n> -X PATCH --input -" sets the title and body of that issue and logs "--- updated issue <n> (api):" with the JSON from stdin.
 # $FAKE_GH_FAIL_CREATE_AT=<n>: the nth create call (the count is kept in $FAKE_GH_LOG.creates) fails with $FAKE_GH_FAIL_TEXT (default "boom").
 api_fail() { [ "$FAKE_GH_FAIL_API" = "$1" ] && { printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; }; }
 case "$all" in
@@ -62,6 +63,12 @@ case "$all" in
     elif [ -f "$FAKE_GH_LOG.issues.json" ]; then node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).reverse()))' "$FAKE_GH_LOG.issues.json"
     else echo '[]'; fi
     exit 0 ;;
+  # Changes the title and text of an issue of $FAKE_GH_LOG.issues.json from the JSON on stdin (404 when it is not there). $FAKE_GH_FAIL_API=update fails it.
+  "api repos/"*"/issues/"[0-9]*" -X PATCH --input -")
+    api_fail update
+    num=${all#*/issues/}; num=${num%% *}
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}const b=JSON.parse(s);if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;i.updated_at=new Date().toISOString();fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- updated issue "+i.number+" (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$num"
+    exit $? ;;
   "api repos/"*"/issues/"[0-9]*)
     api_fail read
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify(i))' "$FAKE_GH_LOG.issues.json" "${all##*/issues/}"
