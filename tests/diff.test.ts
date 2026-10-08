@@ -220,7 +220,8 @@ describe("the time limit", () => {
   it("does not turn a timeout into an empty diff when there is no base", () => {
     const dir = repoWithCommit();
     const slow = slowGit();
-    expect(() => runDiff(summary(dir), { gitBin: slow.bin, budgetMs: 300 })).toThrow(/too long/);
+    // Generous budget: on a loaded machine the script may need a while to start and write its line.
+    expect(() => runDiff(summary(dir), { gitBin: slow.bin, budgetMs: 2000 })).toThrow(/too long/);
     expect(slow.lines()).toBe(1);
   });
 

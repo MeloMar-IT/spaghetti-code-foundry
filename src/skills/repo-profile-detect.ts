@@ -71,6 +71,19 @@ function jsonDeps(file: string, text: string, sections: string[]): RawFinding[] 
   return out;
 }
 
+/** The Node.js runtime a package.json declares in `engines.node`, as a dependency named `node`. */
+function nodeEngine(file: string, text: string): RawFinding[] {
+  try {
+    const engines = (JSON.parse(text) as { engines?: unknown } | null)?.engines;
+    if (!engines || typeof engines !== "object" || Array.isArray(engines)) return [];
+    const v = (engines as Record<string, unknown>).node;
+    if (typeof v !== "string") return [];
+    return [dep(file, "node", v, "engines")].filter((f): f is RawFinding => f !== undefined);
+  } catch {
+    return [];
+  }
+}
+
 const PEP508 = /^\s*([A-Za-z0-9][A-Za-z0-9._-]{0,100})\s*(?:\[[^\]]{0,100}\])?\s*((?:===|==|>=|<=|~=|!=|<|>)\s*[A-Za-z0-9.*+!_-]{1,40})?/;
 
 function requirement(file: string, spec: string, section: string): RawFinding | undefined {
@@ -171,7 +184,7 @@ export function dependenciesIn(relPath: string, text: string): RawFinding[] {
   try {
     const b = baseName(relPath);
     let out: RawFinding[] = [];
-    if (b === "package.json") out = jsonDeps(b, text, ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]);
+    if (b === "package.json") out = [...jsonDeps(b, text, ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]), ...nodeEngine(b, text)];
     else if (b === "composer.json") out = jsonDeps(b, text, ["require", "require-dev"]);
     else if (b === "go.mod") out = goDeps(b, lines(text));
     else if (b === "Cargo.toml" || b === "pyproject.toml") out = tomlDeps(b, lines(text));
@@ -221,7 +234,24 @@ const jsRoot =(spec: string): string | undefined => {
   return spec.startsWith("@") ? (parts.length > 1 ? `${parts[0]}/${parts[1]}` : undefined) : parts[0];
 };
 
-/** Import roots observed in one source file, e.g. { ecosystem: "npm", module: "@scope/pkg" }. Relative and standard-library roots are left out. */
+/** True when the text ends inside a quote or a comment, so a call that follows it is not code. */
+const inString = (before: string): boolean => /\/\/|\/\*/.test(before) || [`'`, `"`, "`"].some((q) => before.split(q).length % 2 === 0);
+
+/** `require("x")` or `import("x")` in code: not after a comment start or inside a string on the same line. */
+function callImport(l: string): Match | null {
+  const re = /\b(?:require|import)\(\s*['"]([^'"]{1,200})['"]\s*\)/g;
+  for (let m = re.exec(l); m; m = re.exec(l)) {
+    if (!inString(l.slice(0, m.index))) return m as unknown as Match;
+  }
+  return null;
+}
+
+const isNodeBuiltin = (spec: string): boolean => spec.startsWith("node:") || (!spec.startsWith("@") && NODE_BUILTINS.has(spec.split("/")[0] ?? ""));
+
+/**
+ * Import roots observed in one source file, e.g. { ecosystem: "npm", module: "@scope/pkg" }. Relative and
+ * standard-library roots are left out, except that Node built-ins are reported as the single root { ecosystem: "node", module: "node" }.
+ */
 export function importsIn(relPath: string, text: string): { ecosystem: string; module: string }[] {
   const found = new Map<string, { ecosystem: string; module: string }>();
   const add = (ecosystem: string, module: string | undefined) => {
@@ -231,12 +261,22 @@ export function importsIn(relPath: string, text: string): { ecosystem: string; m
   try {
     const ls = lines(text);
     if (JS_EXT.test(relPath)) {
+      let block = false;
       for (const l of ls) {
+        if (block) {
+          block = !l.includes("*/");
+          continue;
+        }
+        const open = l.indexOf("/*");
+        if (open >= 0 && !l.includes("*/", open + 2) && !inString(l.slice(0, open))) block = true;
+        if (/^\s*(?:\/\/|\*|\/\*)/.test(l)) continue;
         const m =
           ex(/^\s*(?:import|export)\s+(?:type\s+)?(?:[^'"]{0,200}?\s+from\s+)?['"]([^'"]{1,200})['"]/, l) ??
           ex(/^\s*\}\s*from\s+['"]([^'"]{1,200})['"]/, l) ??
-          ex(/\b(?:require|import)\(\s*['"]([^'"]{1,200})['"]\s*\)/, l);
-        if (m) add("npm", jsRoot(m[1]));
+          callImport(l);
+        if (!m) continue;
+        if (isNodeBuiltin(m[1])) add("node", "node");
+        else add("npm", jsRoot(m[1]));
       }
     } else if (relPath.endsWith(".py")) {
       for (const l of ls) {

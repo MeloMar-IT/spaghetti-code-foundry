@@ -79,6 +79,15 @@ describe("mono-repository", () => {
   });
 });
 
+describe("Node built-in imports", () => {
+  it("gives one node import finding per folder", () => {
+    const p = buildRepoProfile(make({ "src/a.ts": 'import fs from "node:fs";\n', "src/b.ts": "import path from 'path';\n" }));
+    expect(find(p, "import")).toEqual([
+      expect.objectContaining({ name: "node", value: "node", detector: "import-node", path: "src/a.ts", count: 2 }),
+    ]);
+  });
+});
+
 describe("multiple build systems in one folder", () => {
   it("reports all systems, deployment files and schemas", () => {
     const p = buildRepoProfile(

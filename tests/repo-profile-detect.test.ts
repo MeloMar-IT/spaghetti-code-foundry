@@ -62,6 +62,11 @@ describe("cleanToken", () => {
 });
 
 describe("dependenciesIn", () => {
+  it("reports engines.node as a dependency named node, and no other engine", () => {
+    expect(deps("package.json", JSON.stringify({ engines: { node: ">=20", npm: ">=9" } }))).toEqual(["node >=20"]);
+    expect(deps("package.json", JSON.stringify({ engines: { node: 20 } }))).toEqual([]);
+    expect(deps("package.json", JSON.stringify({ engines: ["node"] }))).toEqual([]);
+  });
   it("reads package.json and composer.json", () => {
     expect(deps("package.json", JSON.stringify({ dependencies: { react: "^18.2.0" }, devDependencies: { vitest: "1.0.0" } }))).toEqual(["react ^18.2.0", "vitest 1.0.0"]);
     expect(deps("composer.json", JSON.stringify({ require: { "laravel/framework": "^10.0" } }))).toEqual(["laravel/framework ^10.0"]);
@@ -125,10 +130,25 @@ describe("importsIn", () => {
       "  q,",
       "} from 'multi';",
     ].join("\n");
-    expect(mods("a.ts", t)).toEqual(["npm:react", "npm:@scope/pkg", "npm:lodash", "npm:zod", "npm:multi"]);
+    expect(mods("a.ts", t)).toEqual(["npm:react", "npm:@scope/pkg", "npm:lodash", "node:node", "npm:zod", "npm:multi"]);
   });
-  it("leaves out Node built-in modules, bare or with node:", () => {
-    expect(mods("a.js", "import fs from 'fs';\nconst p = require('path');\nimport x from 'node:os';\nimport y from 'fs/promises';\nimport z from 'express';")).toEqual(["npm:express"]);
+  it("reports Node built-in modules, bare or with node:, as one node root", () => {
+    expect(mods("a.js", "import fs from 'fs';\nconst p = require('path');\nimport x from 'node:os';\nimport y from 'fs/promises';\nimport z from 'express';")).toEqual(["node:node", "npm:express"]);
+    expect(mods("a.js", "import fs from 'fs';\nimport p from 'path';\nimport o from 'node:os';")).toEqual(["node:node"]);
+  });
+  it("ignores require and import calls in comments and strings", () => {
+    const t = [
+      '// require("fs")',
+      'const a = 1; // require("path")',
+      "/* import('os') */",
+      "/*",
+      " * require('child_process')",
+      " */",
+      "const s = 'require(\"net\")';",
+      'const t = `import("http")`;',
+      "const ok = require('lodash');",
+    ].join("\n");
+    expect(mods("a.js", t)).toEqual(["npm:lodash"]);
   });
   it("reads Python imports, leaving out relative and standard-library ones", () => {
     expect(mods("a.py", "import os, numpy as np\nfrom flask.views import View\nfrom . import x\nfrom .y import z\nimport json\n")).toEqual(["python:numpy", "python:flask"]);
