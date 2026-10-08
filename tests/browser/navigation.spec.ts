@@ -18,6 +18,7 @@ const READY: Record<Role, Record<string, string | RegExp>> = {
     start: "gate",
   },
   user: {
+    home: "Seeded failed run",
     runs: "Seeded succeeded run",
     repos: "acme/app",
     refinement: "Show the build status",
