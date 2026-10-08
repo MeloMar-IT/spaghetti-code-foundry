@@ -287,6 +287,39 @@ describe("gitflow pipeline", () => {
     expect(runOf("7")!.history.find((h) => h.id === "baseline_tests")!.output).not.toContain("not run again");
   });
 
+  it("tests the merge ahead of its turn at develop; an unchanged develop is then pushed without a second run", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("succeeded");
+    const ids = run.history.map((h) => h.id);
+    expect(ids.indexOf("pretest_merge")).toBeGreaterThan(ids.indexOf("push_feature"));
+    expect(ids.indexOf("pretest_merge")).toBeLessThan(ids.indexOf("merge_develop"));
+    const ahead = run.history.find((h) => h.id === "pretest_merge")!.output;
+    expect(ahead).toContain("tested ahead: feature/5-add-a-feature merged with develop");
+    expect(ahead).not.toContain("not run again");
+    // develop did not move: the merge gives exactly the tested code.
+    expect(run.history.find((h) => h.id === "test_develop")!.output).toContain("not run again: this exact code already passed these tests");
+    expect(run.history.find((h) => h.id === "push_develop")!.output).toContain("PUSHED: develop");
+  });
+
+  it("inside a story the quick tests run when set; before the change and on the merge the full tests run", async () => {
+    issues(5);
+    await watcher({ quick_test_cmd: "echo QUICK-ONLY", test_cmd: "echo FULL-SUITE" }).tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status).toBe("succeeded");
+    const out = (id: string) => run.history.find((h) => h.id === id)!.output;
+    expect(out("run_tests")).toContain("the quick tests of this story");
+    expect(out("run_tests")).toContain("$ echo QUICK-ONLY");
+    expect(out("run_tests")).not.toContain("$ echo FULL-SUITE");
+    for (const id of ["baseline_tests", "pretest_merge"]) {
+      expect(out(id), id).toContain("$ echo FULL-SUITE");
+      expect(out(id), id).not.toContain("QUICK-ONLY");
+    }
+  });
+
   it("does not lock docs or whole test folders", () => {
     const dir = mkdtempSync(join(tmpdir(), "lockign-"));
     writeFileSync(join(dir, "run.json"), JSON.stringify({ status: "running" }));

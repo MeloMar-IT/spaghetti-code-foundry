@@ -1,0 +1,89 @@
+#!/usr/bin/env node
+// Runs a command while holding one of a few "test slots", so that only a few heavy test runs
+// work on this machine at the same time (several stories testing at once make every run slow and
+// timing-sensitive tests fail).
+//   test-slot <slots-dir> <command> [args…]
+// The command's output and exit code pass through unchanged. A slot is a folder <slots-dir>/slot-N
+// with the pid of its holder; the slot of a process that is gone is taken over. If no slot comes
+// free in time, the command runs anyway — waiting must never stop a story.
+// Env: FACTORY_VAR_TEST_SLOTS (how many at once; default 2, 0 = no limit),
+//      FACTORY_TEST_SLOT_WAIT_SEC (longest wait; default 5400), FACTORY_TEST_SLOT_POLL_MS (default 2000).
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const [dir, cmd, ...args] = process.argv.slice(2);
+if (!dir || !cmd) {
+  console.error("usage: test-slot <slots-dir> <command> [args…]");
+  process.exit(2);
+}
+const num = (v, d) => (/^\d+$/.test(v ?? "") ? Number(v) : d);
+const slots = num(process.env.FACTORY_VAR_TEST_SLOTS, 2);
+const waitMs = num(process.env.FACTORY_TEST_SLOT_WAIT_SEC, 5400) * 1000;
+const pollMs = num(process.env.FACTORY_TEST_SLOT_POLL_MS, 2000);
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+/** Take a free slot, or the slot of a holder that is gone. Returns its folder, or undefined. */
+function take() {
+  for (let i = 1; i <= slots; i++) {
+    const slot = join(dir, `slot-${i}`);
+    try {
+      mkdirSync(slot);
+    } catch {
+      let pid = NaN;
+      try {
+        pid = Number(readFileSync(join(slot, "pid"), "utf8"));
+      } catch { /* just taken by another process, its pid is not written yet */ }
+      if (Number.isNaN(pid) || alive(pid)) continue;
+      // The holder is gone: clear its slot; whoever makes the folder first gets it.
+      rmSync(slot, { recursive: true, force: true });
+      try {
+        mkdirSync(slot);
+      } catch {
+        continue;
+      }
+    }
+    writeFileSync(join(slot, "pid"), String(process.pid));
+    return slot;
+  }
+  return undefined;
+}
+
+let slot;
+if (slots > 0) {
+  mkdirSync(dir, { recursive: true });
+  const start = Date.now();
+  let said = false;
+  while (!(slot = take())) {
+    if (Date.now() - start >= waitMs) {
+      console.log(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s — running anyway`);
+      break;
+    }
+    if (!said) console.log(`test-slot: ${slots} test run(s) are already working on this machine — waiting for a free slot`);
+    said = true;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  if (said && slot) console.log(`test-slot: got a slot after ${Math.round((Date.now() - start) / 1000)} s`);
+}
+const release = () => {
+  if (slot) rmSync(slot, { recursive: true, force: true });
+  slot = undefined;
+};
+const child = spawn(cmd, args, { stdio: "inherit" });
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { child.kill(sig); });
+child.on("error", (e) => {
+  release();
+  console.error(`test-slot: cannot run ${cmd}: ${e.message}`);
+  process.exit(127);
+});
+child.on("exit", (code, signal) => {
+  release();
+  process.exit(code ?? (signal ? 1 : 0));
+});
