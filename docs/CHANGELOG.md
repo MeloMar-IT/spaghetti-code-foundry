@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Guide screenshots 1 — capture tool, manifest helpers and the first seven guide images (#410).
+  - **Command.** `npm run test:ui -- --grep @guide` writes `docs/images/<name>.png` (1440×900, light theme) for `sign-in`, `board`, `runs`, `flows`, `flow-yaml`, `library` and `models`. Plain `npm run test:ui` does not register these tests (`UI_GUIDE`, set by the config).
+  - **Private data.** Host paths are rewritten to demo paths in every text, title and field before the shot, and a guard fails the capture when a temporary folder, the home folder or the checkout is still on the page (checked before and after the screenshot). The `models` shot uses a fixed `/api/providers` answer, so it does not show the host's agents or local model servers.
+  - **Flows.** `flows` and `flow-yaml` show the built-in `issue-gitflow`.
+  - **Code.** `scripts/screenshots/shots.ts` (`fillPath`, `splitPath`, `demoPath`, `imageLinks`, name and path checks, `SHOTS`), `tests/browser/guide-prepare.ts`, `tests/browser/guide-shots.spec.ts` (new), `tests/browser/paths.ts`, `tests/browser/playwright.config.ts`. Tests: `tests/screenshot-manifest.test.ts`.
+  - The guides are not edited in this part.
 - Skill runtime 1 — persist a versioned skill lock in run state (#176).
   - **Lock.** At the first agent step after a checked, ready plan, the run resolves the plan's skill request (role `coder`) and writes `<run folder>/skill-lock.json` (mode 0600, atomic, version 1). Per skill: id, version, digest, source (`admin` or `builtin`, never a path), role, selection reason, the planner's reason and evidence, `requiredBy` and context estimate. Per lock: plan hash, repository commit (when readable), total estimate. The lock is made once per plan and never resolved again, so a resume uses the pinned versions, not the registry's current defaults.
   - **No private data.** Free text that looks like a host path or a secret is left out; `issue:` evidence is kept only as a number (or `issue:omitted`), so no issue text is stored. Code: `src/skills/run-lock.ts` (new), `src/engine/skill-lock.ts` (new).
