@@ -407,7 +407,8 @@ describe("Edit and accept", () => {
   it("sends the changed text", async () => {
     await seed();
     await press(button("Edit and accept", box("what")));
-    expect(dialog()!.attrs["aria-label"]).toBe("Edit and accept");
+    const titleId = dialog()!.attrs["aria-labelledby"];
+    expect(walk(dialog()!).find((e) => e.attrs.id === titleId)?.textContent).toBe("Edit and accept");
     const area = walk(dialog()!).find((e) => e.tag === "textarea")!;
     expect(area.value).toBe("to export");
     type(area, "to export it");

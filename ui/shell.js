@@ -101,13 +101,10 @@ export function initShell(role, { user, store = safeStore(), media = globalThis.
     try { store.setItem("scf-side", ctl.collapsed ? "closed" : "open"); } catch { /* the choice lasts until reload */ }
     ctl.apply();
   });
-  on(el("scrim"), "click", () => ctl.closeDrawer(el("menu-btn")));
+  // The scrim is a backdrop, not a control: it takes the mouse or a tap; the keyboard uses Escape or the menu button.
+  on(el("scrim"), "mousedown", () => ctl.closeDrawer(el("menu-btn")));
   // Any link in the sidebar closes the drawer, also the one for the page that is already open (no hash change then).
-  on(el("side"), "click", (e) => {
-    const t = e?.target;
-    const link = t?.closest ? t.closest("a[href]") : t?.getAttribute?.("href") != null ? t : null;
-    if (ctl.drawer && link) ctl.closeDrawer(el("main"));
-  });
+  for (const link of links()) on(link, "click", () => { if (ctl.drawer) ctl.closeDrawer(el("main")); });
   on(el("side-close"), "click", () => ctl.closeDrawer(el("menu-btn")));
   on(document, "keydown", (e) => {
     if (!ctl.drawer) return;

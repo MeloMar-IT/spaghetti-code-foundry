@@ -258,7 +258,7 @@ describe("initShell, narrow", () => {
   it("a scrim click or any sidebar link closes it, also the link of the open page", () => {
     start();
     byId("menu-btn").click();
-    byId("scrim").click();
+    byId("scrim").fire("mousedown");
     expect(doc().body.classList.contains("drawer-open")).toBe(false);
     byId("menu-btn").click();
     links[1]!.click();

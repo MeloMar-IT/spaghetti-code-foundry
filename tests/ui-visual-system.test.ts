@@ -260,7 +260,7 @@ describe("ui/style.css", () => {
   });
 
   it("draws the focus indicators with --color-focus", () => {
-    expect(rule(style, "input:focus, select:focus, textarea:focus")).toMatch(/outline: 2px solid var\(--color-focus\)[^;]*;\s*border-color: var\(--color-focus\)/);
+    expect(rule(style, "input:focus-visible, select:focus-visible, textarea:focus-visible")).toMatch(/outline: 2px solid var\(--color-focus\)[^;]*;\s*border-color: var\(--color-focus\)/);
     expect(rule(style, "a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible")).toContain("var(--color-focus)");
   });
 });

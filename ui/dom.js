@@ -58,17 +58,21 @@ export function debounce(fn, ms) {
 let toastTimer;
 export function toast(msg, kind = "info") {
   const el = document.getElementById("toast");
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
   el.textContent = msg;
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (el.className = ""), 3500);
 }
 
+let modalSeq = 0;
+
 /** Show a modal; `build(close)` returns its content. Resolves with the value passed to close(). */
 export function modal(title, build, { busy = () => false } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById("modal-root");
     const opener = document.activeElement;
+    const titleId = `modal-title-${++modalSeq}`;
     let closed = false;
     const close = (v) => {
       // A dialog can finish its work after Escape closed it: a second call must not touch a newer dialog.
@@ -91,8 +95,8 @@ export function modal(title, build, { busy = () => false } = {}) {
       }
     };
     document.addEventListener("keydown", onKey);
-    const box = h("div", { class: "modal", role: "dialog", "aria-label": title, "aria-modal": "true", tabindex: "-1" },
-      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, "✕")),
+    const box = h("div", { class: "modal", role: "dialog", "aria-labelledby": titleId, "aria-modal": "true", tabindex: "-1" },
+      h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, "✕")),
       build(close));
     mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
     (box.querySelector("textarea, input") ?? box).focus();
