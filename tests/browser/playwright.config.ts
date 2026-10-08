@@ -5,6 +5,7 @@ export const MAX_DIFF_PIXEL_RATIO = 0.001;
 
 // The config is loaded in the main process first; the workers inherit this, so every process registers the same visual tests.
 process.env.UI_UPDATING ??= process.argv.some((a) => a === "-u" || a.startsWith("--update-snapshots")) ? "1" : "0";
+process.env.UI_GUIDE ??= process.argv.some((a) => a.includes("@guide")) ? "1" : "0";
 
 // No baseURL: the port is only known after the global setup has started the server; the helpers use the seed address.
 export default defineConfig({
