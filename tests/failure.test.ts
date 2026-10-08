@@ -58,6 +58,7 @@ describe("classifyFailure", () => {
     [[NO_COMMIT_IDENTITY], "the account that owns the run is gone", "set the bot name and e-mail in Settings, then resume the run"],
     [[SIGN_IN_NOT_REMOVED], "the sign-in folder of the run could not be removed", 'ask an admin to delete the folder "sign-in" in the run folder, then resume the run'],
     [["skill integrity: a@1.0.0 is missing; this run locked it (sha256:x)", "skill integrity: the skill lock of this run is missing or was changed"], "a skill this run locked is missing or changed", "restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills"],
+    [["skill selection is blocked: a@1.0.0 does not fit the skill context budget (skills.selection.max_tokens)"], "a mandatory skill does not fit the skill context budget", "raise skills.selection.max_tokens, then resume the run"],
     [["skill selection is blocked: a (unpinned)"], "a mandatory skill cannot be used", "pin the skill or change skills.selection.include, then resume the run"],
   ])("is factory for the sentences of a deploy key, the GitHub App or a skill lock: %#", (errors, what, fix) => {
     for (const error of errors) {

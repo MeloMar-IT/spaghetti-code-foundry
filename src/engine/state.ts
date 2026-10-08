@@ -28,6 +28,8 @@ export interface StepRecord {
   retried?: { blips: number; models: number };
   /** Tool calls Claude Code refused (at most 5), e.g. "Bash: mkdir out". */
   denied?: string[];
+  /** Foundry skills given to this Claude session: `id@version` in load order, and the size of the block. Absent without a current skill lock. */
+  skills?: { loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number };
   startedAt: string;
   durationMs: number;
   logFile: string;
