@@ -9,20 +9,36 @@ export interface DepIssue {
 
 const HEADER = /^[ \t]*(?:#{1,6}[ \t]*|\*\*)?(?:depends[ \t]+on|blocked[ \t]+by)\b[*:\s]*(.*)$/im;
 
-/** The text of the "Depends on" line or section (up to the next heading), or "". */
+/** The text of the "Depends on" line or section (up to the next heading), or "". Exactly the piece of the body that dependencyRange names. */
 export function dependencyText(body: string): string {
-  const m = HEADER.exec(body ?? "");
-  if (!m) return "";
-  const rest = body.slice(m.index + m[0].length).split("\n");
-  const lines = [m[1] ?? ""];
-  for (const line of rest.slice(1)) {
-    if (/^\s*#{1,6}\s/.test(line) || /^\s*\*\*[^*]+\*\*\s*$/.test(line)) break;
-    lines.push(line);
-  }
-  return lines.join("\n").trim().slice(0, 1000);
+  const text = body ?? "";
+  const r = dependencyRange(text);
+  return r ? text.slice(r.start, r.end) : "";
 }
 
-const norm = (s: string) =>
+/** The source of the pattern for a "#12" reference: not part of a longer word or "owner/repo#12". */
+export const DEP_REF_SOURCE = "(?<![\\w/])#(\\d+)\\b";
+
+/** Where the "Depends on" text is in the body (what dependencyText gives), or undefined without a header. At most 1000 characters. */
+export function dependencyRange(body: string): { start: number; end: number } | undefined {
+  const text = body ?? "";
+  const m = HEADER.exec(text);
+  if (!m) return undefined;
+  const headEnd = m.index + m[0].length;
+  const first = headEnd - (m[1] ?? "").length;
+  const rest = text.slice(headEnd).split("\n");
+  let pos = headEnd + rest[0]!.length;
+  for (const line of rest.slice(1)) {
+    if (/^\s*#{1,6}\s/.test(line) || /^\s*\*\*[^*]+\*\*\s*$/.test(line)) break;
+    pos += 1 + line.length;
+  }
+  const raw = text.slice(first, pos);
+  const start = first + (raw.length - raw.trimStart().length);
+  const full = first + raw.trimEnd().length;
+  return { start, end: Math.max(start, Math.min(full, start + 1000)) };
+}
+
+const norm =(s: string) =>
   s.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** Issue numbers this body depends on: "#12" references, and items matching another issue's title. */
@@ -30,7 +46,7 @@ export function dependencies(body: string, self: number, all: DepIssue[]): numbe
   const text = dependencyText(body);
   if (!text) return [];
   const found = new Set<number>();
-  for (const m of text.matchAll(/(?<![\w/])#(\d+)\b/g)) found.add(Number(m[1]));
+  for (const m of text.matchAll(new RegExp(DEP_REF_SOURCE, "g"))) found.add(Number(m[1]));
   const titles = all.map((i) => ({ n: i.number, t: norm(i.title) })).filter((i) => i.t.length >= 3);
   const selfTitle = ` ${norm(all.find((i) => i.number === self)?.title ?? "")} `;
   for (const raw of text.split(/[;\n]/)) {

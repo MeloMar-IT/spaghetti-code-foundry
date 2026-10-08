@@ -59,6 +59,11 @@ case "$all" in
     exit 0 ;;
   "api repos/"*"/issues?"*)
     api_fail list
+    # A real page= parameter (not the one inside per_page=): filter by state=open, sort by number, slice.
+    case "$all" in *"?page="*|*"&page="*)
+      node -e 'const fs=require("fs");const f=process.argv[1];let l=process.env.FAKE_GH_BUG_ISSUES?JSON.parse(process.env.FAKE_GH_BUG_ISSUES):fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const a=process.argv[2];const q=new URLSearchParams(a.slice(a.indexOf("?")+1));if(q.get("state")==="open")l=l.filter(x=>x.state==="open");l=l.slice().sort((x,y)=>x.number-y.number);const pp=Number(q.get("per_page")||30),p=Number(q.get("page"));console.log(JSON.stringify(l.slice((p-1)*pp,p*pp)))' "$FAKE_GH_LOG.issues.json" "$2"
+      exit 0 ;;
+    esac
     if [ -n "$FAKE_GH_BUG_ISSUES" ]; then printf '%s\n' "$FAKE_GH_BUG_ISSUES"
     elif [ -f "$FAKE_GH_LOG.issues.json" ]; then node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).reverse()))' "$FAKE_GH_LOG.issues.json"
     else echo '[]'; fi
@@ -67,7 +72,7 @@ case "$all" in
   "api repos/"*"/issues/"[0-9]*" -X PATCH --input -")
     api_fail update
     num=${all#*/issues/}; num=${num%% *}
-    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}const b=JSON.parse(s);if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;i.updated_at=new Date().toISOString();fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- updated issue "+i.number+" (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$num"
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i){console.error("gh: Not Found (HTTP 404)");process.exit(1)}const b=JSON.parse(s);if(b.title!==undefined)i.title=b.title;if(b.body!==undefined)i.body=b.body;const now=new Date().toISOString();if(b.state!==undefined){i.state=b.state;i.state_reason=b.state_reason??(b.state==="closed"?"completed":null);i.closed_at=b.state==="closed"?now:null}i.updated_at=now;fs.writeFileSync(f,JSON.stringify(l));fs.appendFileSync(process.env.FAKE_GH_LOG,"--- "+(b.state!==undefined?"closed":"updated")+" issue "+i.number+" (api):\n"+s+"\n--- end issue\n");console.log(JSON.stringify(i))})' "$FAKE_GH_LOG.issues.json" "$num"
     exit $? ;;
   "api repos/"*"/issues/"[0-9]*)
     api_fail read
