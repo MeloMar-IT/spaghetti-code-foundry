@@ -114,6 +114,7 @@ export function installFakeDom(): () => void {
   const listeners: Record<string, Listener[]> = {};
   g.document = {
     body: make("body"),
+    documentElement: make("html"),
     createElement: make,
     createElementNS: (_ns: string, tag: string) => make(tag),
     getElementById: (id: string) => byId.get(id) ?? byId.set(id, make("div")).get(id),

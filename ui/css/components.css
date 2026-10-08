@@ -43,6 +43,8 @@ a.pill.refinement:hover { text-decoration: underline; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .seg button { border: none; border-radius: var(--radius-none); padding: 5px 12px; }
 .seg button.on { background: var(--panel-2); font-weight: 600; }
+.prefs { display: grid; gap: var(--space-lg); }
+.prefs .seg { justify-self: start; flex-wrap: wrap; }
 .status { font-size: var(--text-small); }
 .status.ok { color: var(--ok); }
 .status.bad { color: var(--fail); }

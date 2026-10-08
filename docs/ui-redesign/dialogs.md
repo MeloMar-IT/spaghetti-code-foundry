@@ -4,7 +4,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 
 Three mechanisms draw a dialog:
 
-- **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 23 sites in 14 files.
+- **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 24 calls in 12 files (second table).
 
@@ -21,6 +21,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
 | `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
+| `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
