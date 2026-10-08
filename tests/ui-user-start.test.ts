@@ -404,20 +404,6 @@ describe("renderStart: fields and start", () => {
   });
 });
 
-describe("homeHash", () => {
-  const home = (runs: unknown, queue: unknown) => ui.homeHash({ runs: async () => runs, queue: async () => queue });
-  it("is Start work only with no runs and nothing queued or running", async () => {
-    expect(await home([], { pending: [], active: [] })).toBe("#/start");
-    expect(await home([{ runId: "r" }], { pending: [], active: [] })).toBe("#/runs");
-    expect(await home([], { pending: [{ runId: "r" }], active: [] })).toBe("#/runs");
-    expect(await home([], { pending: [], active: [{ runId: "r" }] })).toBe("#/runs");
-  });
-  it("is My runs when a call fails", async () => {
-    expect(await ui.homeHash({ runs: async () => { throw new Error("x"); }, queue: async () => ({ pending: [], active: [] }) })).toBe("#/runs");
-    expect(await ui.homeHash({ runs: async () => [], queue: async () => { throw new Error("x"); } })).toBe("#/runs");
-  });
-});
-
 describe("helpers", () => {
   it("githubRepos keeps records with a github name", () => {
     expect(ui.githubRepos([repo("1", "a/a"), repo("2"), { id: "3", github: "" }]).map((r: any) => r.id)).toEqual(["1"]);

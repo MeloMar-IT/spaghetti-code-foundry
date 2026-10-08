@@ -60,7 +60,7 @@ export function sinceView(data, { onDismiss }) {
   };
   const group = (g) => h("div", { class: "since-group" },
     h("b", {}, g.label),
-    g.id === "waiting" ? h("a", { href: "#/your-turn", class: "hold-link" }, "Your turn") : null,
+    g.id === "waiting" ? h("a", { href: "#/home", class: "hold-link" }, "Needs you") : null,
     h("ul", { class: "holds" },
       ...g.items.map(entry),
       g.count > g.items.length ? h("li", { class: "muted" }, `+${g.count - g.items.length} more`) : null));

@@ -19,9 +19,9 @@ const navLinks = (html: string) => [...html.matchAll(/<a href="([^"]+)" data-nav
 const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : []));
 
 describe("the navigation lists", () => {
-  it("has seven primary destinations for an admin, three for a user, and one action each", () => {
+  it("has seven primary destinations for an admin, four for a user, and one action each", () => {
     expect(ia.primaryFor("admin").map((p: any) => p.id)).toEqual(["home", "board", "refinement", "runs", "repos", "flows", "administration"]);
-    expect(ia.primaryFor("user").map((p: any) => p.label)).toEqual(["My runs", "My repositories", "Refinement"]);
+    expect(ia.primaryFor("user").map((p: any) => p.label)).toEqual(["Home", "My runs", "My repositories", "Refinement"]);
     for (const role of ["admin", "user"]) {
       expect(ia.primaryFor(role).length).toBeLessThanOrEqual(ia.MAX_PRIMARY);
       expect(ia.actionsFor(role).map((a: any) => a.href)).toEqual(["#/start"]);
@@ -96,14 +96,15 @@ describe("resolve for a user", () => {
   const r = (h: any) => ia.resolve("user", h);
 
   it("agrees with isUserHash", () => {
-    for (const h of ["#/start", "#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) {
+    for (const h of ["#/home", "#/start", "#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) {
       expect(auth.isUserHash(h), h).toBe(true);
       expect(r(h), h).toMatchObject({ hash: h, redirected: false });
     }
+    expect(r("#/home").title).toBe("Home");
   });
 
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/home", "#/your-turn", "#/board"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/your-turn", "#/board"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
   });
 
   it("builds crumbs", () => {

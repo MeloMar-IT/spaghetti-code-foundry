@@ -291,6 +291,19 @@ a.btn.primary:hover { filter: brightness(1.06); }
 .since .since-body { display: contents; }
 .since-group { display: grid; gap: 2px; }
 .since-note { flex-basis: 100%; font-size: var(--text-small); }
+.home-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); margin-bottom: var(--space-lg); }
+.home-head h1 { margin: 0; }
+.home-section { margin-bottom: var(--space-xl); }
+.home-section > h2 { margin: 0 0 var(--space-sm); }
+.home-list { list-style: none; margin: 0; padding: 0; }
+.home-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px dashed var(--border); }
+.home-row:first-child { border-top: none; }
+.home-row .home-main { flex: 1 1 320px; display: grid; gap: 2px; min-width: 0; }
+.home-row .home-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.home-clear { color: var(--muted); padding: var(--space-sm) 0; text-align: left; }
+details.home-section > summary { cursor: pointer; font-weight: 600; }
+.home .since { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-xl); }
+.home-ask { margin-bottom: var(--space-xl); }
 
 /* Status names with a "?" (ui/next.js) */
 .help { display: contents; }
