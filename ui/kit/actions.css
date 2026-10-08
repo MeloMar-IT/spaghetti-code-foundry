@@ -52,3 +52,4 @@
 .scf-link { color: var(--color-accent); text-decoration: underline; }
 .scf-link:hover, .scf-link:focus-visible { color: var(--color-accent); text-decoration: underline; }
 .scf-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-link--disabled, .scf-link--disabled:hover { color: var(--color-disabled); text-decoration: none; cursor: not-allowed; }

@@ -28,10 +28,19 @@ export function iconButton({ icon: name, label, variant = "ghost", class: cls, .
   return button({ ...more, variant, class: cx("scf-btn--icon", cls), "aria-label": label, title: label }, iconNode(name));
 }
 
-/** An `<a href>`. `external` opens a new tab without handing over the opener. */
-export function link({ href, external = false, class: cls, ...more } = {}, ...children) {
+/**
+ * An `<a href>`. `external` opens a new tab without handing over the opener. `disabled` drops the href (so it is
+ * no longer a link target or a tab stop) and sets aria-disabled.
+ */
+export function link({ href, external = false, disabled = false, class: cls, ...more } = {}, ...children) {
   rest(more);
   if (typeof href !== "string" || href.trim() === "") throw new Error("a link needs an href");
+  if (disabled === true) {
+    // No href, no caller handler, no tab stop; a click (or Enter) goes nowhere.
+    const { onClick, onKeydown, onKeyDown, onKeyup, onKeyUp, onMousedown, onPointerdown, ...inert } = more;
+    const stop = (e) => { e?.preventDefault?.(); e?.stopPropagation?.(); };
+    return h("a", { ...inert, role: "link", tabindex: "-1", "aria-disabled": "true", class: cx("scf-link", "scf-link--disabled", cls), onClick: stop }, children);
+  }
   return h("a", {
     ...more,
     href,

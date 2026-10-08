@@ -2576,8 +2576,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 
 | Command | What it does |
 |---|---|
-| `scf ui [--port 4777] [--no-open]` | Web UI, queue and watchers. Restarts itself when a new build is installed and no run is active (set `SCF_NO_SUPERVISE=1` to turn that off) |
-| `scf serve [--port 4777]` | The same without opening a browser |
+| `scf ui [--port 4777] [--no-open] [--dev]` | Web UI, queue and watchers. Restarts itself when a new build is installed and no run is active (set `SCF_NO_SUPERVISE=1` to turn that off) |
+| `scf serve [--port 4777] [--dev]` | The same without opening a browser. `--dev` (also on `scf ui`) serves the component gallery at `/gallery/` for developers; leave it off in normal use |
 | `scf service install \| uninstall \| status` | Run `scf serve` in the background (macOS) |
 | `scf run <flow> --task "…" [--var k=v] [--repo dir]` | Run a flow |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
