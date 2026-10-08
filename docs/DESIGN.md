@@ -498,7 +498,7 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
 | `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
 | `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
-| `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`. |
+| `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
 | `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
 
 **Where a new rule goes.**
@@ -520,6 +520,21 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
 | `--layer-menu` | 40 | the account menu, `.scrim`, the drawer sidebar (+1) |
 | `--layer-overlay` | 50 | `.backdrop`, and so every `.modal` |
 | `--layer-toast` | 60 | `#toast`, `.skip` |
+
+**Utility classes.** Defined once in `ui/css/utilities.css`; each has exactly the declarations of the inline style it replaces. Build the class string in place with `h()`, for example `class: "row tight text-sm mt-8"`. There is no `style` helper.
+
+| Group | Classes |
+|---|---|
+| Stacking | `.stack` (grid, gap 12px), `.stack.tight` (gap 6px), `.row.tight` (gap 6px), `.row.tighter` (gap 4px), `.row.center` |
+| Margin and padding | `.flush` (margin 0), `.mt-4/6/8/10/16/22`, `.mt-neg-6`, `.mb-4/6/8/10/12/14/16`, `.mx-12`, `.px-12` |
+| Width | `.fit` (auto), `.full` (100%), `.w-70`, `.w-80`, `.w-90`, `.maxw-520` |
+| Text size | `.text-sm` 12.5px, `.text-xs` 12px, `.text-2xs` 11.5px, `.text-3xs` 11px (built from the type tokens) |
+| Text flow | `.pre-wrap`, `.wrap-anywhere`, `.break-all`, `.select-all`, `.block` |
+| Grid | `.span-all` (`grid-column: 1 / -1`) |
+
+`.flush` comes before the margin classes, so `flush mt-4` gives `margin: 4px 0 0`. A compound margin such as `4px 12px` becomes `mt-4 mb-4 mx-12`.
+
+**Inline style only for values computed from data.** Use a utility class for any fixed value. Use `style:` or `.style.` only when the value comes from data, such as the chart tip position and the rate bar width in `ui/dashboard.js`. To show or hide a part, set the `hidden` property; `ui/css/reset.css` has `[hidden] { display: none !important; }` so it also works on `.field` and other grid elements. `tests/ui-inline-styles.test.ts` lists every `style:` and `.style.` in `ui/**/*.js`, fails for a cleaned file unless the line is on its allow-list with a reason, and checks that every utility class used exists in the CSS.
 
 **Content widths.** `--size-form` (640px, in `ui/tokens.css`) is used by `.start-form` and `.modal`; `.modal:has(.block-grid)` is 900px.
 

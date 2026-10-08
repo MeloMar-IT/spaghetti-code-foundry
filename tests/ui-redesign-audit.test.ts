@@ -236,12 +236,17 @@ describe("the dialogs match the code", () => {
 });
 
 describe("inline styles", () => {
-  it("names every file with 10 or more style: uses", () => {
-    const text = sectionText(inventory, "## Inline styles");
-    expect(text.length).toBeGreaterThan(0);
-    const heavy = uiFiles().filter((f) => count(read(f), /style\s*:/g) >= 10);
-    expect(heavy.length).toBeGreaterThanOrEqual(5);
-    for (const f of heavy) expect(text, f).toContain(f);
+  it("lists every file with a style: use and its count, both ways", () => {
+    const table: Record<string, number> = {};
+    for (const r of tableRows(inventory, "## Inline styles")) table[code(r[0]!)] = Number(r[1]);
+    const source: Record<string, number> = {};
+    for (const f of uiFiles()) {
+      const n = count(read(f), /style\s*:/g);
+      if (n > 0) source[f] = n;
+    }
+    expect(table).toEqual(source);
+    const total = Object.values(source).reduce((a, b) => a + b, 0);
+    expect(sectionText(inventory, "## Inline styles")).toContain(`Total ${total} in ${Object.keys(source).length} files.`);
   });
 });
 

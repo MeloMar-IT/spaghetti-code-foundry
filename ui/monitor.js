@@ -34,7 +34,7 @@ export function storyCell(story, needsYou) {
 export function muteForm(target, detectors, { notProblem = false } = {}) {
   const what = target.finding ? "this finding" : "this detector";
   return modal(notProblem ? "This is not a problem" : target.finding ? "Mute a finding" : "Mute a detector", (close) => {
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const detector = target.detector === undefined && target.pick
       ? h("select", {}, (detectors ?? []).map((d) => h("option", { value: d.name }, d.name)))
       : null;

@@ -85,13 +85,13 @@ export async function copyText(clipboard, value) {
 }
 
 const f = (label, el) => h("label", { class: "field" }, h("span", {}, label), el);
-const stack = (...nodes) => h("div", { style: { display: "grid", gap: "12px" } }, ...nodes);
-const para = (t) => h("p", { style: { margin: 0 } }, t);
+const stack = (...nodes) => h("div", { class: "stack" }, ...nodes);
+const para = (t) => h("p", { class: "flush" }, t);
 
 /** The one-time link: a read-only field to select, a Copy button, and what the admin has to do with it. */
 function linkView(link, user, page, onDone) {
   const field = h("input", { name: "link", class: "mono", readonly: true, value: link, onFocus: (e) => e.currentTarget.select?.() });
-  const note = h("p", { class: "status", style: { margin: 0 } });
+  const note = h("p", { class: "status flush" });
   return stack(
     para("This link works once, for 24 hours. Send it to the user yourself: the Foundry does not send it."),
     blockedLinkText(user) ? para(blockedLinkText(user)) : null,
@@ -114,7 +114,7 @@ function callDialog({ title, body, label, danger = false, prepare, done }) {
   let pending = null;
   let closed = false;
   const shown = modal(title, (close) => {
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const content = stack();
     const btn = h("button", { class: danger ? "danger" : "primary", onClick: () => go() }, label);
     let busy = false;
@@ -220,12 +220,12 @@ const editDialog = (u) => {
 };
 
 const blockDialog = (u, { me }) => {
-  const stop = h("input", { type: "checkbox", name: "stopWork", style: { width: "auto" } });
+  const stop = h("input", { type: "checkbox", name: "stopWork", class: "fit" });
   return callDialog({
     title: `Block ${u.name}?`,
     body: [
       para(`${u.name} (${u.email}) is signed out and cannot sign in. Their queued runs are cancelled. Running runs finish, and runs that wait for approval stay.`),
-      h("label", { class: "row", style: { gap: "6px" } }, stop, h("span", {}, "Also stop all their work now")),
+      h("label", { class: "row tight" }, stop, h("span", {}, "Also stop all their work now")),
       h("small", {}, "Also cancels their running runs and their runs that wait for approval. Workspaces are kept."),
       ...own(u, me)],
     label: "Block",
@@ -347,7 +347,7 @@ const defaultLimitsDialog = (_u, { limits }) => {
 export const appReposBody = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 
 const appReposDialog = (u, { repos }) => {
-  const area = h("textarea", { name: "appRepos", class: "mono", rows: 8, style: { width: "100%" } });
+  const area = h("textarea", { name: "appRepos", class: "mono full", rows: 8 });
   area.value = repos.join("\n");
   return callDialog({
     title: `App repositories of ${u.name}`,
