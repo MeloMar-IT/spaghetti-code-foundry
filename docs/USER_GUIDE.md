@@ -2331,9 +2331,30 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 - **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
 - **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
-- **Nothing loads the skills yet.** No skill catalogue reaches the planner either, so requests are empty for now. A later story will check the ids and load the skills.
+- **Nothing loads the skills yet.** No skill catalogue reaches the planner either, so requests are empty for now. [Skill selection](#skill-selection) can check the ids; a later story will wire it in and load the skills.
 - **`issue-code-daily`** does not get a request: it would have to trust a comment.
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
+
+### Skill selection
+
+The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. Nothing calls it from a run yet, so no skill reaches an agent for now.
+
+```yaml
+skills:
+  selection:
+    max_skills: 6          # most skills in one selection (1–20, default 6)
+    max_skill_tokens: 5000 # largest single skill (100–20000, default 5000)
+    max_tokens: 15000      # total for the set (100–100000, default 15000)
+    include: []            # skill ids that are always selected (mandatory)
+    exclude: []            # skill ids that are never selected; catalogue.exclude applies too
+```
+
+- **Exact versions:** each id resolves to its active version, which must pass the pin check (see [Pinned versions and integrity](#pinned-versions-and-integrity)). Repository skills are never selected.
+- **Dependencies:** a skill's declared dependencies are added before it (sorted by id) and count towards the skill and token limits. A dependency that is missing, too old (`min_version`), excluded, unapproved or in a cycle refuses the skill that needs it.
+- **Refused for:** a role the skill does not allow, a size above `max_skill_tokens`, a conflict with a skill already chosen (the earlier one stays), more than `max_skills`, or more than `max_tokens`. The order is always the same: mandatory ids first, then requested ids sorted by id. The set holds only what was asked for and what it needs.
+- **Mandatory skills** (`include`) are never dropped quietly. If one is refused for any reason, or an `include` or `exclude` entry is not a valid id or the list is too long, the whole selection is blocked: nothing is selected and the other skills are marked `blocked`.
+- **`include` is not a pin.** An included skill still needs an approved, pinned version. The config is refused if an `include` id is also in `exclude` or in `catalogue.exclude`, or if there are more `include` ids than `max_skills`.
+- **Decisions:** every requested, mandatory and added skill gets a decision with a reason code: `mandatory`, `requested` or `dependency` when selected; `excluded`, `unknown`, `unapproved`, `unpinned`, `mismatch`, `unverified`, `role`, `too-large`, `dependency-cycle`, `dependency-unavailable`, `dependency-version`, `conflict`, `over-count`, `over-budget` or `blocked` when refused. The result also has the estimated tokens (description and SKILL.md text; reference files are not counted), so the size is known before an agent starts.
 
 ### Access from other computers
 
