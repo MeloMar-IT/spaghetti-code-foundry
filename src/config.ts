@@ -5,6 +5,8 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
+import { SkillIdSchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -380,6 +382,29 @@ export const ConfigSchema = z
           .default([]),
         /** Also read <repo>/.claude-factory/skills. Off: repository skills are never loaded. */
         repository: z.boolean().default(false),
+        /** Limits and pin/exclude lists of the skill catalogue a planner gets. Installation-wide. */
+        catalogue: z
+          .object({
+            max_candidates: z.number().int().min(CATALOGUE_RANGE.maxCandidates[0]).max(CATALOGUE_RANGE.maxCandidates[1]).default(CATALOGUE_DEFAULTS.maxCandidates),
+            max_tokens: z.number().int().min(CATALOGUE_RANGE.maxTokens[0]).max(CATALOGUE_RANGE.maxTokens[1]).default(CATALOGUE_DEFAULTS.maxTokens),
+            /** Skill ids that are always in the catalogue. */
+            include: z.array(SkillIdSchema).max(CATALOGUE_RANGE.include).default([]),
+            /** Skill ids that are never in the catalogue. Wins over include. */
+            exclude: z.array(SkillIdSchema).max(CATALOGUE_RANGE.exclude).default([]),
+          })
+          .strict()
+          .superRefine((c, ctx) => {
+            const dup = (key: "include" | "exclude") =>
+              c[key].forEach((id, i) => {
+                if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
+              });
+            dup("include");
+            dup("exclude");
+            if (c.include.length > c.max_candidates) ctx.addIssue({ code: "custom", path: ["include"], message: "more pinned skills than max_candidates" });
+            if (CATALOGUE_COST.header + CATALOGUE_COST.minimalEntry * c.include.length > c.max_tokens)
+              ctx.addIssue({ code: "custom", path: ["include"], message: "the pinned skills do not fit max_tokens" });
+          })
+          .prefault({}),
       })
       .strict()
       .prefault({}),

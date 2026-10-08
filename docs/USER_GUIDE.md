@@ -2253,6 +2253,23 @@ skills:
 - **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
 - **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
 
+### Skill catalogue
+
+The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. Nothing sends it to a planner yet.
+
+```yaml
+skills:
+  catalogue:
+    max_candidates: 20   # most skills in the catalogue (1–50, default 20)
+    max_tokens: 2000     # estimated size limit (100–20000, default 2000)
+    include: []          # skill ids that are always in the catalogue
+    exclude: []          # skill ids that are never in it; wins over include
+```
+
+- **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
+- **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Pinned (`include`) skills are never dropped. The catalogue says how many skills were left out.
+- **Settings apply to the whole installation,** not to one repository. The config is refused if the pinned skills do not fit the limits.
+
 ### Access from other computers
 
 By default the Foundry answers only on the Mac it runs on. Colleagues can reach it from their own
