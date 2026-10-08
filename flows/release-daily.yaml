@@ -43,7 +43,7 @@ steps:
     run: |-
       cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes
-      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no
+      "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no
       if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi
       { echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo '```'; echo "\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"
         [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"

@@ -1402,6 +1402,16 @@ flowchart LR
   skipped when exactly that code already passed them in another run — which is the normal case for
   the tests before a change: the story starts from the `develop` the previous story just tested.
   The log says "not run again". Set `reuse_test_results: no` to always run them.
+- **One full test run per story.** Inside a story (after coding, after the review fixes) the
+  watcher's `quick_test_cmd` runs when it is set — for example only the tests the change touches
+  (`npx vitest run --changed --passWithNoTests`). The full `test_cmd` runs before the change and on
+  the merge with `develop`, so nothing reaches `develop` without the full tests.
+- **The merge is tested ahead of its turn.** A finished story tests its merge with `develop` before
+  it takes its turn at `develop` (steps `pretest_merge` and `pretest_tests`), so several stories test side by side. If
+  `develop` did not move meanwhile, the turn needs no test run and the story is pushed at once.
+- **A few test runs at a time.** At most `test_slots` test commands (default `2`) work on the
+  machine at once, over all runs and repositories; the others wait their turn. Many test runs at
+  once make each of them slow and let timing-sensitive tests fail. `0` switches the limit off.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.
