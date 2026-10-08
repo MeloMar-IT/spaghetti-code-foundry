@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dependencies, dependencyText, openDependencies } from "../src/queue/deps.js";
+import { DEP_REF_SOURCE, dependencies, dependencyRange, dependencyText, openDependencies } from "../src/queue/deps.js";
 
 const all = [
   { number: 1, title: "Story 1 — Publish update metadata", state: "CLOSED" },
@@ -46,5 +46,37 @@ describe("issue dependencies", () => {
   it("counts closed issues and done labels as done; ignores unknown issues", () => {
     expect(openDependencies([1, 6, 7, 99], all, ["Factory_done"])).toEqual([7]);
     expect(openDependencies([6], all, [])).toEqual([6]);
+  });
+});
+
+describe("dependencyRange", () => {
+  const forms = [
+    "Depends on: #3, #4\nmore\n\n## Notes\nx",
+    "x\n### Depends on\n#12\n- #13\n\n### Notes\nabc",
+    "a\n**Depends on:** #5 and #6\n**Notes**\nz",
+    "### Depends on\n\nNone\n",
+  ];
+  it.each(forms)("matches dependencyText for %j", (body) => {
+    const r = dependencyRange(body)!;
+    expect(body.slice(r.start, r.end).trim()).toBe(dependencyText(body));
+    expect(body.slice(r.start, r.end)).toBe(dependencyText(body));
+  });
+  it("handles other cases", () => {
+    const b = "Blocked by #9";
+    const r = dependencyRange(b)!;
+    expect(b.slice(r.start, r.end)).toBe("#9");
+    expect(dependencyRange("nothing here")).toBeUndefined();
+    const e2 = dependencyRange("Depends on:")!;
+    expect(e2.start).toBe(e2.end);
+    const long = `### Depends on\n${"#1 ".repeat(800)}\n`;
+    const lr = dependencyRange(long)!;
+    expect(lr.end - lr.start).toBe(1000);
+    expect(long.slice(lr.start, lr.end)).toBe(dependencyText(long));
+  });
+  it("DEP_REF_SOURCE matches a plain reference only", () => {
+    const re = () => new RegExp(DEP_REF_SOURCE, "g");
+    expect("see #12.".match(re())).toEqual(["#12"]);
+    expect("owner/repo#12".match(re())).toBeNull();
+    expect("a#12".match(re())).toBeNull();
   });
 });

@@ -411,7 +411,7 @@ export function changedSections(oldBody: string, newBody: string): string[] {
 }
 
 /** Backticks: at least 3, and more than the longest run in any of the texts. */
-const fenceFor = (...texts: string[]): string => {
+export const fenceFor = (...texts: string[]): string => {
   const longest = Math.max(0, ...texts.flatMap((t) => (t.match(/`+/g) ?? []).map((r) => r.length)));
   return "`".repeat(Math.max(3, longest + 1));
 };
