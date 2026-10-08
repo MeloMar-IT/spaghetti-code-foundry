@@ -12,15 +12,17 @@ describe("ui/user/index.html", () => {
     for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "account"]) expect(html).toContain(`id="${id}"`);
     expect(html).not.toContain("health-btn");
   });
-  it("has exactly four links with the user pages", () => {
+  it("has exactly five links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(links).toEqual([
-      ["#/start", "start", "Start work"],
+      ["#/start", "start", "Start work"], // the top action comes first in the document
+      ["#/home", "home", "Home"], // the first link of the sidebar
       ["#/runs", "runs", "My runs"],
       ["#/repos", "repos", "My repositories"],
       ["#/refinement", "refinement", "Refinement"],
     ]);
-    expect(html.split("data-nav=").length - 1).toBe(4);
+    expect(html.split("data-nav=").length - 1).toBe(5);
+    expect(html).toContain('<a class="brand" href="#/home">');
   });
   it("has nothing of the admin page", () => {
     for (const bad of ['id="repo"', 'id="health"', 'id="since"', 'id="sidebar"', "<aside", "turn-badge"]) expect(html, bad).not.toContain(bad);
@@ -82,10 +84,11 @@ describe("ui/user/app.js", () => {
     expect(app).toContain("else cleanup = done;");
   });
 
-  it("routes Start work and decides the empty address behind the generation guard", () => {
-    expect(app).toContain('if (page.section === "start") done = await renderStart(box, { readOnly });');
-    expect(app).toContain("isNoHash(");
-    expect(app.indexOf("const mine = ++generation;")).toBeLessThan(app.indexOf("await homeHash()"));
+  it("routes Home and Start work, and the empty address opens Home", () => {
+    expect(app).toContain('if (page.section === "home") done = await renderHome(box, { readOnly });');
+    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly });');
+    expect(app).toContain('if (isNoHash(hash)) hash = "#/home";');
+    expect(app).not.toContain("homeHash");
     expect(app.match(/\+\+generation/g)).toHaveLength(1);
   });
 

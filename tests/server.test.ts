@@ -518,7 +518,10 @@ steps:
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "retry" })).status).toBe(404);
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "explode" })).status).toBe(400);
     const app = await text("/app.js");
-    for (const s of ["renderYourTurn", "startHash(", 'section === "home"']) expect(app).toContain(s);
+    for (const s of ["renderAdminHome", "startHash(", 'section === "home"']) expect(app).toContain(s);
+    expect((await fetch(base + "/home.js")).status).toBe(200);
+    expect((await fetch(base + "/home-admin.js")).status).toBe(200);
+    expect(await text("/home-admin.js")).toContain("renderYourTurn");
     expect(await text("/api.js")).toContain("/api/your-turn");
   });
 
@@ -563,8 +566,8 @@ steps:
   it("serves the Since you last looked strip", async () => {
     const text = (p: string) => fetch(base + p).then((r) => r.text());
     expect((await fetch(base + "/since.js")).status).toBe(200);
-    expect(await text("/")).toContain('id="since"');
-    expect(await text("/app.js")).toContain("startSince(");
+    expect(await text("/")).not.toContain('id="since"'); // Home owns the box now
+    expect(await text("/app.js")).toContain("startSince(sinceEl)");
     expect(await text("/api.js")).toContain("/api/since");
   });
 

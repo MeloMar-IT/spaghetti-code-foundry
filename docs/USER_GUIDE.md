@@ -76,7 +76,7 @@ admin for a new one.
 
 | Page | What it is for |
 |---|---|
-| **Home** (was *Your turn*) | Only what waits for you, one button each; the app opens here when something waits. The old address `#/your-turn` still works |
+| **Home** (includes *Your turn*) | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
 | **Board** | Where every story is, in columns per repository |
 | **Flows** | Your flows and the built-in ones: edit, create, run |
 | **Library** | Reusable blocks of steps to drop into flows |
@@ -94,7 +94,7 @@ admin for a new one.
 
 **Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories, All repositories, Credentials), Flows (Flows, Library) and Administration (Users, Watchers, Models, Problems, Dashboard, Audit, Settings). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
-An account with the role `user` works on its own display at `/user/`, with **Start work** in the top bar, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user who has no runs (none queued or running either) lands on Start work; a user with runs lands on My runs.
+An account with the role `user` works on its own display at `/user/`, with **Start work** in the top bar, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 **Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
@@ -150,6 +150,21 @@ The same rules as for a user apply: only a published flow, only your own reposit
 ---
 
 ## 3. Follow, approve and resume runs
+
+### Home
+
+**Home** is the first page. The top shows the counts (for example "2 need you · 1 active") and one button, the best next step: the first thing that needs you, then a problem, then a run that is active, else **Start work**.
+
+- **Needs you:** the same list as [Your turn](#your-turn).
+- **Active:** work that is running or queued. Each row says what happens next.
+- **Problems (admin):** problems of the Foundry that Needs you does not already show.
+- **Recently completed:** closed until you open it.
+- **Metrics (admin):** closed until you open it; a link goes to the Dashboard.
+- **Each row:** one main button and a **Details** link to the run. A section shows 5 rows and "+n more".
+- **Empty and all clear:** with nothing yet, Home offers **Start work**; when nothing needs you it says "Nothing needs you."
+- **Users** see only their own work: no cost, model, health or other accounts.
+
+Home asks again every 30 seconds.
 
 ### Your turn
 

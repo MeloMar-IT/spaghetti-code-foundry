@@ -40,10 +40,11 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 
 ## User display
 
-The page at `/user/`. 6 route rows. `USER_HASH` allows exactly these (`ui/auth.js:223`); any other hash is replaced by `#/runs` (`userHash`, `ui/auth.js:232`).
+The page at `/user/`. 7 route rows. `USER_HASH` allows exactly these (`ui/auth.js:223`); any other hash is replaced by `#/runs` (`userHash`, `ui/auth.js:232`).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
+| `/user/#/home` | Home | `ui/home.js` | `renderHome` | `api-runs.ts` | user; admin read-only preview | See what needs me, what is running and what finished | Follow the best next action (head button) | Polls every 30 s; groups come from each run's next-step record |
 | `/user/#/start` | Start work | `ui/user/start.js` | `renderStart` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | user; admin read-only preview | Start a run | Start | Needs a published flow and a GitHub repository (`NO_FLOWS`, `NO_REPOS`) |
 | `/user/#/runs` | My runs | `ui/user/runs.js` | `renderMyRuns` | `api-runs.ts` | user; admin read-only preview | Find a run and its next step | Open a run (card link) | Polls every 30 s; Remove asks with `confirmDialog` |
 | `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3); 9 inline styles |
@@ -59,7 +60,7 @@ Admin preview: `/user/?as=<id>` (`ui/view-as.js`) draws these pages for the chos
 |---|---|---|
 | `/` (no hash) | admin | With something waiting, `startHash` sets `#/your-turn` (`ui/turn.js:14`, `ui/app.js:452`); with nothing waiting `route()` draws `#/flows` (`app.js:379`). The address bar stays empty in that case. `#` and `#/` are not "no hash" here: they draw `welcome()` |
 | `/` (unknown hash) | admin | Any section not in `route()` falls to the last `else`: `welcome()` (`app.js:422`); the hash is not changed |
-| `/user/` (no hash) | user | `homeHash` (`ui/user/start.js:14`): `#/start` when there are no runs and the queue is empty, else `#/runs`; any error gives `#/runs`. `#` and `#/` count as no hash (`isNoHash`, `ui/auth.js:226`) |
+| `/user/` (no hash) | user | Always `#/home` (`ui/user/app.js`); Home shows its own empty state with a Start work button. `#` and `#/` count as no hash (`isNoHash`, `ui/auth.js:226`) |
 | `/user/` (unknown hash) | user | `userPage` replaces the address by `#/runs` (`ui/user/app.js:30`) |
 | `#/set-password/:token` | both | A hash route (`linkToken`, `ui/auth.js:12`). The router reloads the page; the sign-in page then shows "Choose your password" (`auth.js:155`) |
 | `/user/?as=<id>` | user | Admin only. Read-only preview of that user (`ui/view-as.js:86`). A user ignores `as`. An admin without `as` is sent to `/` |
@@ -86,7 +87,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
-| `#/home` | `data.empty` text from the server (`turn.js:133`) | errors box | poll 5 s |
+| `#/home` | `data.empty` text from the server (`turn.js`), or `EMPTY` when nothing exists | errors box | poll 5 s (Your turn) and 30 s (runs, queue, health) |
 | `#/board` | `data.empty` (`board.js:77`) | errors box | poll 5 s |
 | `#/board/:id` | `data.empty` | errors box | poll 5 s |
 | `#/refinement` | "No refinement sessions yet..." (`refinement.js:472`) | errors box | none found |
@@ -108,6 +109,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
+| `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` | errors box | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
 | `/user/#/runs/:id` | `NOT_FOUND` card, `NO_STEPS`, `NO_CHANGES` | card with the error and a link back (`user/runs.js:339`) | stream and poll 30 s (`user/runs.js:487`) |
@@ -143,6 +145,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
 | `#/users` | Table not in `.table-box` | Probably overflows |
 | `#/audit` | Table not in `.table-box` | Probably overflows |
+| `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |
 | `/user/#/runs` | Cards | Fits |
 | `/user/#/runs/:id` | `.run-grid` one column | Long page |

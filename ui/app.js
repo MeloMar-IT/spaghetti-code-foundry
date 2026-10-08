@@ -22,7 +22,8 @@ import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
-import { renderYourTurn, startBadge, startHash } from "./turn.js";
+import { renderAdminHome } from "./home-admin.js";
+import { startBadge, startHash } from "./turn.js";
 
 const sidebar = document.getElementById("sidebar");
 const main = document.getElementById("main");
@@ -373,6 +374,9 @@ function welcome() {
 }
 
 let routeGen = 0;
+// The "since you last looked" box: Home places it; it stays hidden until there is something to say.
+const sinceEl = h("div", { class: "since" });
+sinceEl.hidden = true;
 
 async function route() {
   const mine = ++routeGen;
@@ -394,7 +398,14 @@ async function route() {
   showPage("admin", to);
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
-    if (section === "home") S.cleanup = await renderYourTurn(main);
+    if (section === "home") {
+      // Draws into its own box, so a slow load that ends after a hash change leaves nothing running.
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderAdminHome(box, { since: sinceEl });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
     else if (section === "board") S.cleanup = renderBoard(main, arg);
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);
@@ -458,5 +469,5 @@ async function startAdmin() {
   const to = startHash(location.hash, await startBadge());
   if (to) history.replaceState(null, "", to);
   route();
-  startSince(document.getElementById("since"));
+  startSince(sinceEl);
 }

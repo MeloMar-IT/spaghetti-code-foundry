@@ -18,7 +18,7 @@ const AU = ["admin", "user"];
 
 // nav: "primary" | "secondary" | "action" | "detail". dest: destination id, null for the Start work action.
 export const PAGES = [
-  { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home" }, roles: A },
+  { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A },
   { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU },
@@ -41,7 +41,7 @@ export const PAGES = [
 
 // group "work" = daily work; "setup" = configuration, drawn smaller and apart.
 export const DESTINATIONS = [
-  { id: "home", label: { admin: "Home" }, landing: "home", group: "work", roles: A },
+  { id: "home", label: { admin: "Home", user: "Home" }, landing: "home", group: "work", roles: AU },
   { id: "board", label: { admin: "Board" }, landing: "board", group: "work", roles: A },
   { id: "refinement", label: { admin: "Refinement", user: "Refinement" }, landing: "refinement", group: "work", roles: AU, rank: { user: 9 } },
   { id: "runs", label: { admin: "Runs", user: "My runs" }, landing: "runs", group: "work", roles: AU },

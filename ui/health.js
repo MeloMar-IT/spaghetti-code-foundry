@@ -80,7 +80,8 @@ let last = null; // { health } of the newest answer
 
 /** Sets the chip in the top bar and hides the line when all is good and it was not asked for. */
 export function showHealth(el, chip, health, isOpen = open) {
-  el.hidden = !!health?.ok && !isOpen;
+  // The line opens by itself only when the server does not answer; a problem turns the chip red and Home lists it.
+  el.hidden = health !== null && !isOpen;
   if (!chip) return;
   chip.hidden = false;
   chip.textContent = health ? health.summary : "No answer";

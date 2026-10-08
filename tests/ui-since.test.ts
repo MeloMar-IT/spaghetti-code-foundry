@@ -125,7 +125,7 @@ describe("sinceView", () => {
     expect(issue.attrs).toMatchObject({ href: "https://github.com/o/a/issues/5", target: "_blank" });
     const run = links.find((a) => a.attrs.href === "#/runs/r1")!;
     expect(run.attrs.target).toBeUndefined();
-    expect(links.find((a) => a.attrs.href === "#/your-turn")).toBeDefined();
+    expect(links.find((a) => a.attrs.href === "#/home")).toBeDefined();
     expect(links.find((a) => a.attrs.href === "https://github.com/o/a/pull/1")!.attrs.target).toBe("_blank");
     click(root.all("button")[0]!);
     expect(onDismiss).toHaveBeenCalled();

@@ -230,9 +230,12 @@ describe("the health chip", () => {
   it("showHealth shows the line when not ok, or when the server is silent", () => {
     const e = el();
     const chip = el();
+    // A problem only turns the chip red; Home lists it. The line opens when asked for.
     ui.showHealth(e, chip, bad);
-    expect(e.hidden).toBe(false);
+    expect(e.hidden).toBe(true);
     expect(chip.attrs.class).toBe("health-chip bad");
+    ui.showHealth(e, chip, bad, true);
+    expect(e.hidden).toBe(false);
     ui.showHealth(e, chip, null);
     expect(e.hidden).toBe(false);
     expect(chip.textContent).toBe("No answer");

@@ -520,6 +520,10 @@ describe("roles in the page", () => {
   });
 
   it("userHash keeps the Runs pages and My repositories and sends everything else to the list", () => {
+    expect(auth.userHash("#/home")).toBe("#/home");
+    expect(auth.userHash("#/home/x")).toBe("#/runs");
+    expect(auth.isUserHash("#/home")).toBe(true);
+    expect(auth.otherDisplay({ role: "user" }, "admin", "#/home")).toBe("/user/#/home");
     expect(auth.userHash("#/repos")).toBe("#/repos");
     expect(auth.userHash("#/repos/x")).toBe("#/runs");
     expect(auth.userHash("#/reposx")).toBe("#/runs");

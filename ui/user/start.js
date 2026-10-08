@@ -11,17 +11,6 @@ export const NO_FLOWS = "No flows yet. Ask your administrator to publish one.";
 export const NO_FLOWS_ADMIN = "No published flows yet. Publish one in the flow editor.";
 export const NO_REPOS = "You have no GitHub repository yet. Add the repository you work in.";
 
-/** Where a user lands with no hash: Start work for someone with no runs at all, else My runs. Any error gives My runs. */
-export async function homeHash(a = api) {
-  try {
-    const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
-    const none = Array.isArray(runs) && runs.length === 0 && queue?.pending?.length === 0 && queue?.active?.length === 0;
-    return none ? "#/start" : "#/runs";
-  } catch {
-    return "#/runs";
-  }
-}
-
 /** The records that are GitHub repositories (they have a name as "owner/name"). */
 export const githubRepos = (repos) => (Array.isArray(repos) ? repos : []).filter((r) => typeof r?.github === "string" && r.github !== "");
 
