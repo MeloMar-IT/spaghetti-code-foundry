@@ -103,6 +103,16 @@ describe("resolve for a user", () => {
     expect(r("#/home").title).toBe("Home");
   });
 
+  it("resolves the backlog page before the session page, for both roles", () => {
+    for (const role of ["admin", "user"]) {
+      const to = ia.resolve(role, "#/refinement/backlog");
+      expect(to, role).toMatchObject({ hash: "#/refinement/backlog", redirected: false, title: "Backlog readiness", back: "#/refinement" });
+      expect(to.page.id).toBe("refinement-backlog");
+      expect(ia.resolve(role, "#/refinement/s-1").page.id).toBe("refinement-session");
+    }
+    expect(auth.isUserHash("#/refinement/backlog")).toBe(true);
+  });
+
   it("sends admin pages to My runs", () => {
     for (const h of ["#/users", "#/your-turn", "#/board"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
   });

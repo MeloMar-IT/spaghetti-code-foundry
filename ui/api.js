@@ -116,6 +116,7 @@ export const api = {
   allCredentials: () => req("GET", "/api/admin/credentials"),
   refinement: () => req("GET", "/api/refinement"),
   createRefinement: (body) => req("POST", "/api/refinement", body),
+  refinementBacklog: (repo) => req("GET", `/api/refinement/backlog?repo=${enc(repo)}`),
   refinementSession: (id) => req("GET", `/api/refinement/${enc(id)}`),
   renameRefinement: (id, body) => req("PUT", `/api/refinement/${enc(id)}`, body),
   dropRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/drop`, {}),

@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
+import { renderBacklog } from "./refinement-backlog.js";
 import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
 import { publishSection } from "./refinement-publish.js";
 import { impactLogText } from "./refinement-impact.js";
@@ -295,6 +296,25 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     stopPoll();
   };
 
+  if (id === "backlog") {
+    let repos = [];
+    // A preview makes no request: the list is read with the owner's GitHub sign-in.
+    if (!readOnly) {
+      try {
+        repos = (await api.refinement()).repos;
+      } catch (err) {
+        if (!current()) return () => {};
+        throw err;
+      }
+    }
+    if (!current()) return () => {};
+    const leave = await renderBacklog(main, { repos, readOnly, errorText, current, goTo });
+    return () => {
+      leave();
+      cleanup();
+    };
+  }
+
   if (id) {
     const gone = (e) => mount(main, h("a", { href: "#/refinement" }, "← All sessions"), h("p", { class: "status bad" }, errorText(e)));
     let s;
@@ -470,6 +490,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
       h("span", { class: "muted" }, "Where a rough idea grows into a story"),
       h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
+      readOnly ? null : h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
       readOnly ? null : h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
       readOnly ? null : h("button", { class: "primary", onClick: async () => {
         await newSessionDialog(repos, opened);
