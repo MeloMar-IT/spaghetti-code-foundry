@@ -310,10 +310,20 @@ const errorText = (e: unknown) => `${String((e as { stderr?: string }).stderr ??
 
 /** One call to the issue list of a repository: the answer as a list, pull requests left out. */
 async function listIssues(repo: string, query: string, timeoutMs?: number): Promise<RestIssue[]> {
+  return (await listPage(repo, query, timeoutMs)).issues;
+}
+
+async function listPage(repo: string, query: string, timeoutMs?: number): Promise<{ issues: RestIssue[]; full: boolean }> {
   const out = (await gh(["api", `repos/${repo}/issues?${query}state=all&per_page=100&sort=created&direction=desc`], undefined, timeoutMs)).trim();
   const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
   if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
-  return list.filter((i) => !i.pull_request);
+  return { issues: list.filter((i) => !i.pull_request), full: list.length >= 100 };
+}
+
+/** Like listNewestIssues, and whether GitHub's page was full (100 issues and pull requests), so that older ones may be missing. */
+export async function listNewestIssuesCut(repo: string, timeoutMs?: number): Promise<{ issues: RestIssue[]; cut: boolean }> {
+  const { issues, full } = await listPage(repo, "", timeoutMs);
+  return { issues, cut: full };
 }
 
 /** The newest issues (not pull requests) with a label, open and closed: one call, at most 100. */

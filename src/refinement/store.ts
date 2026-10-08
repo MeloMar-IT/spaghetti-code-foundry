@@ -277,6 +277,17 @@ export function openSessionOfIssue(owner: string, repo: string, issue: number, o
   return s ? copy(s) : undefined;
 }
 
+/** The open sessions of `owner` that came from an issue of `repo`: issue number → session id. */
+export function openSessionsOfRepo(owner: string, repo: string, opts: StoreOptions = {}): Map<number, string> {
+  const now = clock(opts);
+  const found = new Map<number, string>();
+  for (const s of read().sessions) {
+    const n = s.source?.issue;
+    if (n !== undefined && !found.has(n) && !expired(s, now) && openOfIssue(s, owner, repo, n)) found.set(n, s.id);
+  }
+  return found;
+}
+
 export interface NewIssueSession {
   repo: unknown;
   title: string;

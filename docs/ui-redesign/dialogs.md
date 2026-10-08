@@ -86,7 +86,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:240` | confirm | Remove this entry from the map? | Remove a map entry |
-| `ui/refinement.js:390` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
+| `ui/refinement.js:410` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
 | `ui/runs.js:245` | prompt | Approve — note (optional) | Approve a run (admin) |

@@ -22,6 +22,7 @@ export const PAGES = [
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A },
   { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU },
+  { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "start", path: "#/start", title: "Start work", area: "work", dest: null, parent: null, nav: "action", label: { admin: "Start work", user: "Start work" }, roles: AU },
   { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU },
@@ -84,7 +85,8 @@ function match(role, parts) {
     if (!forRole(role)(p)) continue;
     const pat = patternOf(p);
     if (pat[1] !== section) continue;
-    if (pat.length === parts.length && (pat.length === 2 || pat[2].startsWith(":"))) return { page: p, arg: parts[2] };
+    // A fixed last part ("#/refinement/backlog") is listed before the pattern with a variable part, so it wins.
+    if (pat.length === parts.length && (pat.length === 2 || pat[2].startsWith(":") || pat[2] === parts[2])) return { page: p, arg: parts[2] };
   }
   return null;
 }
