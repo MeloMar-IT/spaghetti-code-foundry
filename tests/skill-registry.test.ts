@@ -323,7 +323,9 @@ describe("cache and config", () => {
   });
 
   it("an old config gets the defaults; an unknown key is rejected", () => {
-    expect(ConfigSchema.parse({}).skills).toEqual({ builtin: true, roots: [], repository: false });
+    expect(ConfigSchema.parse({}).skills).toEqual({
+      builtin: true, roots: [], repository: false, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
+    });
     expect(ConfigSchema.safeParse({ skills: { nope: 1 } }).success).toBe(false);
   });
 });
