@@ -3,3 +3,5 @@ dist/
 .claude-factory/
 *.log
 .idea/
+tests/browser/test-results/
+playwright-report/
