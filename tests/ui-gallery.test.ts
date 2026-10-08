@@ -207,7 +207,7 @@ describe("the page and its style", () => {
     expect(css).toMatch(/^\/\*[\s\S]*Belongs here:[\s\S]*Does not belong here:[\s\S]*?\*\//);
     expect(css).toContain("container-type: inline-size");
     expect(css).toContain("container-name: scf-page");
-    expect(css).toMatch(/\[data-width="narrow"\][^{]*\{[^}]*width: 390px/);
+    expect(css).toMatch(/\[data-width="narrow"\][^{]*\{[^}]*width: min\(390px, 100%\)/);
     const tokens = tokenNames();
     for (const m of css.matchAll(/var\((--[\w-]+)/g)) expect(tokens.has(m[1]!), m[1]).toBe(true);
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
