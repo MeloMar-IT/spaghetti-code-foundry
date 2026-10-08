@@ -1,8 +1,9 @@
 import { api } from "./api.js";
-import { h, toast } from "./dom.js";
+import { h, mount, toast } from "./dom.js";
 import { impactKey, impactNodes } from "./refinement-impact.js";
 import { draftStateText, readyKey, readyNodes } from "./refinement-ready.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
+import { splitKey, splitNodes } from "./refinement-split.js";
 import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
 // The story drafts of a refinement session: write, save as you type, preview. Every text is set as text, never as HTML.
@@ -431,11 +432,31 @@ export function draftSection(ctx) {
     ]));
   };
 
+  /** The button that removes a draft (also a split original) after a confirmation. */
+  const removeDraftButton = (did) => h("button", { class: "danger", onClick: (e) => {
+    if (!confirm("Remove this story draft?")) return undefined;
+    // The typed text stays until the draft is really gone; a refused or failed request gives it its timer back.
+    const keys = keysOf(did);
+    keys.forEach((k) => {
+      clearTimeout(timers.get(k));
+      timers.delete(k);
+    });
+    return ctx.send(e.currentTarget, () => api.removeDraft(sid, did).then((next) => {
+      opened.delete(sid);
+      keysOf(did).forEach(forget);
+      return next;
+    })).then((ok) => {
+      if (!ok) for (const k of keys) if (unsaved.has(k)) plan(k);
+      return ok;
+    });
+  } }, "Remove draft");
+
   const buildEditor = (d) => {
     ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map(), rem: new Map(), remKeys: new Map() };
     ed.hint = h("p", { class: "muted" });
     ed.reviewBox = h("div", { class: "review", "data-review": "" });
     ed.impactBox = h("div", { class: "impact", "data-impact": "" });
+    ed.splitBox = h("div", { class: "split", "data-split": "" });
     ed.readyBox = h("div", { class: "ready", "data-ready": "" }); // a div: the card has no direct h4 child (the preview card is found by it)
     ed.reviewKey = "";
     ed.orphans = h("div", { class: "remarks", "data-remarks": "criteria" });
@@ -467,25 +488,7 @@ export function draftSection(ctx) {
         h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose, ed.sug.get("dependsOn")),
       field(d, "notes", "textarea", 3),
     ];
-    const remove = h("button", { class: "danger", onClick: (e) => {
-      if (!confirm("Remove this story draft?")) return undefined;
-      const did = ed.did;
-      // The typed text stays until the draft is really gone; a refused or failed request gives it its timer back.
-      const keys = keysOf(did);
-      keys.forEach((k) => {
-        clearTimeout(timers.get(k));
-        timers.delete(k);
-      });
-      return ctx.send(e.currentTarget, () => api.removeDraft(sid, did).then((next) => {
-        opened.delete(sid);
-        keysOf(did).forEach(forget);
-        return next;
-      })).then((ok) => {
-        if (!ok) for (const k of keys) if (unsaved.has(k)) plan(k);
-        return ok;
-      });
-    } }, "Remove draft");
-    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, remove), ed.readyBox, ed.previewBox, ed.impactBox)));
+    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, removeDraftButton(d.id)), ed.readyBox, ed.previewBox, ed.impactBox, ed.splitBox)));
     for (const k of keysOf(d.id)) if (placeOf(k)) plan(k); // text that waited for this editor is saved
   };
 
@@ -507,6 +510,20 @@ export function draftSection(ctx) {
       if (!ok) box.checked = !add;
       return ok;
     }),
+  });
+
+  /** What the split part does: asks for ways (with an optional own way), redraws after a local change, confirms the plan. */
+  const splitAct = (did) => ({
+    line: ctx.statusLine,
+    redraw: () => update(sess),
+    ask: (btn, own) => afterSave(btn, () => api.askSplit(sid, did, own), NOT_ASKED),
+    split: (btn, bodyOf) => afterSave(btn, async () => {
+      const before = new Set((sess.drafts ?? []).map((x) => x.id));
+      const next = await api.confirmSplit(sid, did, bodyOf(draftOf(did)));
+      const made = next.drafts?.find((x) => !before.has(x.id));
+      if (made) opened.set(sid, made.id);
+      return next;
+    }, "Your text could not be saved, so nothing was split. Try again."),
   });
 
   /** What the review box does: asks for a review (the architect must see what is typed). */
@@ -591,6 +608,10 @@ export function draftSection(ctx) {
     fillBox(ed.reviewBox, ed.remKeys, "review", reviewKey(sess, d), () => reviewNodes(sess, d, reviewAct(d.id)));
     fillBox(ed.impactBox, ed.remKeys, "impact", impactKey(sess, d), () => impactNodes(sess, d, impactAct(d.id)));
     fillBox(ed.readyBox, ed.remKeys, "ready", readyKey(sess, d), () => readyNodes(sess, d, readyAct(d.id)));
+    if (ed.remKeys.get("split") !== splitKey(sess, d)) {
+      ed.remKeys.set("split", splitKey(sess, d));
+      mount(ed.splitBox, splitNodes(sess, d, splitAct(d.id)));
+    }
   };
 
   const syncEditor = (d) => {
@@ -643,14 +664,14 @@ export function draftSection(ctx) {
     const drafts = s.draftsHidden ? [] : s.drafts ?? [];
     // A suggestion or review run that has no open field on this page to show it: its line is at the top.
     const a = s.architect;
-    const own = a?.kind === "suggest" || a?.kind === "review" || a?.kind === "impact" || a?.kind === "ready";
-    const here = mine && own && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && (a.kind === "review" || a.kind === "impact" || a.kind === "ready" || SUGGEST_FIELDS.includes(a.field));
+    const own = a?.kind === "suggest" || a?.kind === "review" || a?.kind === "impact" || a?.kind === "ready" || a?.kind === "split";
+    const here = mine && own && opened.get(sid) === a.draft && drafts.some((x) => x.id === a.draft) && (a.kind === "review" || a.kind === "impact" || a.kind === "ready" || (a.kind === "split" && !drafts.find((x) => x.id === a.draft)?.splitInto) || SUGGEST_FIELDS.includes(a.field));
     const stray = !s.draftsHidden && own && Boolean(a.state) && a.state !== "idle" && !here;
     const strayDraft = stray ? drafts.find((x) => x.id === a.draft) : undefined;
     fill("top", `${Boolean(s.draftsHidden)}|${stray ? JSON.stringify([a, opened.get(sid), draftTitle(strayDraft)]) : ""}`, () => [
       s.draftsHidden ? h("p", { class: "muted" }, DRAFTS_HIDDEN) : null,
       stray ? ctx.statusLine(a) : null,
-      stray && a.state === "paused" && mine && strayDraft ? h("p", { class: "muted" }, `Open the draft "${draftTitle(strayDraft)}" to ask again.`) : null,
+      stray && a.state === "paused" && mine && strayDraft && !strayDraft.splitInto ? h("p", { class: "muted" }, `Open the draft "${draftTitle(strayDraft)}" to ask again.`) : null,
     ]);
     fill("epic", `${mine}|${s.epic}|${drafts.some((d) => d.published)}`, () => epicNodes(s, mine));
     if (!mine) {
@@ -660,7 +681,8 @@ export function draftSection(ctx) {
       fill("list", `ro|${s.draftsHidden}|${JSON.stringify([drafts, s.talk?.map, s.readyList])}`, () => (s.draftsHidden ? null : drafts.length ? drafts.map((d) => {
         const n = impactNodes(s, d, null);
         const r = readyNodes(s, d, null);
-        return [d.published ? h("p", {}, "On GitHub: ", issueLink(d)) : null, previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null];
+        const sp = splitNodes(s, d, null);
+        return [d.published ? h("p", {}, "On GitHub: ", issueLink(d)) : null, previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null, sp.length ? h("div", { class: "card split" }, sp) : null];
       }) : listNodes(drafts, false)));
     } else {
       fill("list", `rw|${opened.get(sid)}|${s.state}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d), d.state, d.published?.issue]))}`, () => [
@@ -680,11 +702,13 @@ export function draftSection(ctx) {
         ed = null;
         memo.editor = null;
         boxes.editor.replaceChildren();
-      } else if (d.published) {
-        // On GitHub: shown as text only, no fields; the saved texts are the record of what was published.
+      } else if (d.published || d.splitInto) {
+        // On GitHub, or split: shown as text only, no fields; the saved texts are the record. A split original is read-only on the server.
         ed = null;
         fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}`, () => h("div", { class: "card" },
-          h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here."),
+          d.published ? h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here.")
+            : h("p", {}, "This draft was split. It is kept as a record and cannot be changed; its parts are worked on instead."),
+          d.splitInto ? h("div", { class: "row" }, removeDraftButton(d.id)) : null,
           previewNodes(d), readOnlyNodes(s, d), readyNodes(s, d, null), impactNodes(s, d, null)));
       } else {
         if (memo.editor) {

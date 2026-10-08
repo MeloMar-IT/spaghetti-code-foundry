@@ -139,6 +139,8 @@ export const api = {
   acceptAnyway: (id, did, item, reason) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/ready/${enc(item)}/accept`, { reason }, true),
   removeAccepted: (id, did, item) => req("DELETE", `/api/refinement/${enc(id)}/drafts/${enc(did)}/ready/${enc(item)}/accept`, undefined, true),
   askImpact: (id, did) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/impact`, {}, true),
+  askSplit: (id, did, own) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/split`, own ? { own } : {}, true),
+  confirmSplit: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/split/confirm`, body, true),
   setReviewLabel: (id, did, add) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review-label`, { add: Boolean(add) }, true),
   moveToNotes: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/move-to-notes`, body, true),
   rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),

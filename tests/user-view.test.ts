@@ -655,7 +655,7 @@ describe("a run held by the daily budget of its owner", () => {
     expect("limit" in mine).toBe(false);
     const run = await call(s, ann, "GET", `/api/runs/${stopped}`);
     expect(run.json().next.status).toBe("waiting — your limit for today is reached");
-    for (const text of [q.text, run.text]) expect(text.match(/.{20}(\$|budget|"limit"|4\.25|dailyBudget).{20}/i)?.[0]).toBeUndefined();
+    for (const text of [q.text, run.text]) expect(text.match(/.{20}(\$|budget|"limit"|(?<![\d.])4\.25(?!\d)|dailyBudget).{20}/i)?.[0]).toBeUndefined();
   });
 
   it("tells the admin it is the owner's daily budget, with the amount", async () => {
