@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Guide screenshots 3 — Home images, image links in the guides, and a doc test for images (#412). `SHOTS` has 19 entries: `home` (admin Home) and `user-home` (Home of a user) are new. `docs/images/your-turn.png` is removed; the guides, `README.md` and `docs/DESIGN.md` show `home.png` instead. The user guide shows the Home of a user again. `docs/ui-redesign/measurement.md` lists the 19 images as captured from the redesign. New `tests/guide-docs.test.ts` checks that every guide image is in the manifest, every manifest image is used, `docs/images/` holds exactly those files, and the table in `measurement.md` matches.
 - Guide screenshots 2 — run pages, dialogs, Settings, Dashboard, repositories and watchers (#411). `npm run test:ui -- --grep @guide` now also writes `run-dialog`, `run-log`, `run-steps`, `run-diff`, `run-waiting`, `settings`, `dashboard`, `repos`, `watchers` and `watcher-form`. `run-diff` is taken on the large test server. `tests/screenshot-manifest.test.ts` checks the placeholders and that a `{diffRun}` shot uses the large server.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.

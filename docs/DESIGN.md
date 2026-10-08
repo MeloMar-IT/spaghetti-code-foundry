@@ -34,7 +34,7 @@ headlessly against git repositories — from a task someone types, or automatica
 Its main use: put one label on a GitHub issue, and the Foundry asks the open questions, plans,
 codes, tests, reviews and merges the story, asking a person only when it has to.
 
-![Your turn: the page that shows only what waits for you](images/your-turn.png)
+![Home: the page that shows what needs you, what is running and what finished](images/home.png)
 
 Node.js and TypeScript (ESM), no web framework, no database. About 15,000 lines of source and
 2,100 tests.
@@ -153,7 +153,7 @@ is how untrusted text travels: as environment variables, never pasted into a com
 pieces (plan phase, test-and-fix loop, review loop, merge). The YAML files are never edited by
 hand.
 
-![The flow editor with the gitflow flow](images/flows.png)
+![The flow editor with a built-in flow](images/flows.png)
 
 ---
 
@@ -591,6 +591,7 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
     - **Update baselines** with `npm run test:ui -- --update-snapshots`, check every changed image,
       and commit them. A story that changes the look on purpose does this and lists the changed
       images in its pull request.
+  - **Guide images.** `tests/browser/guide-shots.spec.ts` writes `docs/images/<name>.png` for every entry of the manifest `SHOTS` (`scripts/screenshots/shots.ts`). Run it with `npm run test:ui -- --grep @guide`. `tests/guide-docs.test.ts` checks that the guides, the folder and the manifest agree.
 
 ---
 

@@ -49,4 +49,10 @@ export const PREPARE: Record<string, ShotPrep> = {
       await page.locator("#modal-root .modal-head h2").waitFor();
     },
   },
+  // Needs you and Active load with separate requests; the shot's text only proves the first
+  home: {
+    act: async (page) => {
+      await page.locator("#main .home-section", { hasText: "Seeded hold run" }).waitFor();
+    },
+  },
 };
