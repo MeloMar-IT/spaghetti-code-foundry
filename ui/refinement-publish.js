@@ -68,6 +68,7 @@ export const confirmText = (plan) => ((plan.willUpdate ?? []).length ? ((plan.wi
 
 /** The toast after publishing: `made` is the answer of the server. */
 export function doneText(made) {
+  if (made.kept) return `Issue #${made.kept.issue} is not changed. Your draft is not published.`;
   const created = made.created?.length ?? 0;
   const issues = created === 1 ? "1 issue is on GitHub" : `${created} issues are on GitHub`;
   const u = made.updated?.[0];
@@ -90,6 +91,23 @@ export function updatesOf(s) {
 export const publishBody = (plan, picks) => ({
   drafts: willPublish(plan).map((draft) => ({ draft, labels: picks[draft]?.labels ?? [], startBuilding: picks[draft]?.startBuilding === true })),
 });
+
+export const KEEP_MINE = "Keep mine";
+export const KEEP_GITHUB = "Keep GitHub's";
+export const CHANGED_HINT = "Keep mine replaces GitHub's version; it is kept, folded, in a comment on the issue. Keep GitHub's writes nothing and publishes none of the stories listed below; your draft stays here.";
+
+/** The question when the issue changed on GitHub. */
+export const changedText = (c) => `Issue #${c.issue} changed on GitHub after this session read it. Which version do you keep?`;
+
+/** The request body of a choice: "mine" publishes as chosen; "github" only refreshes the source (no drafts). `seen` is the GitHub version that was shown. */
+export const keepBody = (plan, picks, keep) =>
+  keep === "github" ? { source: { keep, seen: plan.changedOnGithub.seen } } : { ...publishBody(plan, picks), source: { keep, seen: plan.changedOnGithub.seen } };
+
+/** The two versions side by side. Texts are set as text, never as HTML. */
+export function versionsNode(c) {
+  const column = (head, v) => h("div", {}, h("h4", {}, head), h("b", {}, v.title), h("pre", {}, v.body));
+  return h("div", { "data-versions": "", style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" } }, column("On GitHub now", c.github), column("Yours", c.mine));
+}
 
 /** The line under a failure: "On GitHub already: #101, #102." or "Nothing is on GitHub yet." */
 export function onGithubText(s) {
@@ -140,34 +158,46 @@ function planDialog(plan, s, run) {
         fixed ? checkRow(fixed, `${review} (review label, the draft asked for it)`) : null,
         start ? [checkRow(start, `${START} — adds the label "${choice.label}"`), choice.missing ? h("p", { class: "muted" }, choice.missing) : null] : null);
     };
-    const confirmBtn = willPublish(plan).length ? h("button", { class: "primary", onClick: async () => {
+    const asked = plan.changedOnGithub;
+    const buttons = [];
+    /** Sends `body(read)`, where `read` is what the person ticked. The ticks are checked first when `check`. */
+    const send = (body, check) => async () => {
       if (busy) return;
       const read = {};
       for (const [did, p] of picks) read[did] = { labels: p.labels(), startBuilding: p.start() };
-      for (const did of willPublish(plan)) {
-        const problem = choiceProblem(plan, s, did, read[did] ?? { labels: [], startBuilding: false });
-        if (problem) return void (error.textContent = problem);
+      if (check) {
+        for (const did of willPublish(plan)) {
+          const problem = choiceProblem(plan, s, did, read[did] ?? { labels: [], startBuilding: false });
+          if (problem) return void (error.textContent = problem);
+        }
       }
       error.textContent = "";
       busy = true;
-      confirmBtn.disabled = true;
+      for (const b of buttons) b.disabled = true;
       cancel.disabled = true;
       try {
-        await run(publishBody(plan, read));
+        await run(body(read));
       } finally {
         busy = false;
       }
       close(true);
-    } }, confirmText(plan)) : null;
+    };
+    if (asked) {
+      buttons.push(
+        h("button", { class: "primary", "data-keep": "mine", onClick: send((read) => keepBody(plan, read, "mine"), true) }, KEEP_MINE),
+        h("button", { "data-keep": "github", onClick: send(() => keepBody(plan, {}, "github"), false) }, KEEP_GITHUB),
+      );
+    } else if (willPublish(plan).length) buttons.push(h("button", { class: "primary", onClick: send((read) => publishBody(plan, read), true) }, confirmText(plan)));
     const cancel = h("button", { onClick: () => (busy ? undefined : close(undefined)) }, "Cancel");
     return h("div", { style: { display: "grid", gap: "12px" } },
-      h("p", {}, `These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
+      asked ? [h("p", { class: "status bad" }, changedText(asked)), versionsNode(asked), h("p", { class: "muted" }, CHANGED_HINT)] : null,
+      h("p", {},`These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
       (plan.willUpdate ?? []).length ? h("p", {}, `Issue #${plan.items.find((x) => x.updates !== undefined)?.updates} is updated, not created again.`) : null,
       plan.notChanged !== undefined ? h("p", { class: "muted" }, `Issue #${plan.notChanged} is not changed: no story draft stands for it.`) : null,
       choice.why ? h("p", { class: "muted" }, choice.why) : null,
       h("ol", { class: "plan" }, plan.items.map(item)),
       error,
-      h("div", { class: "row" }, h("span", { class: "spacer" }), confirmBtn ?? h("p", { class: "muted" }, NOTHING_READY), cancel));
+      h("div", { class: "row" }, h("span", { class: "spacer" }), buttons.length ? buttons : h("p", { class: "muted" }, NOTHING_READY), cancel));
   }, { busy: () => busy });
 }
 
@@ -183,6 +213,7 @@ export function publishSection(ctx) {
   let unknown = false; // the session could not be read again after a publish: what is on GitHub is not known
   let shown = null;
   let busy = false;
+  let again; // the versions of an issue that changed again while the person was asked
 
   /** What the page says about the issue the session came from: that the draft updates it, that it was updated, or that it is not changed. */
   const sourceLine = (s) => {
@@ -247,9 +278,15 @@ export function publishSection(ctx) {
     } catch (e) {
       error ??= e;
     }
+    // The issue changed again since the versions were shown: the question is asked again, with the new versions, not as a failure.
+    const asksAgain = error?.status === 409 && error.data?.changedOnGithub;
+    if (asksAgain) {
+      again = error.data.changedOnGithub;
+      error = undefined;
+    }
     failure = error ? ctx.errorText(error) : stale ? "The issues are on GitHub, but the page could not be refreshed. Reload the page to see the links." : "";
     unknown = Boolean(failure) && !fresh;
-    if (!error) toast(doneText(made));
+    if (!error && !asksAgain) toast(doneText(made));
     if (ctx.current()) update(sess); // the failure line is drawn also when the session did not change
   };
 
@@ -279,7 +316,12 @@ export function publishSection(ctx) {
         return;
       }
       if (!ctx.current()) return;
-      await planDialog(plan, sess, run);
+      for (;;) {
+        again = undefined;
+        await planDialog(plan, sess, run);
+        if (!again || !ctx.current()) break;
+        plan = { ...plan, changedOnGithub: again };
+      }
     } finally {
       busy = false;
       if (ctx.current()) update(sess);

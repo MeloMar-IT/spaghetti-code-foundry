@@ -39,6 +39,7 @@ export function logText(entry) {
   const who = entry.who || "Someone";
   if (entry.what === "created") return `${who} started the session`;
   if (entry.what === "renamed") return `${who} renamed it${entry.detail ? ` to "${entry.detail}"` : ""}`;
+  if (entry.what === "source-refreshed") return `${who} kept the GitHub version of the issue${entry.detail ? ` ${entry.detail}` : ""}`;
   if (entry.what === "dropped") return `${who} dropped the session`;
   if (entry.what === "restored") return `${who} restored the session`;
   if (entry.what === "architect-started") return `${who} asked the architect to look at the code`;

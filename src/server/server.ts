@@ -303,7 +303,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
         const status = e instanceof HttpError ? e.status : 400;
         if (!res.headersSent) {
           if (e instanceof HttpError) for (const [k, v] of Object.entries(e.headers ?? {})) res.setHeader(k, v);
-          send(res, status, { error: e.message });
+          send(res, status, { ...(e instanceof HttpError ? e.extra : undefined), error: e.message });
         }
         else res.end();
       });

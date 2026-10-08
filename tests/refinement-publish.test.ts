@@ -3,7 +3,7 @@ import { preview, type Draft } from "../src/refinement/draft.js";
 import { isReady, notReadyReason } from "../src/refinement/draft-ready.js";
 import { RefinementError } from "../src/refinement/errors.js";
 import { isBot, isStatusComment } from "../src/github.js";
-import { changedSections, endsWithMarker, updateComment, updateMarker, chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
+import { changedSections, endsWithMarker, updateComment, updateMarker, chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, parseSourceChoice, sameVersion, versionHash, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
 import type { ReadyItem } from "../src/refinement/ready-list.js";
 
 const LIST: ReadyItem[] = [{ id: "out-of-scope", text: "it says what is out of scope" }];
@@ -338,6 +338,39 @@ describe("parsePublishInput", () => {
     }
     expect(bad({ drafts: [{ draft: uid(1), startBuilding: "yes" }] })).toBe("bad-draft");
     expect(bad({ drafts: [{ draft: uid(1), labels: Array.from({ length: 20 }, (_, i) => `l${i}`) }] })).toBeUndefined();
+  });
+});
+
+describe("versions of an issue", () => {
+  it("hashes the canonical form: stable, 64 hex characters, different for a different title or text", () => {
+    const v = { title: "a", body: "b\nc" };
+    expect(versionHash(v)).toMatch(/^[0-9a-f]{64}$/);
+    expect(versionHash({ ...v })).toBe(versionHash(v));
+    expect(versionHash({ ...v, title: "x" })).not.toBe(versionHash(v));
+    expect(versionHash({ ...v, body: "x" })).not.toBe(versionHash(v));
+    expect(versionHash({ title: "a", body: "b\nc" })).not.toBe(versionHash({ title: "a\nb", body: "c" }));
+  });
+  it("sameVersion ignores line ends and surrounding white space, and the hash agrees", () => {
+    const a = { title: "T", body: "one\ntwo" };
+    const b = { title: "T ", body: "one\r\ntwo\r\n" };
+    expect(sameVersion(a, b)).toBe(true);
+    expect(versionHash(a)).toBe(versionHash(b));
+    expect(sameVersion(a, { ...a, title: "Other" })).toBe(false);
+    expect(sameVersion(a, { ...a, body: "one\ntwo!" })).toBe(false);
+  });
+  const seen = "a".repeat(64);
+  it("parseSourceChoice: nothing without source, both keeps accepted", () => {
+    expect(parseSourceChoice({})).toBeUndefined();
+    expect(parseSourceChoice({ source: { keep: "mine", seen } })).toEqual({ keep: "mine", seen });
+    expect(parseSourceChoice({ source: { keep: "github", seen, extra: 1 } })).toEqual({ keep: "github", seen });
+  });
+  it("parseSourceChoice refuses what is not a choice", () => {
+    for (const source of [null, "mine", [], {}, { keep: "both", seen }, { keep: "mine" }, { keep: "mine", seen: "abc" }, { keep: "mine", seen: "A".repeat(64) }, { keep: "mine", seen: 1 }]) {
+      expect(code(() => parseSourceChoice({ source }))).toBe("bad-draft");
+    }
+  });
+  it("parsePublishInput ignores source", () => {
+    expect(parsePublishInput({ source: { keep: "mine", seen } }, [mk(1)]).size).toBe(0);
   });
 });
 
