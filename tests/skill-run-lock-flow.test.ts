@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,10 +32,10 @@ afterEach(() => {
 });
 
 /** A valid package `demo`, pinned. Version 1 lives in a lower source: the data folder always comes first. */
-function demo(version: string, root = low, body = "Do it."): string {
+function demo(version: string, root = low, body = "Do it.", frontmatter = ""): string {
   const d = join(root, "demo");
   mkdirSync(d, { recursive: true });
-  writeFileSync(join(d, "SKILL.md"), `---\nname: demo\ndescription: A test skill.\n---\n\n${body}\n`);
+  writeFileSync(join(d, "SKILL.md"), `---\nname: demo\ndescription: A test skill.\n${frontmatter}---\n\n${body}\n`);
   writeFileSync(join(d, "skill.yaml"), `id: demo\nversion: ${version}\n`);
   addSkillPins([{ key: `demo@${version}`, digest: loadSkillPackage(d).digest }]);
   return d;
@@ -136,5 +136,78 @@ describe("skill lock in a run", () => {
     const again = await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin, config, from: "a" });
     expect(again.status).toBe("succeeded");
     expect(existsSync(join(s.runDir, RUN_SKILL_LOCK_FILE))).toBe(false);
+  });
+});
+
+describe("skills in a Claude session", () => {
+  const codexBin = resolve("tests/fixtures/fake-codex.mjs");
+  const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  afterEach(() => {
+    if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = savedConfigDir;
+  });
+
+  const showFlow = (agentLine = "") =>
+    parseFlow(`
+name: t
+workspace: inplace
+steps:
+  - id: risk_gate
+    type: shell
+    run: |
+      # /skill-request
+      echo READY
+      echo '${REQUEST}'
+  - id: impl
+    type: claude
+${agentLine}    prompt: |
+      WRITE ran.txt yes
+      SHOWPROMPT
+`);
+  const outputOf = (s: { history: { id: string; output: string }[] }) => s.history.find((h) => h.id === "impl")!.output;
+  const split = (out: string) => ({ args: out.split("\nPROMPT<<")[0]!, prompt: out.split("\nPROMPT<<")[1] ?? "" });
+
+  it.each([true, false])("gives the session the locked skill and nothing of the personal setup (isolate_agents %s)", async (isolate) => {
+    demo("1.1.0", low, "Do it.", "allowed-tools: Bash(curl *) WebFetch\n");
+    const personal = join(tmp, "claude-config");
+    mkdirSync(join(personal, "skills", "personal"), { recursive: true });
+    writeFileSync(join(personal, "skills", "personal", "SKILL.md"), "PERSONAL_SENTINEL");
+    process.env.CLAUDE_CONFIG_DIR = personal;
+
+    const s = await runFlow(showFlow(), { ...runOpts(), config: ConfigSchema.parse({ skills: { roots: [low] }, isolate_agents: isolate }) });
+    expect(s.status).toBe("succeeded");
+    const rec = s.history.find((h) => h.id === "impl")!;
+    expect(rec.skills).toMatchObject({ loaded: ["demo@1.1.0"] });
+    expect(rec.skills!.bytes).toBeGreaterThan(0);
+    expect(rec.skills!.estimatedTokens).toBeLessThanOrEqual(15000);
+    const { args, prompt } = split(outputOf(s));
+    expect(prompt.startsWith('<foundry-skills count="1">')).toBe(true);
+    expect(prompt).toContain('<foundry-skill id="demo" version="1.1.0"');
+    expect(prompt).toContain("Do it.");
+    expect(prompt.indexOf("<foundry-skills")).toBeLessThan(prompt.indexOf("WRITE ran.txt yes"));
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).toContain("--setting-sources project,local");
+    expect(args).toContain("--disable-slash-commands");
+    expect(args).not.toContain("Do it.");
+    expect(args).not.toContain("<foundry-skill id=");
+    expect(args).not.toContain("--allowedTools");
+    expect(args).not.toContain("WebFetch");
+    expect(outputOf(s)).not.toContain("PERSONAL_SENTINEL");
+    expect(readdirSync(repo)).toEqual(["ran.txt"]);
+  });
+
+  it("gives a Codex step no block and records no skills", async () => {
+    demo("1.0.0");
+    const s = await runFlow(showFlow("    agent: codex\n"), { ...runOpts(), codexBin });
+    expect(s.status).toBe("succeeded");
+    expect(outputOf(s)).not.toContain("<foundry-skills");
+    expect(s.history.find((h) => h.id === "impl")!.skills).toBeUndefined();
+  });
+
+  it("a run without a lock gets no block, no record and no isolation when the setting is off", async () => {
+    const s = await runFlow(parseFlow("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: claude, prompt: 'SHOWPROMPT'}\n"), { ...runOpts(), config: ConfigSchema.parse({ isolate_agents: false }) });
+    expect(s.history[0]!.skills).toBeUndefined();
+    expect(s.history[0]!.output).not.toContain("<foundry-skills");
+    expect(s.history[0]!.output).not.toContain("--setting-sources");
   });
 });

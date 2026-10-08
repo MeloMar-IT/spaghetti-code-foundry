@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { codexSandbox } from "../src/agents/run.js";
+import { claudeIsolated, codexSandbox } from "../src/agents/run.js";
 import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
@@ -11,7 +11,7 @@ import { readTranscript } from "../src/engine/transcript.js";
 import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { ClaudeStep } from "../src/flow/schema.js";
-import { buildClaudeArgs } from "../src/steps/claude.js";
+import { buildClaudeArgs, FACTORY_AGENT_NOTE } from "../src/steps/claude.js";
 import { buildCodexArgs } from "../src/steps/codex.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -107,6 +107,28 @@ steps:
     expect(sys).toContain("extra");
     expect(buildClaudeArgs({ prompt: "p", cwd: "/w", logFile: "/l" })).not.toContain("--setting-sources");
     expect(buildCodexArgs({ prompt: "p", cwd: "/w", logFile: "/l", sandbox: "read-only", effort: "max" })).toContain('model_reasoning_effort="xhigh"');
+  });
+
+  it("the note allows only the Foundry skill block, and keeps the isolation flags", () => {
+    expect(FACTORY_AGENT_NOTE).not.toContain("Do not use skills");
+    expect(FACTORY_AGENT_NOTE).toContain("<foundry-skills>");
+    expect(FACTORY_AGENT_NOTE).toContain("do not use, load or look for any other skill");
+    expect(FACTORY_AGENT_NOTE).toContain("win over it");
+    expect(FACTORY_AGENT_NOTE).toContain("running unattended");
+    const args = buildClaudeArgs({ prompt: "p", cwd: "/w", logFile: "/l", isolated: true, systemPrompt: "extra" });
+    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(FACTORY_AGENT_NOTE + "\n\nextra");
+    expect(args).toEqual(expect.arrayContaining(["--strict-mcp-config", "--setting-sources", "project,local", "--disable-slash-commands", "--disallowedTools", "Bash(git push*)"]));
+  });
+
+  it.each([
+    [true, false, undefined, true],
+    [false, false, undefined, false],
+    [false, false, { loaded: [], omitted: [] }, false],
+    [false, false, { loaded: ["a@1.0.0"], omitted: [] }, true],
+    [false, false, { loaded: [], omitted: ["a@1.0.0"] }, true],
+    [false, true, undefined, true],
+  ])("claudeIsolated(%s, %s, %j) is %s", (setting, user, skills, want) => {
+    expect(claudeIsolated(setting, user, skills)).toBe(want);
   });
 
   it("builds codex exec args for new, local and resumed sessions", () => {
