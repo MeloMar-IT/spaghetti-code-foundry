@@ -26,10 +26,10 @@ describe("ui/style.css", () => {
   it("imports nothing from another origin and nothing outside the modules", () => {
     for (const imp of uiCssImports()) expect(imp).not.toMatch(/\/\/|:/);
     expect(readUiCss()).not.toMatch(/@import|url\(\s*["']?https?:/);
-    expect(walk("ui").filter((f) => f.endsWith(".css")).filter((f) => !f.startsWith(join("ui", "css")))).toEqual([join("ui", "style.css"), join("ui", "tokens.css")]);
+    expect(walk("ui").filter((f) => f.endsWith(".css")).filter((f) => !f.startsWith(join("ui", "css")) && !f.startsWith(join("ui", "kit")))).toEqual([join("ui", "style.css"), join("ui", "tokens.css")]);
     for (const html of ["ui/index.html", "ui/user/index.html"]) {
       const text = readFileSync(html, "utf8");
-      expect(text.match(/<link[^>]*stylesheet[^>]*>/g)?.length, html).toBe(2); // /tokens.css, then /style.css
+      expect(text.match(/<link[^>]*stylesheet[^>]*>/g)?.length, html).toBe(3); // /tokens.css, /style.css, then /kit/kit.css
       expect(text, html).toContain('href="/style.css"');
       expect(text, html).not.toContain("<style");
     }
