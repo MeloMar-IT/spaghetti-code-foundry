@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- UI quality 4a — visual regression: screenshots across themes, densities, roles and widths that fail with image differences (#398).
+  - **Behaviour.** `npm run test:ui` now also compares screenshots with committed baselines (`toHaveScreenshot`). Pages: the gallery stand-in (`docs/ui-redesign/visual-system-demo.html`, opened from disk — no component gallery exists yet), admin Home, Board, Runs, a failed run, Repositories, Administration > Users, user Home, My runs, a run, a Refinement session, and the sign-in page. Each is taken in light/dark × default/compact at 1440 px, plus light/default at 360, 768 and 1024 px. The matrix is defined once in `tests/browser/visual-matrix.ts`; a vitest unit test checks it.
+  - **Failing.** A changed area above `MAX_DIFF_PIXEL_RATIO` (one constant in `playwright.config.ts`) fails the test, and expected, actual and diff images go to `tests/browser/test-results/`. A harness test proves it with an injected style change.
+  - **Baselines.** Committed under `tests/browser/__screenshots__/{platform}/`; only `darwin` for now. On other platforms the visual spec is skipped with a message. Update with `npm run test:ui -- --update-snapshots`. Stories that change the look on purpose update them and list the changed images in the pull request.
+  - **Helpers.** `openAs` takes an options argument (theme, density, fixed clock); new `openUrl`. Theme and density are set on `<html>` before page scripts run. The seeded hold run sleeps longer so the live running run lasts through long test runs.
+  - **Known.** Admin baselines at 360 and 768 px show the known sideways scroll; refresh them when #264 part 2 fixes it.
+  - **Compatibility.** No production code change. `npm test` does not run browser tests and passes with no browser installed.
 - UI quality 1a — a browser test harness, `npm run test:ui`, and a navigation overflow check at four widths (#367).
   - **Behaviour.** Playwright (`@playwright/test`, new dev dependency) runs the web UI in a real browser against the real server, started on a free port with a temporary data folder, one admin, one user and seeded data (a run in each main status, a repository, a refinement session, a watcher). Install the browser once with `npx playwright install chromium`. `npm test` does not run these tests and passes with no browser installed.
   - **Helpers.** `WIDTHS` (360, 768, 1024, 1440) in one place; `openAs(browser, role, width)` opens a signed-in page; `expectNoSidewaysScroll(page)` fails when the document is wider than the viewport. The navigation spec checks every primary link on `/` and `/user/` at all four widths (through the menu button and drawer at 360 px).

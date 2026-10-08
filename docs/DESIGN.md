@@ -510,6 +510,25 @@ Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once o
   - Pages keep an event stream open, so the tests never wait for "network idle".
   - Two cases (admin display at 360 and 768 px) are `test.fixme`: they show sideways scroll that
     UI quality 1b (part 2 of #264) fixes.
+  - **Visual check.** `tests/browser/visual.spec.ts` compares screenshots (`toHaveScreenshot`) with
+    committed baselines. `tests/browser/visual-matrix.ts` defines the matrix once: 12 pages (the
+    gallery stand-in `docs/ui-redesign/visual-system-demo.html` opened from disk, admin, user and
+    sign-in pages), each in theme (light, dark) × density (default, compact) at 1440 px, plus
+    light/default at 360, 768 and 1024 px. `tests/visual-matrix.test.ts` (vitest) checks the matrix.
+    - `openAs` takes an options argument for theme, density and a fixed clock. Theme and density are
+      set as `data-theme` / `data-density` on `<html>` before page scripts run.
+    - Captures are deterministic: animations off, caret hidden, fixed height (`VIEW_HEIGHT`), scale
+      factor 1, wait for the page's ready text. Changing parts (run ids, times, the live running
+      run) are masked.
+    - A changed area above `MAX_DIFF_PIXEL_RATIO` (in `playwright.config.ts`) fails the test.
+      Expected, actual and diff images are written to `tests/browser/test-results/`. A harness test
+      injects one style change and checks that the comparison fails.
+    - Baselines live in `tests/browser/__screenshots__/{platform}/`. Only `darwin` has baselines; on
+      other platforms the visual spec is skipped with a message, as it is on a Mac with no
+      baseline folder.
+    - **Update baselines** with `npm run test:ui -- --update-snapshots`, check every changed image,
+      and commit them. A story that changes the look on purpose does this and lists the changed
+      images in its pull request.
 
 ---
 

@@ -44,7 +44,7 @@ workspace: empty
 publish:
   enabled: true
 steps:
-  - {id: wait, type: shell, run: "sleep 600"}
+  - {id: wait, type: shell, run: "sleep 7200"}
 `;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
