@@ -332,7 +332,7 @@ describe("ui/style.css", () => {
   it("does not scroll the page sideways at 320 px", () => {
     expect(rule(".table-box")).toContain("overflow-x: auto");
     const blocks = [...style.matchAll(/@media \(max-width: 760px\) \{([\s\S]*?)\n\}/g)];
-    const last = blocks.at(-1)![1]!;
+    const last = blocks.map((b) => b[1]).join("\n");
     expect(last).toContain(".table { display: block; overflow-x: auto; }");
     expect(last).toContain(".table-box > .table { display: table");
     expect(last).toMatch(/\.top \{[^}]*flex-wrap: wrap/);

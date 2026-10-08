@@ -133,6 +133,4 @@ body.side-closed .side { display: none; }
   .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
   main { overflow-wrap: break-word; }
   main pre { max-width: 100%; overflow-x: auto; }
-  .table { display: block; overflow-x: auto; }
-  .table-box > .table { display: table; overflow: hidden; }
 }

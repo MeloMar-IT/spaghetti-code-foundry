@@ -67,7 +67,7 @@ button.small { padding: 3px 9px; font-size: var(--text-small); }
 
 input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--control-pad-y) var(--control-pad-x); width: 100%; min-width: 0; }
 textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
 .field { display: grid; gap: 4px; }
 .field > span { font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
 .field > small { color: var(--muted); font-size: var(--text-meta); }
@@ -244,8 +244,8 @@ pre.diff .file { font-weight: 700; display: block; }
 .chart { position: relative; }
 .chart svg { width: 100%; height: auto; display: block; }
 .chart .bar { fill: var(--accent); }
-.chart .bar-hit:hover .bar, .chart .bar-hit:focus .bar { fill: color-mix(in srgb, var(--accent) 80%, var(--text)); }
-.chart .bar-hit:focus { outline: none; }
+.chart .bar-hit:hover .bar, .chart .bar-hit:focus-visible .bar { fill: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.chart .bar-hit:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .chart .grid-line { stroke: var(--border); stroke-width: 1; }
 .chart .base-line { stroke: var(--muted); stroke-width: 1; }
 .chart .axis { font-size: var(--text-micro); fill: var(--muted); font-family: var(--sans); }
@@ -357,6 +357,11 @@ td > .help > .help-mark { margin-left: 6px; }
 a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .modal:focus-visible { outline: none; }
+
+/* ── target size: at least 24 × 24 CSS px ── */
+button, .btn, .table a { min-width: 24px; min-height: 24px; }
+.table a { display: inline-block; }
+button.icon { justify-content: center; }
 
 /* ── a wide table scrolls in its own box ── */
 .table-box { overflow-x: auto; }
@@ -572,3 +577,16 @@ body.side-closed .side { display: none; }
 .select-all { user-select: all; }
 .block { display: block; }
 .span-all { grid-column: 1 / -1; }
+
+@media (max-width: 760px) {
+  .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
+  main { overflow-wrap: break-word; }
+  main pre { max-width: 100%; overflow-x: auto; }
+  .table { display: block; overflow-x: auto; }
+  .table-box > .table { display: table; overflow: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  #toast, .chart-tip { transition: none; }
+}

@@ -113,6 +113,10 @@ button.icon { justify-content: center; }
 
 /* ── a wide table scrolls in its own box ── */
 .table-box { overflow-x: auto; }
+@media (max-width: 760px) {
+  .table { display: block; overflow-x: auto; }
+  .table-box > .table { display: table; overflow: hidden; }
+}
 .table tr.link td > a { text-decoration: none; }
 .modal ol.plan li { margin-bottom: 12px; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
