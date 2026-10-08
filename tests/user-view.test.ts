@@ -666,3 +666,13 @@ describe("a run held by the daily budget of its owner", () => {
     expect(run.next.why).toBe("The owner's daily budget of $4.25 is used up");
   });
 });
+
+describe("archive mark in the user view", () => {
+  it("copies archivedAt and never archivedBy", () => {
+    const run = { runId: "r", flow: "f", task: "t", status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z", vars: {}, history: [], state: { next: null }, archivedAt: "2026-02-02T00:00:00.000Z", archivedBy: "u9" } as any;
+    const v = userRun(run);
+    expect(v.archivedAt).toBe("2026-02-02T00:00:00.000Z");
+    expect(JSON.stringify(v)).not.toContain("u9");
+    expect("archivedAt" in userRun({ ...run, archivedAt: undefined })).toBe(false);
+  });
+});

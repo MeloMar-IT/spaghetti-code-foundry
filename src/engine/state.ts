@@ -87,6 +87,10 @@ export interface RunSummary {
   owner?: string;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
+  /** When the run was archived (taken out of the default list). Absent: not archived. */
+  archivedAt?: string;
+  /** The id of the account that archived it. Never shown to a user. */
+  archivedBy?: string;
 }
 
 /** An answer a person gave on the run page to the questions a run stopped with. */
@@ -125,6 +129,8 @@ export interface RunBrief {
   updatedAt: string;
   /** `vars.github_repo` and `vars.issue` of the run, when it has them. */
   githubRepo?: string;
+  /** True when run.json has archivedAt. */
+  archived?: boolean;
   issue?: string;
   /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
   pr?: string;
@@ -168,7 +174,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;
@@ -216,6 +222,44 @@ export function adoptRun(runDir: string, owner: string, hooks: { beforeSwap?: ()
     // A second look: another process may have written run.json while we worked.
     if (readFileSync(file, "utf8") !== text) return false;
     renameSync(tmp, file);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+/**
+ * Sets (at: ISO time) or removes (at: null) the archive mark of a run.json and changes nothing else (not the file
+ * time or the mode). Skips a live run. Written beside the file and renamed over it; if run.json changed in between,
+ * nothing is replaced. Returns true when the file was replaced. Never throws.
+ */
+export function setRunArchived(runDir: string, at: string | null, by?: string, hooks: { beforeSwap?: () => void } = {}): boolean {
+  const file = runFile(runDir);
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    const st = statSync(file);
+    const text = readFileSync(file, "utf8");
+    const s = JSON.parse(text) as Record<string, unknown>;
+    if (!s || typeof s !== "object" || Array.isArray(s)) return false;
+    if (s.status === "running" && pidAlive(s.pid)) return false;
+    if ((typeof s.archivedAt === "string") === (at !== null)) return false;
+    let next: Record<string, unknown>;
+    if (at !== null) next = { ...s, archivedAt: at, ...(by ? { archivedBy: by } : {}) };
+    else {
+      next = { ...s };
+      delete next.archivedAt;
+      delete next.archivedBy;
+    }
+    writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: st.mode & 0o777, flag: "wx" });
+    chmodSync(tmp, st.mode & 0o777);
+    utimesSync(tmp, st.atime, new Date(Math.round(st.mtimeMs)));
+    hooks.beforeSwap?.();
+    // A second look: another process may have written run.json while we worked.
+    if (readFileSync(file, "utf8") !== text) return false;
+    renameSync(tmp, file);
+    briefCache.delete(file);
     return true;
   } catch {
     return false;

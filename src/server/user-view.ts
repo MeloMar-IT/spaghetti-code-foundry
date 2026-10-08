@@ -17,6 +17,8 @@ export interface UserStep { id: string; type: string; visit: number; ok: boolean
 export interface UserRun {
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
+  /** When the run was archived; absent when it is not. */
+  archivedAt?: string;
   /** The id of the refinement session the run reads for (an architect run). */
   refinement?: string;
   vars: Record<string, string>;
@@ -119,6 +121,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(s.resumes !== undefined ? { resumes: s.resumes } : {}),
     ...(s.owner !== undefined ? { owner: s.owner } : {}),
     ...(s.superseded ? { superseded: true } : {}),
+    ...(typeof s.archivedAt === "string" ? { archivedAt: s.archivedAt } : {}),
     ...(refinementSessionOf(s.source) ? { refinement: refinementSessionOf(s.source) } : {}),
     vars,
     flowDef: {

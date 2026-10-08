@@ -314,6 +314,13 @@ a **What happens next** block with **You** as who and the approval message as th
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
+- **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
+  so the list shows current work. Nothing is deleted: `GET /api/runs?archived=1` lists the archived
+  runs, and the run, its log and its changes open as before. **Unarchive** puts it back. A run that
+  is queued, running or waiting cannot be archived (409). You can archive your own runs; an admin
+  can archive any run. The mark is shared: it hides the run from everyone's default list. Resuming,
+  retrying, approving or answering an archived run removes the mark. Board, Your turn, statistics
+  and the monitor still count it.
 
 Runs survive restarts: if the Foundry stops mid-run, the run is marked *interrupted* and can be
 resumed (watchers do this automatically).
@@ -1734,6 +1741,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 |---|---|---|---|
 | `run-start` | A run is started | run id | |
 | `run-cancel`, `run-approve`, `run-reject`, `run-resume` | A run is cancelled, approved, rejected or resumed (a cancel that cancelled nothing writes no line) | run id | |
+| `run-archive`, `run-unarchive` | A finished run was archived or taken out of the archive (a repeat call writes a line too) | run id | |
 | `run-answer` | An answer to the questions of a run was accepted (a refused call writes no line; the text is never logged) | run id | |
 | `refinement-publish` | Ready drafts of a refinement session were published | session id | repository and issue numbers |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
@@ -2137,11 +2145,13 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/validate` | yes | no | check a flow |
 | `POST /api/generate` | yes | no | write a flow with AI |
 | `GET /api/queue` | yes | yes | the queue (a user sees their own queued runs and how many are ahead) |
-| `GET /api/runs` | yes | yes | list runs (a user sees their own) |
+| `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
+| `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
+| `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |
 | `POST /api/runs/:id/answer` | yes | own runs | answer the questions a run stopped with; the run continues with the answer |
 | `POST /api/runs/:id/approve` | yes | own runs | approve a run, with a note; 409 for a closed issue, as for resume |
