@@ -98,6 +98,30 @@ describe("template", () => {
   });
 });
 
+describe("config: ui.redesign", () => {
+  it("is off by default and strict", () => {
+    expect(ConfigSchema.parse({}).ui).toEqual({ redesign: false });
+    expect(ConfigSchema.parse({ ui: {} }).ui).toEqual({ redesign: false });
+    expect(ConfigSchema.parse({ ui: { redesign: true } }).ui.redesign).toBe(true);
+    expect(ConfigSchema.safeParse({ ui: { other: 1 } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ ui: { redesign: "yes" } }).success).toBe(false);
+  });
+
+  it("loads a config.yaml without the key, without rewriting it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    try {
+      const path = join(dir, "config.yaml");
+      writeFileSync(path, "concurrency: 3\n");
+      expect(loadConfig(path).ui).toEqual({ redesign: false });
+      expect(readFileSync(path, "utf8")).toBe("concurrency: 3\n");
+      saveConfig({ ui: { redesign: true } }, path);
+      expect(loadConfig(path).ui.redesign).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("config: audit.retention_days", () => {
   it("defaults to 180", () => {
     expect(ConfigSchema.parse({}).audit).toEqual({ retention_days: 180 });
