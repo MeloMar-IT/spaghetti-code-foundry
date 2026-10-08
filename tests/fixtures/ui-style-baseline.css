@@ -108,6 +108,7 @@ a.pill.refinement:hover { text-decoration: underline; }
 .status.ok { color: var(--ok); }
 .status.bad { color: var(--fail); }
 .dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-round); background: var(--accent); display: inline-block; }
+.dirty-dot.clean { visibility: hidden; }
 
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
 .graph-pane { position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
@@ -167,6 +168,11 @@ details[open] > summary { margin-bottom: 10px; }
 .graph .lbl.fail { fill: var(--fail); }
 .legend { display: flex; gap: 12px; font-size: var(--text-meta); color: var(--muted); margin-top: 8px; }
 .legend i { display: inline-block; width: 14px; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.legend i.seq { border-color: var(--muted); }
+.legend i.ok { border-color: var(--ok); }
+.legend i.fail { border-color: var(--fail); border-top-style: dashed; }
+.legend i.route { border-color: var(--route); }
+.legend i.par { border-color: var(--muted); border-top-style: dotted; }
 
 /* ── runs ── */
 .table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -543,6 +549,7 @@ body.side-closed .side { display: none; }
 .text-xs { font-size: var(--text-meta); }
 .text-2xs { font-size: calc(var(--text-micro) + 0.5px); }
 .text-3xs { font-size: var(--text-micro); }
+.mt-0 { margin-top: 0; }
 .mt-4 { margin-top: 4px; }
 .mt-6 { margin-top: 6px; }
 .mt-8 { margin-top: 8px; }

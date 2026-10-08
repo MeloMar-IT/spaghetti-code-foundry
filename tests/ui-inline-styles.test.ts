@@ -15,6 +15,7 @@ const STYLE_USE = /\bstyle\s*:|\.style\s*[.[]|setAttribute\(\s*["']style["']/;
 const CLEAN = [
   "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
   "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
+  "ui/editor.js", "ui/app.js", "ui/step-types.js", "ui/graph.js", "ui/library.js",
 ];
 
 /** Lines left in a clean file. Matched by the text of the line, not the line number. */
@@ -24,10 +25,10 @@ const ALLOW: Allowed[] = [
   { file: "ui/dashboard.js", has: 'class: "rate-fill", style: { width:', reason: "rate bar width, computed from the data" },
 ];
 
-/** Files issues 3 and 4 of the CSS architecture (#339, #340) clean. They empty this list. */
+/** Files issue 4 of the CSS architecture (#340) cleans. It empties this list. */
 const NOT_CLEANED_YET = [
-  "ui/app.js", "ui/editor.js", "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js", "ui/graph.js",
-  "ui/step-types.js", "ui/library.js", "ui/refinement-import.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
+  "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js",
+  "ui/refinement-import.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
   "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
 ];
 
@@ -51,7 +52,7 @@ const UTILITIES: Record<string, string[]> = {
   ".text-xs": ["font-size: var(--text-meta)"],
   ".text-2xs": ["font-size: calc(var(--text-micro) + 0.5px)"],
   ".text-3xs": ["font-size: var(--text-micro)"],
-  ...Object.fromEntries(Object.entries(margin("top", [["mt-4", "4px"], ["mt-6", "6px"], ["mt-8", "8px"], ["mt-10", "10px"], ["mt-16", "16px"], ["mt-22", "22px"], ["mt-neg-6", "-6px"]])).map(([k, v]) => [`.${k}`, v])),
+  ...Object.fromEntries(Object.entries(margin("top", [["mt-0", "0"], ["mt-4", "4px"], ["mt-6", "6px"], ["mt-8", "8px"], ["mt-10", "10px"], ["mt-16", "16px"], ["mt-22", "22px"], ["mt-neg-6", "-6px"]])).map(([k, v]) => [`.${k}`, v])),
   ...Object.fromEntries(Object.entries(margin("bottom", [["mb-4", "4px"], ["mb-6", "6px"], ["mb-8", "8px"], ["mb-10", "10px"], ["mb-12", "12px"], ["mb-14", "14px"], ["mb-16", "16px"]])).map(([k, v]) => [`.${k}`, v])),
   ".mx-12": ["margin-left: 12px", "margin-right: 12px"],
   ".px-12": ["padding-left: 12px", "padding-right: 12px"],

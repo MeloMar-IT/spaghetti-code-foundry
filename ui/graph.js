@@ -99,10 +99,10 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
   return h("div", {},
     svg("svg", { class: "graph", width, height, viewBox: `0 0 ${width} ${height}` }, defs, lines, arcEls, nodes, end),
     h("div", { class: "legend" },
-      h("span", {}, h("i", { style: { borderColor: "var(--muted)" } }), "next"),
-      h("span", {}, h("i", { style: { borderColor: "var(--ok)" } }), "on success"),
-      h("span", {}, h("i", { style: { borderColor: "var(--fail)", borderTopStyle: "dashed" } }), "on failure"),
-      h("span", {}, h("i", { style: { borderColor: "var(--route)" } }), "route"),
-      h("span", {}, h("i", { style: { borderColor: "var(--muted)", borderTopStyle: "dotted" } }), "parallel")),
+      h("span", {}, h("i", { class: "seq" }), "next"),
+      h("span", {}, h("i", { class: "ok" }), "on success"),
+      h("span", {}, h("i", { class: "fail" }), "on failure"),
+      h("span", {}, h("i", { class: "route" }), "route"),
+      h("span", {}, h("i", { class: "par" }), "parallel")),
     dangling.length ? h("p", { class: "status bad" }, `${dangling.length} jump(s) point to missing steps`) : null);
 }

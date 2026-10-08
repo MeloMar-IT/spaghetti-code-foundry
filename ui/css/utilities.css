@@ -23,6 +23,7 @@
 .text-xs { font-size: var(--text-meta); }
 .text-2xs { font-size: calc(var(--text-micro) + 0.5px); }
 .text-3xs { font-size: var(--text-micro); }
+.mt-0 { margin-top: 0; }
 .mt-4 { margin-top: 4px; }
 .mt-6 { margin-top: 6px; }
 .mt-8 { margin-top: 8px; }
