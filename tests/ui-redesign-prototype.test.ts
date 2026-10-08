@@ -158,12 +158,13 @@ describe("self-contained and private", () => {
 });
 
 describe("tokens", () => {
-  it("has every colour token of ui/style.css with the same value, both themes", () => {
-    const css = read("ui/style.css");
-    const blocks = [...css.matchAll(/:root\s*\{([^}]*)\}/g)].map((m) => m[1]!).filter((b) => b.includes("--bg:"));
-    expect(blocks.length).toBe(2);
+  it("still has every legacy token name of the prototype in ui/tokens.css", () => {
     const proto = read(`${PROTO}/proto.css`);
-    for (const b of blocks) for (const m of b.matchAll(/(--[\w-]+):\s*([^;]+);/g)) expect(proto, `${m[1]}: ${m[2]}`).toContain(`${m[1]}: ${m[2]};`);
+    const block = /:root,\s*html\[data-theme="light"\]\s*\{([^}]*)\}/.exec(proto)?.[1] ?? "";
+    const names = [...block.matchAll(/(--[\w-]+):/g)].map((m) => m[1]!);
+    expect(names).toHaveLength(20);
+    const tokens = read("ui/tokens.css");
+    for (const n of names) expect(tokens, n).toMatch(new RegExp(`^\\s*${n}:`, "m"));
     expect(proto).toContain('html[data-theme="dark"]');
     expect(proto).toContain('html[data-theme="light"]');
     expect(proto).toMatch(/@container[^{]*\(max-width: 760px\)/);

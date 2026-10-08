@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visual system demo (#322)</title>
+  <link rel="stylesheet" href="../../ui/tokens.css">
+  <link rel="stylesheet" href="../../ui/style.css">
+</head>
+<body>
+  <header class="top">
+    <span class="brand"><span class="logo">◆</span> Visual system demo</span>
+    <div class="row">
+      <label class="field"><span>Theme</span>
+        <select id="theme" class="small-select">
+          <option value="auto">auto</option>
+          <option value="light">light</option>
+          <option value="dark">dark</option>
+        </select>
+      </label>
+      <label class="field"><span>Density</span>
+        <select id="density" class="small-select">
+          <option value="comfortable">comfortable</option>
+          <option value="compact">compact</option>
+        </select>
+      </label>
+    </div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <h1>Runs</h1>
+      <span class="spacer"></span>
+      <button class="primary">New run</button>
+      <button>Refresh</button>
+      <button disabled>Cancel</button>
+    </div>
+    <div class="table-box">
+      <table class="table">
+        <thead><tr><th>Run</th><th>Task</th><th>Repository</th><th>Owner</th><th>State</th><th>Started</th></tr></thead>
+        <tbody>
+          <tr class="link"><td class="mono">20261007-1001</td><td class="task">Add a retry to the upload step</td><td>example/shop</td><td>ana@example.test</td><td><span class="pill kind-running">running</span></td><td class="muted">2 min ago</td></tr>
+          <tr class="link"><td class="mono">20261007-0955</td><td class="task">Fix the date format on the invoice page</td><td>example/shop</td><td>ben@example.test</td><td><span class="pill ok">done</span></td><td class="muted">12 min ago</td></tr>
+          <tr class="link"><td class="mono">20261007-0941</td><td class="task">Update the dependency list</td><td>example/api</td><td>cy@example.test</td><td><span class="pill fail">failed</span></td><td class="muted">26 min ago</td></tr>
+          <tr class="link"><td class="mono">20261007-0930</td><td class="task">Write the release notes</td><td>example/docs</td><td>ana@example.test</td><td><span class="pill who-you">waiting for you</span></td><td class="muted">37 min ago</td></tr>
+          <tr class="link"><td class="mono">20261007-0912</td><td class="task">Rename the settings page</td><td>example/api</td><td>dee@example.test</td><td><span class="pill locked">locked</span></td><td class="muted">1 h ago</td></tr>
+          <tr class="link"><td class="mono">20261007-0850</td><td class="task">Clean up old branches</td><td>example/shop</td><td>ben@example.test</td><td><span class="pill">queued</span></td><td class="muted">2 h ago</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Refinement talk</h2>
+    <div class="talk">
+      <div class="card">
+        <div class="row"><span class="pill">you</span><span class="muted">Ana</span></div>
+        <p class="said">The invoice page shows the date in the wrong order for some customers.</p>
+      </div>
+      <div class="card">
+        <div class="row"><span class="pill">foundry</span><span class="muted">Refiner</span></div>
+        <p class="said">Which customers see it? Is it only the invoice page, or also the order mail?</p>
+      </div>
+      <p class="status open-line">One question is still open.</p>
+      <ul>
+        <li class="entry">Only customers in one country.<button class="small">Edit</button><button class="small danger">Remove</button></li>
+        <li class="entry">The order mail looks fine.<button class="small">Edit</button><button class="small danger">Remove</button></li>
+      </ul>
+      <label class="field"><span>Your answer</span><textarea rows="3">Only the invoice page.</textarea></label>
+    </div>
+
+    <pre class="log"><span class="step">step 1: build</span>
+<span class="ok">ok</span> compiled 41 files
+<span class="step">step 2: test</span>
+<span class="fail">fail</span> 1 test failed
+<span class="dim">retrying in 5 s</span></pre>
+  </main>
+  <script>
+    document.getElementById("theme").addEventListener("change", (e) => {
+      if (e.target.value === "auto") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = e.target.value;
+    });
+    document.getElementById("density").addEventListener("change", (e) => {
+      if (e.target.value === "comfortable") delete document.documentElement.dataset.density;
+      else document.documentElement.dataset.density = e.target.value;
+    });
+  </script>
+</body>
+</html>
