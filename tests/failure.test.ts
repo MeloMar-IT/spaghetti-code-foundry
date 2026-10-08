@@ -64,6 +64,15 @@ describe("classifyFailure", () => {
     }
   });
 
+  it("reads the marker of a skill request that is not valid, and says the run has to start again", () => {
+    const out = "skill request: not valid JSON\nplanning failed: the skill request of the plan is not valid";
+    expect(classifyFailure(run("failed", FAILED, failedStep(out)))).toMatchObject({
+      cause: "factory",
+      what: "the plan's skill request was not valid",
+      fix: "start the run again so the issue is planned again",
+    });
+  });
+
   it.each([
     ["planning failed: no PLAN_STATUS line", "the plan had no PLAN_STATUS line"],
     ["planning failed (no questions to ask)", "the plan had no questions to ask"],

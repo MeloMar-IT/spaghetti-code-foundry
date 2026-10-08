@@ -26,10 +26,12 @@ export function shortDenied(entry: string): string {
   return /^[\w.+-]+$/.test(prog) ? `Bash: ${prog}` : "Bash";
 }
 
-const MARKERS: { line: string; what: string }[] = [
+const MARKERS: { line: string; what: string; fix?: string }[] = [
   { line: "planning failed: no PLAN_STATUS line", what: "the plan had no PLAN_STATUS line" },
   { line: "planning failed (no questions to ask)", what: "the plan had no questions to ask" },
   { line: "no SUBTASK lines", what: "the triage had no SUBTASK lines" },
+  // A resume would run the gate on the same plan again, so the plan has to be made again.
+  { line: "planning failed: the skill request of the plan is not valid", what: "the plan's skill request was not valid", fix: "start the run again so the issue is planned again" },
 ];
 const RETRY_STEP = "resume the run to try the step again";
 const PUSH_FIX = "change Protected branches in Settings or the flow's branch";
@@ -112,7 +114,7 @@ function evidence(h: StepRecord[]): Failure | undefined {
     if (net) return { cause: "factory", what: net.what, fix: net.fix };
   }
   const marker = MARKERS.find((m) => m.line === lines.at(-1));
-  if (marker) return { cause: "factory", what: marker.what, fix: RETRY_STEP };
+  if (marker) return { cause: "factory", what: marker.what, fix: marker.fix ?? RETRY_STEP };
   if (lines.some((l) => PUSH_GUARD.test(l))) return { cause: "factory", what: "a push to a protected branch was blocked", fix: PUSH_FIX };
   if (lines.some((l) => NOT_FEATURE.test(l))) return { cause: "factory", what: "a push to a branch that is not a feature branch was blocked", fix: PUSH_FIX };
   return undefined;

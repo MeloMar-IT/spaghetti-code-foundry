@@ -49,7 +49,7 @@ for (const line of text.split("\n")) {
     part.deps = /^(none|-|n\/a)?\s*$/i.test(dep[1]) ? [] : dep[1].split(/[,;\s]+/).filter(Boolean);
     continue;
   }
-  if (/^(PLAN_STATUS|SPLIT_RISK|SPLIT_APPROVED|RISK_SCORE|RISK_REASON):/.test(line)) continue;
+  if (/^(PLAN_STATUS|SPLIT_RISK|SPLIT_APPROVED|RISK_SCORE|RISK_REASON|SKILL_REQUEST):/.test(line)) continue;
   part.lines.push(line);
 }
 if (parts.length < 2) fail(`expected at least 2 parts, found ${parts.length}`);
