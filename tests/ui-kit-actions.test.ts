@@ -157,7 +157,7 @@ describe("core", () => {
 describe("kit CSS", () => {
   const read = (p: string) => readFileSync(p, "utf8");
   it("kit.css imports every other css file in ui/kit, in order", () => {
-    expect(kitCssImports()).toEqual(["/kit/actions.css", "/kit/forms.css"]);
+    expect(kitCssImports()).toEqual(["/kit/actions.css", "/kit/forms.css", "/kit/display.css"]);
     const files = readdirSync("ui/kit").filter((f) => f.endsWith(".css") && f !== "kit.css").map((f) => `/kit/${f}`).sort();
     expect([...kitCssImports()].sort()).toEqual(files);
   });

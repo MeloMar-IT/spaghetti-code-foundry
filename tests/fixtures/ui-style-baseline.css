@@ -606,3 +606,4 @@ body.side-closed .side { display: none; }
 .gallery-example__body { min-width: 0; overflow-wrap: anywhere; }
 .gallery-example__failed { margin: 0; color: var(--color-danger); }
 .gallery-row { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; }
+.gallery-stack { display: grid; gap: var(--space-md); }
