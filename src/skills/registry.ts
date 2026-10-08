@@ -282,7 +282,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
 }
 
 /** The active entry of an id, or the exact `id@version`. */
-export function findSkill(reg: SkillRegistry, id: string, version?: string): RegisteredSkill | undefined {
+export function findSkill(reg: Pick<SkillRegistry, "skills" | "byKey">, id: string, version?: string): RegisteredSkill | undefined {
   if (version !== undefined) return reg.byKey.get(`${id}@${version}`);
   return reg.skills.find((s) => s.id === id && s.active);
 }
@@ -306,9 +306,9 @@ export class SkillIntegrityError extends SkillSelectError {
 
 /**
  * The gate for a run: the entry for this exact `id@version` if it is approved or built-in and its bytes match the pin.
- * Never falls back to another version or to the active entry. Nothing calls it yet.
+ * Never falls back to another version or to the active entry. Used by `resolveSkills`.
  */
-export function selectSkill(reg: SkillRegistry, id: string, version: string): RegisteredSkill {
+export function selectSkill(reg: Pick<SkillRegistry, "byKey" | "problems">, id: string, version: string): RegisteredSkill {
   const s = version ? reg.byKey.get(`${id}@${version}`) : undefined;
   if (!s) throw new SkillSelectError("unknown", `no skill ${id}@${version}`);
   if (s.trust === "unapproved") throw new SkillSelectError("unapproved", `${s.key} comes from the repository and cannot be selected`);

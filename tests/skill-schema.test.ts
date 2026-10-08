@@ -4,6 +4,7 @@ import {
   SkillIdSchema,
   SkillManifestSchema,
   SkillVersionSchema,
+  compareSkillVersions,
   relativePathProblem,
 } from "../src/skills/schema.js";
 
@@ -104,4 +105,23 @@ describe("SkillFrontmatterSchema", () => {
       { ...ok, name: "Sql" },
     ]) expect(SkillFrontmatterSchema.safeParse(bad).success).toBe(false);
   });
+});
+
+describe("compareSkillVersions", () => {
+  const ordered = (list: string[]) => {
+    for (let i = 0; i + 1 < list.length; i++) {
+      expect(compareSkillVersions(list[i]!, list[i + 1]!)).toBeLessThan(0);
+      expect(compareSkillVersions(list[i + 1]!, list[i]!)).toBeGreaterThan(0);
+    }
+  };
+  it("orders major, minor and patch numerically", () => ordered(["1.0.0", "1.0.1", "1.1.0", "2.0.0", "10.0.0"]));
+  it("puts a prerelease below its release and compares identifiers one by one", () =>
+    ordered(["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-rc.1", "1.0.0"]));
+  it("compares numeric identifiers as numbers", () => ordered(["1.0.0-2", "1.0.0-10"]));
+  it("compares numbers above the safe integer exactly", () => {
+    ordered(["9007199254740993.0.0", "9007199254740994.0.0"]);
+    ordered(["1.0.0-9007199254740993", "1.0.0-9007199254740994"]);
+    expect(compareSkillVersions("1.0.9007199254740993", "1.0.9007199254740992")).toBeGreaterThan(0);
+  });
+  it("gives 0 for equal versions", () => expect(compareSkillVersions("1.2.3-rc.1", "1.2.3-rc.1")).toBe(0));
 });

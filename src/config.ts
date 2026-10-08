@@ -6,6 +6,7 @@ import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
+import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
 import { SkillIdSchema } from "./skills/schema.js";
 
 const watcherShape = {
@@ -405,8 +406,37 @@ export const ConfigSchema = z
               ctx.addIssue({ code: "custom", path: ["include"], message: "the pinned skills do not fit max_tokens" });
           })
           .prefault({}),
+        /** What the skill resolver may select for a plan: limits, mandatory ids (include) and refused ids (exclude). Installation-wide. */
+        selection: z
+          .object({
+            max_skills: z.number().int().min(RESOLVE_RANGE.maxSkills[0]).max(RESOLVE_RANGE.maxSkills[1]).default(RESOLVE_DEFAULTS.maxSkills),
+            max_skill_tokens: z.number().int().min(RESOLVE_RANGE.maxSkillTokens[0]).max(RESOLVE_RANGE.maxSkillTokens[1]).default(RESOLVE_DEFAULTS.maxSkillTokens),
+            max_tokens: z.number().int().min(RESOLVE_RANGE.maxTokens[0]).max(RESOLVE_RANGE.maxTokens[1]).default(RESOLVE_DEFAULTS.maxTokens),
+            /** Skill ids that are always selected. Not an approval: they still need a pin. */
+            include: z.array(SkillIdSchema).max(RESOLVE_RANGE.include).default([]),
+            /** Skill ids that are never selected. */
+            exclude: z.array(SkillIdSchema).max(RESOLVE_RANGE.exclude).default([]),
+          })
+          .strict()
+          .superRefine((c, ctx) => {
+            for (const key of ["include", "exclude"] as const)
+              c[key].forEach((id, i) => {
+                if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
+              });
+            if (c.include.length > c.max_skills) ctx.addIssue({ code: "custom", path: ["include"], message: "more mandatory skills than max_skills" });
+            c.include.forEach((id, i) => {
+              if (c.exclude.includes(id)) ctx.addIssue({ code: "custom", path: ["include", i], message: `"${id}" is also in exclude` });
+            });
+          })
+          .prefault({}),
       })
       .strict()
+      .superRefine((s, ctx) => {
+        s.selection.include.forEach((id, i) => {
+          if (s.catalogue.exclude.includes(id))
+            ctx.addIssue({ code: "custom", path: ["selection", "include", i], message: `a mandatory skill is excluded from the catalogue ("${id}")` });
+        });
+      })
       .prefault({}),
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,

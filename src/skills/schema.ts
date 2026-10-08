@@ -133,3 +133,28 @@ export interface SkillPackage extends SkillManifest {
   digest: string;
   files: Record<SkillFolder, SkillFile[]>;
 }
+
+/** SemVer precedence of two versions that match `SKILL_VERSION_RE`: negative, 0 or positive. */
+export function compareSkillVersions(a: string, b: string): number {
+  const split = (v: string) => {
+    const i = v.indexOf("-");
+    const core = (i < 0 ? v : v.slice(0, i)).split(".").map(BigInt);
+    return { core, pre: i < 0 ? [] : v.slice(i + 1).split(".") };
+  };
+  const x = split(a);
+  const y = split(b);
+  for (let i = 0; i < 3; i++) if (x.core[i] !== y.core[i]) return x.core[i]! < y.core[i]! ? -1 : 1;
+  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
+  const num = /^\d+$/;
+  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i]!;
+    const q = y.pre[i]!;
+    if (p === q) continue;
+    const pn = num.test(p);
+    const qn = num.test(q);
+    if (pn && qn) return BigInt(p) < BigInt(q) ? -1 : 1;
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return Math.sign(x.pre.length - y.pre.length);
+}
