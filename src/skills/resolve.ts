@@ -34,6 +34,8 @@ export const SkillDecisionSchema = z
     mandatory: z.boolean(),
     /** The conflicting skill or the failing dependency. */
     via: SkillIdSchema.optional(),
+    /** For dependency-unavailable: why the dependency itself cannot be used. Absent when the dependency chain is too deep. */
+    cause: z.enum(RESOLVE_REJECT_CODES).optional(),
     estimatedTokens: int.optional(),
   })
   .strict();
@@ -79,7 +81,7 @@ export function skillContextTokens(pkg: Pick<SkillPackage, "description" | "inst
   return estimateTokens(`${pkg.description}\n${pkg.instructions}`);
 }
 
-type Fail = { code: (typeof RESOLVE_REJECT_CODES)[number]; via?: string; version?: string };
+type Fail = { code: (typeof RESOLVE_REJECT_CODES)[number]; via?: string; version?: string; cause?: (typeof RESOLVE_REJECT_CODES)[number] };
 type Checked = { ok: true; skill: RegisteredSkill; tokens: number } | ({ ok: false } & Fail);
 
 /** Valid, unique, sorted ids; bad ones are counted. */
@@ -152,7 +154,7 @@ export function resolveSkills(
     const visit = (id: string, isRoot: boolean, minVersion?: string): Fail | undefined => {
       if (stack.includes(id)) return { code: "dependency-cycle", via: id };
       const c = check(id);
-      if (!c.ok) return isRoot ? { code: c.code, version: c.version } : { code: "dependency-unavailable", via: id };
+      if (!c.ok) return isRoot ? { code: c.code, version: c.version } : { code: "dependency-unavailable", via: id, cause: c.code };
       if (minVersion && compareSkillVersions(c.skill.version, minVersion) < 0) return { code: "dependency-version", via: id };
       if (done.has(id)) return undefined;
       if (stack.length >= RESOLVE_RANGE.depth) return { code: "dependency-unavailable", via: id };
@@ -244,6 +246,7 @@ export function resolveSkills(
     const d: SkillDecision = {
       id, ...(version ? { version } : {}), outcome: "rejected", code: r ? r.code : "blocked", mandatory: isMandatory,
       ...(r?.via ? { via: r.via } : {}),
+      ...(r?.cause ? { cause: r.cause } : {}),
     };
     const t = tokensOf(id);
     if (t !== undefined) d.estimatedTokens = t;

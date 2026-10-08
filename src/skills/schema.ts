@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UNRESOLVED_ACTIONS, UNRESOLVED_HIGH_RISK_DEFAULT, UNRESOLVED_LIMITS } from "./resolve-rules.js";
 
 /** Skill id: lower-case slug, 1–64 chars, letters/digits with single hyphens between. Stable format. */
 export const SKILL_ID_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -109,6 +110,21 @@ export const SkillManifestSchema = z
       if (c === m.id) ctx.addIssue({ code: "custom", path: ["conflicts", i], message: "a skill cannot conflict with itself" });
     });
   });
+
+/** What to do with a requested skill that cannot be used (config key skills.unresolved). High-risk skills always stop. */
+export const UnresolvedPolicySchema = z
+  .object({
+    unknown: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    missing: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    untrusted: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    conflict: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    oversized: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    /** Ids, categories and capabilities that count as high risk. */
+    high_risk: z.array(SkillIdSchema).max(UNRESOLVED_LIMITS.terms).default([...UNRESOLVED_HIGH_RISK_DEFAULT]),
+  })
+  .strict()
+  .prefault({});
+export type UnresolvedPolicy = z.infer<typeof UnresolvedPolicySchema>;
 
 export type SkillRole = (typeof SKILL_ROLES)[number];
 export type SkillRisk = (typeof SKILL_RISKS)[number];

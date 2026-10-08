@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
@@ -377,11 +377,17 @@ describe("gitflow pipeline", () => {
   it("reads the skill request of a normal plan and posts the section", async () => {
     const request = { version: 1, skills: [{ id: "typescript", reason: "The change is in src/*.ts.", evidence: ["path:src/a.ts"] }] };
     process.env.FAKE_SKILL_REQUEST = JSON.stringify(request);
+    // "typescript" is not installed in the test: warn and go on instead of stopping
+    config.skills.unresolved.unknown = "warn";
+    onTestFinished(() => {
+      config.skills.unresolved.unknown = "stop";
+    });
     issues(5);
     await watcher().tick();
     await settle();
     const run = runOf("5")!;
     expect(run.status).toBe("succeeded");
+    expect(run.skillPlan?.warnings).toHaveLength(1);
     expect(planSkillRequest(run)).toEqual(request);
     const comment = gh.comments().find((c) => c.body.includes("Foundry plan**"))!.body;
     expect(comment).toContain("## Required skills\n\n- `typescript` — The change is in src/*.ts. Evidence: `path:src/a.ts`");

@@ -2340,13 +2340,13 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 - **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
 - **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
-- **Nothing loads the skills yet.** No skill catalogue reaches the planner either, so requests are empty for now. [Skill selection](#skill-selection) can check the ids; a later story will wire it in and load the skills.
+- **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). Nothing loads the skills yet, and no skill catalogue reaches the planner, so requests are empty for now.
 - **`issue-code-daily`** does not get a request: it would have to trust a comment.
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
 ### Skill selection
 
-The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. Nothing calls it from a run yet, so no skill reaches an agent for now.
+The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. After the plan gate a run checks the plan's skills with it (see [Missing and conflicting skills](#missing-and-conflicting-skills)), but no skill reaches an agent yet.
 
 ```yaml
 skills:
@@ -2373,6 +2373,28 @@ When a run has a plan that is ready to code, the first agent step resolves the p
 - **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume.
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
+
+### Missing and conflicting skills
+
+After the plan gate (`issue-plan`: the plan step) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.
+
+```yaml
+skills:
+  unresolved:
+    unknown: stop      # not installed (stop or warn, default stop)
+    missing: stop      # a dependency is missing, too old or in a cycle
+    untrusted: stop    # excluded, unapproved, unpinned, changed, unverified or wrong role
+    conflict: stop     # conflicts with another skill, or the selection is blocked
+    oversized: stop    # too large, or over the skill or token limit
+    high_risk: [migration, migrations, security, messaging, kafka, rabbitmq, amqp, queue, outbox]
+```
+
+- **Default:** every kind stops the run. The stop reason names each skill with a stable reason code (the codes under Decisions above) and says what to do, for example to pin or approve the skill.
+- **Warn:** set a kind to `warn` to let low-risk work go on. Each warning is saved in `run.json` (`skillPlan`: the action, the selected skills and every unresolved skill) and written to the log as `⚠ …`.
+- **High risk always stops,** whatever the policy says. A skill is high risk when its id, category or a capability equals a `high_risk` term. Terms match whole hyphen-separated words, so `insecurity-notes` is not high risk. A package that says `risk: high` is high risk too. A `medium` skill also always stops; only `low` can be warned about. A mandatory skill (`skills.selection.include`) that cannot be used also stops.
+- **Resume:** resuming a stopped run checks the skills again. Install, approve or pin the skill (see [Pinned versions and integrity](#pinned-versions-and-integrity)), then resume. If the stored request cannot be read again, the run stays stopped.
+- **Unchanged:** a run whose plan asks for no skills, with no `skills.selection.include`, is not checked. Older run files stay valid.
+- **Not shown yet:** the stop reason and warnings are in `run.json` and the live log. The run page and GitHub comments do not show them yet.
 
 ### Access from other computers
 

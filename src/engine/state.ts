@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renam
 import { join } from "node:path";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
+import type { RunSkillPlan } from "../skills/run-plan.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -90,6 +91,8 @@ export interface RunSummary {
   answers?: RunAnswer[];
   /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */
   skillLock?: RunSkillLockSummary;
+  /** The skill resolution of the plan and what was decided about skills that could not be used. Absent on older runs and when no skill was asked for. */
+  skillPlan?: RunSkillPlan;
 }
 
 /** An answer a person gave on the run page to the questions a run stopped with. */

@@ -64,7 +64,7 @@ export function parseSkillRequestLine(line: string): SkillRequest {
   return parsed.data;
 }
 
-const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
+export const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
 
 /**
  * The step record of a run's final READY plan gate; undefined when there is none: the plan was not READY, it is
