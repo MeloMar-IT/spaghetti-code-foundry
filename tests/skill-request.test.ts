@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PLAN_GATE_MAX_OUTPUT, stepMaxOutput } from "../src/engine/guards.js";
 import type { StepRecord } from "../src/engine/state.js";
-import { parseSkillRequestLine, planSkillRequest, SkillRequestError, SKILL_REQUEST_LIMITS } from "../src/skills/request.js";
+import { parseSkillRequestLine, planGateRecord, planSkillRequest, SkillRequestError, SKILL_REQUEST_LIMITS } from "../src/skills/request.js";
 import { flowPath } from "./helpers/fake-github.js";
 import { parseFlow } from "../src/flow/load.js";
 import { readFileSync } from "node:fs";
@@ -139,6 +139,17 @@ describe("planSkillRequest", () => {
   const rec = (id: string, over: Partial<StepRecord> = {}): StepRecord => ({ id, type: "shell", visit: 1, ok: true, output: "", startedAt: "", durationMs: 0, logFile: "", ...over });
   const gate = (line: string, id = "risk_gate", over: Partial<StepRecord> = {}) => rec(id, { output: `the plan\n\nRISK: 20\nGATE: no\n${line}\n`, ...over });
   const run = (history: StepRecord[], def: unknown = flowDef) => planSkillRequest({ history, flowDef: def } as never);
+
+  it("planGateRecord gives the gate record, and nothing in the cases where there is no request", () => {
+    const g = gate(L(req()));
+    const gateOf = (history: StepRecord[], def: unknown = flowDef) => planGateRecord({ history, flowDef: def } as never);
+    expect(gateOf([rec("plan"), g])).toBe(g);
+    expect(gateOf([g, rec("plan")])).toBeUndefined();
+    expect(gateOf([rec("plan"), gate(L(req()), "risk_gate", { ok: false })])).toBeUndefined();
+    expect(gateOf([gate(L(req()), "legacy_gate")])).toBeUndefined();
+    expect(gateOf([g], { steps: [{ id: "risk_gate", type: "shell", run: "echo" }] })).toBeUndefined();
+    expect(planGateRecord({ history: [g] })).toBe(g);
+  });
 
   it("reads the line of the last ok risk_gate and of post_plan", () => {
     expect(run([rec("plan"), gate(L(req()))])).toEqual(req());

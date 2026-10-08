@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RunSummary } from "../engine/state.js";
+import type { RunSummary, StepRecord } from "../engine/state.js";
 import { SkillIdSchema, relativePathProblem } from "./schema.js";
 
 // The skill request of a final plan: one "SKILL_REQUEST: {…}" line. The rules mirror tools/skill-request
@@ -67,12 +67,12 @@ export function parseSkillRequestLine(line: string): SkillRequest {
 const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
 
 /**
- * The request of a run's final READY plan; undefined when there is none: the plan was not READY, it is being
- * planned again, or the run is older than the check (its gate came from a flow that did not run tools/skill-request,
- * so its output holds the planner's raw text). Throws SkillRequestError for a line that is not valid.
+ * The step record of a run's final READY plan gate; undefined when there is none: the plan was not READY, it is
+ * being planned again, or the run is older than the check (its gate came from a flow that did not run
+ * tools/skill-request, so its output holds the planner's raw text).
  * Pass `flowDef` (as stored in the run) to have that provenance checked; without it only the history is read.
  */
-export function planSkillRequest(run: Pick<RunSummary, "history"> & Partial<Pick<RunSummary, "flowDef">>): SkillRequest | undefined {
+export function planGateRecord(run: Pick<RunSummary, "history"> & Partial<Pick<RunSummary, "flowDef">>): StepRecord | undefined {
   const last = [...run.history].reverse().find((r) => !r.parent && PLAN_PHASE_STEPS.has(r.id));
   if (!last || !last.ok || !(SKILL_REQUEST_GATES as readonly string[]).includes(last.id)) return undefined;
   // Provenance: only a gate of a flow that checks the line with the tool produced a validated one.
@@ -80,6 +80,13 @@ export function planSkillRequest(run: Pick<RunSummary, "history"> & Partial<Pick
     const def = run.flowDef.steps?.find((s) => s.id === last.id);
     if (!def || def.type !== "shell" || !def.run.includes("/skill-request")) return undefined;
   }
+  return last;
+}
+
+/** The request of a run's final READY plan; undefined when there is none (see planGateRecord). Throws SkillRequestError for a line that is not valid. */
+export function planSkillRequest(run: Pick<RunSummary, "history"> & Partial<Pick<RunSummary, "flowDef">>): SkillRequest | undefined {
+  const last = planGateRecord(run);
+  if (!last) return undefined;
   const lines = last.output.split("\n").filter((l) => l.startsWith(SKILL_REQUEST_MARKER) || l.startsWith("SKILL_REQUEST:"));
   if (lines.length === 0) return undefined;
   if (lines.length > 1) throw new SkillRequestError("more than one SKILL_REQUEST line");
