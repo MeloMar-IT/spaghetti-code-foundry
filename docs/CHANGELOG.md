@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- UI quality 4d — route compatibility test for the rollout (#401), first part.
+  - **Behaviour.** No change for users. `tests/ui-rollout.test.ts` (new, unit tests, no server or browser) proves that every admin and user address in `docs/ui-redesign/inventory.md` resolves to a page in `ui/ia.js` and not to the unknown-address fallback; that the old `#/your-turn` opens Home; that the `#/set-password/:token` link is read before the router; that `#/runs/<id>` opens the run on both displays; and that every link the notifier writes resolves.
+  - **Known limit.** Status comments on GitHub write run ids as plain text, not as links, so only notification links are covered.
+  - **Not done yet.** The `ui.version` setting, the `ui-classic/` copy, the Settings switch ("Interface version"), `docs/ui-redesign/rollout.md` (migration guidance, gate checklist, removal rule) and the user guide entry are not part of this change. The UI served is still the redesign.
+  - **Tests.** `tableRows` and `code` moved unchanged from `tests/ui-redesign-audit.test.ts` to `tests/helpers/md-table.ts` (new) so both test files share them.
 - Skill planning 3 — resolve requests under policy and context budgets (#174).
   - **Resolver.** `resolveSkills(registry, requested, opts)` in `src/skills/resolve.ts` (new) is pure and never throws for a bad request. It maps ids to the active version, checks each with `selectSkill` (so only approved, pinned, unchanged skills pass), adds declared dependencies first (sorted by id, depth limit 32), and returns `selected` (id, version, digest, reason, `requiredBy`, `estimatedTokens`), reason-coded `decisions` and the total `estimatedTokens`.
   - **Rules.** Mandatory ids first, then requested ids sorted by id; each skill is admitted with its new dependencies or not at all. Refusal codes: `excluded`, `unknown`, `unapproved`, `unpinned`, `mismatch`, `unverified`, `role`, `too-large`, `dependency-cycle`, `dependency-unavailable`, `dependency-version`, `conflict`, `over-count`, `over-budget`, `blocked`. A conflict keeps the earlier skill. A refused mandatory skill, or an invalid or too long include/exclude list, blocks the whole selection (`ok: false`, nothing selected), so mandatory skills are never dropped silently.
