@@ -47,6 +47,11 @@ node scripts/build-flows.mjs   # regenerate flows/*.yaml (see below)
   `docs/USER_GUIDE.md` when behaviour users see changes. If the flow format changes, update
   `docs/FLOW_AUTHORING.md` too — `tests/guide.test.ts` checks its examples.
 - No new dependencies unless the issue asks for one.
+- **Keep the test suite fast.** Every story runs it, so its length is the speed of the Foundry. Write
+  unit tests (call the function, no server, no git repository, no child process) unless the issue is
+  about a flow, the watcher or the server as a whole. Wait for the event you expect, never for a fixed
+  time. One test file should finish in a few seconds on a quiet machine; when an end-to-end file grows
+  past that, split it or move cases down to unit tests instead of adding to it.
 - Security rules: enforce permissions on the server; never put untrusted text (issue text, step
   output, task) into shell commands — use the `$FACTORY_…` environment variables; secrets never
   appear in API responses, logs or agent environments.

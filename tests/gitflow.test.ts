@@ -277,8 +277,8 @@ describe("gitflow pipeline", () => {
     const base = second.history.find((h) => h.id === "baseline_tests")!.output;
     expect(base).toContain("not run again: this exact code already passed these tests");
     expect(base).toContain("result: PASSED (already tested)");
-    // Its own change is new code: those tests do run.
-    expect(second.history.find((h) => h.id === "test_develop")!.output).not.toContain("not run again");
+    // Its own change is new code: those tests do run — once, ahead of the merge.
+    expect(second.history.find((h) => h.id === "pretest_merge")!.output).not.toContain("not run again");
 
     // Switched off: every test run happens.
     issues(7);
