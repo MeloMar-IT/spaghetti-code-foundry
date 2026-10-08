@@ -1,0 +1,30 @@
+/* ui/kit/forms.css — fields, text controls, selects and checkboxes of the component kit.
+   Belongs here: .scf-field, .scf-input and .scf-checkbox rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
+
+.scf-field { display: grid; gap: var(--space-xs); }
+.scf-field__label { font-size: var(--text-meta); color: var(--color-text-muted); font-weight: var(--weight-medium); }
+.scf-field__required { color: var(--color-danger); }
+.scf-field__hint { font-size: var(--text-meta); color: var(--color-text-muted); }
+.scf-field__error { font-size: var(--text-meta); color: var(--color-danger); }
+
+.scf-input {
+  box-sizing: border-box;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--control-pad-y) var(--control-pad-x);
+}
+.scf-input--mono { font-family: var(--font-mono); font-size: var(--text-code); }
+.scf-input--area { resize: vertical; }
+.scf-input:focus { outline: 2px solid var(--color-focus); outline-offset: 0; border-color: var(--color-focus); }
+.scf-input[aria-invalid="true"] { border-color: var(--color-danger); }
+.scf-input:disabled { color: var(--color-disabled); background: var(--color-disabled-soft); }
+
+.scf-checkbox { display: inline-flex; align-items: center; gap: var(--space-sm); }
+.scf-checkbox__input { width: auto; padding: 0; margin: 0; accent-color: var(--color-accent); }
+.scf-checkbox__input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }

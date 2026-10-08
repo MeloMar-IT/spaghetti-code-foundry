@@ -102,3 +102,78 @@ export function parseCss(text: string): CssRule[] {
   scan(src, "");
   return rules;
 }
+
+// Checks for the component kit (ui/kit/, #325).
+
+const COLOR_NAMES = new Set(("aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue " +
+  "chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta " +
+  "darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink " +
+  "deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey " +
+  "honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow " +
+  "lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime " +
+  "limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen " +
+  "mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid " +
+  "palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue " +
+  "saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle " +
+  "tomato turquoise violet wheat white whitesmoke yellow yellowgreen").split(" "));
+const COLOR_FN = /(?:^|[^\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(/i;
+const TOKEN_PREFIXES = ["--color-", "--font-", "--text-", "--leading-", "--weight-", "--space-", "--size-", "--border-", "--radius-", "--shadow-",
+  "--motion-", "--control-", "--cell-", "--card-", "--stack-", "--page-", "--layer-"];
+const COMPOUND = /^(\.scf-[a-z0-9_-]+)+(\[[a-z-]+(="[^"]*")?\]|:[a-z-]+)*$/;
+
+/** Problems in kit CSS: an id selector, a bare tag, a class not starting with scf-, a colour literal (hex, function or
+ *  any CSS colour keyword), a var() not in `tokens` or without a token prefix. `tokens` = names defined in ui/tokens.css. */
+export function kitCssProblems(text: string, tokens: Set<string>): string[] {
+  const out: string[] = [];
+  for (const rule of parseCss(text)) {
+    if (rule.selector.startsWith("@")) continue;
+    for (const sel of rule.selector.split(",")) {
+      for (const compound of sel.trim().split(/\s*[>+~]\s*|\s+/)) {
+        if (!COMPOUND.test(compound)) out.push(`selector "${sel.trim()}": "${compound}" is not an .scf- class compound`);
+      }
+    }
+    for (const decl of rule.declarations) {
+      const value = decl.slice(decl.indexOf(":") + 1);
+      const bare = value.replace(/var\([^)]*\)/g, "");
+      if (/#[0-9a-f]{3,8}\b/i.test(bare) || COLOR_FN.test(bare) || (bare.toLowerCase().match(/[a-z]+/g) ?? []).some((w) => COLOR_NAMES.has(w))) {
+        out.push(`${rule.selector}: colour literal in "${decl}"`);
+      }
+      for (const m of value.matchAll(/var\(\s*(--[\w-]+)/g)) {
+        if (!tokens.has(m[1]!) || !TOKEN_PREFIXES.some((p) => m[1]!.startsWith(p))) out.push(`${rule.selector}: ${m[1]} is not a kit token`);
+      }
+    }
+  }
+  return out;
+}
+
+/** Problems in a kit module's source: a style key (`style:`, `"style":`, shorthand `style,` or `style }`), `style =`, `.style`. */
+export function kitSourceProblems(source: string): string[] {
+  const out: string[] = [];
+  const patterns: [RegExp, string][] = [
+    [/["']?\bstyle["']?\s*:/, "style key"],
+    [/\bstyle\s*[,}]/, "shorthand style"],
+    [/\bstyle\s*=(?!=)/, "style assignment"],
+    [/\.style\b/, ".style access"],
+  ];
+  source.split("\n").forEach((line, i) => {
+    for (const [re, what] of patterns) if (re.test(line)) out.push(`line ${i + 1}: ${what}`);
+  });
+  return out;
+}
+
+/** The "/kit/…" paths of ui/kit/kit.css, in order; throws on any other line. */
+export function kitCssImports(uiDir = "ui"): string[] {
+  const out: string[] = [];
+  for (const line of readFileSync(join(uiDir, "kit", "kit.css"), "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    const m = /^@import url\("(\/kit\/[\w-]+\.css)"\);$/.exec(line);
+    if (!m) throw new Error(`ui/kit/kit.css: not an @import line: ${line}`);
+    out.push(m[1]!);
+  }
+  return out;
+}
+
+/** Names of the custom properties that ui/tokens.css defines. */
+export function tokenNames(uiDir = "ui"): Set<string> {
+  return new Set([...readFileSync(join(uiDir, "tokens.css"), "utf8").matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]!));
+}
