@@ -187,6 +187,11 @@ describe("the sign-in decisions", () => {
 
 describe("ensureSignedIn on the fake DOM", () => {
   const el = (id: string) => document.getElementById(id) as unknown as FakeElement;
+  const userButton = (text: string) => el("user").all("button").find((b) => b.textContent === text)!;
+  const mem = (initial?: unknown) => {
+    const s: any = { data: initial === undefined ? undefined : JSON.stringify(initial), getItem: () => s.data ?? null, setItem: (_k: string, v: string) => { s.data = v; } };
+    return s;
+  };
   const withClass = (root: FakeElement, tag: string, cls: string) => root.all(tag).filter((e) => (e.attrs.class ?? "").split(" ").includes(cls));
   const form = () => el("main").children.find((c): c is FakeElement => c instanceof FakeElement && c.tag === "form")!;
   const inputs = () => form().all("input");
@@ -215,6 +220,7 @@ describe("ensureSignedIn on the fake DOM", () => {
   beforeEach(() => {
     restore();
     restore = installFakeDom();
+    vi.stubGlobal("localStorage", mem());
   });
 
   const SESSION = { user: { id: "u1", name: "Ann", email: "ann@example.com", role: "admin" }, csrfToken: "csrf-1", setupNeeded: false };
@@ -225,16 +231,32 @@ describe("ensureSignedIn on the fake DOM", () => {
     expect(el("user").hidden).toBe(false);
     expect(el("user").textContent).toContain("Ann");
     const buttons = el("user").all("button");
-    expect(buttons.map((b) => b.textContent)).toEqual(["Change password", "Sign out"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["Appearance", "Change password", "Sign out"]);
     expect((document.body as unknown as FakeElement).classList.contains("signed-out")).toBe(false);
     await apiMod.api.saveConfig({});
     expect(sent()[0]!.headers["x-csrf-token"]).toBe("csrf-1");
   });
 
+  it("applies the stored choice of the account after sign-in", async () => {
+    const store = mem({ v: 1, last: { theme: "light", density: "comfortable" }, accounts: { u1: { theme: "dark", density: "compact" } } });
+    vi.stubGlobal("localStorage", store);
+    await auth.ensureSignedIn(fakeApi(SESSION), reload);
+    const root = (document as any).documentElement as FakeElement;
+    expect(root.attrs).toMatchObject({ "data-theme": "dark", "data-density": "compact" });
+    expect(JSON.parse(store.data).last).toEqual({ theme: "dark", density: "compact" });
+  });
+
+  it("signs in when storage throws", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } });
+    expect(await auth.ensureSignedIn(fakeApi(SESSION), reload)).toEqual(SESSION.user);
+    const root = (document as any).documentElement as FakeElement;
+    expect(root.attrs).toMatchObject({ "data-theme": "system", "data-density": "comfortable" });
+  });
+
   it("the sign-out button signs out and reloads", async () => {
     const a = fakeApi(SESSION);
     await auth.ensureSignedIn(a, reload);
-    el("user").all("button")[1]!.click();
+    userButton("Sign out").click();
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
     expect(a.signOut).toHaveBeenCalledTimes(1);
   });
@@ -242,7 +264,7 @@ describe("ensureSignedIn on the fake DOM", () => {
   it("a failed sign-out shows the text and does not reload", async () => {
     const a = fakeApi(SESSION, { signOut: vi.fn(async () => { throw new Error("bad CSRF token"); }) });
     await auth.ensureSignedIn(a, reload);
-    el("user").all("button")[1]!.click();
+    userButton("Sign out").click();
     await vi.waitFor(() => expect(el("toast").textContent).toBe("bad CSRF token"));
     expect(reload).not.toHaveBeenCalled();
   });
@@ -253,7 +275,7 @@ describe("ensureSignedIn on the fake DOM", () => {
     const open = async (changePassword: unknown) => {
       const a = fakeApi(SESSION, { changePassword });
       await auth.ensureSignedIn(a, reload);
-      el("user").all("button")[0]!.click();
+      userButton("Change password").click();
       await vi.waitFor(() => expect(dialog().all("form")).toHaveLength(1));
       return a;
     };

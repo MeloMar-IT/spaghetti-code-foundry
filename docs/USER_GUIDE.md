@@ -69,6 +69,15 @@ one (twice). The new password follows the same rules (12 to 200 characters, not 
 Your session stays; every other session of your account is signed out. A wrong current password
 counts like a wrong sign-in (see "Wrong passwords" in [Settings and safety](#7-settings-and-safety)).
 
+**Appearance: theme and density.** **Appearance** in the top bar, next to **Change password**, opens a
+dialog with two choices. **Theme** is System (follows your device), Light or Dark. **Density** is
+Comfortable or Compact. A choice applies at once, with no reload. The chosen option has a check mark and
+is announced as pressed, so it does not depend on colour. The choice is kept in this browser, per
+account, and is not sent to the server: a second account in the same browser has its own, and another
+browser starts with System and Comfortable. The sign-in form uses the last choice. Other open tabs pick
+up a change when they reload. If the browser blocks storage, the page still works with System and
+Comfortable.
+
 **Set-password link.** A new account may get a link instead of a password. Open it in the
 browser's address bar, type the password twice, and press **Set password**. Then sign in with it.
 The link works once and for 24 hours. If the page says "this link is not valid any more", ask your

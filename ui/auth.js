@@ -1,5 +1,6 @@
 import { api, setCsrf } from "./api.js";
 import { h, modal, mount, toast } from "./dom.js";
+import { appearanceButton, initPrefs } from "./prefs.js";
 
 const PASSWORD_MIN = 12;
 
@@ -198,6 +199,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
     return new Promise(() => {});
   }
   setCsrf(session.csrfToken);
+  initPrefs(session.user);
   const out = h(
     "button",
     {
@@ -212,7 +214,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
   );
   const box = document.getElementById("user");
   const change = h("button", { class: "small", type: "button", onClick: () => changePasswordDialog(a) }, "Change password");
-  mount(box, h("span", {}, session.user.name), change, out);
+  mount(box, h("span", {}, session.user.name), appearanceButton(session.user), change, out);
   box.hidden = false;
   return session.user;
 }
