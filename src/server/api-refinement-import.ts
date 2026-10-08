@@ -45,7 +45,23 @@ function namesFor(ctx: ApiContext, key: string) {
   return own.length ? own.map((w) => labelNames(w)) : [labelNames({} as WatcherConfig)];
 }
 
-const labelsOf = (issue: RestIssue): string[] => (Array.isArray(issue.labels) ? issue.labels.flatMap((l) => (typeof l === "string" ? [l] : typeof l?.name === "string" ? [l.name] : [])) : []);
+/**
+ * Why the Foundry builds or has built an issue right now, or undefined when it may be written to. A run's pull request only blocks when it is
+ * not closed without a merge; the ones not in `pulls` are read (and added to it). Errors of the read propagate.
+ */
+export async function whyBuilding(ctx: ApiContext, repo: string, n: number, labels: readonly string[], timeout: number, pulls: Map<string, PullKind> = new Map()): Promise<string | undefined> {
+  const key = githubKey(repo);
+  const names = namesFor(ctx, key);
+  const first = foundryFacts(ctx, key, n);
+  const early = buildingReason({ labels, runs: first.runs.map(({ pr: _pr, ...r }) => r), queued: first.queued, labelNames: names, pulls });
+  if (early) return early;
+  for (const pr of pullsToRead(first.runs)) if (!pulls.has(pr)) pulls.set(pr, await pullState(repo, Number(pr), timeout));
+  // Fresh facts: a run that started while the pull requests were read still counts.
+  const f = foundryFacts(ctx, key, n);
+  return buildingReason({ labels, runs: f.runs, queued: f.queued, labelNames: names, pulls });
+}
+
+export const labelsOf = (issue: RestIssue): string[] => (Array.isArray(issue.labels) ? issue.labels.flatMap((l) => (typeof l === "string" ? [l] : typeof l?.name === "string" ? [l.name] : [])) : []);
 
 /**
  * Reads an open issue of the caller's repository with the repository's sign-in and makes a refinement session from it. Nothing on GitHub

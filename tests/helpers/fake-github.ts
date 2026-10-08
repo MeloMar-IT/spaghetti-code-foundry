@@ -127,6 +127,9 @@ export function fakeGithub() {
     /** The title and text of every issue the fake gh was asked to make through the REST API, as sent on stdin. */
     createdBodies: (): { title: string; body: string; labels: string[] }[] =>
       [...readFileSync(ghLog, "utf8").matchAll(/^--- created issue \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => JSON.parse(m[1]!)),
+    /** The number, title and text of every issue the fake gh was asked to change through the REST API (PATCH), as sent on stdin. */
+    updatedBodies: (): { issue: number; title: string; body: string }[] =>
+      [...readFileSync(ghLog, "utf8").matchAll(/^--- updated issue (\d+) \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => ({ issue: Number(m[1]), ...JSON.parse(m[2]!) })),
     /** The names of the labels that exist in the fake repository. */
     labels: (): string[] => (existsSync(labelsFile) ? readFileSync(labelsFile, "utf8").split("\n").filter(Boolean) : []),
     setLabels: (list: string[]) => writeFileSync(labelsFile, list.map((l) => `${l}\n`).join("")),

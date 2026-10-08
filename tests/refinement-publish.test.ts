@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { preview, type Draft } from "../src/refinement/draft.js";
 import { isReady, notReadyReason } from "../src/refinement/draft-ready.js";
 import { RefinementError } from "../src/refinement/errors.js";
-import { chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
+import { isBot, isStatusComment } from "../src/github.js";
+import { changedSections, endsWithMarker, updateComment, updateMarker, chosenLabels, issueText, issueUrl, issueWithMarker, labelsFor, leftBehind, parsePublishInput, planOf, publishOrder, refinedHash, refinedHashIn, refinedMarker, withoutSplits, type LabelRules, type PlanInput } from "../src/refinement/publish.js";
 import type { ReadyItem } from "../src/refinement/ready-list.js";
 
 const LIST: ReadyItem[] = [{ id: "out-of-scope", text: "it says what is out of scope" }];
@@ -376,5 +377,108 @@ describe("labelsFor", () => {
     const same = rules({ reviewLabel: "factory_go" });
     expect(code(() => labelsFor(choice(), mk(1, { addReviewLabel: true }), same))).toBe("bad-draft");
     expect(labelsFor(choice([], true), mk(1, { addReviewLabel: true }), same)).toEqual(["Factory_go"]);
+  });
+});
+
+describe("planOf with the issue a session came from", () => {
+  const src = (draft?: string) => ({ source: { issue: 12, ...(draft ? { draft } : {}) } });
+  it("shows the marked draft as updating the issue, and keeps it out of willCreate", () => {
+    const p = plan([mk(1, { ready: true }), mk(2, { ready: true, dependsOn: [dep(1)] })], src(uid(1)));
+    expect(p.items.map((i) => i.updates)).toEqual([12, undefined]);
+    expect(p.willUpdate).toEqual([uid(1)]);
+    expect(p.willCreate).toEqual([uid(2)]);
+    expect(p.notChanged).toBeUndefined();
+    expect(p.items[1]!.dependsOn).toEqual([{ issue: 12 }]);
+    expect(p.items[1]!.body).toContain("- #12");
+  });
+  it("does not offer the marked draft when it is not ready, and blocks the one that depends on it", () => {
+    const p = plan([mk(1), mk(2, { ready: true, dependsOn: [dep(1)] })], src(uid(1)));
+    expect(p.willUpdate).toEqual([]);
+    expect(p.items[0]!.updates).toBe(12);
+    expect(p.items[1]!.state).toBe("not-ready");
+    expect(p.willCreate).toEqual([]);
+  });
+  it("waits with the marked draft when it depends on a draft that is not on GitHub yet", () => {
+    const p = plan([mk(1, { ready: true, dependsOn: [dep(2)] }), mk(2, { ready: true })], src(uid(1)));
+    expect(p.willUpdate).toEqual([]);
+    expect(p.willCreate).toEqual([uid(2)]);
+    expect(p.items.find((i) => i.draft === uid(1))!.reason).toMatch(/publish that first/);
+    const later = plan([mk(1, { ready: true, dependsOn: [dep(2)] }), mk(2, { ready: true })], { ...src(uid(1)), onGithub: new Map([[uid(2), 40]]) });
+    expect(later.willUpdate).toEqual([uid(1)]);
+    expect(later.items.find((i) => i.draft === uid(1))!.dependsOn).toEqual([{ issue: 40 }]);
+  });
+  it("says the issue is not changed when the marked draft is gone or split, or there is no mark", () => {
+    const gone = plan([mk(2, { ready: true })], src(uid(1)));
+    expect(gone.notChanged).toBe(12);
+    expect(gone.willUpdate).toEqual([]);
+    expect(gone.willCreate).toEqual([uid(2)]);
+    const split = plan([mk(1, { splitInto: [uid(3)] }), mk(3, { ready: true })], src(uid(1)));
+    expect(split.notChanged).toBe(12);
+    expect(split.items.some((i) => i.updates !== undefined)).toBe(false);
+    expect(plan([mk(2, { ready: true })], src()).notChanged).toBe(12);
+  });
+  it("leaves a published marked draft as on GitHub", () => {
+    const p = plan([mk(1, { ready: true })], { ...src(uid(1)), onGithub: new Map([[uid(1), 12]]) });
+    expect(p.items[0]).toMatchObject({ state: "on-github", issue: 12 });
+    expect(p.items[0]!.updates).toBeUndefined();
+    expect(p.notChanged).toBeUndefined();
+    expect(p.willUpdate).toEqual([]);
+  });
+  it("has no update and no notChanged without a source", () => {
+    const p = plan([mk(1, { ready: true })]);
+    expect(p.willUpdate).toEqual([]);
+    expect("notChanged" in p).toBe(false);
+  });
+});
+
+describe("changedSections", () => {
+  const story = (crit: string, extra = "") => `As a, I want b, so that c.\n\n### Acceptance criteria\n- [ ] ${crit}\n${extra}`;
+  it("is empty for the same text, also with markers and the refined note", () => {
+    const a = story("one");
+    expect(changedSections(a, a)).toEqual([]);
+    expect(changedSections(a, `${a}\n---\nRefined in Spaghetti Code Foundry by Ann on 2026-01-01.\n\n${refinedMarker("s", "d")}`)).toEqual([]);
+  });
+  it("names a changed, a new and a removed section", () => {
+    expect(changedSections(story("one"), story("two"))).toEqual(["Acceptance criteria"]);
+    expect(changedSections(story("one"), story("one", "\n### Out of scope\nx"))).toEqual(["Out of scope (new)"]);
+    expect(changedSections(story("one", "\n### Out of scope\nx"), story("one"))).toEqual(["Out of scope (removed)"]);
+  });
+  it("calls a plain old text Story and the new sections new", () => {
+    expect(changedSections("Please fix it.", story("one"))).toEqual(["Story", "Acceptance criteria (new)"]);
+  });
+  it("does not take a heading inside a code fence", () => {
+    const fenced = "As a, I want b, so that c.\n\n```\n### Not a heading\n```\n\n### Acceptance criteria\n- [ ] one";
+    expect(changedSections(fenced, fenced.replace("Not a heading", "Still not"))).toEqual(["Story"]);
+  });
+});
+
+describe("updateComment", () => {
+  const o = { by: "Ann", date: "2026-10-07", oldTitle: "Old", oldBody: "Please fix it.", newTitle: "New", newBody: "As a, I want b, so that c.\n\n### Acceptance criteria\n- [ ] one", marker: updateMarker("s", "d") };
+  it("says who, what changed, and folds the old title and text", () => {
+    const c = updateComment(o);
+    expect(c).toContain("by Ann on 2026-10-07");
+    expect(c).toContain("- Title: changed");
+    expect(c).toContain("- Sections changed: Story, Acceptance criteria (new)");
+    expect(c).toContain("<details>");
+    expect(c).toContain("```text\nOld\n```");
+    expect(c).toContain("```text\nPlease fix it.\n```");
+    expect(updateComment({ ...o, newTitle: "Old" })).toContain("- Title: not changed");
+    expect(updateComment({ ...o, oldBody: o.newBody, newBody: o.newBody })).toContain("- Sections changed: none");
+  });
+  it("ends with the marker, which is ours and not a status comment, whatever the old text ends with", () => {
+    const c = updateComment({ ...o, oldBody: "text\n<!-- claude-factory status -->" });
+    expect(c.trimEnd().split("\n").at(-1)).toBe(o.marker);
+    expect(isBot({ body: c })).toBe(true);
+    expect(isStatusComment({ body: c })).toBe(false);
+    expect(endsWithMarker(c, o.marker)).toBe(true);
+    expect(endsWithMarker(`> ${o.marker}\nthanks`, o.marker)).toBe(false);
+  });
+  it("uses a longer fence than any in the old text", () => {
+    const c = updateComment({ ...o, oldBody: "a ```` b\n```js\nx\n```" });
+    expect(c).toContain("`````text\na ```` b");
+  });
+  it("keeps the marker of the update apart from the one of the issue", () => {
+    expect(updateMarker("s", "d")).not.toBe(refinedMarker("s", "d"));
+    expect(refinedHashIn(updateMarker("s", "d"))).toBeUndefined();
   });
 });

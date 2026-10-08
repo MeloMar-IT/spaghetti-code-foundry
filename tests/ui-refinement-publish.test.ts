@@ -399,6 +399,82 @@ describe("after publishing", () => {
   });
 });
 
+describe("a session that came from an issue", () => {
+  const source = { issue: 7, url: "https://github.com/acme/app/issues/7", title: "T", body: "", updatedAt: "x", draft: D1 };
+  const updating = (extra: object = {}) => makePlan({ items: [item(1, mk(D1, "One"), { updates: 7 })], willCreate: [], willUpdate: [D1], ...extra });
+  it("willPublish, confirmText and doneText", () => {
+    expect(pub.willPublish({ willUpdate: [D1], willCreate: [D2] })).toEqual([D1, D2]);
+    expect(pub.willPublish({ willCreate: [D2] })).toEqual([D2]);
+    expect(pub.confirmText({ willCreate: [D2] })).toBe("Create the issues");
+    expect(pub.confirmText({ willUpdate: [D1], willCreate: [] })).toBe("Update the issue");
+    expect(pub.confirmText({ willUpdate: [D1], willCreate: [D2] })).toBe("Update and create the issues");
+    expect(pub.doneText({ created: [{}] })).toBe("1 issue is on GitHub");
+    expect(pub.doneText({ created: [{}, {}] })).toBe("2 issues are on GitHub");
+    expect(pub.doneText({ created: [], updated: [{ issue: 7 }] })).toBe("Issue #7 is updated");
+    expect(pub.doneText({ created: [{}, {}], updated: [{ issue: 7 }] })).toBe("Issue #7 is updated and 2 issues are on GitHub");
+  });
+  it("updatesOf", () => {
+    const d = mk(D1, "One");
+    expect(pub.updatesOf({ drafts: [d] })).toBeUndefined();
+    expect(pub.updatesOf({ source, drafts: [d] })).toEqual({ issue: 7, draft: d, published: undefined });
+    expect(pub.updatesOf({ source, drafts: [mk(D2, "Two")] })).toBeUndefined();
+    expect(pub.updatesOf({ source, drafts: [mk(D1, "One", { state: "split" })] })).toBeUndefined();
+    const done = mk(D1, "One", { published: { issue: 7, url: "u" } });
+    expect(pub.updatesOf({ source, drafts: [done] }).published).toEqual({ issue: 7, url: "u" });
+  });
+  it("shows Updates #N in the dialog, and a confirm button that sends the draft", async () => {
+    over = { source };
+    plan = updating();
+    postAnswer = () => ({ status: 200, body: { repo: "acme/app", created: [], updated: [{ draft: D1, issue: 7, url: source.url, found: false }], state: "published" } });
+    await openPlan();
+    expect(planItem(D1).textContent).toContain("Updates #7");
+    expect(planItem(D1).textContent).toContain("The title and text of issue #7 are replaced. Its labels are kept.");
+    expect(dialog()!.textContent).toContain("Issue #7 is updated, not created again.");
+    expect(button(pub.CONFIRM, dialog())).toBeUndefined();
+    tick(labelBox(D1, "bug"));
+    await press(button("Update the issue", dialog()));
+    expect(posts()[0]!.body).toEqual({ drafts: [{ draft: D1, labels: ["bug"], startBuilding: false }] });
+    expect((document as any).getElementById("toast").textContent).toBe("Issue #7 is updated");
+  });
+  it("says when the issue is not changed", async () => {
+    over = { source };
+    plan = makePlan({ notChanged: 7 });
+    await openPlan();
+    expect(dialog()!.textContent).toContain("Issue #7 is not changed: no story draft stands for it.");
+  });
+  it("shows what the section does with the issue, before and after", async () => {
+    over = { source };
+    await show();
+    expect(publishBox().textContent).toContain("Updates #7: One");
+    drafts = [mk(D1, "One", { published: { issue: 7, url: source.url } })];
+    await show();
+    const a = walk(publishBox()).find((e) => e.tag === "a");
+    expect(a?.attrs.href).toBe(source.url);
+    expect(publishBox().textContent).toContain("Updated #7");
+    drafts = [mk(D1, "One", { published: { issue: 7, url: "javascript:alert(1)" } })];
+    await show();
+    expect(walk(publishBox()).some((e) => e.tag === "a")).toBe(false);
+    expect(publishBox().textContent).toContain("Updated #7");
+    drafts = [mk(D2, "Two")];
+    await show();
+    expect(publishBox().textContent).toContain("Issue #7 is not changed.");
+  });
+  it("shows a title with markup as text", async () => {
+    over = { source };
+    drafts = [mk(D1, XSS)];
+    await show();
+    expect(publishBox().textContent).toContain(XSS);
+    expect(walk(publishBox()).some((e) => e.tag === "img")).toBe(false);
+  });
+  it("behaves as before without willUpdate", async () => {
+    plan = makePlan();
+    await openPlan();
+    expect(button(pub.CONFIRM, dialog())).toBeDefined();
+    expect(dialog()!.textContent).not.toContain("Updates #");
+    expect(dialog()!.textContent).not.toContain("is not changed");
+  });
+});
+
 describe("a failure", () => {
   it("shows the server's message and what is on GitHub, and offers Publish again for the rest", async () => {
     drafts = [mk(D1, "One"), mk(D2, "Two")];

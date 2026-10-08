@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { BOT_MARKER } from "../github.js";
+import { cleanBody, splitSections } from "./issue-import.js";
 import { bad, isObject, oneLine, preview, type Draft } from "./draft.js";
 import { chars } from "./talk.js";
 import { acceptedLines, notReadyReason } from "./draft-ready.js";
@@ -24,6 +25,8 @@ export interface PlanItem {
   reason?: string;
   /** The issue number (state `on-github`). */
   issue?: number;
+  /** The issue this item replaces the title and text of (the draft that stands for the issue the session came from, not on GitHub yet). */
+  updates?: number;
   dependsOn: PlanDep[];
   /** The labels it would get: the build label, and the review label when the draft asks for it. */
   labels: string[];
@@ -38,6 +41,8 @@ export interface PlanInput {
   date: string;
   buildLabel?: string;
   reviewLabel?: string;
+  /** The issue the session came from, and the draft that stands for it (none: nothing stands for it). */
+  source?: { issue: number; draft?: string };
 }
 
 type Sess = { drafts: Draft[]; epic?: number };
@@ -152,7 +157,7 @@ function inCircle(drafts: readonly Draft[]): Set<string> {
  * Readiness is worked out now with `isReady` and the list given; the stored state of the session is not used. A ready draft that depends
  * on a draft that is neither ready nor on GitHub is not offered. `leftBehind` names split originals that still hold criteria.
  */
-export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: string[]; leftBehind: LeftBehind[] } {
+export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: string[]; willUpdate: string[]; notChanged?: number; leftBehind: LeftBehind[] } {
   const left = leftBehind(s.drafts);
   s = { ...s, drafts: withoutSplits(s.drafts) };
   const order = publishOrder(s.drafts);
@@ -160,6 +165,10 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
   const byId = new Map(s.drafts.map((d) => [d.id, d]));
   const position = new Map(order.map((d, i) => [d.id, i + 1]));
   const circle = inCircle(s.drafts);
+  // The draft that stands for the source issue, while it is there (not split) and not on GitHub yet.
+  const markedId = o.source?.draft !== undefined && byId.has(o.source.draft) ? o.source.draft : undefined;
+  const updating = o.source && markedId !== undefined && !o.onGithub.has(markedId) ? { id: markedId, issue: o.source.issue } : undefined;
+  const notChanged = o.source && markedId === undefined ? o.source.issue : undefined;
 
   const states = new Map<string, { state: PlanState; reason?: string }>();
   const stateOf = (d: Draft): { state: PlanState; reason?: string } => {
@@ -174,7 +183,11 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
       const blocker = draftDeps(d, ids)
         .map((id) => byId.get(id)!)
         .find((x) => stateOf(x).state === "not-ready");
-      r = blocker ? { state: "not-ready", reason: `it depends on "${titleOf(blocker)}", which is not ready` } : { state: "ready" };
+      const unpublished = updating?.id === d.id ? draftDeps(d, ids).map((id) => byId.get(id)!).find((x) => !o.onGithub.has(x.id)) : undefined;
+      if (blocker) r = { state: "not-ready", reason: `it depends on "${titleOf(blocker)}", which is not ready` };
+      // The issue is changed first; what it depends on must exist by then.
+      else if (unpublished) r = { state: "not-ready", reason: `it replaces issue #${updating!.issue} and depends on "${titleOf(unpublished)}", which is not on GitHub yet: publish that first` };
+      else r = { state: "ready" };
     }
     states.set(d.id, r);
     return r;
@@ -183,6 +196,7 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
   const numberOf = (id: string): DepNumber => {
     const issue = o.onGithub.get(id);
     if (issue !== undefined) return { issue };
+    if (updating?.id === id) return { issue: updating.issue };
     const item = position.get(id);
     return item === undefined ? undefined : { item };
   };
@@ -201,9 +215,16 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
     const wanted = state === "on-github" ? [] : [...(o.buildLabel ? [o.buildLabel] : []), ...(o.reviewLabel && d.addReviewLabel ? [o.reviewLabel] : [])];
     const labels = wanted.filter((l, k) => wanted.findIndex((x) => x.toLowerCase() === l.toLowerCase()) === k);
     const issue = o.onGithub.get(d.id);
-    return { n: i + 1, draft: d.id, title, body, state, ...(reason !== undefined ? { reason } : {}), ...(state === "on-github" && issue !== undefined ? { issue } : {}), dependsOn, labels };
+    return { n: i + 1, draft: d.id, title, body, state, ...(reason !== undefined ? { reason } : {}), ...(state === "on-github" && issue !== undefined ? { issue } : {}), ...(updating?.id === d.id ? { updates: updating.issue } : {}), dependsOn, labels };
   });
-  return { items, willCreate: items.filter((x) => x.state === "ready").map((x) => x.draft), leftBehind: left };
+  const ready = items.filter((x) => x.state === "ready");
+  return {
+    items,
+    willCreate: ready.filter((x) => x.updates === undefined).map((x) => x.draft),
+    willUpdate: ready.filter((x) => x.updates !== undefined).map((x) => x.draft),
+    ...(notChanged !== undefined ? { notChanged } : {}),
+    leftBehind: left,
+  };
 }
 
 // ---- the hidden marker -----------------------------------------------------------------------------
@@ -225,6 +246,21 @@ export function refinedHashIn(body: unknown): string | undefined {
     .filter(Boolean)
     .at(-1);
   return last === undefined ? undefined : MARKER_LINE.exec(last)?.[1];
+}
+
+/** The last line of the comment the Foundry adds to an issue it replaced the text of: it tells a retry that the comment exists already. */
+export const updateMarker = (sessionId: string, draftId: string): string =>
+  `${BOT_MARKER} refined-update=${createHash("sha256").update(`refined-update\n${sessionId}\n${draftId}`).digest("hex")} -->`;
+
+/** Whether the last non-empty line of a comment, trimmed, is exactly this marker (a comment that only quotes it is not ours). */
+export function endsWithMarker(body: unknown, marker: string): boolean {
+  if (typeof body !== "string") return false;
+  const last = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1);
+  return last === marker;
 }
 
 /** Of issues as GitHub lists them: the one made from this draft (the lowest number when more carry the marker), or undefined. */
@@ -303,6 +339,72 @@ export function chosenLabels(choice: PublishChoice | undefined, o: LabelRules): 
     if (!found) throw bad(`the label "${l}" does not exist in ${o.repo}`);
     return found;
   });
+}
+
+// ---- the comment on an issue that was updated -------------------------------------------------------
+
+/** The comment must fit GitHub's limit of 65,536 characters; the old text is never cut, so a longer one is refused before anything is written. */
+export const UPDATE_COMMENT_MAX = 65_000;
+
+/** Of two issue texts: the sections that differ, as `Name`, `Name (new)` or `Name (removed)`. The text before the first heading is "Story". */
+export function changedSections(oldBody: string, newBody: string): string[] {
+  const keyed = (text: string) => {
+    const { before, sections } = splitSections(cleanBody(text));
+    const map = new Map<string, { name: string; text: string }>();
+    map.set("story", { name: "Story", text: before.join("\n").trim() });
+    for (const sec of sections) {
+      const key = sec.heading.toLowerCase();
+      const joined = sec.lines.join("\n").trim();
+      const known = map.get(key);
+      map.set(key, known ? { name: known.name, text: `${known.text}\n${joined}`.trim() } : { name: sec.heading, text: joined });
+    }
+    return map;
+  };
+  const was = keyed(oldBody);
+  const now = keyed(newBody);
+  const out: string[] = [];
+  for (const [key, n] of now) {
+    const o = was.get(key);
+    if (!o) out.push(`${n.name} (new)`);
+    else if (o.text !== n.text) out.push(n.name);
+  }
+  for (const [key, o] of was) if (!now.has(key)) out.push(`${o.name} (removed)`);
+  return out;
+}
+
+/** Backticks: at least 3, and more than the longest run in any of the texts. */
+const fenceFor = (...texts: string[]): string => {
+  const longest = Math.max(0, ...texts.flatMap((t) => (t.match(/`+/g) ?? []).map((r) => r.length)));
+  return "`".repeat(Math.max(3, longest + 1));
+};
+
+/** The comment that says who replaced the title and text of an issue and what changed, with the old title and text folded. The last line is the marker. */
+export function updateComment(o: { by: string; date: string; oldTitle: string; oldBody: string; newTitle: string; newBody: string; marker: string }): string {
+  const changed = changedSections(o.oldBody, o.newBody);
+  const fence = fenceFor(o.oldTitle, o.oldBody);
+  return [
+    `**Refined in Spaghetti Code Foundry by ${o.by} on ${o.date}.** The title and text of this issue were replaced.`,
+    "",
+    `- Title: ${o.oldTitle === o.newTitle ? "not changed" : "changed"}`,
+    `- Sections changed: ${changed.length ? changed.join(", ") : "none"}`,
+    "",
+    "<details>",
+    "<summary>The title and text before</summary>",
+    "",
+    "**Title**",
+    `${fence}text`,
+    o.oldTitle,
+    fence,
+    "",
+    "**Text**",
+    `${fence}text`,
+    o.oldBody,
+    fence,
+    "",
+    "</details>",
+    "",
+    o.marker,
+  ].join("\n");
 }
 
 /** All labels a draft is created with: the chosen ones, the build label when asked, the review label when the draft asks for it. */

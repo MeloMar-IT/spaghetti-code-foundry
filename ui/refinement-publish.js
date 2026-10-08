@@ -7,6 +7,8 @@ import { mayChange, unsaved } from "./refinement-draft.js";
 export const PUBLISH = "Publish";
 export const PUBLISH_TITLE = "Publish to GitHub";
 export const CONFIRM = "Create the issues";
+export const CONFIRM_UPDATE = "Update the issue";
+export const CONFIRM_BOTH = "Update and create the issues";
 export const START = "Start building this story";
 export const NOTHING_SENT = "Nothing is sent to GitHub until you confirm.";
 export const NO_WATCHER = "This repository has no enabled watcher for issues, so no label can start a build from here.";
@@ -58,9 +60,35 @@ export function choiceProblem(plan, s, draftId, pick) {
   return "";
 }
 
-/** The request body: one entry per draft that will be created. `picks`: draft id → { labels, startBuilding }. */
+/** The drafts a publish writes: the one that updates the issue the session came from, then the ones that are created. */
+export const willPublish = (plan) => [...(plan.willUpdate ?? []), ...(plan.willCreate ?? [])];
+
+/** The text of the confirm button. */
+export const confirmText = (plan) => ((plan.willUpdate ?? []).length ? ((plan.willCreate ?? []).length ? CONFIRM_BOTH : CONFIRM_UPDATE) : CONFIRM);
+
+/** The toast after publishing: `made` is the answer of the server. */
+export function doneText(made) {
+  const created = made.created?.length ?? 0;
+  const issues = created === 1 ? "1 issue is on GitHub" : `${created} issues are on GitHub`;
+  const u = made.updated?.[0];
+  if (!u) return issues;
+  return created ? `Issue #${u.issue} is updated and ${issues}` : `Issue #${u.issue} is updated`;
+}
+
+/**
+ * The draft that stands for the issue a session came from: { issue, draft, published } — `draft` is the draft as the page has it, `published`
+ * its link once it is on GitHub — or undefined when the session came from no issue or nothing stands for it (the draft is gone or split).
+ */
+export function updatesOf(s) {
+  if (!s?.source) return undefined;
+  const d = (s.drafts ?? []).find((x) => x.id === s.source.draft);
+  if (!d || d.state === "split" || d.splitInto?.length) return undefined;
+  return { issue: s.source.issue, draft: d, published: d.published };
+}
+
+/** The request body: one entry per draft that will be written. `picks`: draft id → { labels, startBuilding }. */
 export const publishBody = (plan, picks) => ({
-  drafts: (plan.willCreate ?? []).map((draft) => ({ draft, labels: picks[draft]?.labels ?? [], startBuilding: picks[draft]?.startBuilding === true })),
+  drafts: willPublish(plan).map((draft) => ({ draft, labels: picks[draft]?.labels ?? [], startBuilding: picks[draft]?.startBuilding === true })),
 });
 
 /** The line under a failure: "On GitHub already: #101, #102." or "Nothing is on GitHub yet." */
@@ -86,8 +114,9 @@ function planDialog(plan, s, run) {
     const picks = new Map(); // draft id → { labels: () => string[], start: () => boolean }
     const error = h("p", { class: "status bad" });
     const item = (it) => {
-      const head = [h("b", {}, it.title)];
+      const head = [h("b", {}, it.title), it.updates !== undefined ? [" ", h("span", { class: "pill" }, `Updates #${it.updates}`)] : null];
       const detail = [
+        it.updates !== undefined ? h("p", { class: "muted" }, `The title and text of issue #${it.updates} are replaced. Its labels are kept.`) : null,
         h("details", {}, h("summary", {}, "Text"), h("pre", {}, it.body)),
         h("h4", {}, "Depends on"),
         it.dependsOn.length ? h("ul", {}, it.dependsOn.map((d) => h("li", {}, dependsText(d)))) : h("p", { class: "muted" }, "None (can be built on its own)."),
@@ -111,11 +140,11 @@ function planDialog(plan, s, run) {
         fixed ? checkRow(fixed, `${review} (review label, the draft asked for it)`) : null,
         start ? [checkRow(start, `${START} — adds the label "${choice.label}"`), choice.missing ? h("p", { class: "muted" }, choice.missing) : null] : null);
     };
-    const confirmBtn = plan.willCreate.length ? h("button", { class: "primary", onClick: async () => {
+    const confirmBtn = willPublish(plan).length ? h("button", { class: "primary", onClick: async () => {
       if (busy) return;
       const read = {};
       for (const [did, p] of picks) read[did] = { labels: p.labels(), startBuilding: p.start() };
-      for (const did of plan.willCreate) {
+      for (const did of willPublish(plan)) {
         const problem = choiceProblem(plan, s, did, read[did] ?? { labels: [], startBuilding: false });
         if (problem) return void (error.textContent = problem);
       }
@@ -129,10 +158,12 @@ function planDialog(plan, s, run) {
         busy = false;
       }
       close(true);
-    } }, CONFIRM) : null;
+    } }, confirmText(plan)) : null;
     const cancel = h("button", { onClick: () => (busy ? undefined : close(undefined)) }, "Cancel");
     return h("div", { style: { display: "grid", gap: "12px" } },
-      h("p", {}, `These issues will be created in ${plan.repo}, in this order. ${NOTHING_SENT}`),
+      h("p", {}, `These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
+      (plan.willUpdate ?? []).length ? h("p", {}, `Issue #${plan.items.find((x) => x.updates !== undefined)?.updates} is updated, not created again.`) : null,
+      plan.notChanged !== undefined ? h("p", { class: "muted" }, `Issue #${plan.notChanged} is not changed: no story draft stands for it.`) : null,
       choice.why ? h("p", { class: "muted" }, choice.why) : null,
       h("ol", { class: "plan" }, plan.items.map(item)),
       error,
@@ -153,10 +184,24 @@ export function publishSection(ctx) {
   let shown = null;
   let busy = false;
 
+  /** What the page says about the issue the session came from: that the draft updates it, that it was updated, or that it is not changed. */
+  const sourceLine = (s) => {
+    if (!s.source) return null;
+    const u = updatesOf(s);
+    if (!u) return h("p", { class: "muted" }, `Issue #${s.source.issue} is not changed.`);
+    if (u.published) {
+      const url = String(u.published.url ?? "");
+      const text = `#${u.published.issue}`;
+      return h("p", { class: "muted" }, "Updated ", url.startsWith("https://github.com/") ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, text) : text);
+    }
+    return h("p", { class: "muted" }, `Updates #${u.issue}: ${u.draft.preview?.title || u.draft.title?.text || ""}`);
+  };
+
   const draw = () => {
     const s = sess;
     node.replaceChildren(...nodes(!mayChange(s) ? null : [
       h("h2", {}, PUBLISH),
+      sourceLine(s),
       failure ? [h("p", { class: "status bad" }, failure), unknown ? h("p", { class: "muted" }, UNKNOWN) : h("p", { class: "muted" }, onGithubText(s))] : null,
       s.state === "published" ? h("p", { class: "muted" }, ALL_PUBLISHED) : null,
       s.state !== "published" && canPublish(s) && ["queued", "running"].includes(s.architect?.state) ? h("p", { class: "muted" }, ARCHITECT_BUSY) : null,
@@ -167,7 +212,8 @@ export function publishSection(ctx) {
   };
   const update = (s) => {
     sess = s;
-    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown]);
+    const u = updatesOf(s);
+    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown, s.source?.issue, s.source?.draft, u?.draft.preview?.title || u?.draft.title?.text, u?.published?.issue]);
     if (key === shown) return;
     shown = key;
     draw();
@@ -203,7 +249,7 @@ export function publishSection(ctx) {
     }
     failure = error ? ctx.errorText(error) : stale ? "The issues are on GitHub, but the page could not be refreshed. Reload the page to see the links." : "";
     unknown = Boolean(failure) && !fresh;
-    if (!error) toast(made.created.length === 1 ? "1 issue is on GitHub" : `${made.created.length} issues are on GitHub`);
+    if (!error) toast(doneText(made));
     if (ctx.current()) update(sess); // the failure line is drawn also when the session did not change
   };
 

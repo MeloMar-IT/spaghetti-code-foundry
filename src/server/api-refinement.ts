@@ -47,6 +47,7 @@ import {
   isPublishing,
   listSessions,
   purgeDropped,
+  markOf,
   renameSession,
   restoreSession,
 } from "../refinement/store.js";
@@ -189,7 +190,8 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
-    ...(s.source ? { source: s.source } : {}),
+    // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown.
+    ...(s.source ? { source: (({ pending: _pending, draft: _draft, ...rest }) => ({ ...rest, ...(markOf(s) !== undefined ? { draft: markOf(s) } : {}) }))(s.source) } : {}),
     state: s.state,
     // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
     ...(repoAvailable ? { readyList: list } : {}),
