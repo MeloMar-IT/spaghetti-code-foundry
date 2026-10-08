@@ -278,7 +278,7 @@ describe("gitflow pipeline", () => {
     expect(base).toContain("not run again: this exact code already passed these tests");
     expect(base).toContain("result: PASSED (already tested)");
     // Its own change is new code: those tests do run — once, ahead of the merge.
-    expect(second.history.find((h) => h.id === "pretest_merge")!.output).not.toContain("not run again");
+    expect(second.history.find((h) => h.id === "pretest_tests")!.output).not.toContain("not run again");
 
     // Switched off: every test run happens.
     issues(7);
@@ -296,7 +296,8 @@ describe("gitflow pipeline", () => {
     const ids = run.history.map((h) => h.id);
     expect(ids.indexOf("pretest_merge")).toBeGreaterThan(ids.indexOf("push_feature"));
     expect(ids.indexOf("pretest_merge")).toBeLessThan(ids.indexOf("merge_develop"));
-    const ahead = run.history.find((h) => h.id === "pretest_merge")!.output;
+    expect(run.history.find((h) => h.id === "pretest_merge")!.output).toContain("TRIAL: feature/5-add-a-feature merged with develop");
+    const ahead = run.history.find((h) => h.id === "pretest_tests")!.output;
     expect(ahead).toContain("tested ahead: feature/5-add-a-feature merged with develop");
     expect(ahead).not.toContain("not run again");
     // develop did not move: the merge gives exactly the tested code.
@@ -314,7 +315,7 @@ describe("gitflow pipeline", () => {
     expect(out("run_tests")).toContain("the quick tests of this story");
     expect(out("run_tests")).toContain("$ echo QUICK-ONLY");
     expect(out("run_tests")).not.toContain("$ echo FULL-SUITE");
-    for (const id of ["baseline_tests", "pretest_merge"]) {
+    for (const id of ["baseline_tests", "pretest_tests"]) {
       expect(out(id), id).toContain("$ echo FULL-SUITE");
       expect(out(id), id).not.toContain("QUICK-ONLY");
     }

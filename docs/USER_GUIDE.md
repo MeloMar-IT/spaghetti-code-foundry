@@ -1403,7 +1403,7 @@ flowchart LR
   (`npx vitest run --changed --passWithNoTests`). The full `test_cmd` runs before the change and on
   the merge with `develop`, so nothing reaches `develop` without the full tests.
 - **The merge is tested ahead of its turn.** A finished story tests its merge with `develop` before
-  it takes its turn at `develop` (step `pretest_merge`), so several stories test side by side. If
+  it takes its turn at `develop` (steps `pretest_merge` and `pretest_tests`), so several stories test side by side. If
   `develop` did not move meanwhile, the turn needs no test run and the story is pushed at once.
 - **A few test runs at a time.** At most `test_slots` test commands (default `2`) work on the
   machine at once, over all runs and repositories; the others wait their turn. Many test runs at

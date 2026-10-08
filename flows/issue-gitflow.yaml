@@ -916,10 +916,9 @@ steps:
   - id: pretest_merge
     type: shell
     repo_access: true
-    timeout_sec: 7200
-    description: Test the merge with develop ahead of the merge turn (the turn then needs no test run when develop did not move)
+    description: Make the merge with develop on the side, to test it ahead of the merge turn
     run: |-
-      dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD)
+      dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD); rm -f "{{run.dir}}/trial-merge"
       skip() { echo "not tested ahead: $1 — the merge step tests as usual"; exit 0; }
       [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] || skip "reuse_test_results is off"
       # Cut off during an earlier try (the workspace is still on the trial merge): go back to the feature branch first.
@@ -931,7 +930,20 @@ steps:
       git checkout -q --detach "origin/$dev" || skip "cannot check out $dev"
       # The same merge, in the same direction, as merge_develop makes (so the files are identical).
       if git merge --no-ff --no-edit -m "trial merge of $f" "$f" >/dev/null 2>&1; then
-        ( cmd="$FACTORY_VAR_TEST_CMD"
+        git rev-parse --short "origin/$dev" > "{{run.dir}}/trial-merge"; echo "TRIAL: $f merged with $dev at $(cat "{{run.dir}}/trial-merge")"
+      else
+        git merge --abort >/dev/null 2>&1; git checkout -q -f "$f" || { echo "cannot go back to $f"; exit 1; }
+        echo "not tested ahead: the merge with $dev has conflicts — they are resolved in the merge step"
+      fi
+    on_success: pretest_tests
+  - id: pretest_tests
+    type: shell
+    timeout_sec: 7200
+    description: Test the merge with develop ahead of the merge turn (the turn then needs no test run when develop did not move)
+    run: |-
+      dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)
+      if [ ! -s "{{run.dir}}/trial-merge" ]; then echo "nothing to test ahead"; exit 0; fi
+      ( cmd="$FACTORY_VAR_TEST_CMD"
         if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
         if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
         marker="{{run.dir}}/tests.marker"; touch "$marker"
@@ -951,10 +963,8 @@ steps:
           if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi
         fi
         exit "$code" ); code=$?
-        [ "$code" -eq 0 ] && echo "tested ahead: $f merged with $dev at $(git rev-parse --short "origin/$dev")" || echo "the tests fail on the merge with $dev — the merge step runs them again and the fix follows"
-      else
-        git merge --abort >/dev/null 2>&1; echo "not tested ahead: the merge with $dev has conflicts — they are resolved in the merge step"
-      fi
+      [ "$code" -eq 0 ] && echo "tested ahead: $f merged with $dev at $(cat "{{run.dir}}/trial-merge")" || echo "the tests fail on the merge with $dev — the merge step runs them again and the fix follows"
+      rm -f "{{run.dir}}/trial-merge"
       git checkout -q -f "$f" || { echo "cannot go back to $f"; exit 1; }
       exit 0
     on_success: merge_develop
