@@ -9,19 +9,11 @@ import { RefinementError, beginPublishing, endPublishing, getSession, logRoom, r
 import { createIssue, isBot, listNewestIssues, repoLabels, type RestIssue } from "../github.js";
 import { HttpError, readJson, send } from "./http.js";
 import { architectDeps, guardedAsync, limitsOf } from "./api-refinement.js";
+import { GH_TIMEOUT_MS, whatHappened } from "./api-refinement-import.js";
 import { sessionUser } from "./api-auth.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
 import type { ApiContext, Route } from "./server.js";
 
-const GH_TIMEOUT_MS = 15_000;
-
-/** What went wrong with a call to GitHub, in one line: its own words (the first line of stderr), or that it did not answer. */
-function whatHappened(e: unknown): string {
-  const x = e as { killed?: boolean; stderr?: unknown; message?: unknown };
-  if (x?.killed === true) return "GitHub did not answer in time";
-  const first = (t: unknown) => (typeof t === "string" ? t.split("\n").map((l) => l.trim()).find(Boolean) : undefined);
-  return first(x?.stderr) ?? first(x?.message) ?? "unknown error";
-}
 
 /** The session of the signed-in account, for the plan and for publishing: both use the owner's GitHub sign-in, so only the owner may. */
 function ownedSession(ctx: ApiContext, req: IncomingMessage, id: string) {
@@ -31,6 +23,8 @@ function ownedSession(ctx: ApiContext, req: IncomingMessage, id: string) {
   if (!s || (s.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such refinement session");
   if (s.owner !== user.id) throw new HttpError(403, "only the owner can read or publish the plan: it is used with the owner's GitHub sign-in");
   if (s.state === "dropped") throw new HttpError(409, "a dropped session cannot be published; restore it first");
+  // Publishing makes new issues; writing back to the issue a session came from is not built yet, so it must not make a copy.
+  if (s.source) throw new HttpError(409, `this session came from issue #${s.source.issue}; publishing it back to that issue is not possible yet, so nothing is made`);
   const by = (user.name ?? "").replace(/\s+/g, " ").trim() || "a Foundry user";
   if (isBot({ body: by })) throw new HttpError(400, "the account name holds a Foundry marker");
   return { user, s, by };

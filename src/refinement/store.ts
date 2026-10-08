@@ -13,7 +13,8 @@ import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./dra
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
-import { DRAFT_LOG_KINDS, DraftsSchema, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
+import { draftFromStory, type StoryFields } from "./issue-import.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, ISSUE_URL, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
@@ -28,6 +29,10 @@ export const refinementsPath = () => join(dataHome(), "refinements.json");
 export const SESSION_LIMIT = 200;
 export const IDEA_MAX = 10_000;
 export const TITLE_MAX = 120;
+/** A session that came from an issue keeps the title of the issue; GitHub allows 256 characters. */
+export const SESSION_TITLE_MAX = 256;
+/** The longest issue text a session keeps as its source (GitHub's own limit). */
+export const SOURCE_BODY_MAX = 65_536;
 /** A session keeps at most this many log entries; the last one is kept free so the session can still be dropped. */
 export const LOG_LIMIT = 1000;
 /** A dropped session is removed after this long. */
@@ -43,7 +48,7 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
@@ -60,13 +65,27 @@ const ArchitectSchema = z
     a.kind === "suggest" ? a.draft !== undefined && a.field !== undefined : a.kind === "review" || a.kind === "impact" || a.kind === "ready" || a.kind === "split" ? a.draft !== undefined && a.field === undefined : a.draft === undefined && a.field === undefined,
   );
 
+/** Where a session came from: the issue, and its title, text and `updated_at` when it was read. */
+const SourceSchema = z
+  .object({
+    issue: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    url: z.string().max(300).regex(ISSUE_URL),
+    title: z.string().min(1).max(SESSION_TITLE_MAX),
+    body: z.string().max(SOURCE_BODY_MAX),
+    updatedAt: z.iso.datetime(),
+    buildLabel: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+export type IssueSource = z.infer<typeof SourceSchema>;
+
 const SessionSchema = z
   .object({
     id: z.uuid(),
     owner: z.uuid(),
     repo: z.string().refine(validGithubName),
-    title: z.string().min(1).max(TITLE_MAX),
+    title: z.string().min(1).max(SESSION_TITLE_MAX),
     idea: z.string().min(1).max(IDEA_MAX),
+    source: SourceSchema.optional(),
     state: z.enum(STATES),
     stateBefore: z.enum(OPEN_STATES as [string, ...string[]]).optional(),
     droppedAt: z.iso.datetime().optional(),
@@ -202,7 +221,22 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
   const idea = checkIdea(input.idea);
   const title = input.title === undefined || input.title === null || (typeof input.title === "string" && !input.title.trim()) ? undefined : checkTitle(input.title);
   if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
-  const given = input.repo;
+  return insertSession(owner, input.repo, opts, (repo, at) => ({
+    id: randomUUID(),
+    owner,
+    repo,
+    title: title ?? titleFromIdea(idea),
+    idea,
+    state: "exploring",
+    drafts: [],
+    log: [{ at, by: owner, what: "created" }],
+    created: at,
+    updated: at,
+  }));
+}
+
+/** Checks the owner and the repository and the session limit under the lock, then saves the session `make` builds. */
+function insertSession(owner: string, given: string, opts: CreateOptions, make: (repo: string, at: string, kept: Session[]) => Session): Session {
   return withAuthLock(() => {
     if (!(opts.ownerOk ?? defaultOwnerOk)(owner)) throw new RefinementError("no-owner", "no such account");
     const repo = (opts.repoName ?? defaultRepoName)(owner, given);
@@ -213,21 +247,61 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
     if (kept.filter((s) => s.owner === owner).length >= SESSION_LIMIT) {
       throw new RefinementError("limit", `at most ${SESSION_LIMIT} sessions; dropped sessions count until they are removed after 30 days`);
     }
-    const at = now.toISOString();
+    const session = make(repo, now.toISOString(), kept);
+    save([...kept, session]);
+    return copy(session);
+  });
+}
+
+const openOfIssue = (s: Session, owner: string, repo: string, issue: number) =>
+  s.owner === owner && s.source?.issue === issue && s.repo.toLowerCase() === repo.toLowerCase() && s.state !== "dropped" && s.state !== "published";
+
+/** The open (not dropped, not published, not expired) session of `owner` that came from this issue. */
+export function openSessionOfIssue(owner: string, repo: string, issue: number, opts: StoreOptions = {}): Session | undefined {
+  const now = clock(opts);
+  const s = read().sessions.find((x) => !expired(x, now) && openOfIssue(x, owner, repo, issue));
+  return s ? copy(s) : undefined;
+}
+
+export interface NewIssueSession {
+  repo: unknown;
+  title: string;
+  idea: string;
+  source: IssueSource;
+  story?: StoryFields;
+}
+
+/**
+ * A session from an issue that was read: the idea is its title and text; a text in the story format gives one draft, every field typed.
+ * `beforeSave` runs under the lock, right before the write; it may throw to refuse.
+ */
+export function createSessionFromIssue(owner: string, input: NewIssueSession, opts: CreateOptions & Pick<TalkOptions, "readyList"> & { beforeSave?: () => void } = {}): Session {
+  const idea = checkIdea(input.idea);
+  const title = input.title.trim();
+  if (!title || title.length > SESSION_TITLE_MAX || CONTROL.test(title)) throw new RefinementError("bad-title", "the title of the issue cannot be used");
+  if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
+  return insertSession(owner, input.repo, opts, (repo, at, kept) => {
+    const dup = kept.find((s) => openOfIssue(s, owner, repo, input.source.issue));
+    if (dup) throw new RefinementError("duplicate", `issue #${input.source.issue} already has an open refinement session: "${dup.title}"`, dup.id);
+    opts.beforeSave?.();
+    const drafts = input.story ? [draftFromStory(input.story)] : [];
+    const list = (opts.readyList ?? defaultReadyList)(owner, repo);
     const session: Session = {
       id: randomUUID(),
       owner,
       repo,
-      title: title ?? titleFromIdea(idea),
+      title,
       idea,
-      state: "exploring",
-      drafts: [],
-      log: [{ at, by: owner, what: "created" }],
+      source: input.source,
+      state: stateOf("exploring", false, drafts, list),
+      drafts,
+      ...(input.story?.epic !== undefined ? { epic: input.story.epic } : {}),
+      log: [{ at, by: owner, what: "imported", detail: `#${input.source.issue}` }],
       created: at,
       updated: at,
     };
-    save([...kept, session]);
-    return copy(session);
+    // A wrong import never reaches the file.
+    return SessionSchema.parse(session);
   });
 }
 
@@ -301,6 +375,9 @@ export function restoreSession(actor: Actor, id: string, opts: StoreOptions = {}
   return change(actor, id, opts, false, (s, at) => {
     if (s.state !== "dropped" || s.stateBefore === undefined) throw new RefinementError("bad-state", "that session is not dropped");
     room(s, LOG_LIMIT - 1);
+    // Another open session for the same issue may have been made while this one was dropped.
+    const other = s.source ? read().sessions.find((x) => x.id !== s.id && !expired(x, new Date(at)) && openOfIssue(x, s.owner, s.repo, s.source!.issue)) : undefined;
+    if (other) throw new RefinementError("duplicate", `issue #${s.source!.issue} has another open refinement session: "${other.title}"; drop it first`, other.id);
     const { stateBefore, droppedAt: _droppedAt, ...rest } = s;
     return { ...rest, state: stateBefore as SessionState, updated: at, log: [...s.log, { at, by: actor.id, what: "restored" }] };
   });

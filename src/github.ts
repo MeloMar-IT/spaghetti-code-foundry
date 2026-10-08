@@ -300,6 +300,9 @@ export interface RestIssue {
   html_url: string;
   created_at: string;
   closed_at?: string | null;
+  updated_at?: string;
+  /** Set when the "issue" is a pull request. */
+  pull_request?: unknown;
   labels: ({ name?: string } | string)[];
 }
 
@@ -328,6 +331,25 @@ export async function restIssue(repo: string, issue: number, timeoutMs?: number)
     if (/not found|HTTP 404/i.test(errorText(e))) return undefined;
     throw e;
   }
+}
+
+/**
+ * The state of a pull request: "closed" only when GitHub says it is closed and not merged; "gone" when GitHub says it does not exist;
+ * "unknown" when the answer is not clear (so a caller can treat it as not closed).
+ */
+export async function pullState(repo: string, pr: number, timeoutMs?: number): Promise<"open" | "merged" | "closed" | "gone" | "unknown"> {
+  let p: { state?: unknown; merged?: unknown; merged_at?: unknown };
+  try {
+    p = JSON.parse((await gh(["api", `repos/${repo}/pulls/${pr}`], undefined, timeoutMs)).trim());
+  } catch (e) {
+    if (/not found|HTTP 404/i.test(errorText(e))) return "gone";
+    throw e;
+  }
+  if (!p || typeof p !== "object") return "unknown";
+  if (p.merged === true || (typeof p.merged_at === "string" && p.merged_at)) return "merged";
+  if (p.state === "open") return "open";
+  if (p.state === "closed" && p.merged === false) return "closed";
+  return "unknown";
 }
 
 /** Makes an issue. Title and text go through stdin as JSON, never into the command line. */
