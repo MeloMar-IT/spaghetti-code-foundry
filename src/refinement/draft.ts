@@ -25,6 +25,8 @@ export const SUGGESTIONS_MAX = 20;
 export const SUGGEST_LIST_MAX = 10;
 /** The newest rejected suggestions a draft keeps (for the next suggestion runs of the session). */
 export const REJECTED_MAX = 30;
+/** The longest log detail of a merge of two drafts: it names every link that was removed. */
+export const MERGE_DETAIL_MAX = 1000;
 export const REASON_MAX = 300;
 
 /** The fields of a draft the architect can suggest text for. */
@@ -61,6 +63,7 @@ export const DRAFT_LOG_KINDS = [
   "architect-split",
   "draft-split",
   "criterion-moved",
+  "drafts-merged",
   "moved-to-notes",
   "ready-checked",
   "ready-asked",
@@ -410,7 +413,7 @@ export function changeEpic(st: DraftState, input: unknown): DraftChange | undefi
 // ---- suggestions of the architect ------------------------------------------------------------------
 
 /** The draft with these waiting suggestions; the key is not there when none wait. */
-function withSuggestions(d: Draft, list: Suggestion[]): Draft {
+export function withSuggestions(d: Draft, list: Suggestion[]): Draft {
   const { suggestions: _gone, ...rest } = d;
   return list.length ? { ...rest, suggestions: list } : rest;
 }

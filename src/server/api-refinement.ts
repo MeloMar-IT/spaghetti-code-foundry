@@ -29,6 +29,7 @@ import {
   checkReadyOf,
   confirmSplitOf,
   moveCriterionOf,
+  mergeDraftsOf,
   correctReadyState,
   removeAcceptedOf,
   answerQuestion,
@@ -363,6 +364,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   if (seg.length === 7 && seg[2] === "drafts" && seg[4] === "criteria" && seg[6] === "move" && method === "POST") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(moveCriterionOf(actor, seg[1]!, seg[3]!, seg[5]!, body).id), user))), true;
+  }
+  if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "merge" && method === "POST") {
+    const body = await readJson(req);
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(mergeDraftsOf(actor, seg[1]!, seg[3]!, body).id), user))), true;
   }
   if (seg.length === 5 && seg[2] === "drafts" && seg[4] === "split" && method === "POST") {
     // The body is optional: without one there is no own way. A body that is there must be JSON.
