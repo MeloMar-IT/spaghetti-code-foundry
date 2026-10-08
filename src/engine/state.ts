@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Flow, Step } from "../flow/schema.js";
+import type { RunSkillPlan } from "../skills/run-plan.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -87,6 +88,8 @@ export interface RunSummary {
   owner?: string;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
+  /** The skill resolution of the plan and what was decided about skills that could not be used. Absent on older runs and when no skill was asked for. */
+  skillPlan?: RunSkillPlan;
 }
 
 /** An answer a person gave on the run page to the questions a run stopped with. */

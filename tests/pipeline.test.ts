@@ -112,6 +112,13 @@ describe("label-driven issue pipeline", () => {
   });
 
   describe("the skill request", () => {
+    // the requested skills are not installed in these tests: warn and go on instead of stopping
+    beforeEach(() => {
+      config.skills.unresolved.unknown = "warn";
+    });
+    afterEach(() => {
+      config.skills.unresolved.unknown = "stop";
+    });
     const REQ = (id: string) => JSON.stringify({ version: 1, skills: [{ id, reason: "because", evidence: ["issue:asks for it"] }] });
     const DRAFT = (id: string) => `## Goal\nAdd feature.txt\nSKILL_REQUEST: ${REQ(id)}\nPLAN_STATUS: READY`;
     const planned = async () => {
