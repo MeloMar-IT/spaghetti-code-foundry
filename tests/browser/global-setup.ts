@@ -3,12 +3,21 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const PREFIX = "UI_TEST_SEED ";
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
-/** Starts the seeded server as a child process, publishes its seed in UI_TEST_SEED, and returns the teardown. */
-export default async function globalSetup(): Promise<() => Promise<void>> {
-  const root = fileURLToPath(new URL("../..", import.meta.url));
-  const child = spawn(process.execPath, ["--import", "tsx", "tests/browser/server.ts"], { cwd: root, env: process.env, stdio: ["ignore", "pipe", "inherit"] });
+interface Launched { seed: string; stop(): Promise<void> }
+
+/** Starts one seeded server as a child process with `env` and resolves with its seed line and a teardown. */
+async function launch(env: NodeJS.ProcessEnv): Promise<Launched> {
+  const child = spawn(process.execPath, ["--import", "tsx", "tests/browser/server.ts"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "inherit"] });
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  const stop = async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    const kill = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    await exited;
+    clearTimeout(kill);
+  };
 
   const seed = await new Promise<string>((resolve, reject) => {
     const fail = (msg: string) => {
@@ -25,13 +34,29 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       resolve(line.slice(PREFIX.length));
     });
   });
-  process.env.UI_TEST_SEED = seed;
+  return { seed, stop };
+}
+
+/**
+ * Starts two seeded servers as child processes and publishes their seeds in UI_TEST_SEED (the default data) and
+ * UI_TEST_SEED_LARGE (500 runs, a long log, a large diff; only the performance spec uses it). Returns the teardown.
+ */
+export default async function globalSetup(): Promise<() => Promise<void>> {
+  const plain = { ...process.env };
+  delete plain.UI_TEST_LARGE;
+  const results = await Promise.allSettled([launch(plain), launch({ ...process.env, UI_TEST_LARGE: "1" })]);
+  const started = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) {
+    await Promise.all(started.map((l) => l.stop()));
+    throw failed.reason;
+  }
+  const [defaultOne, largeOne] = started;
+  if (!defaultOne || !largeOne) throw new Error("the seeded servers did not start");
+  process.env.UI_TEST_SEED = defaultOne.seed;
+  process.env.UI_TEST_SEED_LARGE = largeOne.seed;
 
   return async () => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.kill("SIGTERM");
-    const kill = setTimeout(() => child.kill("SIGKILL"), 10_000);
-    await exited;
-    clearTimeout(kill);
+    await Promise.all(started.map((l) => l.stop()));
   };
 }

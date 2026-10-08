@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { startSeeded, type Seeded } from "./browser/seed.js";
+import { listRunIds, loadRun, readLiveLog } from "../src/engine/state.js";
+import { largeFromEnv, seedLarge, startSeeded, type Seeded } from "./browser/seed.js";
 import { WIDTHS, usesDrawer } from "./browser/widths.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -39,6 +41,12 @@ describe("the seeded server", () => {
     }
   });
 
+  it("has no large data unless asked", async () => {
+    expect(s.large).toBeUndefined();
+    const ids = list((await get(s, admin, "/api/runs")).json, "runs").map((x) => x.runId as string);
+    expect(ids.filter((id) => id.startsWith("big-") || id.startsWith("ui-big-"))).toEqual([]);
+  });
+
   it("shows the user only their own runs", async () => {
     const r = await get(s, user, "/api/runs");
     expect(list(r.json, "runs").map((x) => x.runId).sort()).toEqual([...s.userRuns].sort());
@@ -63,6 +71,68 @@ describe("the seeded server", () => {
   it("touches nothing real", () => {
     expect(home.startsWith(tmpdir())).toBe(true);
     expect(home).not.toBe(savedHome);
+  });
+});
+
+describe("the seeded server with large data", () => {
+  let s: Seeded;
+  let admin: TestSession;
+  beforeAll(async () => {
+    s = await startSeeded({ large: true });
+    admin = await signInAs(s.url, { create: false });
+  });
+  afterAll(async () => {
+    await s?.close();
+  });
+
+  it("says what it seeded", () => {
+    expect(s.large).toEqual({ runs: 500, logRun: "ui-big-log", diffRun: "ui-big-diff" });
+  });
+
+  it("lists 200 runs, newest ids first", async () => {
+    const rows = list((await get(s, admin, "/api/runs")).json, "runs");
+    expect(rows).toHaveLength(200);
+    const ids = rows.map((x) => x.runId);
+    expect(ids).toContain("big-0500");
+    expect(ids).toContain("ui-big-log");
+  });
+
+  it("has a diff of 1,000 added and 1,000 removed lines", async () => {
+    const r = await get(s, admin, "/api/runs/ui-big-diff/diff");
+    expect(r.json.truncated).toBe(false);
+    const lines = String(r.json.patch).split("\n");
+    expect(lines.filter((l) => /^\+(?!\+\+)/.test(l))).toHaveLength(1000);
+    expect(lines.filter((l) => /^-(?!--)/.test(l))).toHaveLength(1000);
+  });
+
+  it("keeps the six statuses", () => {
+    expect(Object.keys(s.runs).sort()).toEqual(["cancelled", "failed", "running", "stopped", "succeeded", "waiting"]);
+  });
+});
+
+describe("the large seed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ui-large-seed-"));
+  const runsDir = join(dir, "runs");
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("writes 500 runs, a long log and a diff run", () => {
+    expect(seedLarge(runsDir, dir, "owner-1", "/repo")).toEqual({ runs: 500, logRun: "ui-big-log", diffRun: "ui-big-diff" });
+    const ids = listRunIds(runsDir);
+    expect(ids).toHaveLength(502);
+    expect(ids.indexOf("big-0500")).toBeLessThan(ids.indexOf("big-0001"));
+    const run = loadRun(runsDir, "big-0001")!;
+    expect(run.owner).toBe("owner-1");
+    expect(["succeeded", "failed", "cancelled"]).toContain(run.status);
+    expect(readLiveLog(join(runsDir, "ui-big-log"))).toHaveLength(5000);
+    expect(loadRun(runsDir, "ui-big-diff")!.baseSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+describe("the large switch", () => {
+  it("is on only for UI_TEST_LARGE=1", () => {
+    expect(largeFromEnv({ UI_TEST_LARGE: "1" })).toBe(true);
+    expect(largeFromEnv({})).toBe(false);
+    expect(largeFromEnv({ UI_TEST_LARGE: "0" })).toBe(false);
   });
 });
 
@@ -94,6 +164,12 @@ describe("the harness wiring", () => {
     expect(pkg.scripts.test).toBe("vitest run");
     expect(pkg.devDependencies["@playwright/test"]).toBeTruthy();
     expect(readdirSync("tests/browser").filter((f) => f.endsWith(".test.ts"))).toEqual([]);
+  });
+
+  it("runs the performance spec last, against a second, large server", () => {
+    expect(existsSync("tests/browser/performance.spec.ts")).toBe(true);
+    expect(readFileSync("tests/browser/playwright.config.ts", "utf8")).toContain('dependencies: ["chromium"]');
+    expect(readFileSync("tests/browser/global-setup.ts", "utf8")).toContain("UI_TEST_SEED_LARGE");
   });
 
   it("restores FACTORY_HOME", () => {
