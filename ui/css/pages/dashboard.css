@@ -10,8 +10,8 @@
 .chart { position: relative; }
 .chart svg { width: 100%; height: auto; display: block; }
 .chart .bar { fill: var(--accent); }
-.chart .bar-hit:hover .bar, .chart .bar-hit:focus .bar { fill: color-mix(in srgb, var(--accent) 80%, var(--text)); }
-.chart .bar-hit:focus { outline: none; }
+.chart .bar-hit:hover .bar, .chart .bar-hit:focus-visible .bar { fill: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.chart .bar-hit:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
 .chart .grid-line { stroke: var(--border); stroke-width: 1; }
 .chart .base-line { stroke: var(--muted); stroke-width: 1; }
 .chart .axis { font-size: var(--text-micro); fill: var(--muted); font-family: var(--sans); }

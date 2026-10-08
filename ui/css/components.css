@@ -16,7 +16,7 @@ button.small { padding: 3px 9px; font-size: var(--text-small); }
 
 input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--control-pad-y) var(--control-pad-x); width: 100%; min-width: 0; }
 textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
-input:focus, select:focus, textarea:focus { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
 .field { display: grid; gap: 4px; }
 .field > span { font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
 .field > small { color: var(--muted); font-size: var(--text-meta); }
@@ -100,6 +100,16 @@ a.btn.primary:hover { filter: brightness(1.06); }
 a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .modal:focus-visible { outline: none; }
+
+/* ── target size: at least 24 × 24 CSS px ── */
+button, .btn, .table a { min-width: 24px; min-height: 24px; }
+.table a { display: inline-block; }
+button.icon { justify-content: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  #toast, .chart-tip { transition: none; }
+}
 
 /* ── a wide table scrolls in its own box ── */
 .table-box { overflow-x: auto; }

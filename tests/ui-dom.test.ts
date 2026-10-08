@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -68,6 +68,63 @@ describe("modal", () => {
     expect(box.attrs.role).toBe("dialog");
     expect(box.attrs["aria-modal"]).toBe("true");
     expect(box.attrs.tabindex).toBe("-1");
+    expect(box.attrs["aria-label"]).toBeUndefined();
+    const h2 = el("modal-root").querySelector("h2") as FakeElement;
+    expect(h2.textContent).toBe("Title");
+    expect(h2.attrs.id).toBeTruthy();
+    expect(box.attrs["aria-labelledby"]).toBe(h2.attrs.id);
+  });
+
+  it("gives each dialog its own title id", () => {
+    void dom.modal("Title", () => dom.h("p", {}, "x"));
+    const first = (el("modal-root").querySelector("div[role]") as FakeElement).attrs["aria-labelledby"];
+    keydown("Escape");
+    void dom.modal("Title", () => dom.h("p", {}, "x"));
+    const second = (el("modal-root").querySelector("div[role]") as FakeElement).attrs["aria-labelledby"];
+    expect(first).toBeTruthy();
+    expect(second).not.toBe(first);
+  });
+
+  describe("busy", () => {
+    const open = (busy: () => boolean) => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      let done = false;
+      void dom.modal("Title", () => dom.h("p", {}, "x"), { busy }).then(() => (done = true));
+      const backdrop = el("modal-root").children[0] as FakeElement;
+      const closeBtn = el("modal-root").querySelector("button") as FakeElement;
+      return { opener, backdrop, closeBtn, isDone: () => done };
+    };
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const mousedown = (b: FakeElement) => b.fire("mousedown", { target: b, currentTarget: b });
+
+    it("Escape, the close button and the backdrop do nothing while busy", async () => {
+      let busy = true;
+      const { backdrop, closeBtn, isDone } = open(() => busy);
+      keydown("Escape");
+      closeBtn.click();
+      mousedown(backdrop);
+      await flush();
+      expect(isDone()).toBe(false);
+      expect(el("modal-root").children).toHaveLength(1);
+      busy = false;
+      keydown("Escape");
+      await flush();
+      expect(isDone()).toBe(true);
+    });
+
+    it("the close button and the backdrop close it when not busy, and the focus returns to the opener", async () => {
+      const a = open(() => false);
+      a.closeBtn.click();
+      await flush();
+      expect(a.isDone()).toBe(true);
+      expect(doc().activeElement).toBe(a.opener);
+      const b = open(() => false);
+      mousedown(b.backdrop);
+      await flush();
+      expect(b.isDone()).toBe(true);
+      expect(doc().activeElement).toBe(b.opener);
+    });
   });
 
   it("focuses the box when there is no input", () => {
@@ -176,5 +233,28 @@ describe("mount", () => {
     const unnamed = doc().activeElement;
     dom.mount(target, draw(null));
     expect(doc().activeElement).toBe(unnamed);
+  });
+});
+
+describe("toast", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("sets the text, and role alert for an error", () => {
+    dom.toast("x", "error");
+    expect(el("toast").textContent).toBe("x");
+    expect(el("toast").attrs.role).toBe("alert");
+  });
+  it("uses role status for other kinds", () => {
+    dom.toast("x");
+    expect(el("toast").attrs.role).toBe("status");
+    dom.toast("x", "ok");
+    expect(el("toast").attrs.role).toBe("status");
+  });
+  it("an error followed by an info ends on status", () => {
+    dom.toast("bad", "error");
+    dom.toast("fine");
+    expect(el("toast").attrs.role).toBe("status");
+    expect(el("toast").textContent).toBe("fine");
   });
 });
