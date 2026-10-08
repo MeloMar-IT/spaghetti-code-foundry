@@ -80,7 +80,7 @@ export function runCard({ run, job }, onRemove) {
 /** A yes/no dialog. Resolves true for the yes button, false for the other, Close, Escape or the backdrop. */
 export async function confirmDialog(title, text, yes = "Yes", no = "No") {
   const answer = await modal(title, (close) => h("div", { class: "run-dialog" },
-    h("p", { style: { margin: 0 } }, text),
+    h("p", { class: "flush" }, text),
     h("div", { class: "row" },
       h("button", { type: "button", class: "danger", onClick: () => close(true) }, yes),
       h("button", { type: "button", onClick: () => close(false) }, no))));
@@ -96,7 +96,7 @@ export async function decisionDialog(kind, send) {
   let busy = false;
   const answer = await modal(approve ? "Approve" : "Reject", (close) => {
     const note = h("textarea", { name: "note", rows: 4, "aria-label": approve ? "Note (optional)" : "Why reject? (optional)" });
-    const err = h("p", { class: "status bad", role: "alert", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush", role: "alert" });
     const submitBtn = h("button", { type: "submit", class: approve ? "primary" : "danger" }, approve ? "Approve" : "Reject");
     const closeBtn = h("button", { type: "button", onClick: () => { if (!busy) close(false); } }, "Not now");
     const submit = async (e) => {
@@ -238,14 +238,14 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const b = h("button", { type: "button", "data-tab": k, class: k === tab ? "on" : null, onClick: () => showTab(k) }, label);
     tabButtons.push([k, b]);
   }
-  mount(tabsBox, h("div", { class: "seg tabs", style: { marginBottom: "12px" } }, tabButtons.map(([, b]) => b)), tabBody);
+  mount(tabsBox, h("div", { class: "seg tabs mb-12" }, tabButtons.map(([, b]) => b)), tabBody);
   mount(tabBody, logEl);
 
   // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
   let sending = false;
   let expectAnswers = 0;
   const answerInput = h("textarea", { name: "answer", rows: 4, "data-focus": "answer-text" });
-  const answerErr = h("p", { class: "status bad", role: "alert", style: { margin: 0 } });
+  const answerErr = h("p", { class: "status bad flush", role: "alert" });
   const answerBtn = h("button", { type: "submit", class: "primary" }, "Send answer");
   const answerForm = h("form", { class: "run-answer", onSubmit: sendAnswer },
     h("label", { class: "field" }, h("span", {}, "Your answer"), answerInput),
@@ -344,8 +344,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next)),
         actionButtons(runActions({ status: "queued" }, true)),
         h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), nextBlock(job.next), job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null),
-        h("div", { class: "card", style: { marginBottom: "16px" } },
-          job.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, job.task) : null,
+        h("div", { class: "card mb-16" },
+          job.task ? h("p", { class: "flush pre-wrap" }, job.task) : null,
           h("dl", { class: "meta" }, job.flow ? row("Flow", job.flow) : null, workText(job.githubRepo, job.issue) ? row("Repository", workText(job.githubRepo, job.issue)) : null)));
     }
     const s = summary;
@@ -362,9 +362,9 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         retiredLine(s),
         queued && job && job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null,
         steprow ? h("dl", { class: "meta" }, steprow) : null),
-      h("div", { class: "card", style: { marginBottom: "16px" } },
-        s.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, s.task) : null,
-        s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, h("b", {}, "Questions"), "\n", s.questions) : null,
+      h("div", { class: "card mb-16" },
+        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
+        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere" }, h("b", {}, "Questions"), "\n", s.questions) : null,
         h("dl", { class: "meta" },
           work ? row("Repository", work) : null,
           s.branch ? row("Branch", s.branch) : null,

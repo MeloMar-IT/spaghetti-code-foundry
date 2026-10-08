@@ -108,3 +108,4 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
 .pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
+.check-row { display: flex; gap: 6px; align-items: center; }

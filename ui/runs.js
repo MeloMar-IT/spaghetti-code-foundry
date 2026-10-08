@@ -28,7 +28,7 @@ export const refinementMark = (id) => h("a", { class: "pill refinement", href: `
 /** A row of the Runs list: the status name of the record with its "?", then flow, task, steps, cost, start. */
 export const runRow = (r, { owner = false, cost = true } = {}) => h("tr", { class: "link", onClick: () => (location.hash = `#/runs/${r.runId}`) },
   h("td", {}, r.next ? nextStatus(r.next) : null),
-  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), r.refinement ? [" ", refinementMark(r.refinement)] : null, what(r) ? h("div", { class: "muted mono", style: { fontSize: "11.5px" } }, what(r)) : null),
+  h("td", {}, h("a", { href: `#/runs/${r.runId}`, onClick: (e) => e.stopPropagation() }, h("b", {}, r.flow)), r.refinement ? [" ", refinementMark(r.refinement)] : null, what(r) ? h("div", { class: "muted mono text-2xs" }, what(r)) : null),
   h("td", { class: "task", title: r.task }, r.task || h("span", { class: "muted" }, "—"),
     r.next ? h("div", { class: "muted", title: r.next.text }, r.next.text) : null,
     r.next && whenParts(r.next).length ? h("div", { class: "next-parts timing" }, whenParts(r.next)) : null),
@@ -82,12 +82,12 @@ export async function renderRunsList(main, { admin = true } = {}) {
         admin ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
         filter,
         h("span", { class: "spacer" }),
-        h("span", { class: "muted", style: { fontSize: "12px" } }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
+        h("span", { class: "muted text-xs" }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
         h("button", { onClick: () => draw() }, "↻ Refresh")),
-      queue.pending.length ? h("div", { class: "card", style: { marginBottom: "16px" } },
+      queue.pending.length ? h("div", { class: "card mb-16" },
         h("h3", {}, "Queue"),
         queue.pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); draw(); }))) : null,
-      yours.length ? h("div", { style: { marginBottom: "16px" } }, h("h3", { style: { marginBottom: "8px" } }, `Needs you (${yours.length})`), table(yours)) : null,
+      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours)) : null,
       runs.length ? table(runs) : h("div", { class: "empty" }, owner ? "No runs of this account." : admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
   };
   await draw();
@@ -162,7 +162,7 @@ export function failureCard(s, { onStep } = {}) {
     h("b", {}, "Your options"),
     h("ul", { class: "options" }, f.options.map((o) => h("li", {}, o))),
     onStep ? h("button", { class: "small", onClick: onStep }, "Show the failed step") : null,
-    s.reason ? h("details", { class: "raw" }, h("summary", {}, "Raw details"), h("pre", { class: "mono", style: { whiteSpace: "pre-wrap" } }, s.reason)) : null);
+    s.reason ? h("details", { class: "raw" }, h("summary", {}, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
 
 /** One finished step: summary line, the raw error under "Details", and the output or transcript when opened. `open`: shown opened. */
@@ -177,7 +177,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
         h("span", { class: "muted" }, s.type === "agent" ? "Agent" : s.type),
         h("span", { class: "spacer" }),
         h("span", { class: "muted mono" }, secs(s.durationMs))),
-      s.error ? h("p", { class: "muted", style: { margin: "4px 12px" } }, s.error) : null);
+      s.error ? h("p", { class: "muted mt-4 mb-4 mx-12" }, s.error) : null);
   }
   const body = h("div");
   let loaded = false;
@@ -185,7 +185,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
     if (loaded) return;
     loaded = true;
     if (s.type !== "claude") return mount(body, h("pre", {}, s.output || "(no output)"));
-    mount(body, h("p", { class: "muted", style: { padding: "0 12px" } }, "Loading transcript…"));
+    mount(body, h("p", { class: "muted px-12" }, "Loading transcript…"));
     const t = await api.transcript(runId, i).catch((err) => ({ events: [{ kind: "raw", text: err.message }] }));
     mount(body, transcriptView(t.events));
   };
@@ -211,7 +211,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
 /** The published version of the flow a run started with; null for a flow that is not published. */
 export const versionRow = (s) => (s.flowDef?.publish?.enabled ? [h("dt", {}, "Flow version"), h("dd", {}, String(s.flowDef.publish.version))] : null);
 
-export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { style: { whiteSpace: "pre-wrap" } }, s.reason)] : null);
+export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { class: "pre-wrap" }, s.reason)] : null);
 
 export function diffView(d, { none = "No changes (or the workspace is not a git checkout)." } = {}) {
   if (!d.patch) return h("p", { class: "muted" }, none);
@@ -287,7 +287,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     mount(tabBody, diffView(await api.diff(runId).catch((e) => ({ patch: "", stat: e.message }))));
   };
 
-  const tabs = h("div", { class: "seg tabs", style: { marginBottom: "12px" } },
+  const tabs = h("div", { class: "seg tabs mb-12" },
     [["log", "Live log"], ["steps", admin ? "Steps & transcripts" : "Steps"], ["diff", "Changes"]].map(([k, l]) => {
       const b = h("button", { "data-tab": k, class: k === tab ? "on" : null, onClick: () => { picked = true; showTab(k); } }, l);
       tabButtons.push([k, b]);
@@ -314,9 +314,9 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
         admin ? h("a", { class: "btn", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
       card ?? (s.next ? nextBlock(s.next) : null),
       retiredLine(s),
-      h("div", { class: "card", style: { marginBottom: "16px" } },
-        s.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, s.task) : null,
-        s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap" } }, h("b", {}, "Questions"), "\n", s.questions) : null,
+      h("div", { class: "card mb-16" },
+        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
+        s.questions ? h("pre", { class: "mono pre-wrap" }, h("b", {}, "Questions"), "\n", s.questions) : null,
         h("dl", { class: "meta" },
           what(s) ? [h("dt", {}, "Ticket"), h("dd", {}, what(s))] : null,
           h("dt", {}, "Run"), h("dd", {}, s.runId),

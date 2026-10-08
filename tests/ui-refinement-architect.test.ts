@@ -392,7 +392,7 @@ describe("the brief", () => {
     page = session({ brief: BRIEF });
     await show();
     expect(walk(main()).filter((e) => e.tag === "h3" && !inTalk(e)).map((e) => e.textContent)).toEqual(["What the code does", "Where it would change", "Risks", "Open questions", "Backlog"]);
-    const bodies = walk(main()).filter((e) => e.tag === "p" && e.style?.whiteSpace === "pre-wrap" && e.textContent !== "An idea");
+    const bodies = walk(main()).filter((e) => e.tag === "p" && (e.attrs.class ?? "").split(" ").includes("pre-wrap") && e.textContent !== "An idea");
     expect(bodies.length).toBe(5);
     expect(text()).toContain(new Date(BRIEF.at).toLocaleString());
     expect(text()).toContain("branch develop");

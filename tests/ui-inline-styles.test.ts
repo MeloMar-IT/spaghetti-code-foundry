@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCss, readUiCss } from "./helpers/ui-css.js";
 
-// Inline style only for values computed from data (#338). Spacing, widths and text sizes are classes from
+// Inline style only for values computed from data (#338, #340). Spacing, widths and text sizes are classes from
 // ui/css/utilities.css. This guard lists every `style:` and `.style.` left in ui/**/*.js.
 
 type Hit = { file: string; line: number; text: string };
@@ -15,6 +15,8 @@ const STYLE_USE = /\bstyle\s*:|\.style\s*[.[]|setAttribute\(\s*["']style["']/;
 const CLEAN = [
   "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
   "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
+  "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
+  "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
 ];
 
 /** Lines left in a clean file. Matched by the text of the line, not the line number. */
@@ -24,12 +26,8 @@ const ALLOW: Allowed[] = [
   { file: "ui/dashboard.js", has: 'class: "rate-fill", style: { width:', reason: "rate bar width, computed from the data" },
 ];
 
-/** Files issues 3 and 4 of the CSS architecture (#339, #340) clean. They empty this list. */
-const NOT_CLEANED_YET = [
-  "ui/app.js", "ui/editor.js", "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js", "ui/graph.js",
-  "ui/step-types.js", "ui/library.js", "ui/refinement-import.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
-  "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
-];
+/** The editor files, cleaned by #339. #340 is done. Whichever of the two is built last removes this list; here that is #339. */
+const NOT_CLEANED_YET = ["ui/app.js", "ui/editor.js", "ui/graph.js", "ui/step-types.js", "ui/library.js", "ui/refinement-import.js"];
 
 /** Selector to declarations, as the utility vocabulary defines them in ui/css/utilities.css. */
 const margin = (side: "top" | "bottom", names: Array<[string, string]>): Record<string, string[]> =>
@@ -61,6 +59,7 @@ const UTILITIES: Record<string, string[]> = {
   ".select-all": ["user-select: all"],
   ".block": ["display: block"],
   ".span-all": ["grid-column: 1 / -1"],
+  ".cols-2": ["grid-template-columns: 1fr 1fr"],
 };
 
 function jsFiles(dir: string): string[] {
@@ -173,6 +172,31 @@ describe("ui/**/*.js", () => {
 
   it("lists only files that exist", () => {
     for (const f of [...CLEAN, ...NOT_CLEANED_YET]) expect(files, f).toContain(f);
+  });
+
+  it("gives the checkbox row its own rule, and leaves the split label as it is", () => {
+    const rules = parseCss(readFileSync("ui/css/components.css", "utf8")).filter((r) => r.selector === ".check-row");
+    expect(rules).toHaveLength(1);
+    expect(rules[0]!.declarations).toEqual(["display: flex", "gap: 6px", "align-items: center"]);
+    const split = readFileSync("ui/refinement-split.js", "utf8");
+    expect(split).toContain('class: "check"');
+    expect(split).not.toContain("check-row");
+  });
+
+  it("does not put .row on checkbox labels in the drafts, because `.drafts .row input` in pages/refinement.css stretches them", () => {
+    for (const f of ["ui/refinement-impact.js", "ui/refinement-publish.js"]) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).toContain('class: "check check-row"');
+      expect(src, f).toContain('class: "fit"');
+      expect(src, f).not.toMatch(/class: "check row/);
+    }
+  });
+
+  it("uses the same classes on both run pages", () => {
+    for (const f of ["ui/runs.js", "ui/user/runs.js"]) {
+      const src = readFileSync(f, "utf8");
+      for (const c of ["flush pre-wrap", "card mb-16", "seg tabs mb-12"]) expect(src, `${f}: ${c}`).toContain(`class: "${c}"`);
+    }
   });
 
   it("does not use the stack class on a form that has no rule for it (ui/auth.js)", () => {

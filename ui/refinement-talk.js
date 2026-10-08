@@ -126,7 +126,7 @@ function editDialog(ctx, sessionId, entry) {
   let busy = false;
   return modal("Edit entry", (close) => {
     const area = h("textarea", { name: "entry", rows: 4, value: entry.text });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const run = async () => {
       if (busy) return;
       const next = text(area.value);
@@ -140,7 +140,7 @@ function editDialog(ctx, sessionId, entry) {
       close(ok ? true : undefined);
     };
     const save = h("button", { class: "primary", onClick: run }, "Save");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, "Entry"), area), err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   }, { busy: () => busy });
 }
