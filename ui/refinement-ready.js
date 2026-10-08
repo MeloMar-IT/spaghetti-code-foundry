@@ -8,7 +8,7 @@ export const CHECK = "Check readiness";
 export const RESULT_WORDS = { met: "Met", "not-met": "Not met", unsure: "Unsure" };
 export const NOT_CHECKED = "Not checked yet";
 export const BY_WORDS = { code: "checked by code", architect: "judged by the architect" };
-export const DRAFT_STATES = { ready: "Ready", drafting: "Drafting" };
+export const DRAFT_STATES = { ready: "Ready", drafting: "Drafting", split: "Split" };
 export const ACCEPT = "Accept anyway";
 export const ACCEPTED = "Accepted anyway";
 export const NOT_NEEDED = "not needed: the item is met";
@@ -24,7 +24,7 @@ export const readyRun = (s, did) => {
   return a?.kind === "ready" && a.draft === did ? a : null;
 };
 
-/** The state of a draft in words: "Ready" or "Drafting". */
+/** The state of a draft in words: "Ready", "Drafting" or "Split". */
 export const draftStateText = (d) => DRAFT_STATES[d?.state] ?? "Drafting";
 
 /** What the check shows: { kind: "line" | "none" | "button", again? }. A brief is not needed here: code may decide every item alone. */

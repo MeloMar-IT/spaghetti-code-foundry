@@ -119,6 +119,9 @@ describe("pure functions", () => {
     expect(talk.kindOf({ kind: "suggest" })).toBe("suggest");
     expect(talk.kindOf({ kind: "impact" })).toBe("impact");
     expect(talk.kindOf({ kind: "review" })).toBe("review");
+    expect(talk.kindOf({ kind: "split" })).toBe("split");
+    expect(talk.roundLabel(session({ architect: { state: "paused", kind: "split" } }))).toBe("");
+    expect(talk.canAsk(session({ architect: { state: "paused", kind: "split" } }))).toBe(false);
     expect(talk.roundLabel(session({ architect: { state: "paused", kind: "review" } }))).toBe("");
     expect(talk.canAsk(session({ architect: { state: "paused", kind: "review" } }))).toBe(false);
     const review = talk.talkSection(session({ architect: { state: "running", kind: "review" } }), { send: () => {}, errorText: String, line: null });

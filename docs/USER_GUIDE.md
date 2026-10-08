@@ -2877,6 +2877,37 @@ An empty part shows as "…"; a full stop is added when the why has none; "Out o
 
 **What is logged.** Adding and removing a draft and setting or clearing the Epic. Saving text writes no line. Drafts and the Epic are kept in `refinements.json` like the talk.
 
+### Splitting a draft
+
+A draft with at least 2 acceptance criteria has a **Split** button. It asks the architect for up to 3 ways to cut the story into smaller drafts. It shows the run like the other asks: queued, running, paused (with **Ask again**) or failed (with the reason). Nothing is split and no field changes until you press **Confirm split**.
+
+**The ways.** Each way shows:
+
+- its cut in words (by step, by interface, by data, by rule, or "learn first (spike)");
+- the stories in order, each with its sentence, its criteria and what it depends on;
+- what the first story already delivers;
+- the criteria that fit nowhere;
+- its warnings: a story that delivers nothing a user can see or check, and two stories that touch the same code.
+
+When the draft changed after the ways were asked, the box says "out of date" and offers **Ask again**.
+
+**Describe my own way.** Write a short text and press **Ask with my way**. The architect is asked again, and its first way works out your description.
+
+**The plan.** **Use this way** opens the plan; **Start from an empty plan** opens a plan with no parts. In the plan you can:
+
+- rename parts, add parts and remove parts;
+- move a criterion to another part, or to **Fits nowhere**;
+- change the order of the parts (**Up**, **Down**);
+- set **Depends on** for a part.
+
+The plan is kept in the page only, so reloading the page loses it. **Discard plan** drops it.
+
+**Problems are shown before sending.** The plan names a criterion that is in no list, a part that depends on a later part, a part without a title and fewer than 2 parts. **Confirm split** stays off until the plan is right, and its text says how many drafts it creates. If you type a criterion just before you confirm, the page saves it first and shows it under "In no list" instead of sending.
+
+**After Confirm split.** Each part becomes a new draft, the page opens the first one, and the original stays as a read-only record (see "Moving a criterion between the parts of a split" for moving criteria later).
+
+**Who sees it.** Only people who can edit drafts see the buttons. In "View as user" no button is shown and no changing call leaves the browser; the ways are shown as text.
+
 ### The talk: questions, answers and the map
 
 A session keeps the talk with the architect, so it is not lost. The session page shows it in two parts, **Questions** and **Map**, right after the Context brief. The calls below are what the page uses (see also "Rounds and questions from a session" below).
@@ -2980,7 +3011,7 @@ The architect gives no implementation plan, no questions, no proposals, no sugge
 - `unplaced`: the C numbers that fit no story. Every C number of the draft is in exactly one story or in `unplaced`.
 - `warnings`: `{ "kind": "layer", "story": 2, "why": "…" }` when a story delivers nothing a user can see or check, and `{ "kind": "same-code", "stories": [1, 2], "why": "…" }` when two stories touch the same code so heavily that they cannot be built at the same time.
 
-When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. Only the flow exists so far: no page or server route asks for a split yet.
+When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. The draft page asks for it with **Split** (see "Splitting a draft").
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 
