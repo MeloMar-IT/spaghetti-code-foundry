@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -35,6 +36,32 @@ export interface SkillEntry {
   content?: Uint8Array;
   /** Only for a file whose content was deliberately not read (too large). Ignored when content is given. */
   size?: number;
+}
+
+/** First bytes of what `skillDigest` hashes. */
+export const SKILL_DIGEST_HEADER = "scf-skill-package-v1\n";
+
+/**
+ * The digest of a package: SHA-256 over the header, then every file sorted by path (byte order) as
+ * `uint32 BE path length, path (UTF-8), uint32 BE content length, content`. The order of `entries` does not matter.
+ * Covers paths and raw bytes only: not file modes, empty folders or `.DS_Store`.
+ */
+export function skillDigest(entries: readonly { path: string; content: Uint8Array }[]): string {
+  const h = createHash("sha256");
+  h.update(SKILL_DIGEST_HEADER);
+  const len = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n);
+    return b;
+  };
+  const sorted = entries.map((e) => ({ path: Buffer.from(e.path, "utf8"), content: e.content })).sort((a, b) => Buffer.compare(a.path, b.path));
+  for (const e of sorted) {
+    h.update(len(e.path.length));
+    h.update(e.path);
+    h.update(len(e.content.byteLength));
+    h.update(e.content);
+  }
+  return "sha256:" + h.digest("hex");
 }
 
 const SKILL_MD = "SKILL.md";
@@ -225,6 +252,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     dependencies: [...manifest.dependencies].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     description: fm.description.trim(),
     instructions: body,
+    digest: skillDigest(kept.map((e) => ({ path: e.path, content: e.content! }))),
     files,
   };
   if (fm.license !== undefined) pkg.license = fm.license.trim();

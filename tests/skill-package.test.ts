@@ -1,11 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRun } from "../src/engine/state.js";
 import { listFlows, parseFlow } from "../src/flow/load.js";
-import { loadSkillPackage, parseSkillPackage, SkillPackageError, splitFrontmatter, type SkillEntry } from "../src/skills/package.js";
-import { SKILL_LIMITS } from "../src/skills/schema.js";
+import { loadSkillPackage, parseSkillPackage, SKILL_DIGEST_HEADER, SkillPackageError, skillDigest, splitFrontmatter, type SkillEntry } from "../src/skills/package.js";
+import { SKILL_DIGEST_RE, SKILL_LIMITS } from "../src/skills/schema.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const MD = "---\nname: minimal\ndescription: A tiny example skill used only in tests.\n---\n\n# Minimal\n\nKeep changes small.\n";
@@ -55,6 +56,7 @@ describe("parseSkillPackage: success", () => {
       risk: "low",
       description: "A tiny example skill used only in tests.",
       instructions: "# Minimal\n\nKeep changes small.",
+      digest: skillDigest(base().map((e) => ({ path: e.path, content: e.content! }))),
       files: emptyFiles,
     });
   });
@@ -288,6 +290,52 @@ describe("loadSkillPackage", () => {
     const dir = make();
     writeFileSync(join(dir, "SKILL.md"), "x".repeat(SKILL_LIMITS.skillMdBytes + 1));
     has(failure(() => loadSkillPackage(dir)).issues, "SKILL.md", "larger than");
+  });
+});
+
+describe("skill digest", () => {
+  const dg = (entries: SkillEntry[]) => parseSkillPackage(entries).digest;
+  const e = (path: string, text: string) => ({ path, content: enc(text) });
+  it("does not depend on the order of the entries and matches the format", () => {
+    const list = withEntries(file("references/a.md", "a"), file("references/b.md", "b"));
+    const a = dg(list);
+    expect(dg([...list].reverse())).toBe(a);
+    expect(a).toMatch(SKILL_DIGEST_RE);
+    expect(loadSkillPackage("tests/fixtures/skills/full").digest).toBe(loadSkillPackage("tests/fixtures/skills/full").digest);
+  });
+  it("hashes the documented bytes", () => {
+    const u32 = (n: number) => Buffer.from([0, 0, 0, n]);
+    const bytes = Buffer.concat([Buffer.from(SKILL_DIGEST_HEADER), u32(1), Buffer.from("a"), u32(1), Buffer.from("x")]);
+    expect(skillDigest([e("a", "x")])).toBe("sha256:" + createHash("sha256").update(bytes).digest("hex"));
+    expect(SKILL_DIGEST_HEADER).toBe("scf-skill-package-v1\n");
+  });
+  it("changes with any byte, name or split between path and content", () => {
+    const start = withEntries(file("references/a.md", "a"));
+    const d0 = dg(start);
+    const changed = (list: SkillEntry[]) => expect(dg(list)).not.toBe(d0);
+    changed(start.map((x) => (x.path === "SKILL.md" ? file("SKILL.md", MD + " ") : x)));
+    changed(start.map((x) => (x.path === "skill.yaml" ? file("skill.yaml", YAML + "category: other\n") : x)));
+    changed(start.map((x) => (x.path === "references/a.md" ? file("references/a.md", "b") : x)));
+    changed(withEntries(file("references/a.md", "a"), file("references/b.md", "b")));
+    changed(base());
+    changed(start.map((x) => (x.path === "references/a.md" ? file("references/c.md", "a") : x)));
+    changed(start.map((x) => (x.path === "SKILL.md" ? file("SKILL.md", MD.replace("name: minimal", "name:  minimal")) : x)));
+    expect(skillDigest([e("a", "bc")])).not.toBe(skillDigest([e("ab", "c")]));
+    expect(dg([...start, file("references/.DS_Store", "junk")])).toBe(d0);
+  });
+  it("on disk: ignores siblings, refuses links, refuses a bad path", () => {
+    const parent = tmp();
+    const dir = join(parent, "minimal");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "SKILL.md"), MD);
+    writeFileSync(join(dir, "skill.yaml"), YAML);
+    const d0 = loadSkillPackage(dir).digest;
+    writeFileSync(join(parent, "sibling.md"), "x");
+    expect(loadSkillPackage(dir).digest).toBe(d0);
+    mkdirSync(join(dir, "references"));
+    symlinkSync(join(parent, "sibling.md"), join(dir, "references", "l.md"));
+    expect(() => loadSkillPackage(dir)).toThrow(SkillPackageError);
+    expect(() => parseSkillPackage(withEntries(file("../x")))).toThrow(SkillPackageError);
   });
 });
 

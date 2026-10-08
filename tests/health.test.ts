@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary } from "../src/engine/state.js";
 import { briefsOf } from "./helpers/briefs.js";
@@ -10,7 +10,8 @@ import { saveGuard } from "../src/monitor/guard.js";
 import { nextStep } from "../src/next-step.js";
 import { toHold } from "../src/queue/watcher.js";
 import { health } from "../src/server/health.js";
-import { clearSkillRegistryCache } from "../src/skills/registry.js";
+import { addSkillPins } from "../src/skills/lock.js";
+import { clearSkillRegistryCache, discoverSkills } from "../src/skills/registry.js";
 import type { ApiContext } from "../src/server/server.js";
 
 const NOW = new Date("2026-10-01T12:00:00Z");
@@ -109,6 +110,81 @@ describe("health(): skills", () => {
     const h = health(ctxOf({ config: { skills: { roots: [noisy, join(tmpDir(), "nope")] } } }), NOW);
     expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[1]" });
     expect(h.skillProblems).toHaveLength(20);
+  });
+
+  describe("integrity and lock", () => {
+    let savedHome: string | undefined;
+    let home: string;
+    beforeEach(() => {
+      savedHome = process.env.FACTORY_HOME;
+      home = tmpDir();
+      process.env.FACTORY_HOME = home;
+      clearSkillRegistryCache();
+    });
+    afterEach(() => {
+      if (savedHome === undefined) delete process.env.FACTORY_HOME;
+      else process.env.FACTORY_HOME = savedHome;
+    });
+    const pkg = (root: string, id: string, version = "1.0.0", note = "") => {
+      const d = join(root, id);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "SKILL.md"), `---\nname: ${id}\ndescription: A test skill.\n---\n\nDo it.${note}\n`);
+      writeFileSync(join(d, "skill.yaml"), `id: ${id}\nversion: ${version}\n`);
+    };
+    const pinned = (root: string, id: string, version = "1.0.0") => {
+      pkg(root, id, version);
+      const reg = discoverSkills(ConfigSchema.parse({ skills: { roots: [root] } }).skills, {});
+      const e = reg.byKey.get(`${id}@${version}`)!;
+      addSkillPins([{ key: e.key, digest: e.digest }]);
+      pkg(root, id, version, " Changed.");
+      clearSkillRegistryCache();
+      return e.digest;
+    };
+    const ctx = (roots: string[]) => ctxOf({ config: { skills: { roots } } });
+
+    it("a tampered pinned package is a problem with both digests", () => {
+      const root = tmpDir();
+      const old = pinned(root, "tamper");
+      const h = health(ctx([root]), NOW);
+      expect(h.skillProblems).toHaveLength(1);
+      expect(h.skillProblems![0]).toMatchObject({ source: "admin", root: "skills.roots[0]", package: "tamper" });
+      expect(h.skillProblems![0]!.reason).toContain(old);
+      expect(h.skillProblems![0]!.reason).toMatch(/actual sha256:[0-9a-f]{64}\)$/);
+    });
+
+    it("keeps the actual digest when id and version are 64 characters", () => {
+      const root = tmpDir();
+      const id = "a".repeat(64);
+      const version = "1.0.0-" + "b".repeat(58);
+      expect(version).toHaveLength(64);
+      pinned(root, id, version);
+      const r = health(ctx([root]), NOW).skillProblems![0]!.reason;
+      expect(r.length).toBeLessThanOrEqual(400);
+      expect(r).toMatch(/actual sha256:[0-9a-f]{64}\)$/);
+    });
+
+    it("shows the integrity problem before the root problems and the package errors", () => {
+      const root = tmpDir();
+      for (let i = 0; i < 25; i++) mkdirSync(join(root, `bad${String(i).padStart(2, "0")}`));
+      pinned(root, "zz-tampered");
+      const h = health(ctx([root, join(tmpDir(), "nope")]), NOW);
+      expect(h.skillProblems).toHaveLength(20);
+      expect(h.skillProblems![0]).toMatchObject({ package: "zz-tampered" });
+      expect(h.skillProblems![1]).toMatchObject({ root: "skills.roots[1]" });
+      expect(h.skillProblemsMore).toBe(7);
+    });
+
+    it("a corrupt lock is one problem without a path", () => {
+      writeFileSync(join(home, "skills.lock.json"), "{");
+      const h = health(ctxOf(), NOW);
+      expect(h.skillProblems).toMatchObject([{ root: "skill lock" }]);
+      expect(JSON.stringify(h)).not.toContain(home);
+    });
+
+    it("never creates a lock file", () => {
+      health(ctxOf(), NOW);
+      expect(existsSync(join(home, "skills.lock.json"))).toBe(false);
+    });
   });
 
   it("covers an enabled repository source", () => {

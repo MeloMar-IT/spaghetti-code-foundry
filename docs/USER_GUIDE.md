@@ -218,7 +218,7 @@ A line under the top bar of every page says **All good**, or the number of probl
 
 The same data is at `GET /api/health`: `ok`, `summary` ("All good", "1 problem", "N problems"), `problems` (records like those of `GET /api/next`), `repos`, and when there is one `version` (`commit`, `date`) and `update` (`waiting`, `commit`, `text`). It holds no settings, tokens or paths, and links are only `https://…` or `#/…`.
 
-Problems with skill folders (see [Skill sources](#skill-sources)) count as problems too: one line names the source (for example `administrator`) and the package folder, never a path. `GET /api/health` lists at most 20 as `skillProblems` (`source`, `root`, optional `package`, `reason`) and the rest as `skillProblemsMore`; `scf skills` lists all of them with full paths.
+Problems with skill folders (see [Skill sources](#skill-sources)) count as problems too: one line names the source (for example `administrator`) and the package folder, never a path. A pinned package that changed (with both digests) and an unreadable skill lock (`skill lock`) are listed first; see [Pinned versions and integrity](#pinned-versions-and-integrity). `GET /api/health` lists at most 20 as `skillProblems` (`source`, `root`, optional `package`, `reason`) and the rest as `skillProblemsMore`; `scf skills` lists all of them with full paths.
 
 When the monitor has stored findings, the line also links to the [Problems page](#the-problems-page):
 "N open findings of the monitor", or "Findings of the monitor (none open)". It does not change
@@ -2282,6 +2282,27 @@ skills:
 - **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
 - **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
 
+#### Pinned versions and integrity
+
+A pin ties one skill version to the exact content you looked at. If the content changes later, the skill stops being usable until you decide again.
+
+- **What the digest covers:** every file in the package folder (path and raw bytes), in a fixed order. Changing one byte, adding, removing or renaming a file changes it. `.DS_Store`, file modes and empty folders do not count. Line-ending conversion changes the bytes, so a Git checkout with CRLF can give another digest than a tarball.
+- **Trust by source:**
+
+  | Source | Trust | Can be pinned |
+  |---|---|---|
+  | Data folder, `skills.roots` | approved | yes, by you with `scf skills pin` |
+  | Built-in | builtin | yes, pinned for you when the server starts |
+  | Repository | unapproved | never |
+
+- **The lock file** is `skills.lock.json` in the data folder. It holds the digest for each `id@version`. Listing skills and the health line only read it.
+- **To pin:** run `scf skills`, check the package, copy its digest, then run `scf skills pin <id@version> <digest>`. Pinning a version that is already pinned with the same digest changes nothing. `scf skills pin --builtin` pins the built-in skills; the server does this at start as well. `scf skills unpin <id@version>` removes a pin.
+- **Pin states** in `scf skills`: `pinned` (matches), `unpinned` (not approved yet), `mismatch` (changed since the pin) and `unverified` (the lock cannot be read).
+- **A mismatch** means the content differs from what you approved. Health and `scf skills` show both digests, and the skill cannot be selected. There are two ways out: give the changed package a new version (the new version starts unpinned), or check the package and run `scf skills pin <id@version> <new digest> --replace`. A built-in skill is never re-pinned automatically; a release that changes one must change its `version`.
+- **An unreadable lock** (bad JSON, wrong version, a symlink or a folder in its place) makes every approved and built-in skill `unverified`, and nothing is pinned or unpinned. Health shows `skill lock`. Fix or delete `skills.lock.json` in the data folder, then pin again. The server still starts.
+- **Runs** must name the exact version (`id@version`). A newer or older version is never used instead. Repository skills can never be selected for unattended runs.
+- **Limit:** the lock detects a change after the pin, not a bad first copy. Anyone who can write the data folder can also change the lock.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. Nothing sends it to a planner yet.
@@ -2296,8 +2317,9 @@ skills:
 ```
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
-- **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Pinned (`include`) skills are never dropped. The catalogue says how many skills were left out.
-- **Settings apply to the whole installation,** not to one repository. The config is refused if the pinned skills do not fit the limits.
+- **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
+- **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
+- **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.
 
 ### Skill request
 
@@ -2520,7 +2542,10 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
-| `scf skills [--repo dir]` | List approved skill packages, notes and problems with full paths; exits 1 when there are problems |
+| `scf skills [--repo dir]` | List skill packages with trust, pin state and digest, plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
+| `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
+| `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
+| `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

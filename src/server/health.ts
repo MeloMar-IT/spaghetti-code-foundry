@@ -147,9 +147,9 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const repos = [...lastOk].map(([repo, ok]) => (ok ? { repo, lastOk: ok } : { repo }));
 
   const reg = cachedSkillRegistry(cfg.skills, t, undefined, { repo: ctx.opts.repo });
-  // Root problems come first (the sort is stable), so the cap never hides a named root behind package errors.
-  const rootLevel = (k: string) => (k === "invalid-package" || k === "duplicate" ? 1 : 0);
-  const skillAll = [...reg.problems].sort((a, b) => rootLevel(a.kind) - rootLevel(b.kind)).map((p) => ({ source: p.source, root: p.label, ...(p.package ? { package: p.package } : {}), reason: p.reason.slice(0, 300) }));
+  // Integrity and lock problems first, then root problems, then package errors (the sort is stable), so the cap never hides a tampered package or a named root behind package errors.
+  const level = (k: string) => (k === "integrity" || k === "lock" ? 0 : k === "invalid-package" || k === "duplicate" ? 2 : 1);
+  const skillAll = [...reg.problems].sort((a, b) => level(a.kind) - level(b.kind)).map((p) => ({ source: p.source, root: p.label, ...(p.package ? { package: p.package } : {}), reason: p.reason.slice(0, 400) }));
   const skillProblems = skillAll.slice(0, MAX_SKILL_PROBLEMS);
 
   const list = problems.map(safe);

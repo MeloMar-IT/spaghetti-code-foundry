@@ -152,6 +152,18 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 
 **Still open.** Nothing found.
 
+## Skill integrity
+
+**Protected by.**
+- Each skill package has a SHA-256 digest over all its files. Administrator and built-in skills can only be selected when the digest matches the pin in `skills.lock.json` (exact `id@version`, no fallback to another version).
+- Repository skills are `unapproved` and cannot be pinned.
+- The lock is written with the guarded store code (mode 0600, no symlinks); an unreadable lock makes every skill `unverified` instead of trusted. Health shows changes and lock problems without paths.
+
+**Limits.**
+- The lock detects a change after the pin, not a bad first copy. A person must check the package before `scf skills pin`.
+- Built-in skills are pinned at server start without a person, because they ship with the release.
+- Whoever can write the data folder can rewrite the lock.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the
