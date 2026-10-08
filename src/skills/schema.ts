@@ -8,7 +8,10 @@ const PRE = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
 /** Skill version: SemVer MAJOR.MINOR.PATCH with an optional -prerelease (no build metadata), at most 64 chars. */
 export const SKILL_VERSION_RE = new RegExp(`^(?=.{1,64}$)${NUM}\\.${NUM}\\.${NUM}(?:-${PRE}(?:\\.${PRE})*)?$`);
 
-export const SKILL_ROLES = ["planner", "coder", "reviewer", "tester"] as const;
+/** A package digest: `sha256:` and 64 lower-case hex digits. See `skillDigest` in package.ts. */
+export const SKILL_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+export const SKILL_ROLES =["planner", "coder", "reviewer", "tester"] as const;
 export const SKILL_RISKS = ["low", "medium", "high"] as const;
 export const SKILL_FOLDERS = ["references", "scripts", "assets", "evals"] as const;
 export const SKILL_LIMITS = {
@@ -126,5 +129,7 @@ export interface SkillPackage extends SkillManifest {
   allowedTools?: string;
   /** SKILL.md without the frontmatter, trimmed. */
   instructions: string;
+  /** Digest of every file in the package (raw bytes, paths included). */
+  digest: string;
   files: Record<SkillFolder, SkillFile[]>;
 }

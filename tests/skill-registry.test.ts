@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import {
   BUILTIN_SKILLS,
@@ -12,8 +12,14 @@ import {
   discoverSkills,
   findSkill,
   personalAgentPath,
+  pinBuiltinSkills,
+  pinBuiltinSkillsAtStart,
+  pinSkill,
+  selectSkill,
+  SkillIntegrityError,
   type SkillRegistry,
 } from "../src/skills/registry.js";
+import { readSkillLock, removeSkillPin } from "../src/skills/lock.js";
 
 const tmps: string[] = [];
 const modes: [string, number][] = [];
@@ -327,6 +333,254 @@ describe("cache and config", () => {
       builtin: true, roots: [], repository: false, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
     });
     expect(ConfigSchema.safeParse({ skills: { nope: 1 } }).success).toBe(false);
+  });
+});
+
+describe("trust, pins and the gate", () => {
+  let saved: string | undefined;
+  let e: Env;
+  beforeEach(() => {
+    saved = process.env.FACTORY_HOME;
+    e = setup();
+    process.env.FACTORY_HOME = e.home;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.FACTORY_HOME;
+    else process.env.FACTORY_HOME = saved;
+  });
+  const lockFile = () => join(e.home, "skills.lock.json");
+  const lockBytes = () => readFileSync(lockFile());
+  const get = (reg: SkillRegistry, key: string) => reg.byKey.get(key)!;
+  const tamper = (dir: string) => {
+    mkdirSync(join(dir, "references"), { recursive: true });
+    writeFileSync(join(dir, "references", "x.md"), "changed");
+  };
+  const pinIt = (key: string, over: Record<string, unknown> = {}) => {
+    const reg = run(e, over);
+    return pinSkill(reg, key, get(reg, key).digest);
+  };
+  const code = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (err) {
+      return (err as { code?: string }).code ?? (err as Error).name;
+    }
+    return "no error";
+  };
+  const startOpts = () => ({ home: e.home, builtinRoot: e.builtin, userHome: e.userHome, env: {} as NodeJS.ProcessEnv });
+
+  it("gives each source its trust, creates no lock file, and starts unpinned", () => {
+    pkg(join(e.home, "skills"), "a");
+    pkg(e.root(0), "r");
+    pkg(e.builtin, "b");
+    const repo = tmp();
+    pkg(join(repo, ".claude-factory", "skills"), "p");
+    const reg = run(e, { roots: [e.root(0)], repository: true }, { repo });
+    expect(["a", "r", "b", "p"].map((id) => get(reg, `${id}@1.0.0`).trust)).toEqual(["approved", "approved", "builtin", "unapproved"]);
+    expect(reg.skills.every((s) => s.pin === "unpinned")).toBe(true);
+    expect(existsSync(lockFile())).toBe(false);
+    expect(code(() => selectSkill(reg, "a", "1.0.0"))).toBe("unpinned");
+    expect(code(() => selectSkill(reg, "p", "1.0.0"))).toBe("unapproved");
+  });
+
+  it("pins with the listed digest, and a repeat changes nothing", () => {
+    pkg(join(e.home, "skills"), "a");
+    expect(pinIt("a@1.0.0")).toBe("pinned");
+    const reg = run(e);
+    expect(get(reg, "a@1.0.0").pin).toBe("pinned");
+    expect(selectSkill(reg, "a", "1.0.0").key).toBe("a@1.0.0");
+    const before = lockBytes();
+    const d = get(reg, "a@1.0.0").digest;
+    expect(pinSkill(reg, "a@1.0.0", d, { now: new Date(Date.now() + 1e7) })).toBe("unchanged");
+    expect(pinSkill(reg, "a@1.0.0", d, { replace: true, now: new Date(Date.now() + 2e7) })).toBe("unchanged");
+    expect(lockBytes()).toEqual(before);
+  });
+
+  it("refuses a bad request and writes nothing", () => {
+    pkg(join(e.home, "skills"), "a");
+    const repo = tmp();
+    pkg(join(repo, ".claude-factory", "skills"), "p");
+    const reg = run(e, { repository: true }, { repo });
+    const d = get(reg, "a@1.0.0").digest;
+    expect(code(() => pinSkill(reg, "zz@1.0.0", d))).toBe("unknown");
+    expect(code(() => pinSkill(reg, "nope", d))).toBe("bad-key");
+    expect(code(() => pinSkill(reg, "a@1.0.0", "sha256:zz"))).toBe("bad-digest");
+    expect(code(() => pinSkill(reg, "p@1.0.0", get(reg, "p@1.0.0").digest))).toBe("unapproved");
+    expect(code(() => pinSkill(reg, "a@1.0.0", "sha256:" + "0".repeat(64)))).toBe("digest-mismatch");
+    expect(existsSync(lockFile())).toBe(false);
+  });
+
+  it("a package that changed after the pin is a mismatch with both digests", () => {
+    const dir = pkg(join(e.home, "skills"), "a");
+    pinIt("a@1.0.0");
+    const old = get(run(e), "a@1.0.0").digest;
+    tamper(dir);
+    const reg = run(e);
+    const s = get(reg, "a@1.0.0");
+    expect(s.pin).toBe("mismatch");
+    const p = reg.problems.find((x) => x.kind === "integrity")!;
+    expect(p.integrity).toEqual({ id: "a", version: "1.0.0", source: "admin", label: "data folder", expected: old, actual: s.digest });
+    for (const part of ["a@1.0.0", "admin", "data folder", old, s.digest]) expect(p.reason).toContain(part);
+    let err: unknown;
+    try {
+      selectSkill(reg, "a", "1.0.0");
+    } catch (x) {
+      err = x;
+    }
+    expect(err).toBeInstanceOf(SkillIntegrityError);
+    expect((err as SkillIntegrityError).failure).toEqual(p.integrity);
+    const before = lockBytes();
+    expect(code(() => pinSkill(reg, "a@1.0.0", s.digest))).toBe("already-pinned");
+    expect(lockBytes()).toEqual(before);
+    expect(pinSkill(reg, "a@1.0.0", s.digest, { replace: true })).toBe("replaced");
+    expect(get(run(e), "a@1.0.0").pin).toBe("pinned");
+  });
+
+  it("a reused version is a mismatch, a new version is unpinned", () => {
+    const dir = pkg(join(e.home, "skills"), "x");
+    pinIt("x@1.0.0");
+    rmSync(dir, { recursive: true });
+    const gone = readSkillLock(e.home);
+    expect(gone.ok && Object.keys(gone.pins)).toContain("x@1.0.0");
+    const again = pkg(join(e.home, "skills"), "x");
+    writeFileSync(join(again, "SKILL.md"), "---\nname: x\ndescription: Other.\n---\n\nOther instructions.\n");
+    expect(get(run(e), "x@1.0.0").pin).toBe("mismatch");
+    rmSync(again, { recursive: true });
+    pkg(join(e.home, "skills"), "x", "1.0.1");
+    expect(get(run(e), "x@1.0.1").pin).toBe("unpinned");
+  });
+
+  it("the same content in another source stays pinned, and the order of roots does not matter", () => {
+    const dir = pkg(e.root(0), "x");
+    pinIt("x@1.0.0", { roots: [e.root(0)] });
+    expect(get(run(e, { roots: [e.root(0)] }), "x@1.0.0").pin).toBe("pinned");
+    mkdirSync(join(e.home, "skills"), { recursive: true });
+    renameSync(dir, join(e.home, "skills", "x"));
+    const reg = run(e, { roots: [e.root(0)] });
+    expect(get(reg, "x@1.0.0")).toMatchObject({ pin: "pinned", label: "data folder" });
+    pkg(e.root(1), "y");
+    pinIt("y@1.0.0", { roots: [e.root(0), e.root(1)] });
+    expect(get(run(e, { roots: [e.root(1), e.root(0)] }), "y@1.0.0").pin).toBe("pinned");
+  });
+
+  it("another source with the same key but other content is a mismatch", () => {
+    const dir = pkg(e.root(0), "x");
+    pinIt("x@1.0.0", { roots: [e.root(0)] });
+    rmSync(dir, { recursive: true });
+    tamper(pkg(e.builtin, "x"));
+    expect(get(run(e, { roots: [e.root(0)] }), "x@1.0.0")).toMatchObject({ source: "builtin", pin: "mismatch" });
+  });
+
+  it("selects the exact version only", () => {
+    const two = pkg(e.root(0), "x", "2.0.0");
+    pkg(e.builtin, "x", "1.0.0");
+    const over = { roots: [e.root(0)] };
+    pinIt("x@2.0.0", over);
+    pinIt("x@1.0.0", over);
+    expect(selectSkill(run(e, over), "x", "2.0.0").version).toBe("2.0.0");
+    tamper(two);
+    expect(() => selectSkill(run(e, over), "x", "2.0.0")).toThrow(SkillIntegrityError);
+    rmSync(two, { recursive: true });
+    const reg = run(e, over);
+    expect(findSkill(reg, "x")?.version).toBe("1.0.0");
+    expect(code(() => selectSkill(reg, "x", "2.0.0"))).toBe("unknown");
+    expect(selectSkill(reg, "x", "1.0.0").version).toBe("1.0.0");
+    expect(code(() => selectSkill(reg, "x", ""))).toBe("unknown");
+  });
+
+  it("a symlinked file makes the package invalid and unselectable", () => {
+    const dir = pkg(e.root(0), "x", "2.0.0");
+    pkg(e.builtin, "x", "1.0.0");
+    const over = { roots: [e.root(0)] };
+    pinIt("x@2.0.0", over);
+    pinIt("x@1.0.0", over);
+    mkdirSync(join(dir, "references"));
+    symlinkSync(join(e.home, "elsewhere"), join(dir, "references", "l.md"));
+    const reg = run(e, over);
+    expect(reg.byKey.has("x@2.0.0")).toBe(false);
+    expect(kinds(reg)).toContain("invalid-package");
+    expect(code(() => selectSkill(reg, "x", "2.0.0"))).toBe("unknown");
+  });
+
+  it("cannot pin a symlinked package folder", () => {
+    const real = pkg(tmp(), "x");
+    mkdirSync(e.root(0));
+    symlinkSync(real, join(e.root(0), "x"));
+    const reg = run(e, { roots: [e.root(0)] });
+    expect(code(() => pinSkill(reg, "x@1.0.0", "sha256:" + "0".repeat(64)))).toBe("unknown");
+  });
+
+  it("a repository skill with the key of a stored pin gives no integrity problem", () => {
+    pkg(join(e.home, "skills"), "x");
+    pinIt("x@1.0.0");
+    rmSync(join(e.home, "skills", "x"), { recursive: true });
+    const repo = tmp();
+    tamper(pkg(join(repo, ".claude-factory", "skills"), "x"));
+    const reg = run(e, { repository: true }, { repo });
+    expect(kinds(reg)).not.toContain("integrity");
+    expect(get(reg, "x@1.0.0").pin).toBe("unpinned");
+  });
+
+  it("pinBuiltinSkills pins built-ins only and never replaces a pin", () => {
+    pkg(e.builtin, "one");
+    pkg(e.builtin, "two");
+    pkg(join(e.home, "skills"), "adm");
+    expect(pinBuiltinSkills(run(e))).toEqual({ pinned: ["one@1.0.0", "two@1.0.0"], mismatched: [] });
+    expect(get(run(e), "adm@1.0.0").pin).toBe("unpinned");
+    expect(pinBuiltinSkills(run(e))).toEqual({ pinned: [], mismatched: [] });
+    removeSkillPin("two@1.0.0");
+    tamper(join(e.builtin, "one"));
+    const digestOf = () => {
+      const r = readSkillLock(e.home);
+      return r.ok ? r.pins["one@1.0.0"]!.digest : "";
+    };
+    const before = digestOf();
+    expect(pinBuiltinSkills(run(e))).toEqual({ pinned: ["two@1.0.0"], mismatched: ["one@1.0.0"] });
+    expect(digestOf()).toBe(before);
+  });
+
+  it("a corrupt lock leaves every approved and built-in entry unverified and blocks the writers", () => {
+    pkg(join(e.home, "skills"), "a");
+    pkg(e.builtin, "b");
+    writeFileSync(lockFile(), "{");
+    const reg = run(e);
+    expect(reg.skills.map((s) => s.pin)).toEqual(["unverified", "unverified"]);
+    const lock = reg.problems.filter((p) => p.kind === "lock");
+    expect(lock).toHaveLength(1);
+    expect(lock[0]!.label).toBe("skill lock");
+    expect(lock[0]!.reason).not.toContain(e.home);
+    expect(code(() => selectSkill(reg, "a", "1.0.0"))).toBe("unverified");
+    expect(() => pinSkill(reg, "a@1.0.0", get(reg, "a@1.0.0").digest)).toThrow();
+    expect(() => pinBuiltinSkills(reg)).toThrow();
+    expect(readFileSync(lockFile(), "utf8")).toBe("{");
+  });
+
+  describe("pinBuiltinSkillsAtStart", () => {
+    it("pins and logs", () => {
+      pkg(e.builtin, "one");
+      const log: string[] = [];
+      pinBuiltinSkillsAtStart(cfg(), (m) => log.push(m), startOpts());
+      expect(log).toEqual(["pinned the built-in skills: one@1.0.0"]);
+      expect(readFileSync(lockFile(), "utf8")).toContain("one@1.0.0");
+    });
+    it("warns about a mismatch and changes nothing", () => {
+      pkg(e.builtin, "one");
+      pinBuiltinSkillsAtStart(cfg(), () => {}, startOpts());
+      tamper(join(e.builtin, "one"));
+      const before = lockBytes();
+      const log: string[] = [];
+      pinBuiltinSkillsAtStart(cfg(), (m) => log.push(m), startOpts());
+      expect(log.join("\n")).toMatch(/do not match their pin.*one@1\.0\.0/);
+      expect(lockBytes()).toEqual(before);
+    });
+    it("warns about a corrupt lock and does not throw", () => {
+      pkg(e.builtin, "one");
+      writeFileSync(lockFile(), "{");
+      const log: string[] = [];
+      expect(() => pinBuiltinSkillsAtStart(cfg(), (m) => log.push(m), startOpts())).not.toThrow();
+      expect(log.join("\n")).toContain("were not pinned");
+      expect(readFileSync(lockFile(), "utf8")).toBe("{");
+    });
   });
 });
 

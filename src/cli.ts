@@ -11,7 +11,7 @@ import { getUser } from "./auth/users.js";
 import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
 import { FORCE_HINT, gateRun } from "./run-gate.js";
 import { listBlocks } from "./flow/blocks.js";
-import { discoverSkills } from "./skills/registry.js";
+import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
 import { loadConfig, WatcherSchema } from "./config.js";
@@ -41,7 +41,10 @@ Usage:
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
-  scf skills [--repo <dir>]                      List approved skill packages and skill folder problems
+  scf skills [--repo <dir>]                      List skill packages with trust, pin state and digest, and problems
+  scf skills pin <id@version> <digest> [--replace]   Pin a listed skill package (copy the digest from the list)
+  scf skills pin --builtin                       Pin the built-in skills that have no pin
+  scf skills unpin <id@version>                  Remove a pin
   scf validate <flow|file.yaml>                  Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
@@ -176,6 +179,8 @@ async function main(argv: string[]): Promise<number> {
       note: { type: "string" },
       "no-open": { type: "boolean" },
       admin: { type: "boolean" },
+      replace: { type: "boolean" },
+      builtin: { type: "boolean" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
       email: { type: "string" },
@@ -259,14 +264,9 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "skills": {
-      const reg = discoverSkills(loadConfig().skills, { repo });
-      for (const s of reg.skills) process.stdout.write(`${s.id.padEnd(24)} ${s.version}  [${s.label}]${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}\n`);
-      for (const n of reg.notes) process.stdout.write(`NOTE ${n.text}\n`);
-      for (const p of reg.problems) {
-        const root = reg.sources.find((r) => r.label === p.label)?.root ?? p.root;
-        process.stdout.write(`PROBLEM ${p.label} ${root}${p.package ? "/" + p.package : ""}: ${p.reason}\n`);
-      }
-      return reg.problems.length ? 1 : 0;
+      const { skillsCommand } = await import("./skills/cli.js");
+      const { help: _h, ...given } = values;
+      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
     }
 
     case "flow-guide": {
@@ -354,6 +354,8 @@ async function main(argv: string[]): Promise<number> {
         return supervise(fileURLToPath(import.meta.url), process.argv.slice(2), say, startGuard(say));
       }
       const stamp = buildStamp(dirname(fileURLToPath(import.meta.url)));
+      // Before the server listens: the watchers start with it.
+      pinBuiltinSkillsAtStart(loadConfig().skills, (m) => process.stdout.write(m + "\n"));
       const { url, ctx } = await startServer({
         repo,
         port,

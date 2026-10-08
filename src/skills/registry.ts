@@ -3,9 +3,10 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
-import { FACTORY_HOME } from "../home.js";
+import { dataHome } from "../auth/store.js";
+import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
-import type { SkillPackage } from "./schema.js";
+import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
 export type SkillSourceKind = "admin" | "builtin" | "repository";
 export interface SkillSource {
@@ -20,6 +21,18 @@ export interface SkillSourceReport extends SkillSource {
   status: "ok" | "missing" | "unreadable" | "refused" | "disabled";
   packages: number;
 }
+/** `approved`: administrator folders. `builtin`: ships with the release. `unapproved`: the repository, never selectable. */
+export type SkillTrust = "approved" | "builtin" | "unapproved";
+/** `unverified`: the lock cannot be read. */
+export type SkillPinState = "pinned" | "unpinned" | "mismatch" | "unverified";
+export interface SkillIntegrityFailure {
+  id: string;
+  version: string;
+  source: SkillSourceKind;
+  label: string;
+  expected: string;
+  actual: string;
+}
 export interface RegisteredSkill {
   key: string;
   id: string;
@@ -29,16 +42,20 @@ export interface RegisteredSkill {
   dir: string;
   active: boolean;
   shadowedBy?: string;
+  trust: SkillTrust;
+  pin: SkillPinState;
+  digest: string;
   pkg: SkillPackage;
 }
 export interface SkillProblem {
-  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many";
+  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock";
   source: SkillSourceKind;
   label: string;
   root: string;
   package?: string;
   reason: string;
   issues?: SkillIssue[];
+  integrity?: SkillIntegrityFailure;
 }
 export interface SkillNote {
   kind: "shadowed" | "repository-disabled";
@@ -100,12 +117,14 @@ export function personalAgentPath(p: string, env: NodeJS.ProcessEnv = process.en
 }
 
 export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {}): SkillSource[] {
-  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(opts.home ?? FACTORY_HOME, "skills"), optional: true }];
+  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(opts.home ?? dataHome(), "skills"), optional: true }];
   skills.roots.forEach((root, i) => list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false }));
   if (skills.builtin) list.push({ kind: "builtin", label: "built-in", root: opts.builtinRoot ?? BUILTIN_SKILLS, optional: false });
   if (opts.repo) list.push({ kind: "repository", label: "repository", root: join(opts.repo, ".claude-factory", "skills"), optional: true });
   return list;
 }
+
+const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", builtin: "builtin", repository: "unapproved" };
 
 const code = (e: unknown) => String((e as NodeJS.ErrnoException)?.code ?? "unknown error");
 const cut = (s: string) => (s.length > 300 ? s.slice(0, 299) + "…" : s);
@@ -200,7 +219,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       try {
         const pkg = loadSkillPackage(dir);
         bytes += packageBytes(pkg);
-        found.push({ key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: src.kind, label: src.label, dir, active: false, pkg });
+        found.push({ key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: src.kind, label: src.label, dir, active: false, trust: TRUST[src.kind], pin: "unpinned", digest: pkg.digest, pkg });
         report.packages++;
       } catch (e) {
         if (e instanceof SkillPackageError) bad(e.issues.slice(0, 3).map((i) => `${i.path}: ${i.reason}`).join("; ") || "invalid package", e.issues);
@@ -218,6 +237,33 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       continue;
     }
     byKey.set(s.key, s);
+  }
+  // Pins are looked up by key alone: the source does not matter, only the bytes.
+  const lock = readSkillLock(opts.home ?? dataHome());
+  if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });
+  for (const s of byKey.values()) {
+    if (s.trust === "unapproved") continue;
+    if (!lock.ok) {
+      s.pin = "unverified";
+      continue;
+    }
+    const pin: SkillPin | undefined = lock.pins[s.key];
+    if (!pin) continue;
+    if (pin.digest === s.digest) {
+      s.pin = "pinned";
+      continue;
+    }
+    s.pin = "mismatch";
+    const integrity: SkillIntegrityFailure = { id: s.id, version: s.version, source: s.source, label: s.label, expected: pin.digest, actual: s.digest };
+    problems.push({
+      kind: "integrity",
+      source: s.source,
+      label: s.label,
+      root: s.label,
+      package: s.id,
+      reason: `${s.key} (${s.source}, ${s.label}) does not match its pin (pinned ${pin.digest}, actual ${s.digest})`,
+      integrity,
+    });
   }
   const winner = new Map<string, RegisteredSkill>();
   for (const s of byKey.values()) if (!winner.has(s.id)) winner.set(s.id, s);
@@ -241,11 +287,106 @@ export function findSkill(reg: SkillRegistry, id: string, version?: string): Reg
   return reg.skills.find((s) => s.id === id && s.active);
 }
 
+export type SkillSelectCode = "unknown" | "unapproved" | "unverified" | "unpinned" | "mismatch";
+export class SkillSelectError extends Error {
+  constructor(
+    public code: SkillSelectCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SkillSelectError";
+  }
+}
+export class SkillIntegrityError extends SkillSelectError {
+  constructor(public failure: SkillIntegrityFailure) {
+    super("mismatch", `${failure.id}@${failure.version} does not match its pin (pinned ${failure.expected}, actual ${failure.actual})`);
+    this.name = "SkillIntegrityError";
+  }
+}
+
+/**
+ * The gate for a run: the entry for this exact `id@version` if it is approved or built-in and its bytes match the pin.
+ * Never falls back to another version or to the active entry. Nothing calls it yet.
+ */
+export function selectSkill(reg: SkillRegistry, id: string, version: string): RegisteredSkill {
+  const s = version ? reg.byKey.get(`${id}@${version}`) : undefined;
+  if (!s) throw new SkillSelectError("unknown", `no skill ${id}@${version}`);
+  if (s.trust === "unapproved") throw new SkillSelectError("unapproved", `${s.key} comes from the repository and cannot be selected`);
+  if (s.pin === "unverified") throw new SkillSelectError("unverified", `${s.key} cannot be verified: the skill lock cannot be read`);
+  if (s.pin === "mismatch") {
+    const failure = reg.problems.find((p) => p.kind === "integrity" && p.integrity?.id === s.id && p.integrity.version === s.version)?.integrity;
+    throw new SkillIntegrityError(failure ?? { id: s.id, version: s.version, source: s.source, label: s.label, expected: "", actual: s.digest });
+  }
+  if (s.pin === "unpinned") throw new SkillSelectError("unpinned", `${s.key} is not pinned; run "scf skills pin ${s.key} ${s.digest}"`);
+  return s;
+}
+
+export type SkillPinErrorCode = "bad-key" | "bad-digest" | "unknown" | "unapproved" | "digest-mismatch" | "already-pinned";
+export class SkillPinError extends Error {
+  constructor(
+    public code: SkillPinErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SkillPinError";
+  }
+}
+
+export interface PinOptions {
+  replace?: boolean;
+  now?: Date;
+  waitMs?: number;
+}
+
+function lockProblem(reg: SkillRegistry): void {
+  const p = reg.problems.find((x) => x.kind === "lock");
+  if (p) throw new SkillLockError("unreadable", p.reason);
+}
+
+/** Pins one listed skill. The digest must be the one of the entry in `reg`. A repository skill is never pinned. */
+export function pinSkill(reg: SkillRegistry, key: string, digest: string, opts: PinOptions = {}): "pinned" | "unchanged" | "replaced" {
+  if (!parseSkillKey(key)) throw new SkillPinError("bad-key", `${key} is not a skill key (id@version)`);
+  if (!SKILL_DIGEST_RE.test(digest)) throw new SkillPinError("bad-digest", "the digest must be sha256: and 64 hex digits");
+  const s = reg.byKey.get(key);
+  if (!s) throw new SkillPinError("unknown", `no skill ${key} is listed`);
+  if (s.trust === "unapproved") throw new SkillPinError("unapproved", `${key} comes from the repository and cannot be pinned`);
+  if (s.digest !== digest) throw new SkillPinError("digest-mismatch", `${key} has the digest ${s.digest}, not the one given`);
+  lockProblem(reg);
+  const r = addSkillPins([{ key, digest }], opts);
+  if (r.kept.length) throw new SkillPinError("already-pinned", `${key} is pinned with another digest; use --replace after you checked the package`);
+  return r.added.length ? "pinned" : r.replaced.length ? "replaced" : "unchanged";
+}
+
+export interface BuiltinPinResult {
+  pinned: string[];
+  /** Built-in skills whose pin has another digest. They are not changed. */
+  mismatched: string[];
+}
+
+/** Pins every built-in skill that has no pin. Never replaces a pin. Throws when the lock cannot be read. */
+export function pinBuiltinSkills(reg: SkillRegistry, opts: PinOptions = {}): BuiltinPinResult {
+  lockProblem(reg);
+  const list = [...reg.byKey.values()].filter((s) => s.source === "builtin").map((s) => ({ key: s.key, digest: s.digest }));
+  const r = addSkillPins(list, { now: opts.now, waitMs: opts.waitMs });
+  return { pinned: r.added, mismatched: r.kept };
+}
+
+/** Pins the built-in skills when the server starts. Only logs: a problem here must not stop the server. */
+export function pinBuiltinSkillsAtStart(skills: Config["skills"], log: (line: string) => void, opts: DiscoverOptions & { waitMs?: number } = {}): void {
+  try {
+    const r = pinBuiltinSkills(discoverSkills(skills, opts), { waitMs: opts.waitMs ?? 500 });
+    if (r.pinned.length) log(`pinned the built-in skills: ${r.pinned.join(", ")}`);
+    if (r.mismatched.length) log(`warning: these built-in skills do not match their pin and were not changed: ${r.mismatched.join(", ")}. Run "scf skills" to see both digests.`);
+  } catch (e) {
+    log(`warning: the built-in skills were not pinned: ${(e as Error).message}`);
+  }
+}
+
 let cache: { key: string; at: number; reg: SkillRegistry } | undefined;
 
 /** Like discoverSkills, kept for a minute: health asks every 30 seconds. */
 export function cachedSkillRegistry(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): SkillRegistry {
-  const key = JSON.stringify(skills) + "\0" + (opts.home ?? FACTORY_HOME) + "\0" + (opts.repo ?? "");
+  const key = JSON.stringify(skills) + "\0" + (opts.home ?? dataHome()) + "\0" + (opts.repo ?? "");
   if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return cache.reg;
   const reg = discoverSkills(skills, opts);
   cache = { key, at: now, reg };
