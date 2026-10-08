@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -436,7 +437,7 @@ describe("helpers", () => {
 });
 
 describe("ui/style.css", () => {
-  const css = readFileSync("ui/style.css", "utf8");
+  const css = readUiCss();
   it("is one column and lets fieldsets shrink", () => {
     const form = css.slice(css.indexOf(".start-form { display: grid;"));
     expect(form.slice(0, form.indexOf("}"))).not.toContain("grid-template-columns");

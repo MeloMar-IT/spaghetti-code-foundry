@@ -1,0 +1,129 @@
+/* pages/shell.css — the frame content around every page.
+   Belongs here: top bar, health line, since line, subnav, crumbs, sidebar, sign-in card, view bar, the user display, the application shell (content frame, drawer sidebar, account menu).
+   Does not belong here: the page frame (layout.css). */
+
+/* ── top bar ── */
+.top { display: flex; align-items: center; gap: 24px; height: var(--size-bar); padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: var(--layer-sticky); }
+.brand { font-weight: 650; text-decoration: none; display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.logo { color: var(--accent); }
+.brand-short { display: none; }
+.repo { color: var(--muted); font-family: var(--mono); font-size: var(--text-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
+.health[hidden] { display: none; }
+.health.bad { background: var(--fail-soft); }
+.health .holds { margin: 0; flex: 1 1 420px; }
+.health-repos { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-left: auto; }
+.health-version { flex: 1 1 100%; }
+.user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-small); white-space: nowrap; }
+.signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
+.top a[data-nav="start"] { border: 1px solid var(--border); color: var(--text); text-decoration: none; padding: 6px 12px; border-radius: var(--radius-md); white-space: nowrap; }
+.top a[data-nav="start"].active { background: var(--panel-2); }
+.subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
+.subnav a { text-decoration: none; padding: 4px 10px; border-radius: var(--radius-md); color: var(--muted); }
+.subnav a.active { background: var(--panel-2); color: var(--text); }
+.crumbs { padding: 6px 24px 0; font-size: var(--text-small); color: var(--muted); }
+.crumbs a { color: var(--muted); }
+.subnav[hidden], .crumbs[hidden] { display: none; }
+.auth-card { max-width: 380px; margin: 60px auto; }
+
+/* ── sidebar ── */
+.side-actions { display: grid; gap: 6px; margin-bottom: 18px; }
+.flow-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.flow-list li { min-width: 0; }
+.flow-list a { display: block; padding: 8px 10px; border-radius: var(--radius-md); text-decoration: none; }
+.flow-list a:hover { background: var(--panel-2); }
+.flow-list a.active { background: var(--accent-soft); }
+.flow-list .n { display: flex; justify-content: space-between; gap: 6px; font-weight: 550; }
+.flow-list .d { color: var(--muted); font-size: var(--text-meta); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-list .bad .n { color: var(--fail); }
+.flow-list .n .ico { margin-right: var(--space-xs); }
+@media (max-width: 760px) {
+  .brand-full { display: none; }
+  .brand-short { display: inline; }
+  .repo { display: none; }
+  .top { gap: 10px; }
+}
+.since { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--accent-soft); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 24px; }
+.since[hidden] { display: none; }
+.since .since-body { display: contents; }
+.since-group { display: grid; gap: 2px; }
+.since-note { flex-basis: 100%; font-size: var(--text-small); }
+
+/* ── the user display (ui/user/) ── */
+.user-display .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; padding-bottom: 6px; }
+.user-display .user { margin-left: auto; flex-wrap: wrap; white-space: normal; min-width: 0; }
+.user-display .user > span { overflow-wrap: anywhere; min-width: 0; }
+.user-display main { overflow-wrap: break-word; }
+/* "View as user": the bar of the read-only preview */
+.view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
+.view-bar[hidden] { display: none; }
+.view-as .top { position: static; }
+@media (max-width: 760px) {
+  .user-display .top { position: static; overflow-x: visible; }
+}
+
+/* ── the application shell: content frame, top bar parts, drawer sidebar ── */
+.shell { display: flex; flex: 1 0 auto; min-width: 0; }
+.content { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.content > * { flex: none; }
+.content > .layout { flex: 1 0 auto; }
+.content > main { flex: 1 0 auto; }
+
+.top > * { min-width: 0; }
+.spacer { flex: 1 1 0; }
+.menu-btn { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.menu-btn .badge { display: none; margin-left: 0; }
+body.side-closed .menu-btn .badge:not([hidden]) { display: inline-block; }
+.page-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.top-actions { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; }
+.top-actions[hidden], .ask-scf[hidden], .health-chip[hidden] { display: none; }
+.health-chip { border-radius: var(--radius-pill); padding: 3px 10px; font-size: var(--text-meta); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+.health-chip.ok { background: var(--ok-soft); }
+.health-chip.bad { background: var(--fail-soft); }
+.account { position: relative; flex: 0 1 auto; }
+.account summary { list-style: none; cursor: pointer; padding: 6px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); display: flex; align-items: center; }
+.account summary::-webkit-details-marker { display: none; }
+.account-name { display: block; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account > .user { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: var(--layer-menu); flex-direction: column; align-items: stretch; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); white-space: normal; width: max-content; max-width: min(320px, 90vw); }
+.account > .user > span { overflow-wrap: anywhere; }
+.account:not([open]) > .user { display: none; }
+
+.side { flex: none; width: 208px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; background: var(--panel); border-right: 1px solid var(--border); position: sticky; top: var(--size-bar); height: calc(100vh - var(--size-bar)); overflow-y: auto; align-self: flex-start; }
+.side a { display: flex; align-items: center; padding: 7px 10px; border-radius: var(--radius-md); color: var(--muted); text-decoration: none; }
+.side a[aria-current] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.side-close { display: none; margin: 0 0 6px auto; }
+.side-head { margin: 10px 10px 2px; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.side a.setup { font-size: var(--text-small); }
+.side .repo { margin-top: auto; padding: 8px 10px 0; white-space: normal; overflow-wrap: anywhere; }
+body.side-closed .side { display: none; }
+.view-as .side { top: 0; height: 100vh; }
+
+.skip { position: absolute; left: -9999px; top: 0; z-index: var(--layer-toast); }
+.skip:focus-visible { left: 8px; top: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.scrim { position: fixed; inset: 0; background: var(--color-overlay); z-index: var(--layer-menu); }
+.scrim[hidden] { display: none; }
+
+.signed-out .side, .signed-out .menu-btn, .signed-out .page-title, .signed-out .top a[data-nav], .signed-out .health-chip, .signed-out .account, .signed-out .skip, .signed-out .top-actions { display: none; }
+
+@media (max-width: 760px) {
+  .side { display: none; position: fixed; top: 0; left: 0; bottom: 0; height: auto; width: min(280px, 85vw); z-index: calc(var(--layer-menu) + 1); }
+  body.drawer-open .side, body.drawer-open.side-closed .side { display: flex; }
+  body.side-closed:not(.drawer-open) .side { display: none; }
+  .side-close { display: block; }
+  body:not(.drawer-open) .menu-btn .badge:not([hidden]) { display: inline-block; }
+  .page-title { flex: 0 1 auto; }
+  .top { gap: 8px; padding: 0 12px; }
+  .top a[data-nav="start"] { padding: 6px 8px; }
+  .health-chip { max-width: 9ch; }
+  .account-name { max-width: 9ch; }
+  aside { max-height: 35vh; overflow: auto; }
+}
+
+@media (pointer: coarse) {
+  .side a, .top button, .top a[data-nav], .account summary { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scrim { transition: opacity var(--motion-base); }
+}

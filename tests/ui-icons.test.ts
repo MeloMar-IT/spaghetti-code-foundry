@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { KINDS } from "../src/words.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -128,7 +129,7 @@ describe("flow name and transcript", () => {
 
 describe("source", () => {
   const src = readFileSync("ui/icons.js", "utf8");
-  const css = readFileSync("ui/style.css", "utf8");
+  const css = readUiCss();
 
   it("has no innerHTML, address or inline style, and the licence note", () => {
     expect(src).not.toContain("innerHTML");

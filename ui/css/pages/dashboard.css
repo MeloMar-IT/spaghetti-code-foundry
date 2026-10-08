@@ -1,0 +1,36 @@
+/* pages/dashboard.css — the dashboard and the home page.
+   Belongs here: tiles, charts, rates, watcher list, the home lists.
+   Does not belong here: table variants (components.css); the dashboard grid (layout.css). */
+
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 14px; }
+.tile { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--card-pad) var(--space-xl); }
+.tile-label { font-size: var(--text-meta); color: var(--muted); font-weight: 550; }
+.tile-value { font-size: var(--text-display); font-weight: 650; letter-spacing: -0.02em; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.tile-sub { font-size: var(--text-meta); color: var(--muted); }
+.chart { position: relative; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .bar { fill: var(--accent); }
+.chart .bar-hit:hover .bar, .chart .bar-hit:focus .bar { fill: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.chart .bar-hit:focus { outline: none; }
+.chart .grid-line { stroke: var(--border); stroke-width: 1; }
+.chart .base-line { stroke: var(--muted); stroke-width: 1; }
+.chart .axis { font-size: var(--text-micro); fill: var(--muted); font-family: var(--sans); }
+.chart-tip { position: absolute; transform: translate(-50%, -120%); background: var(--text); color: var(--bg); font-size: var(--text-meta); padding: 4px 8px; border-radius: var(--radius-sm); pointer-events: none; opacity: 0; white-space: nowrap; transition: opacity var(--motion-fast); }
+.chart-tip.show { opacity: 1; }
+.rate { display: inline-flex; gap: 8px; align-items: center; }
+.rate-track { width: 70px; height: 6px; border-radius: var(--radius-sm); background: var(--panel-2); overflow: hidden; display: inline-block; }
+.rate-fill { display: block; height: 100%; background: var(--ok); border-radius: var(--radius-sm); }
+.watcher-list { display: grid; gap: 12px; }
+.home-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); margin-bottom: var(--space-lg); }
+.home-head h1 { margin: 0; }
+.home-section { margin-bottom: var(--space-xl); }
+.home-section > h2 { margin: 0 0 var(--space-sm); }
+.home-list { list-style: none; margin: 0; padding: 0; }
+.home-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px dashed var(--border); }
+.home-row:first-child { border-top: none; }
+.home-row .home-main { flex: 1 1 320px; display: grid; gap: 2px; min-width: 0; }
+.home-row .home-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.home-clear { color: var(--muted); padding: var(--space-sm) 0; text-align: left; }
+details.home-section > summary { cursor: pointer; font-weight: 600; }
+.home .since { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: var(--space-xl); }
+.home-ask { margin-bottom: var(--space-xl); }

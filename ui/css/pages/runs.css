@@ -1,0 +1,53 @@
+/* pages/runs.css — runs list, run page and user run cards.
+   Belongs here: timeline, transcript, diff, log, run cards.
+   Does not belong here: table rules (components.css). */
+
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: var(--text-small); }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; font-family: var(--mono); font-size: var(--text-meta); word-break: break-all; }
+.timeline { display: grid; gap: 6px; }
+.tl { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); }
+.tl summary { display: flex; gap: 10px; align-items: center; padding: 8px 12px; color: var(--text); font-size: var(--text-small); }
+.tl pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.log { background: var(--color-log-bg); color: var(--color-log-text); border-radius: var(--radius); padding: 12px 14px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.log .ok { color: var(--color-log-ok); }
+.log .fail { color: var(--color-log-fail); }
+.log .step { color: var(--color-log-step); font-weight: 600; }
+.log .dim { color: var(--color-log-dim); }
+.transcript { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.tx-text { white-space: pre-wrap; font-size: var(--text-small); }
+.tx-tool { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); }
+.tx-tool > summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; }
+.tx-tool.bad { border-color: var(--fail); }
+.tx-tool.bad > summary .ico { color: var(--fail); }
+.tx-arg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); flex: 1; min-width: 0; }
+.tl, .tx-tool { min-width: 0; overflow: hidden; }
+.tl summary > * { flex-shrink: 0; }
+.tl summary .status { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 300px; overflow: auto; white-space: pre-wrap; }
+.tx-result { border-left: 3px solid var(--ok); padding: 6px 10px; white-space: pre-wrap; }
+.tx-result.bad { border-color: var(--fail); }
+pre.diff { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; overflow: auto; max-height: 75vh; font-size: var(--text-meta); line-height: 1.45; margin: 0; }
+pre.diff .add { color: var(--ok); background: var(--ok-soft); display: block; }
+pre.diff .del { color: var(--fail); background: var(--fail-soft); display: block; }
+pre.diff .hunk { color: var(--run); display: block; }
+pre.diff .file { font-weight: 700; display: block; }
+.diffstat { background: var(--panel-2); border-radius: var(--radius-md); padding: 8px 10px; margin: 0 0 10px; overflow: auto; }
+.meta dd .muted { font-family: var(--sans); word-break: normal; }
+
+/* My runs and the run page of a user (ui/user/runs.js) */
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-card.who-you { border-color: var(--color-waiting); }
+.run-card .run-link { overflow-wrap: anywhere; }
+.run-card .run-next { margin: 0; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.run-now h2 { margin: 0 0 8px; font-size: var(--text-section); }
+.run-dialog { display: grid; gap: 12px; }
+.run-answer { display: grid; gap: 12px; margin-bottom: 16px; min-width: 0; }
+.run-answer[hidden] { display: none; }
+.run-answers { margin-bottom: 16px; min-width: 0; }
+.run-answers h2 { margin: 0 0 8px; font-size: var(--text-section); }
+.run-answers ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.run-answers li { white-space: pre-wrap; overflow-wrap: anywhere; }
+.user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }

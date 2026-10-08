@@ -1,0 +1,108 @@
+/* components.css — controls and boxes used on more than one page.
+   Belongs here: buttons, inputs, fields, pills, cards, tables, modal, toast, tabs, chips, spinner, icons, focus rules, and every variant of them, even a variant that only one page uses; shared helpers such as the toolbar and status line.
+   Does not belong here: rules for a class that only one page area uses; layout of a page. */
+
+/* ── controls ── */
+button, .btn { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: var(--radius-md); padding: var(--control-pad-y) var(--control-pad-x); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+button:hover { background: var(--panel-2); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--color-on-accent); font-weight: 550; }
+button.primary:hover { filter: brightness(1.06); background: var(--accent); }
+button.danger { color: var(--fail); }
+button.ghost { border-color: transparent; background: transparent; }
+button.icon { border: none; background: transparent; padding: 4px 7px; color: var(--muted); }
+button.icon:hover { color: var(--text); background: var(--panel-2); }
+button.small { padding: 3px 9px; font-size: var(--text-small); }
+
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--control-pad-y) var(--control-pad-x); width: 100%; min-width: 0; }
+textarea { resize: vertical; font-family: var(--mono); font-size: var(--text-code); line-height: 1.5; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--color-focus); border-color: var(--color-focus); }
+.field { display: grid; gap: 4px; }
+.field > span { font-size: var(--text-meta); color: var(--muted); font-weight: 500; }
+.field > small { color: var(--muted); font-size: var(--text-meta); }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-meta); padding: 1px 8px; border-radius: var(--radius-pill); background: var(--panel-2); color: var(--muted); font-weight: 550; white-space: nowrap; }
+.pill.sem-neutral { background: var(--color-neutral-soft); color: var(--color-neutral); }
+.pill.sem-accent { background: var(--color-accent-soft); color: var(--color-accent); }
+.pill.sem-success { background: var(--color-success-soft); color: var(--color-success); }
+.pill.sem-warning { background: var(--color-warning-soft); color: var(--color-warning); }
+.pill.sem-danger { background: var(--color-danger-soft); color: var(--color-danger); }
+.pill.sem-info { background: var(--color-info-soft); color: var(--color-info); }
+.pill.sem-running { background: var(--color-running-soft); color: var(--color-running); }
+.pill.sem-waiting { background: var(--color-waiting-soft); color: var(--color-waiting); }
+.pill.sem-disabled { background: var(--color-disabled-soft); color: var(--color-disabled); }
+.pill.claude { background: var(--accent-soft); color: var(--claude); }
+.pill.ok, .pill.kind-done, .pill.state-active { background: var(--ok-soft); color: var(--ok); }
+.pill.fail, .pill.state-error, .pill.first { background: var(--fail-soft); color: var(--fail); }
+.pill.locked { background: var(--color-warning-soft); color: var(--color-warning); }
+.pill.kind-running { background: var(--run-soft); color: var(--run); }
+.pill.who-a-time-limit { background: var(--color-warning-soft); color: var(--color-warning); }
+a.pill.refinement { background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+a.pill.refinement:hover { text-decoration: underline; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.toolbar h1 { margin-right: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.seg button { border: none; border-radius: var(--radius-none); padding: 5px 12px; }
+.seg button.on { background: var(--panel-2); font-weight: 600; }
+.status { font-size: var(--text-small); }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--fail); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--card-pad); display: grid; gap: var(--stack-gap); }
+.card.jump-only { border-style: dashed; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip { font-family: var(--mono); font-size: var(--text-micro); padding: 1px 7px; border-radius: var(--radius-sm); border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+.chip:hover { color: var(--accent); border-color: var(--accent); }
+.errors { background: var(--fail-soft); color: var(--fail); border-radius: var(--radius-md); padding: 10px 12px; white-space: pre-wrap; font-family: var(--mono); font-size: var(--text-meta); margin-bottom: 14px; }
+.small-select { width: auto; font-size: var(--text-small); padding: 3px 6px; }
+.checks { display: grid; gap: 4px; }
+.pill.approval { background: var(--color-waiting-soft); color: var(--color-waiting); }
+.pill.parallel, .pill.flow { background: var(--run-soft); color: var(--run); }
+.table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table th, .table td { text-align: left; padding: var(--cell-pad-y) var(--cell-pad-x); font-size: var(--text-table); border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { font-size: var(--text-table-head); color: var(--muted); font-weight: 550; background: var(--panel-2); }
+.table tr.link { cursor: pointer; }
+.table tr.link:hover td { background: var(--panel-2); }
+.table .task { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: var(--radius-round); animation: spin .8s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ico { width: var(--size-icon); height: var(--size-icon); flex: none; display: inline-block; vertical-align: text-bottom; }
+.ico-sm { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+.ico.spin { animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ico.spin { animation: none; } }
+button.block-card:not(:disabled):hover { border-color: var(--accent); background: var(--panel); }
+.modal:has(.block-grid) { width: min(900px, 100%); }
+.tabs button.on { background: var(--panel-2); font-weight: 600; }
+.table.compact th, .table.compact td { padding: 6px 10px; font-size: var(--text-small); }
+.backdrop { position: fixed; inset: 0; background: var(--color-overlay); display: grid; place-items: center; z-index: var(--layer-overlay); padding: 16px; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-xl); width: min(var(--size-form), 100%); max-height: 90vh; overflow: auto; padding: 18px; display: grid; gap: 14px; box-shadow: var(--shadow-lg); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+#toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: var(--radius-md); opacity: 0; transition: var(--motion-slow); pointer-events: none; z-index: var(--layer-toast); max-width: 90vw; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.error { background: var(--fail); color: var(--color-on-danger); }
+.card.next-step { margin-bottom: 12px; }
+.card.next-step.who-you { border-color: var(--color-waiting); background: color-mix(in srgb, var(--color-waiting) 6%, var(--panel)); }
+.card.next-step.who-something-is-wrong { border-color: var(--fail); }
+.pill.who-you { background: var(--color-waiting-soft); color: var(--color-waiting); }
+.pill.who-something-is-wrong { background: var(--fail-soft); color: var(--fail); }
+.table .task div { overflow: hidden; text-overflow: ellipsis; font-size: var(--text-small); }
+.badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--accent); color: var(--color-on-accent); font-size: var(--text-meta); font-weight: 600; line-height: 18px; text-align: center; }
+.badge[hidden] { display: none; }
+a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--color-on-accent); font-weight: 550; }
+a.btn.primary:hover { filter: brightness(1.06); }
+.card.failure { border-color: var(--fail); }
+.card.failure ul.options { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.card.failure details.raw summary { cursor: pointer; color: var(--muted); }
+
+/* ── keyboard focus ── */
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
+.modal:focus-visible { outline: none; }
+
+/* ── a wide table scrolls in its own box ── */
+.table-box { overflow-x: auto; }
+.table tr.link td > a { text-decoration: none; }
+.modal ol.plan li { margin-bottom: 12px; }
+.modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
+.pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }

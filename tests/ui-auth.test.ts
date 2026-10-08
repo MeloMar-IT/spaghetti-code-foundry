@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -486,8 +487,8 @@ describe("the page", () => {
   });
 
   it("the admin page has no user branch and index.html starts signed out", () => {
-    for (const file of ["ui/app.js", "ui/auth.js", "ui/style.css"]) {
-      const text = readFileSync(file, "utf8");
+    const texts: Array<[string, string]> = [["ui/app.js", readFileSync("ui/app.js", "utf8")], ["ui/auth.js", readFileSync("ui/auth.js", "utf8")], ["ui/css", readUiCss()]];
+    for (const [file, text] of texts) {
       for (const word of ["allowedHash", "startApp", "role-user"]) expect(text.includes(word), `${file} ${word}`).toBe(false);
     }
     expect(readFileSync("ui/index.html", "utf8")).toContain('<body class="signed-out">');

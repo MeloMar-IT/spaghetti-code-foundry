@@ -134,7 +134,11 @@ describe("every route needs a session", () => {
   });
 
   it("serves static files without a session", async () => {
-    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/vendor/yaml/index.js", "/user", "/user/", "/user/app.js"]) expect((await fetch(s.base + p)).status, p).toBe(200);
+    for (const p of ["/", "/app.js", "/auth.js", "/style.css", "/css/tokens.css", "/css/pages/shell.css", "/vendor/yaml/index.js", "/user", "/user/", "/user/app.js"]) {
+      const r = await fetch(s.base + p);
+      expect(r.status, p).toBe(200);
+      if (p.endsWith(".css")) expect(r.headers.get("content-type"), p).toContain("text/css");
+    }
   });
 
   it("serves the user display at /user and /user/ with the policy header, and 404 for an unknown file", async () => {

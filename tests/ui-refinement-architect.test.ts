@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -469,7 +470,7 @@ describe("the Runs list", () => {
     expect(link(runs.queueRow({ runId: "r1", kind: "run" }, () => {}))).toBeUndefined();
   });
   it("is wired: style rule and API call", async () => {
-    expect(readFileSync("ui/style.css", "utf8")).toContain(".pill.refinement");
+    expect(readUiCss()).toContain(".pill.refinement");
     await api.askArchitect("a b");
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/a%20b/architect", body: {} }]);
   });

@@ -1,0 +1,15 @@
+/* reset.css — defaults for bare elements.
+   Belongs here: body, headings, links, code, pre, details; the helper for monospace text because it shares the code rule.
+   Does not belong here: classes; anything for one page. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: var(--text-body)/var(--leading-body) var(--sans); }
+a { color: inherit; }
+h1, h2, h3 { margin: 0; font-weight: 600; }
+h1 { font-size: var(--text-page); }
+h2 { font-size: var(--text-section); }
+h3 { font-size: var(--text-small); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+code, pre, .mono { font-family: var(--mono); font-size: var(--text-code); }
+details > summary { cursor: pointer; color: var(--muted); font-size: var(--text-small); user-select: none; }
+details[open] > summary { margin-bottom: 10px; }

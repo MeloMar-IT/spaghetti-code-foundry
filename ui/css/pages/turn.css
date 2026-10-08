@@ -1,0 +1,32 @@
+/* pages/turn.css — holds, next-step lines, Your turn and help marks.
+   Belongs here: hold lists, timing notes, turn items, help marks.
+   Does not belong here: next-step card and who pill variants (components.css). */
+
+.slow-note { color: var(--color-warning); font-weight: 550; }
+.timing { font-size: var(--text-small); }
+
+/* Why issues are waiting (Dashboard, Admin watcher cards) */
+.holds { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: var(--text-small); }
+.holds li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.holds .hold-title { font-weight: 500; }
+.holds .hold-link { margin-left: 8px; font-size: var(--text-small); }
+.hold-group + .hold-group { margin-top: 12px; }
+.holds .hold-action, .next-parts .hold-action { font-weight: 550; }
+.next-parts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.hold-rest { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.turn-group { margin-bottom: 16px; }
+.turn-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px dashed var(--border); }
+.turn-item:first-of-type { border-top: none; }
+.turn-item .turn-main { flex: 1 1 320px; display: grid; gap: 2px; min-width: 0; }
+.turn-item .turn-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.turn-text { white-space: pre-wrap; max-height: 45vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; margin: 6px 0; font: inherit; }
+.turn-q { display: grid; gap: 4px; margin-bottom: 10px; }
+.turn-risk { font-weight: 600; }
+
+/* Status names with a "?" (ui/next.js) */
+.help { display: contents; }
+.help-mark { width: 18px; height: 18px; padding: 0; justify-content: center; flex: none; border-radius: var(--radius-round); font-size: var(--text-meta); font-weight: 600; color: var(--muted); }
+.help-mark[aria-expanded="true"] { background: var(--panel-2); color: var(--text); }
+td > .help > .help-mark { margin-left: 6px; }
+.help-text { display: block; flex-basis: 100%; order: 99; max-width: 60ch; margin: 4px 0 2px; padding: 6px 10px; border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); font: var(--weight-regular) var(--text-small)/var(--leading-body) var(--sans); white-space: normal; cursor: default; }
+.help-text[hidden] { display: none; }

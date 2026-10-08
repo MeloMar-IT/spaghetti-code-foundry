@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -255,7 +256,7 @@ describe("the api calls", () => {
   });
   it("is wired into the page and the style sheet", () => {
     expect(readFileSync("ui/refinement.js", "utf8")).toContain('from "./refinement-talk.js"');
-    const css = readFileSync("ui/style.css", "utf8");
+    const css = readUiCss();
     expect(css).toMatch(/\.talk \{[^}]*min-width: 0/);
     expect(css).toContain("overflow-wrap: anywhere");
   });

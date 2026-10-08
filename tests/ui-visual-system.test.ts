@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { readUiCss } from "./helpers/ui-css.js";
 
 // ui/tokens.css is the one place for colours, type, spacing and density (#322). This test reads the files as text,
 // computes every contrast ratio and keeps ui/style.css free of raw values. It does not check how the pages look.
@@ -125,7 +126,7 @@ const GROUPS: Record<string, string[]> = {
 const DENSITY = ["--text-body", "--text-table", "--control-pad-y", "--control-pad-x", "--cell-pad-y", "--cell-pad-x", "--card-pad", "--stack-gap", "--page-pad-y", "--page-pad-x", "--size-bar"];
 
 const tokens = parseTokens(read("ui/tokens.css"));
-const style = read("ui/style.css");
+const style = readUiCss(); // ui/style.css only imports the modules under ui/css/ (#337)
 const sorted = (xs: Iterable<string>) => [...xs].sort();
 
 /** The body of the first rule that starts a line with the selector (indent = the leading spaces). */
@@ -240,7 +241,8 @@ describe("ui/style.css", () => {
   });
 
   it("only uses variables that tokens.css defines", () => {
-    const files = ["ui/style.css", ...readdirSync("ui").filter((f) => f.endsWith(".js")).map((f) => `ui/${f}`), ...readdirSync("ui/user").filter((f) => f.endsWith(".js")).map((f) => `ui/user/${f}`)];
+    for (const m of style.matchAll(/var\((--[\w-]+)/g)) expect(tokens.base.has(m[1]!), `ui/css: ${m[1]}`).toBe(true);
+    const files = [...readdirSync("ui").filter((f) => f.endsWith(".js")).map((f) => `ui/${f}`), ...readdirSync("ui/user").filter((f) => f.endsWith(".js")).map((f) => `ui/user/${f}`)];
     for (const f of files) for (const m of read(f).matchAll(/var\((--[\w-]+)/g)) expect(tokens.base.has(m[1]!), `${f}: ${m[1]}`).toBe(true);
   });
 

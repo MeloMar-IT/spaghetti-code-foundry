@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readUiCss } from "./helpers/ui-css.js";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
@@ -104,7 +105,7 @@ describe("ui/user/app.js", () => {
 });
 
 describe("ui/style.css", () => {
-  const css = read("style.css");
+  const css = readUiCss();
   it("wraps the user top bar, scrolls tables in a box and marks the keyboard focus", () => {
     expect(css).toMatch(/\.user-display \.top \{[^}]*flex-wrap: wrap/);
     expect(css).toContain(".table-box { overflow-x: auto; }");
