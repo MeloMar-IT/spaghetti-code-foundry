@@ -53,3 +53,8 @@
 .drafts .row input, .drafts .row select { width: auto; flex: 1 1 160px; }
 .drafts .checks { list-style: none; padding-left: 0; }
 .drafts .checks input { width: auto; margin-right: 6px; }
+.drafts .parts { display: grid; gap: 6px; justify-items: start; }
+.drafts .parts:empty { display: none; }
+.drafts .parts .pill { margin: 0 6px 0 0; }
+.drafts .parts select, .drafts select.move, .drafts [data-merge] select { width: auto; }
+.drafts .parts li > select, .drafts .parts p > button { margin-left: 6px; }
