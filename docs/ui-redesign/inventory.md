@@ -161,7 +161,7 @@ Count of `style:` occurrences per file (one line can hold more than one; `runs.j
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 95 in 16 files. Lines that contain one: 94.
+Total 96 in 16 files. Lines that contain one: 95.
 
 | File | Uses |
 |---|---|
@@ -175,7 +175,7 @@ Total 95 in 16 files. Lines that contain one: 94.
 | `ui/step-types.js` | 5 |
 | `ui/library.js` | 4 |
 | `ui/refinement-import.js` | 4 |
-| `ui/refinement-publish.js` | 3 |
+| `ui/refinement-publish.js` | 4 |
 | `ui/refinement-suggest.js` | 3 |
 | `ui/refinement-impact.js` | 2 |
 | `ui/refinement-talk.js` | 2 |
