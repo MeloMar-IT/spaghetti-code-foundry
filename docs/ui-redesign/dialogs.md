@@ -77,7 +77,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/app.js:257` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
 | `ui/app.js:278` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
 | `ui/app.js:299` | confirm | Run without a task description? | Run (inside the Run dialog) |
-| `ui/health.js:49` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
+| `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
 | `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
@@ -91,7 +91,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement.js:411` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:245` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:246` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:255` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:259` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:288` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:289` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:298` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:302` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

@@ -5,6 +5,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 ## Unreleased
 
 - Guide screenshots 2 — run pages, dialogs, Settings, Dashboard, repositories and watchers (#411). `npm run test:ui -- --grep @guide` now also writes `run-dialog`, `run-log`, `run-steps`, `run-diff`, `run-waiting`, `settings`, `dashboard`, `repos`, `watchers` and `watcher-form`. `run-diff` is taken on the large test server. `tests/screenshot-manifest.test.ts` checks the placeholders and that a `{diffRun}` shot uses the large server.
+- Accessibility 4 — keyboard access and predictable focus during live updates (#388).
+  - **Run rows.** The status pill in the first cell of a run row (`runRow`, `ui/runs.js`) is a real link to the run (`Open` when there is no status record), so a keyboard user can open a run. The flow name no longer links. The row click stays as a pointer shortcut.
+  - **Focus after a redraw.** Controls on the board, Your turn, Runs, Since, health and My runs pages carry a stable `data-focus` name made from run ids, issue numbers or item keys, so `mount()` gives focus back to the same control after a timed redraw. When that control is gone, `mount()` (`ui/dom.js`) focuses the first heading in the redrawn area, then one in its parent, then the area itself (`tabindex="-1"`), never `<body>`.
+  - **No redraw under your hands.** The Runs list skips a timed redraw while a select or text field has focus (`fieldFocused`, exported from `ui/runs.js`, also used by `ui/board.js`). The admin run page holds an update while the retry select has focus and draws it when focus leaves. Your turn and My runs hold their redraw while a dialog is open and then draw the newest answer. The Since strip focuses the page heading when it hides with focus inside it. Polling intervals and hashes are unchanged.
+  - **Run log.** `logBox` (`ui/runs.js`) makes the log a labelled `role="log"` region with `aria-live="polite"` and `tabindex="0"`, so it scrolls with the keyboard. Used on the admin and user run pages.
+  - **Status announcements.** `statusAnnouncer` reads a run's status change out once through a polite status region, on both run pages.
+  - **Help mark.** The **?** in `ui/next.js` has a stable `data-focus` name and closes with Escape.
+  - **Docs.** `docs/USER_GUIDE.md` "Keyboard" gains a table of keys by place. Four line numbers in `docs/ui-redesign/dialogs.md` follow the move in `ui/runs.js`.
+  - **Tests.** `tests/ui-a11y-live.test.ts` (new: focus kept over a timer tick, `audit()` and one announcement for each polled page), `tests/ui-dom.test.ts`, `tests/ui-next.test.ts`, `tests/helpers/fake-dom.ts`.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
   - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.

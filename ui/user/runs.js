@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
-import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
+import { aheadText, diffView, failedStepIndex, failureCard, logBox, logLine, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -63,9 +63,9 @@ export function runCard({ run, job }, onRemove) {
   const when = r ? ["Started", r.startedAt] : ["Queued", job?.enqueuedAt];
   return h("li", { class: `run-card${n?.who === "You" ? ` ${whoClass(n)}` : ""}` },
     h("div", { class: "row" },
-      n ? nextStatus(n) : null,
+      n ? nextStatus(n, `help-${id}`) : null,
       h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, r?.flow ?? job?.flow ?? "Queued run")),
-      r?.refinement ? refinementMark(r.refinement) : null),
+      r?.refinement ? refinementMark(r.refinement, `ref-${id}`) : null),
     task ? h("div", {}, task) : null,
     work ? h("div", { class: "muted mono" }, work) : null,
     n ? h("p", { class: "run-next muted" }, n.text) : null,
@@ -138,11 +138,13 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   let seq = 0;
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
+  let dialogOpen = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
 
   const draw = () => {
+    if (dialogOpen) return;
     mount(list, entries.length
       ? h("ul", { class: "run-cards" }, entries.map((e) => runCard(e, readOnly ? null : remove)))
-      : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", href: "#/start" }, "Start work")));
+      : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work")));
   };
   async function load() {
     const mine = ++seq;
@@ -153,14 +155,21 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   }
   async function remove(job) {
     alertEl.textContent = "";
-    if (!(await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it"))) return;
+    dialogOpen = true;
+    let yes;
+    try {
+      yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it");
+    } finally {
+      dialogOpen = false;
+    }
+    if (!yes) return draw(); // the newest answer that came while the dialog was open
     try {
       const r = await a.cancelRun(job.runId);
       if (r?.cancelled === false) alertEl.textContent = NOT_CANCELLED;
       else toast("Removed");
     } catch (e) {
       alertEl.textContent = errorText(e);
-      return;
+      return draw();
     }
     await load().catch((e) => { alertEl.textContent = errorText(e); });
   }
@@ -204,7 +213,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   const head = h("div");
   const alertEl = h("p", { class: "status bad", role: "alert" });
-  const logEl = h("pre", { class: "log" });
+  const logEl = logBox();
+  const status = statusAnnouncer();
   const tabBody = h("div");
   const tabButtons = [];
   const tabsBox = h("div");
@@ -260,13 +270,13 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
-  mount(main, head, alertEl, answerBox, tabsBox);
+  mount(main, head, alertEl, status.el, answerBox, tabsBox);
 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
 
   const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
-  const back = () => h("a", { class: "btn ghost", href: "#/runs", "aria-label": "Back to My runs" }, "←");
+  const back = () => h("a", { class: "btn ghost", href: "#/runs", "data-focus": "back", "aria-label": "Back to My runs" }, "←");
 
   function actionButtons(kinds) {
     if (readOnly) return null;
@@ -281,6 +291,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   function draw() {
     if (dialogOpen) return;
+    status.say(summary ?? (job ? { next: job.next } : null));
     drawHead();
     drawAnswer();
   }
@@ -334,14 +345,14 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       const missing = runError?.status === 404 && !queueError;
       const err = !missing && (queueError || runError);
       return mount(head, missing
-        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs" }, "My runs"))
+        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
         : err
-          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs" }, "My runs"))
+          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
           : h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
     }
     if (!summary) {
       return mount(head,
-        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next)),
+        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next, "status-help")),
         actionButtons(runActions({ status: "queued" }, true)),
         h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), nextBlock(job.next), job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null),
         h("div", { class: "card mb-16" },
@@ -354,7 +365,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const steprow = stepRow(s);
     const work = workText(s.vars?.github_repo, s.vars?.issue);
     mount(head,
-      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next) : null, s.refinement ? refinementMark(s.refinement) : null),
+      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next, "status-help") : null, s.refinement ? refinementMark(s.refinement, "refinement") : null),
       actionButtons(runActions(s, job !== null)),
       h("section", { class: "run-now", "aria-label": "Now" },
         h("h2", {}, "Now"),

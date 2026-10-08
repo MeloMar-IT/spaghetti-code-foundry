@@ -40,39 +40,47 @@ export function whereTarget(where) {
 }
 
 /** The link of a record; a plain span when the url is not one we link. */
-export function whereLink(where) {
+export function whereLink(where, focus) {
   const t = whereTarget(where);
   const label = where?.label ?? "";
   if (!t) return label ? h("span", { class: "hold-link" }, label) : null;
   return t.external
-    ? h("a", { href: t.href, target: "_blank", rel: "noopener", class: "hold-link" }, `${label} ↗`)
-    : h("a", { href: t.href, class: "hold-link" }, label);
+    ? h("a", { href: t.href, target: "_blank", rel: "noopener", class: "hold-link", "data-focus": focus }, `${label} ↗`)
+    : h("a", { href: t.href, class: "hold-link", "data-focus": focus }, label);
 }
 
 /** A "?" button: pressing it shows `text` under the line, pressing it again hides it. Mouse, keyboard and touch. */
-export function helpMark(text) {
+export function helpMark(text, focus) {
   if (!text) return null;
   const note = h("span", { class: "help-text", role: "note" }, text);
   note.hidden = true;
-  const btn = h("button", { type: "button", class: "help-mark", "aria-label": "What does this mean?", "aria-expanded": "false", onClick: () => {
-    note.hidden = !note.hidden;
-    btn.setAttribute("aria-expanded", String(!note.hidden));
-  } }, "?");
+  const set = (open) => {
+    note.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  // Enter and Space press a button; Escape closes the note, and only the note (a dialog around it stays open).
+  const btn = h("button", { type: "button", class: "help-mark", "aria-label": "What does this mean?", "aria-expanded": "false", "data-focus": focus,
+    onClick: () => set(note.hidden),
+    onKeydown: (e) => {
+      if (e?.key !== "Escape" || note.hidden) return;
+      set(false);
+      e.stopPropagation?.();
+    } }, "?");
   // A press on the "?" or its text must not open the run (rows of the Runs list are links).
-  return h("span", { class: "help", onClick: (e) => e.stopPropagation() }, btn, note);
+  return h("span", { class: "help", "data-a11y-skip": "stop", onClick: (e) => e.stopPropagation() }, btn, note);
 }
 
 /** A status name as a pill with its "?": [pill, help]. `x` has `status` and `help` (a record, or a watcher's `state`). */
-export const statusMark = (x, cls = "", busy = false, semantic = "neutral") => {
+export const statusMark = (x, cls = "", busy = false, semantic = "neutral", focus) => {
   const sem = Object.hasOwn(STATUS, semantic) ? semantic : "neutral";
   return [
     h("span", { class: `pill sem-${sem} ${cls}`.trim() }, icon(busy ? "loader-circle" : STATUS[sem], { small: true, spin: busy }), x.status),
-    helpMark(x.help),
+    helpMark(x.help, focus),
   ];
 };
 
 /** The status of a record. */
-export const nextStatus = (n) => statusMark(n, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind));
+export const nextStatus = (n, focus) => statusMark(n, `${whoClass(n)} kind-${n.kind}`, n.kind === "running", semanticOf(n.kind), focus);
 
 /** "Continues: …" when the record says when it continues. */
 export const untilPart = (n) => (n.until ? h("span", { class: "muted" }, `Continues: ${n.until}`) : null);
@@ -95,19 +103,20 @@ export const whenParts = (n) => [untilPart(n), ...timingParts(n)].filter(Boolean
 export const ISSUE_UNCHECKED = "The state of the issue on GitHub could not be checked";
 
 /** The one renderer of a record: who, status, issue, title, action, why, until, timing, link. `ref: false` leaves out issue and title, `status: false` the status. */
-export function nextParts(n, { ref = true, status = true } = {}) {
+export function nextParts(n, { ref = true, status = true, focus } = {}) {
   const issueOk = ref && n.issue && /^[\w.-]+\/[\w.-]+$/.test(n.repo ?? "");
+  const name = (part) => (focus ? `${focus}-${part}` : undefined);
   return [
     h("span", { class: `pill ${whoClass(n)}` }, n.who),
-    ...(status ? nextStatus(n) : []),
-    issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono" }, `#${n.issue}`) : null,
+    ...(status ? nextStatus(n, name("help")) : []),
+    issueOk ? h("a", { href: `https://github.com/${n.repo}/issues/${n.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": name("issue") }, `#${n.issue}`) : null,
     ref && n.title ? h("span", { class: "hold-title" }, n.title) : null,
     h("span", { class: "hold-action" }, n.action),
     h("span", { class: "muted" }, n.why),
     n.issueUnchecked ? h("span", { class: "muted issue-unchecked" }, ISSUE_UNCHECKED) : null,
     untilPart(n),
     ...timingParts(n),
-    whereLink(n.where),
+    whereLink(n.where, name("where")),
   ];
 }
 
@@ -115,6 +124,6 @@ export function nextParts(n, { ref = true, status = true } = {}) {
 export const nextList = (records) => h("ul", { class: "holds" }, sortNext(records).map((n) => h("li", {}, nextParts(n))));
 
 /** Run page block. */
-export const nextBlock = (n) => h("div", { class: `card next-step ${whoClass(n)}` },
+export const nextBlock = (n, focus = "next") => h("div", { class: `card next-step ${whoClass(n)}` },
   h("b", {}, "What happens next"),
-  h("div", { class: "next-parts" }, nextParts(n, { ref: false, status: false })));
+  h("div", { class: "next-parts" }, nextParts(n, { ref: false, status: false, focus })));
