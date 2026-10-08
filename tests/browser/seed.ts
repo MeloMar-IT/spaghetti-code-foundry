@@ -47,7 +47,14 @@ steps:
   - {id: wait, type: shell, run: "sleep 600"}
 `;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Not published: the user's Start work page does not list it. The browser tests start their own run of it.
+const FAIL = `name: fail
+workspace: empty
+steps:
+  - {id: check, type: shell, run: "echo broken; exit 1"}
+`;
+
+const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Starts the real server on a free port with its own temporary data folder (FACTORY_HOME is set to it and put back on close),
@@ -142,7 +149,7 @@ export async function startSeeded(): Promise<Seeded> {
 
     const send = (method: string, path: string, body: unknown) =>
       fetch(url + path, { method, headers: { "content-type": "application/json", ...admin.headers(method) }, body: JSON.stringify(body) });
-    for (const [name, yaml] of [["gate", GATE], ["hold", HOLD]] as const) {
+    for (const [name, yaml] of [["gate", GATE], ["hold", HOLD], ["fail", FAIL]] as const) {
       const r = await send("PUT", `/api/flows/${name}`, { yaml, scope: "repo" });
       if (r.status !== 200) throw new Error(`could not save the flow ${name}: ${r.status} ${await r.text()}`);
     }

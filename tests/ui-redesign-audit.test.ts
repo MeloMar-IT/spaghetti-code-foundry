@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installFakeDom } from "./helpers/fake-dom.js";
+import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } from "./browser/journeys-baseline.js";
 
 // docs/ui-redesign/ is a research audit of every screen. This test keeps its tables in step with the code:
 // routes, nav links, dialog call sites, native dialogs and inline styles. It does not check wording, the counts
@@ -273,6 +274,29 @@ describe("the documents", () => {
       expect(r[1], "Nav steps").toMatch(/^\d+$/);
       expect(r[2], "Modelled s").toMatch(/^\d+(\.\d+)?$/);
       expect([r[3], r[4], r[5]], `${r[0]}: measured, errors, confidence are open`).toEqual(["", "", ""]);
+    }
+  });
+
+  it("keeps the browser test's baseline in step with the table in measurement.md", () => {
+    const rows = tableRows(doc("measurement.md"), "## The five tasks");
+    expect(rows.map((r) => r[0])).toEqual(["1", "2", "3", "4", "5"]);
+    for (const r of rows) {
+      const id = Number(r[0]) as TaskId;
+      expect(TASKS[id], `task ${r[0]}`).toBe(r[1]);
+      for (const cell of [r[4], r[5], r[6]]) expect(cell, `task ${r[0]}: a count`).toMatch(/^\d+$/);
+      expect({ nav: Number(r[4]), clicks: Number(r[5]), fields: Number(r[6]) }, `task ${r[0]}`).toEqual(BASELINE[id]);
+    }
+  });
+
+  it("finds the measures that are above the baseline", () => {
+    expect(over({ nav: 2, clicks: 3, fields: 1 }, { nav: 1, clicks: 2, fields: 1 })).toEqual(["nav 2 > 1", "clicks 3 > 2"]);
+    expect(over(BASELINE[4], BASELINE[4])).toEqual([]);
+    expect(effortText(BASELINE[1])).toBe("1 / 2 / 1");
+  });
+
+  it("names a follow-up for every task that is above the baseline, and only for those", () => {
+    for (const id of [1, 2, 3, 4, 5] as TaskId[]) {
+      expect(over(REDESIGN[id], BASELINE[id]).length > 0, `task ${id}`).toBe(KNOWN_OVER[id] !== undefined);
     }
   });
 

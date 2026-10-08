@@ -1,4 +1,4 @@
-import { expect, type Browser, type Page } from "@playwright/test";
+import { expect, request, type APIResponse, type Browser, type Page } from "@playwright/test";
 import type { SeedData } from "./seed.js";
 import { VIEW_HEIGHT } from "./widths.js";
 
@@ -35,6 +35,23 @@ export async function openAs(browser: Browser, role: Role, width: number, hash =
     await context.close();
     throw e;
   }
+}
+
+export interface Api { send(method: string, path: string, body?: unknown): Promise<APIResponse>; close(): Promise<void> }
+
+/** Calls the server's API as `role`, for set-up and clean-up of a test (the CSRF token goes with every method other than GET and HEAD). */
+export async function apiAs(role: Role): Promise<Api> {
+  const s = seed();
+  const who = s[role];
+  const ctx = await request.newContext({ baseURL: s.url });
+  const res = await ctx.post("/api/session", { data: { email: who.email, password: who.password } });
+  expect(res.status(), "sign-in").toBe(200);
+  const { csrfToken } = (await res.json()) as { csrfToken: string };
+  return {
+    send: (method, path, body) =>
+      ctx.fetch(path, { method, headers: method === "GET" || method === "HEAD" ? {} : { "x-csrf-token": csrfToken }, ...(body === undefined ? {} : { data: body }) }),
+    close: () => ctx.dispose(),
+  };
 }
 
 /** Fails when the document is wider than the viewport. */

@@ -13,6 +13,7 @@ An audit of the web UI, as a base for #248–#250. Taken on 2026-10-07 from comm
 | `journeys.md` | The fixture, the counting rules and nine journeys with step counts |
 | `findings.md` | Findings split into structural and visual, candidates that need a measure, and consolidation candidates |
 | `measurement.md` | Widths, measures, existing screenshots, capture list, five tasks with modelled times, protocol, empty results table |
+| `usability-check.md` | Script for the sessions with people on the five tasks, the result table (baseline and redesign side by side), the pass rule and where to post results; the automated effort check (`tests/browser/journeys.spec.ts`) |
 | `prototype/` | Research 2 (#248): static pages with fake data (`index.html`, `home.html`, `board.html`, `runs.html`, `run.html`, `repositories.html`, `admin.html`), `proto.css` and `proto.js` |
 | `prototypes.md` | The seven patterns, pages and alternatives, state matrix, route table, health and since mapping, the old run |
 | `walkthroughs.md` | Walkthroughs of the five tasks for both roles and every alternative; locate and primary-action tables; usability and visual check sheets |
