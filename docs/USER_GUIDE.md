@@ -2930,6 +2930,23 @@ The plan is kept in the page only, so reloading the page loses it. **Discard pla
 
 **Who sees it.** Only people who can edit drafts see the buttons. In "View as user" no button is shown and no changing call leaves the browser; the ways are shown as text.
 
+#### After the split: parts, moving and merging
+
+**The original.** It shows **Split into …** with a button for each part, and it is read-only. Criteria that fit nowhere are listed under **Fits nowhere**; each has **Move to …** with the parts. In the session, the original has the state word **Split** and does not count for "ready".
+
+**A part.** It shows **Part n of m of …** with a link back to the original. Below it:
+
+- the hint sentence, marked as a hint from the architect and not part of the story;
+- its warnings: "delivers nothing a user can see or check" and "touches the same code as …; build one after the other".
+
+**Move a criterion.** Each criterion of a part has **Move to …** with the other parts and the original. Text you typed in the draft is saved first. The criterion moves, it is not copied.
+
+**Depends on.** The list of a part does not offer later parts of the same split, or the original.
+
+**Merge with ….** A draft lists the other drafts of the session (not a split original). The page asks you to confirm and says what happens to the fields: dependencies are repointed or removed, accepted-anyway marks and readiness are cleared, and the draft gets the review label. A merge is blocked while the other draft has unsaved text.
+
+**Log.** The log says "criterion moved" and "drafts merged" in plain words. Dependencies that no longer fit the split are listed when they are removed.
+
 ### The talk: questions, answers and the map
 
 A session keeps the talk with the architect, so it is not lost. The session page shows it in two parts, **Questions** and **Map**, right after the Context brief. The calls below are what the page uses (see also "Rounds and questions from a session" below).

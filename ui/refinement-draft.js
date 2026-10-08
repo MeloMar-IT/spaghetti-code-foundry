@@ -3,6 +3,7 @@ import { h, mount, toast } from "./dom.js";
 import { impactKey, impactNodes } from "./refinement-impact.js";
 import { draftStateText, readyKey, readyNodes } from "./refinement-ready.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
+import { mayDependOn, mergeNodes, moveNodes, partsKey, partsNodes } from "./refinement-parts.js";
 import { splitKey, splitNodes } from "./refinement-split.js";
 import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
@@ -303,7 +304,9 @@ export function draftSection(ctx) {
     row.mark = h("small", { class: "muted" });
     row.rem = h("div", { class: "remarks", "data-remarks": c ? `crit-${c.id}` : "crit-new" });
     row.remKey = "";
-    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null, row.rem);
+    row.mv = h("span", { "data-move": "" });
+    row.mvKey = "";
+    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null, row.mv, row.rem);
     return row;
   }
   const savedText = (row, d) => d?.criteria.find((c) => c.id === row.id)?.text ?? "";
@@ -407,8 +410,8 @@ export function draftSection(ctx) {
     return ctx.send(btn, () => api.saveDraft(sid, did, { dependsOn: make(d.dependsOn.map(dependsItem)) }));
   };
   const renderDepends = (d) => {
-    const others = (sess.drafts ?? []).filter((o) => o.id !== d.id && !d.dependsOn.some((x) => x.draft === o.id));
-    const key = JSON.stringify([d.dependsOn, (sess.drafts ?? []).map((o) => [o.id, draftTitle(o)]), others.length]);
+    const others = (sess.drafts ?? []).filter((o) => o.id !== d.id && !d.dependsOn.some((x) => x.draft === o.id) && mayDependOn(d, o, sess.drafts ?? []));
+    const key = JSON.stringify([d.dependsOn, (sess.drafts ?? []).map((o) => [o.id, draftTitle(o)]), others.map((o) => o.id)]);
     if (ed.dependsKey === key) return;
     ed.dependsKey = key;
     const select = others.length ? h("select", { "aria-label": "Another draft" }, others.map((o) => h("option", { value: o.id }, draftTitle(o)))) : null;
@@ -454,6 +457,8 @@ export function draftSection(ctx) {
   const buildEditor = (d) => {
     ed = { did: d.id, fields: new Map(), rows: new Map(), byId: new Map(), dependsKey: "", sug: new Map(), sugKeys: new Map(), marks: new Map(), rem: new Map(), remKeys: new Map() };
     ed.hint = h("p", { class: "muted" });
+    ed.partsBox = h("div", { class: "parts", "data-parts": "" });
+    ed.mergeBox = h("div", { class: "row", "data-merge": "" });
     ed.reviewBox = h("div", { class: "review", "data-review": "" });
     ed.impactBox = h("div", { class: "impact", "data-impact": "" });
     ed.splitBox = h("div", { class: "split", "data-split": "" });
@@ -488,7 +493,7 @@ export function draftSection(ctx) {
         h("div", { class: "row" }, ed.depInput, h("button", { onClick: addIssue }, "Add issue")), ed.depChoose, ed.sug.get("dependsOn")),
       field(d, "notes", "textarea", 3),
     ];
-    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, removeDraftButton(d.id)), ed.readyBox, ed.previewBox, ed.impactBox, ed.splitBox)));
+    boxes.editor.replaceChildren(...nodes(h("div", { class: "card" }, ed.hint, ed.partsBox, ed.reviewBox, parts, ed.statusEl, h("div", { class: "row" }, removeDraftButton(d.id), ed.mergeBox), ed.readyBox, ed.previewBox, ed.impactBox, ed.splitBox)));
     for (const k of keysOf(d.id)) if (placeOf(k)) plan(k); // text that waited for this editor is saved
   };
 
@@ -524,6 +529,25 @@ export function draftSection(ctx) {
       if (made) opened.set(sid, made.id);
       return next;
     }, "Your text could not be saved, so nothing was split. Try again."),
+  });
+
+  /** What the parts part does: opens a draft, moves a criterion, merges two drafts. Typed text is saved first. */
+  const partsAct = (did) => ({
+    open: (id) => open(id),
+    move: (el, cid, to) => {
+      const key = K(did, `crit:${cid}`);
+      clearTimeout(timers.get(key));
+      timers.delete(key);
+      return afterSave(el, () => api.moveCriterion(sid, did, cid, to), "Your text could not be saved, so nothing was moved. Try again.").then((ok) => {
+        if (!ok && unsaved.has(key)) plan(key);
+        return ok;
+      });
+    },
+    merge: (btn, other) => afterSave(btn, () => {
+      // A text of the other draft that has no editor open is not saved by `afterSave`; merging would lose it.
+      if (keysOf(other).length) throw new Error("The other draft has text that is not saved. Open it and save it first, so nothing is lost.");
+      return api.mergeDrafts(sid, did, other);
+    }, "Your text could not be saved, so nothing was merged. Try again."),
   });
 
   /** What the review box does: asks for a review (the architect must see what is typed). */
@@ -595,7 +619,14 @@ export function draftSection(ctx) {
   };
   const syncRemarks = (d) => {
     for (const [f, el] of ed.rem) fillBox(el, ed.remKeys, f, remarkKey(d, f), () => remarkNodes(d, f, undefined, moveAct(d.id, f)));
+    const pk = partsKey(sess, d);
+    fillBox(ed.partsBox, ed.remKeys, "parts", pk, () => partsNodes(sess, d, partsAct(d.id)));
+    fillBox(ed.mergeBox, ed.remKeys, "merge", pk, () => mergeNodes(sess, d, partsAct(d.id)));
     for (const row of ed.rows.values()) {
+      if (row.id && row.mvKey !== pk) {
+        row.mvKey = pk;
+        row.mv.replaceChildren(...nodes(moveNodes(sess, d, d.criteria.find((c) => c.id === row.id) ?? { id: row.id, text: "" }, partsAct(d.id))));
+      }
       if (!row.id) continue;
       const key = remarkKey(d, "criteria", row.id);
       if (row.remKey === key) continue;
@@ -682,7 +713,8 @@ export function draftSection(ctx) {
         const n = impactNodes(s, d, null);
         const r = readyNodes(s, d, null);
         const sp = splitNodes(s, d, null);
-        return [d.published ? h("p", {}, "On GitHub: ", issueLink(d)) : null, previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null, sp.length ? h("div", { class: "card split" }, sp) : null];
+        const pn = partsNodes(s, d, null);
+        return [d.published ? h("p", {}, "On GitHub: ", issueLink(d)) : null, pn.length ? h("div", { class: "card parts" }, pn) : null, previewNodes(d), readOnlyNodes(s, d), r.length ? h("div", { class: "card ready" }, r) : null, n.length ? h("div", { class: "card impact" }, n) : null, sp.length ? h("div", { class: "card split" }, sp) : null];
       }) : listNodes(drafts, false)));
     } else {
       fill("list", `rw|${opened.get(sid)}|${s.state}|${JSON.stringify(drafts.map((d) => [d.id, draftTitle(d), d.state, d.published?.issue]))}`, () => [
@@ -705,9 +737,10 @@ export function draftSection(ctx) {
       } else if (d.published || d.splitInto) {
         // On GitHub, or split: shown as text only, no fields; the saved texts are the record. A split original is read-only on the server.
         ed = null;
-        fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}`, () => h("div", { class: "card" },
+        fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}|${partsKey(s, d)}`, () => h("div", { class: "card" },
           d.published ? h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here.")
             : h("p", {}, "This draft was split. It is kept as a record and cannot be changed; its parts are worked on instead."),
+          partsNodes(s, d, partsAct(d.id)).length ? h("div", { class: "parts" }, partsNodes(s, d, partsAct(d.id))) : null,
           d.splitInto ? h("div", { class: "row" }, removeDraftButton(d.id)) : null,
           previewNodes(d), readOnlyNodes(s, d), readyNodes(s, d, null), impactNodes(s, d, null)));
       } else {

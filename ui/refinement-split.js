@@ -139,6 +139,17 @@ export function splitLogText(entry) {
   if (entry.what === "split-asked") return `${who} asked the architect for ways to split a story draft`;
   if (entry.what === "architect-split") return n === null ? "The architect proposed ways to split a story draft" : `The architect proposed ${plural(n, "way", "ways")} to split a story draft`;
   if (entry.what === "draft-split") return n === null ? `${who} split a story draft` : `${who} split a story draft into ${n} drafts`;
+  if (entry.what === "criterion-moved") return `${who} moved a criterion to another draft${entry.detail ? `: "${entry.detail}"` : ""}`;
+  if (entry.what === "drafts-merged") {
+    const detail = String(entry.detail ?? "");
+    if (!detail) return `${who} merged two story drafts`;
+    const i = detail.indexOf("; removed ");
+    const raw = i >= 0 ? detail.slice(0, i) : detail;
+    // The titles are not escaped in the detail: when it cannot be read in one way only, the plain sentence is used.
+    if (detail.split("; removed ").length > 2 || !/^"[^]*" \+ "[^]*"$/.test(raw) || raw.split('" + "').length !== 2) return `${who} merged two story drafts`;
+    const head = raw.replace('" + "', '" and "');
+    return `${who} merged two story drafts: ${head}${i >= 0 ? `. Dependencies that no longer fit the split were removed: ${detail.slice(i + 10)}` : ""}`;
+  }
   return "";
 }
 

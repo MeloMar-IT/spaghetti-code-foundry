@@ -402,6 +402,11 @@ summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
 .drafts .split .pill, .drafts .split li > small { margin: 0 6px; }
 .drafts .split select, .drafts .split input[type="checkbox"] { width: auto; }
 .drafts .split li > button, .drafts .split li > select { margin-left: 6px; }
+.drafts .parts { display: grid; gap: 6px; justify-items: start; }
+.drafts .parts:empty { display: none; }
+.drafts .parts .pill { margin: 0 6px 0 0; }
+.drafts .parts select, .drafts select.move, .drafts [data-merge] select { width: auto; }
+.drafts .parts li > select, .drafts .parts p > button { margin-left: 6px; }
 .drafts .ready { display: grid; gap: 6px; justify-items: start; }
 .drafts .ready:empty { display: none; }
 .drafts .ready ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }

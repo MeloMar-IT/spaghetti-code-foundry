@@ -141,6 +141,8 @@ export const api = {
   askImpact: (id, did) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/impact`, {}, true),
   askSplit: (id, did, own) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/split`, own ? { own } : {}, true),
   confirmSplit: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/split/confirm`, body, true),
+  moveCriterion: (id, did, cid, to) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/criteria/${enc(cid)}/move`, { to }, true),
+  mergeDrafts: (id, did, other) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/merge`, { with: other }, true),
   setReviewLabel: (id, did, add) => req("PUT", `/api/refinement/${enc(id)}/drafts/${enc(did)}/review-label`, { add: Boolean(add) }, true),
   moveToNotes: (id, did, body) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/move-to-notes`, body, true),
   rejectSuggestion: (id, did, xid, body = {}) => req("POST", `/api/refinement/${enc(id)}/drafts/${enc(did)}/suggestions/${enc(xid)}/reject`, body, true),
