@@ -7,6 +7,7 @@ import { addRepo, reposPath } from "../src/auth/repos.js";
 import { createUser, deleteUser, setStatus } from "../src/auth/users.js";
 import { ConfigSchema, WatcherSchema, saveConfig } from "../src/config.js";
 import { Scheduler } from "../src/queue/scheduler.js";
+import { createSessionFromIssue, getSession } from "../src/refinement/store.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { addRepoWatcher, removeWatchersOfRepos, repoWatchersPath } from "../src/repos/watchers.js";
 import { startServer } from "../src/server/server.js";
@@ -57,6 +58,23 @@ describe("a Watcher of a repository", () => {
     await none.w.tick();
     expect(none.scheduler.queue().pending).toEqual([]);
     expect(none.w.status.lastError).toMatch(/no owner/);
+  });
+
+  it("still picks up an issue that is in a refinement session", async () => {
+    await createUser({ name: "Admin", email: "admin@example.com", password: "test-password-12345", role: "admin" });
+    const ann = await createUser({ name: "Ann", email: "ann@example.com", password: "test-password-12345", role: "user" });
+    const made = createSessionFromIssue(
+      ann.id,
+      { repo: "acme/app", title: "four", idea: "four", source: { issue: 4, url: "https://github.com/acme/app/issues/4", title: "four", body: "", updatedAt: "2026-01-01T00:00:00.000Z", buildLabel: "claude-factory" } },
+      { ownerOk: () => true, repoName: (_o, n) => n },
+    );
+    issue();
+    const mine = start({ repoId: "r1", ownerId: ann.id });
+    await mine.w.tick();
+    expect(mine.scheduler.queue().pending).toHaveLength(1);
+    const after = getSession(made.id)!;
+    expect(after.state).not.toBe("dropped");
+    expect(after.source?.buildLabel).toBe("claude-factory");
   });
 
   it("starts nothing more after stop(true), also in the middle of a check", async () => {

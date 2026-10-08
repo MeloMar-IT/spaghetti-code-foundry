@@ -120,6 +120,7 @@ export const api = {
   renameRefinement: (id, body) => req("PUT", `/api/refinement/${enc(id)}`, body),
   dropRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/drop`, {}),
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),
+  removeBuildLabel: (id) => req("POST", `/api/refinement/${enc(id)}/source/remove-build-label`, {}),
   askArchitect: (id) => req("POST", `/api/refinement/${enc(id)}/architect`, {}),
   askRound: (id) => req("POST", `/api/refinement/${enc(id)}/round`, {}),
   askOwnQuestion: (id, question) => req("POST", `/api/refinement/${enc(id)}/ask`, { question }),

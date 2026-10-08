@@ -2,13 +2,13 @@ import type { IncomingMessage } from "node:http";
 import { findOwnedRepo } from "../auth/repos.js";
 import { githubKey, githubNameOf, validGithubName } from "../auth/repo-url.js";
 import type { WatcherConfig } from "../config.js";
-import { pullState, restIssue, type RestIssue } from "../github.js";
+import { pullState, restIssue, setLabels, type RestIssue } from "../github.js";
 import { labelNames } from "../queue/watcher.js";
 import { buildLabelOf } from "../refinement/build-limits.js";
 import { buildingReason, pullsToRead, type PullKind } from "../refinement/issue-building.js";
 import { cleanTitle, ideaOf, parseStory } from "../refinement/issue-import.js";
 import { issueUrl } from "../refinement/publish.js";
-import { IDEA_MAX, RefinementError, SESSION_TITLE_MAX, SOURCE_BODY_MAX, createSessionFromIssue, openSessionOfIssue, type Session } from "../refinement/store.js";
+import { IDEA_MAX, RefinementError, SESSION_TITLE_MAX, SOURCE_BODY_MAX, clearSourceBuildLabel, createSessionFromIssue, getSession, openSessionOfIssue, type Session } from "../refinement/store.js";
 import { HttpError } from "./http.js";
 import { sessionUser } from "./api-auth.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
@@ -154,4 +154,41 @@ export async function importIssue(ctx: ApiContext, req: IncomingMessage, body: R
       { beforeSave: () => void check(true) },
     );
   });
+}
+
+/**
+ * Removes the build label from the issue a session came from, with the repository's sign-in, and forgets it in the session. Owner only.
+ * Once the label is gone on GitHub it is forgotten in the session too, also when the session was dropped during the call.
+ */
+export async function removeBuildLabel(ctx: ApiContext, req: IncomingMessage, id: string): Promise<Session> {
+  const user = sessionUser(ctx, req);
+  const s = getSession(id);
+  if (!s || (s.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such refinement session");
+  if (s.owner !== user.id) throw new HttpError(403, "only the owner can remove the build label: it is removed with the owner's GitHub sign-in");
+  if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot change its issue; restore it first");
+  const stored = s.source?.buildLabel;
+  if (!s.source || stored === undefined) throw new RefinementError("bad-state", "there is no build label to remove");
+  const n = s.source.issue;
+  const timeout = ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS;
+  await asOwnedRepo(ctx, s.owner, s.repo, async () => {
+    let issue: RestIssue | undefined;
+    try {
+      issue = await restIssue(s.repo, n, timeout);
+    } catch (e) {
+      throw new HttpError(502, `could not read the issue on GitHub: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
+    }
+    // GitHub also answers "not found" when the sign-in cannot see a private repository: the label may still be there, so the warning stays.
+    if (!issue) throw new HttpError(502, `could not find issue #${n} on GitHub — check the repository's sign-in under My repositories and try again`);
+    const wanted = [stored, buildLabelOf(s.repo, ctx.config().watchers, s.owner)].flatMap((l) => (l === undefined ? [] : [l.toLowerCase()]));
+    // An issue that has lost the label already has nothing to remove.
+    const found = labelsOf(issue).filter((l) => wanted.includes(l.toLowerCase()));
+    if (!found.length) return;
+    try {
+      await setLabels(s.repo, n, undefined, found, timeout);
+    } catch (e) {
+      throw new HttpError(502, `GitHub did not remove the label: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
+    }
+  });
+  // The label is gone on GitHub now: forget it even when the session was dropped in the meantime.
+  return clearSourceBuildLabel({ id: user.id, admin: false }, id, {}, true);
 }

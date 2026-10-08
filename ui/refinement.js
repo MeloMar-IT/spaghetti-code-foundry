@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
+import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
 import { publishSection } from "./refinement-publish.js";
 import { impactLogText } from "./refinement-impact.js";
 import { splitLogText } from "./refinement-split.js";
@@ -50,7 +51,7 @@ export function logText(entry) {
   if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
   if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
   if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
-  return talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
+  return importLogText(entry) || talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
 }
 
 const ASK = "Ask the architect to look at the code";
@@ -409,6 +410,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
           h("span", { class: "spacer" }), buttons),
+        ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
         h("h2", {}, "Idea"),
@@ -444,6 +446,11 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const { repos } = listed;
   const sessions = listed.sessions.map(seen);
   const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
+  const opened = (made) => {
+    if (!made?.id) return;
+    if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);
+    else toast("Refinement session started");
+  };
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
@@ -463,12 +470,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
       h("span", { class: "muted" }, "Where a rough idea grows into a story"),
       h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
+      readOnly ? null : h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
       readOnly ? null : h("button", { class: "primary", onClick: async () => {
-        await newSessionDialog(repos, (made) => {
-          if (!made?.id) return;
-          if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);
-          else toast("Refinement session started");
-        });
+        await newSessionDialog(repos, opened);
       } }, "New session")),
     shown.length
       ? h("div", { class: "table-box" }, h("table", { class: "table" },

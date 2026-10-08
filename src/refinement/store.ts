@@ -48,7 +48,7 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
@@ -374,6 +374,20 @@ export function renameSession(actor: Actor, id: string, title: unknown, opts: St
     if (s.title === t) return undefined;
     room(s, LOG_LIMIT - 1);
     return { ...s, title: t, updated: at, log: [...s.log, { at, by: actor.id, what: "renamed", detail: t }] };
+  });
+}
+
+/**
+ * Forgets that the source issue has the build label, after it was removed on GitHub. Only the owner; refused for a dropped session
+ * (checked again here, under the lock) unless `removed` says the label is gone on GitHub already, so the session never keeps a wrong
+ * warning. The log line is skipped when the log has no room beyond what a run still needs.
+ */
+export function clearSourceBuildLabel(actor: Actor, id: string, opts: StoreOptions = {}, removed = false): Session {
+  return change(actor, id, opts, false, (s, at) => {
+    if (s.state === "dropped" && !removed) throw new RefinementError("bad-state", "a dropped session cannot change its issue; restore it first");
+    if (!s.source?.buildLabel) throw new RefinementError("bad-state", "there is no build label to remove");
+    const { buildLabel, ...source } = s.source;
+    return { ...s, source, updated: at, log: logged(s, at, "source-label-removed", buildLabel, reservedFor(s)) };
   });
 }
 

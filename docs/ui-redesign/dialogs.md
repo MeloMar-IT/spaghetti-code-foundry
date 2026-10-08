@@ -26,6 +26,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
 | `ui/monitor.js` | Mute a finding | Button on a finding | reason, duration | Mute | `modal` |
 | `ui/monitor.js` | Mute a detector | Button on a detector | detector (when picked here), reason, duration | Mute | `modal` |
+| `ui/refinement-import.js` | Refine an existing issue | Refine an existing issue on `#/refinement` | repository, issue number; with no repository it shows a link to `#/repos` | Refine issue | `modal` |
 | `ui/refinement-publish.js` | Publish to GitHub | Publish on the session page | per ready draft: labels, "Start building this story" | Create the issues | `modal` |
 | `ui/refinement-ready.js` | Accept anyway | Button on a failed ready check | reason (required) | Accept | `modal` |
 | `ui/refinement-suggest.js` | Edit and accept | Button on a suggestion | edited text | Accept | `modal` |

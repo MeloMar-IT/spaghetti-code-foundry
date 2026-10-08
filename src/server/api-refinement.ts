@@ -53,7 +53,7 @@ import {
   restoreSession,
 } from "../refinement/store.js";
 import { HttpError, readJson, readOptionalJson, send } from "./http.js";
-import { importIssue } from "./api-refinement-import.js";
+import { importIssue, removeBuildLabel } from "./api-refinement-import.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -312,6 +312,10 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 3 && seg[2] === "restore" && method === "POST") {
     return send(res, 200, guarded(ctx, () => view(ctx, settled(restoreSession(actor, seg[1]!).id), user))), true;
+  }
+  if (seg.length === 4 && seg[2] === "source" && seg[3] === "remove-build-label" && method === "POST") {
+    const s = await guardedAsync(ctx, () => removeBuildLabel(ctx, req, seg[1]!));
+    return send(res, 200, guarded(ctx, () => view(ctx, settled(s.id), user))), true;
   }
   /** Starts (or resumes) a run of the architect for the session and answers 202 with the session. */
   const startRun = (ask: ArchitectRequest) => {

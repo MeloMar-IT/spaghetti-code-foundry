@@ -202,6 +202,7 @@ const EXAMPLES: Record<string, Example> = {
   "PUT refinement/:id": { path: `refinement/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/drop": { path: `refinement/${UNKNOWN}/drop`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/restore": { path: `refinement/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
+  "POST refinement/:id/source/remove-build-label": { path: `refinement/${UNKNOWN}/source/remove-build-label`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/architect": { path: `refinement/${UNKNOWN}/architect`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/round": { path: `refinement/${UNKNOWN}/round`, body: {}, user: 404, admin: 404 },
   "POST refinement/:id/ask": { path: `refinement/${UNKNOWN}/ask`, body: {}, user: 404, admin: 404 },
@@ -294,6 +295,7 @@ describe("the table", () => {
     expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
     expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
+    expect(findRule("POST", ["refinement", "a", "source", "remove-build-label"])?.path).toBe("refinement/:id/source/remove-build-label");
     expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
     expect(findRule("POST", ["refinement", "a", "round"])?.path).toBe("refinement/:id/round");
     expect(findRule("POST", ["refinement", "a", "ask"])?.path).toBe("refinement/:id/ask");
