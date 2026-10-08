@@ -181,6 +181,11 @@ describe("ui server", () => {
     expect(html).toContain("<title>Spaghetti Code Foundry</title>");
     expect(html).toContain('<span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span>');
     expect(html).not.toContain("claude-factory");
+    expect(html).toContain('id="side"');
+    expect(html).toContain('id="top-actions"');
+    const shellCss = await fetch(base + "/shell.css");
+    expect(shellCss.status).toBe(200);
+    expect(shellCss.headers.get("content-type")).toContain("text/css");
     const css = await text("/style.css");
     expect(css).toContain(".brand-short { display: none; }");
     expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);

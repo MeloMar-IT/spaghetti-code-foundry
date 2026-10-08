@@ -5,32 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spaghetti Code Foundry</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/shell.css">
 </head>
 <body class="signed-out">
-  <header class="top">
+  <button type="button" id="skip" class="skip">Skip to content</button>
+  <header class="top" id="top">
+    <button type="button" id="menu-btn" class="menu-btn" aria-controls="side" aria-expanded="true" aria-label="Menu"><span aria-hidden="true">☰</span><span id="menu-count" class="badge" hidden></span></button>
     <a class="brand" href="#/home"><span class="logo">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
-    <nav aria-label="Pages">
+    <span id="page-title" class="page-title"></span>
+    <span class="spacer"></span>
+    <span id="top-actions" class="top-actions">
       <a href="#/start" data-nav="start">Start work</a>
+      <span id="ask-scf" class="ask-scf" hidden></span>
+      <button type="button" id="health-btn" class="health-chip" aria-controls="health" aria-expanded="false" hidden></button>
+    </span>
+    <details id="account" class="account">
+      <summary id="account-summary" aria-label="Account"><span id="account-name" class="account-name">Account</span></summary>
+      <span id="user" class="user" hidden></span>
+    </details>
+  </header>
+  <div id="scrim" class="scrim" hidden></div>
+  <div class="shell">
+    <nav id="side" class="side" aria-label="Pages">
+      <button type="button" id="side-close" class="side-close">Close menu</button>
+      <span class="side-head">Work</span>
       <a href="#/home" data-nav="home">Home<span id="turn-badge" class="badge" hidden></span></a>
       <a href="#/board" data-nav="board">Board</a>
       <a href="#/refinement" data-nav="refinement">Refinement</a>
       <a href="#/runs" data-nav="runs">Runs</a>
       <a href="#/repos" data-nav="repos">Repositories</a>
-      <span class="nav-gap" aria-hidden="true"></span>
+      <span class="side-head">Setup</span>
       <a href="#/flows" data-nav="flows" class="setup">Flows</a>
       <a href="#/users" data-nav="administration" class="setup">Administration</a>
+      <span class="repo" id="repo" title="Repository this UI works against"></span>
     </nav>
-    <span class="repo" id="repo" title="Repository this UI works against"></span>
-    <span id="user" class="user" hidden></span>
-  </header>
-  <nav id="subnav" class="subnav" aria-label="Section" hidden></nav>
-  <nav id="crumbs" class="crumbs" aria-label="Breadcrumb" hidden></nav>
-  <div id="health" class="health" hidden></div>
-  <div id="since" class="since" hidden></div>
-  <div class="layout">
-    <aside id="sidebar"></aside>
-    <main id="main"></main>
+    <div id="content" class="content">
+      <nav id="subnav" class="subnav" aria-label="Section" hidden></nav>
+      <nav id="crumbs" class="crumbs" aria-label="Breadcrumb" hidden></nav>
+      <div id="health" class="health" hidden></div>
+      <div id="since" class="since" hidden></div>
+      <div class="layout">
+        <aside id="sidebar"></aside>
+        <main id="main" tabindex="-1"></main>
+      </div>
+    </div>
   </div>
+  <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
   <div id="toast"></div>
   <script type="module" src="/app.js"></script>

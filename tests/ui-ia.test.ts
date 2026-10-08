@@ -142,3 +142,30 @@ describe("the data", () => {
     }
   });
 });
+
+describe("the grouped shell", () => {
+  it("GROUPS cover every group of the destinations", () => {
+    const ids = ia.GROUPS.map((g: any) => g.id);
+    for (const d of ia.DESTINATIONS) expect(ids, d.id).toContain(d.group);
+  });
+
+  it("the admin sidebar headings are the groups its destinations use, in order", () => {
+    const html = read("ui/index.html");
+    const heads = [...html.matchAll(/<span class="side-head">([^<]+)</g)].map((m) => m[1]);
+    const used = new Set(ia.primaryFor("admin").map((d: any) => d.group));
+    expect(heads).toEqual(ia.GROUPS.filter((g: any) => used.has(g.id)).map((g: any) => g.label));
+    expect(read("ui/user/index.html")).not.toContain("side-head");
+  });
+
+  it("every page link but Start work is in the sidebar; the top bar has only Start work", () => {
+    for (const file of ["ui/index.html", "ui/user/index.html"]) {
+      const html = read(file);
+      const top = html.slice(html.indexOf('<header class="top"'), html.indexOf("</header>"));
+      expect([...top.matchAll(/data-nav="([\w-]+)"/g)].map((m) => m[1]), file).toEqual(["start"]);
+      const from = html.indexOf('<nav id="side"');
+      const side = html.slice(from, html.indexOf("</nav>", from));
+      const all = [...html.matchAll(/data-nav="([\w-]+)"/g)].length;
+      expect([...side.matchAll(/data-nav="([\w-]+)"/g)].length + 1, file).toBe(all);
+    }
+  });
+});

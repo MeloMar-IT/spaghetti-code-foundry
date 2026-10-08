@@ -4,7 +4,7 @@ import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
 import { resolve } from "./ia.js";
-import { showPage } from "./shell.js";
+import { initShell, showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
@@ -443,6 +443,7 @@ document.addEventListener("keydown", (e) => {
 // A user never gets past this line: enterDisplay sends that account to /user/ and does not return.
 const me = await enterDisplay("admin");
 S.me = me.id;
+initShell("admin", { user: me });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 await startAdmin();
