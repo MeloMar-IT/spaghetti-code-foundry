@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import vm from "node:vm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 // docs/ui-redesign/prototype/ holds static pages (#248). This test reads them as text and keeps them in step with
 // the documents and the code. It does not check how the pages look, or the wiring in a real browser (see README.md).
@@ -159,7 +160,7 @@ describe("self-contained and private", () => {
 
 describe("tokens", () => {
   it("has every colour token of ui/style.css with the same value, both themes", () => {
-    const css = read("ui/style.css");
+    const css = readUiCss();
     const blocks = [...css.matchAll(/:root\s*\{([^}]*)\}/g)].map((m) => m[1]!).filter((b) => b.includes("--bg:"));
     expect(blocks.length).toBe(2);
     const proto = read(`${PROTO}/proto.css`);

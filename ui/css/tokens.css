@@ -1,0 +1,56 @@
+/* tokens.css — global custom properties for the light and dark themes.
+   Belongs here: colours, fonts, radius, the z-index scale and content widths.
+   Does not belong here: selectors other than the root element; any rule that styles an element. */
+
+:root {
+  --bg: #f6f6f4;
+  --panel: #ffffff;
+  --panel-2: #f0efec;
+  --border: #e2e0db;
+  --text: #1d1c1a;
+  --muted: #6d6a64;
+  --accent: #c2410c;
+  --accent-soft: #fdeee6;
+  --ok: #15803d;
+  --ok-soft: #e6f4ea;
+  --fail: #b91c1c;
+  --fail-soft: #fbeaea;
+  --run: #1d4ed8;
+  --run-soft: #e8eefc;
+  --claude: #c2410c;
+  --route: #7c3aed;
+  --shell: #4b5563;
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --z-sticky: 10;
+  --z-modal: 50;
+  --z-toast: 60;
+  --w-form: 640px;
+  --w-modal: 640px;
+  --w-modal-wide: 900px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141412;
+    --panel: #1c1c1a;
+    --panel-2: #242421;
+    --border: #33322e;
+    --text: #ecebe7;
+    --muted: #9b988f;
+    --accent: #f08a50;
+    --accent-soft: #3a2418;
+    --ok: #4ade80;
+    --ok-soft: #173222;
+    --fail: #f87171;
+    --fail-soft: #3a1c1c;
+    --run: #7aa2ff;
+    --run-soft: #1c2640;
+    --claude: #f08a50;
+    --route: #a78bfa;
+    --shell: #a3a3a3;
+    color-scheme: dark;
+  }
+}

@@ -1,0 +1,100 @@
+/* components.css — controls and boxes used on more than one page.
+   Belongs here: buttons, inputs, fields, pills, cards, tables, modal, toast, tabs, chips, spinner, focus rules, and every variant of them, even a variant that only one page uses; shared helpers such as the toolbar and status line.
+   Does not belong here: rules for a class that only one page area uses; layout of a page. */
+
+@media (prefers-color-scheme: dark) {
+  /* Never applies today: the light rule below has the same weight and comes later. Kept in this order on purpose (#337). */
+  .pill.who-a-time-limit { background: #3b2f12; color: #fbbf24; }
+}
+
+/* ── controls ── */
+button, .btn { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+button:hover { background: var(--panel-2); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
+button.primary:hover { filter: brightness(1.06); background: var(--accent); }
+button.danger { color: var(--fail); }
+button.ghost { border-color: transparent; background: transparent; }
+button.icon { border: none; background: transparent; padding: 4px 7px; color: var(--muted); }
+button.icon:hover { color: var(--text); background: var(--panel-2); }
+button.small { padding: 3px 9px; font-size: 12.5px; }
+
+input, select, textarea { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px; width: 100%; min-width: 0; }
+textarea { resize: vertical; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.field { display: grid; gap: 4px; }
+.field > span { font-size: 12px; color: var(--muted); font-weight: 500; }
+.field > small { color: var(--muted); font-size: 11.5px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 1px 8px; border-radius: 99px; background: var(--panel-2); color: var(--muted); font-weight: 550; white-space: nowrap; }
+.pill.claude { background: var(--accent-soft); color: var(--claude); }
+.pill.ok, .pill.kind-done, .pill.state-active { background: var(--ok-soft); color: var(--ok); }
+.pill.fail, .pill.state-error, .pill.first { background: var(--fail-soft); color: var(--fail); }
+.pill.locked { background: #fef3c7; color: #92400e; }
+.pill.kind-running { background: var(--run-soft); color: var(--run); }
+.pill.who-a-time-limit { background: #fef3c7; color: #92400e; }
+a.pill.refinement { background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+a.pill.refinement:hover { text-decoration: underline; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.toolbar h1 { margin-right: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: none; border-radius: 0; padding: 5px 12px; }
+.seg button.on { background: var(--panel-2); font-weight: 600; }
+.status { font-size: 12.5px; }
+.status.ok { color: var(--ok); }
+.status.bad { color: var(--fail); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; display: grid; gap: 10px; }
+.card.jump-only { border-style: dashed; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 5px; border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer; }
+.chip:hover { color: var(--accent); border-color: var(--accent); }
+.errors { background: var(--fail-soft); color: var(--fail); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; font-family: var(--mono); font-size: 12px; margin-bottom: 14px; }
+.small-select { width: auto; font-size: 12.5px; padding: 3px 6px; }
+.checks { display: grid; gap: 4px; }
+.pill.approval { background: #ede9fe; color: #6d28d9; }
+.pill.parallel, .pill.flow { background: var(--run-soft); color: var(--run); }
+.table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table th, .table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { font-size: 12px; color: var(--muted); font-weight: 550; background: var(--panel-2); }
+.table tr.link { cursor: pointer; }
+.table tr.link:hover td { background: var(--panel-2); }
+.table .task { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+button.block-card:not(:disabled):hover { border-color: var(--accent); background: var(--panel); }
+.modal:has(.block-grid) { width: min(var(--w-modal-wide), 100%); }
+.tabs button.on { background: var(--panel-2); font-weight: 600; }
+.table.compact th, .table.compact td { padding: 6px 10px; font-size: 13px; }
+.backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .4); display: grid; place-items: center; z-index: var(--z-modal); padding: 16px; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; width: min(var(--w-modal), 100%); max-height: 90vh; overflow: auto; padding: 18px; display: grid; gap: 14px; box-shadow: 0 20px 60px rgb(0 0 0 / .25); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+#toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 9px; opacity: 0; transition: .2s; pointer-events: none; z-index: var(--z-toast); max-width: 90vw; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.error { background: var(--fail); color: #fff; }
+.card.next-step { margin-bottom: 12px; }
+.card.next-step.who-you { border-color: #7c3aed; background: color-mix(in srgb, #7c3aed 6%, var(--panel)); }
+.card.next-step.who-something-is-wrong { border-color: var(--fail); }
+.pill.who-you { background: #ede9fe; color: #6d28d9; }
+.pill.who-something-is-wrong { background: var(--fail-soft); color: var(--fail); }
+.table .task div { overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11.5px; font-weight: 600; line-height: 18px; text-align: center; }
+.badge[hidden] { display: none; }
+a.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
+a.btn.primary:hover { filter: brightness(1.06); }
+.card.failure { border-color: var(--fail); }
+.card.failure ul.options { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.card.failure details.raw summary { cursor: pointer; color: var(--muted); }
+
+/* ── keyboard focus ── */
+a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+summary:focus-visible, .seg button:focus-visible { outline-offset: -2px; }
+.modal:focus-visible { outline: none; }
+
+/* ── a wide table scrolls in its own box ── */
+.table-box { overflow-x: auto; }
+.table tr.link td > a { text-decoration: none; }
+.modal ol.plan li { margin-bottom: 12px; }
+.modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
+.pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }

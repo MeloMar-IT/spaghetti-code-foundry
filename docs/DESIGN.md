@@ -486,6 +486,48 @@ Plain JavaScript modules, no build step, no framework. One page per concern:
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 
+### UI styles
+
+`ui/style.css` is only a list of `@import url("/css/…")` lines. The rules live in small modules under `ui/css/`. There is no build step: the browser follows the imports. `/css/…` is served like `/style.css` (static, no sign-in, `text/css`), and the CSP allows same-origin `@import`. `ui/index.html` and `ui/user/index.html` still link only `/style.css`.
+
+**Modules and who owns what.** Every module starts with a comment that says what belongs in it and what does not.
+
+| File | Owns |
+|---|---|
+| `tokens.css` | The light and dark custom properties, the z-index scale and the content widths. No other selectors. |
+| `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
+| `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
+| `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
+| `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+
+**Where a new rule goes.**
+1. A custom property: `tokens.css`.
+2. A bare element: `reset.css`.
+3. A control or box used on more than one page, or a variant of one: `components.css`.
+4. A one-purpose helper: `utilities.css`.
+5. Anything else: the page file of the area that uses it. A page file does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page.
+
+Use a token, not a number, for z-index and for the widths below. Keep rules that override each other in the same module and in the same order.
+
+**Import order, and why.** Tokens, reset, layout, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. Two dark-mode rules (`.pill.who-a-time-limit` and `.slow-note`) come before their light rules and so never apply. This is kept on purpose, with a comment, so nothing changes on screen.
+
+**z-index scale** (in `tokens.css`; a test fails on a `z-index` that is not a token):
+
+| Token | Value | Used by |
+|---|---|---|
+| `--z-sticky` | 10 | `.top` |
+| `--z-modal` | 50 | `.backdrop`, and so every `.modal` |
+| `--z-toast` | 60 | `#toast` |
+
+**Content widths** (in `tokens.css`): `--w-form` 640px (`.start-form`), `--w-modal` 640px and `--w-modal-wide` 900px (`.modal`, and `.modal:has(.block-grid)`). The same tokens are in `docs/ui-redesign/prototype/proto.css`, because a test compares the two.
+
+**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--z-sticky`; static in the user display on narrow screens) and `.graph-pane` in the editor (sticks 72px from the top, under the top bar).
+
+**Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. There is no drawer today. If one is added, give it a token in the z-index scale and describe it here.
+
+**Tests.** `readUiCss()` in `tests/helpers/ui-css.ts` follows the imports and returns the whole stylesheet, for tests that read CSS. It fails on an import that does not resolve and on a `.css` file under `ui/css/` that is not imported. `tests/ui-css.test.ts` checks the import order, that the rule set equals the frozen `tests/fixtures/ui-style-baseline.css`, the tokens, the z-index rule, the module comments, and that no page file starts a rule with a shared component class.
+
 ---
 
 ## 16. Tests

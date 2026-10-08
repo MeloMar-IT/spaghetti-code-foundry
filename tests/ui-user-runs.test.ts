@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -770,7 +771,7 @@ describe("renderMyRun", () => {
 });
 
 describe("ui/style.css", () => {
-  const css = readFileSync("ui/style.css", "utf8");
+  const css = readUiCss();
   const rule = (sel: string) => css.split("\n").find((l) => l.startsWith(`${sel} {`)) ?? "";
   it("lets the answer form shrink and its text wrap", () => {
     expect(rule(".run-answer")).not.toMatch(/(^|[^-])width:/);

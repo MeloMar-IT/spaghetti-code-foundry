@@ -1,0 +1,8 @@
+/* utilities.css — one-purpose helper classes.
+   Belongs here: grid, row, spacer and muted helpers.
+   Does not belong here: anything with more than one job; component variants. */
+
+.grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }

@@ -1,0 +1,49 @@
+/* pages/refinement.css — refinement sessions.
+   Belongs here: talk, drafts and publish.
+   Does not belong here: modal and pill variants (components.css). */
+
+/* The talk of a refinement session (ui/refinement-talk.js) */
+.talk { display: grid; gap: 10px; margin: 14px 0; min-width: 0; }
+.talk > *, .talk .card > *, .talk li { min-width: 0; }
+.talk p { margin: 0; }
+.talk p, .talk li, .talk h3, .talk b, .talk label { overflow-wrap: anywhere; }
+.talk .said { white-space: pre-wrap; }
+.talk ul, .talk ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.talk .entry > button { margin-left: 6px; }
+.talk .open-line { font-weight: 550; }
+.talk textarea { font-family: var(--sans); font-size: inherit; }
+
+/* The story drafts of a refinement session (ui/refinement-draft.js) */
+.drafts, .drafts > div { display: grid; gap: 10px; min-width: 0; }
+.drafts > div:empty { display: none; }
+.drafts { margin: 14px 0; }
+.drafts .card > *, .drafts li { min-width: 0; }
+.drafts p, .drafts h4 { margin: 0; }
+.drafts h4 { font-size: 13px; }
+.drafts p, .drafts li, .drafts b, .drafts label, .drafts pre { overflow-wrap: anywhere; }
+.drafts .said, .drafts pre { white-space: pre-wrap; }
+.drafts ul { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.drafts textarea { font-family: var(--sans); font-size: inherit; }
+.drafts .suggest { display: grid; gap: 6px; justify-items: start; }
+.drafts .suggest:empty { display: none; }
+.drafts .suggest .entry > button, .drafts .entry > small { margin-left: 6px; }
+.drafts .remarks, .drafts .review { display: grid; gap: 4px; justify-items: start; }
+.drafts .remarks:empty, .drafts .review:empty { display: none; }
+.drafts .impact { display: grid; gap: 6px; justify-items: start; }
+.drafts .impact:empty { display: none; }
+.drafts .impact .pill, .drafts .impact li > small { margin: 0 6px; }
+.drafts .ready { display: grid; gap: 6px; justify-items: start; }
+.drafts .ready:empty { display: none; }
+.drafts .ready ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.drafts .ready .pill, .drafts .ready li > small { margin: 0 6px; }
+.drafts .ready li > button { margin-left: 6px; }
+.publish { display: grid; gap: 8px; justify-items: start; margin-top: 16px; }
+.drafts .remark { font-size: 12.5px; color: var(--muted); }
+.drafts .remark > small { margin-left: 6px; }
+.drafts li.entry { flex-wrap: wrap; }
+.drafts .entry > .remarks { flex: 1 0 100%; }
+.drafts .entry { display: flex; gap: 6px; align-items: flex-start; }
+.drafts .entry > textarea { flex: 1; }
+.drafts .row input, .drafts .row select { width: auto; flex: 1 1 160px; }
+.drafts .checks { list-style: none; padding-left: 0; }
+.drafts .checks input { width: auto; margin-right: 6px; }

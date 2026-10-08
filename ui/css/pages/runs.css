@@ -1,0 +1,52 @@
+/* pages/runs.css — runs list, run page and user run cards.
+   Belongs here: timeline, transcript, diff, log, run cards.
+   Does not belong here: table rules (components.css). */
+
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.timeline { display: grid; gap: 6px; }
+.tl { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.tl summary { display: flex; gap: 10px; align-items: center; padding: 8px 12px; color: var(--text); font-size: 13.5px; }
+.tl pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.log { background: #111110; color: #d9d7d0; border-radius: var(--radius); padding: 12px 14px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.log .ok { color: #4ade80; }
+.log .fail { color: #f87171; }
+.log .step { color: #f0a070; font-weight: 600; }
+.log .dim { color: #8b887f; }
+.transcript { display: grid; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.tx-text { white-space: pre-wrap; font-size: 13.5px; }
+.tx-tool { border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.tx-tool > summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; }
+.tx-tool.bad { border-color: var(--fail); }
+.tx-arg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); flex: 1; min-width: 0; }
+.tl, .tx-tool { min-width: 0; overflow: hidden; }
+.tl summary > * { flex-shrink: 0; }
+.tl summary .status { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--border); max-height: 300px; overflow: auto; white-space: pre-wrap; }
+.tx-result { border-left: 3px solid var(--ok); padding: 6px 10px; white-space: pre-wrap; }
+.tx-result.bad { border-color: var(--fail); }
+pre.diff { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; overflow: auto; max-height: 75vh; font-size: 12px; line-height: 1.45; margin: 0; }
+pre.diff .add { color: var(--ok); background: var(--ok-soft); display: block; }
+pre.diff .del { color: var(--fail); background: var(--fail-soft); display: block; }
+pre.diff .hunk { color: var(--run); display: block; }
+pre.diff .file { font-weight: 700; display: block; }
+.diffstat { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; overflow: auto; }
+.meta dd .muted { font-family: var(--sans); word-break: normal; }
+
+/* My runs and the run page of a user (ui/user/runs.js) */
+.run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.run-card { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.run-card.who-you { border-color: #7c3aed; }
+.run-card .run-link { overflow-wrap: anywhere; }
+.run-card .run-next { margin: 0; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.run-now h2 { margin: 0 0 8px; font-size: 15px; }
+.run-dialog { display: grid; gap: 12px; }
+.run-answer { display: grid; gap: 12px; margin-bottom: 16px; min-width: 0; }
+.run-answer[hidden] { display: none; }
+.run-answers { margin-bottom: 16px; min-width: 0; }
+.run-answers h2 { margin: 0 0 8px; font-size: 15px; }
+.run-answers ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.run-answers li { white-space: pre-wrap; overflow-wrap: anywhere; }
+.user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }

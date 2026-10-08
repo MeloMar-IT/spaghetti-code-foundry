@@ -22,6 +22,12 @@ html[data-theme="light"] {
   --radius: 10px;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --z-sticky: 10;
+  --z-modal: 50;
+  --z-toast: 60;
+  --w-form: 640px;
+  --w-modal: 640px;
+  --w-modal-wide: 900px;
   color-scheme: light;
 }
 
