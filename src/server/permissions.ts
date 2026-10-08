@@ -119,6 +119,7 @@ export const RULES: Rule[] = [
   r("PUT", "refinement/:id", "yes", "rename your refinement session"),
   r("POST", "refinement/:id/drop", "yes", "drop your refinement session (an admin: any session); it is removed after 30 days, and its architect run is cancelled"),
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
+  r("POST", "refinement/:id/source/remove-build-label", "yes", "remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403)"),
   r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
   r("POST", "refinement/:id/round", "yes", "ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time)"),
   r("POST", "refinement/:id/ask", "yes", "ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time)"),
