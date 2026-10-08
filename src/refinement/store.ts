@@ -8,12 +8,12 @@ import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } fro
 import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
-import { confirmSplit, moveCriterion } from "./draft-parts.js";
+import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
 import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
-import { DRAFT_LOG_KINDS, DraftsSchema, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
+import { DRAFT_LOG_KINDS, DraftsSchema, MERGE_DETAIL_MAX, type Draft, EpicSchema, SUGGEST_FIELDS, acceptSuggestion, addSuggested, changeEpic, dropDraft, newDraft, rejectSuggestion, saveTyped, tiesOk, untie, type DraftChange, type DraftState, type SuggestField, type SuggestRefs } from "./draft.js";
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
@@ -48,7 +48,7 @@ const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
   .superRefine((l, ctx) => {
-    if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > TITLE_MAX) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
+    if (!isTalkKind(l.what) && l.detail !== undefined && chars(l.detail) > (l.what === "drafts-merged" ? MERGE_DETAIL_MAX : TITLE_MAX)) ctx.addIssue({ code: "custom", message: "too long", path: ["detail"] });
   });
 
 const RUN_ID = z.string().regex(/^[\w-]+$/).max(100);
@@ -654,7 +654,7 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     const held = s.drafts.find((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d));
     if (held) throw new RefinementError("bad-state", `${onGithub(held)} would change by this; it cannot be done here`);
     const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
-    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, TITLE_MAX) } : {}) }] : [];
+    const line = c.line ? [{ at, by: actor.id, what: c.line.what, ...(c.line.detail !== undefined ? { detail: cut(c.line.detail, c.line.what === "drafts-merged" ? MERGE_DETAIL_MAX : TITLE_MAX) } : {}) }] : [];
     return { ...rest, ...(c.epic !== undefined ? { epic: c.epic } : {}), drafts, state, updated: at, log: [...s.log, ...line] };
   });
 }
@@ -664,7 +664,8 @@ export const saveDraft = (actor: Actor, id: string, draftId: string, input: unkn
 export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
 export const confirmSplitOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => confirmSplit(st, draftId, input), { draft: draftId });
 export const moveCriterionOf = (actor: Actor, id: string, draftId: string, criterionId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveCriterion(st, draftId, criterionId, input), { draft: draftId });
-export const acceptSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
+export const mergeDraftsOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => mergeDrafts(st, draftId, input), { draft: draftId });
+export const acceptSuggestionOf =(actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
   changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), acceptSuggestion(st, draftId, sid, input)), { draft: draftId });
 export const rejectSuggestionOf = (actor: Actor, id: string, draftId: string, sid: string, input: unknown, opts: TalkOptions = {}): Session =>
   changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), rejectSuggestion(st, draftId, sid, input)), { draft: draftId });

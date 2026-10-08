@@ -1,9 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { CRITERIA_MAX, DRAFT_LIMIT, DRAFT_TITLE_MAX, bad, checkText, isObject, oneLine, type Draft, type DraftChange, type DraftState, type Source } from "./draft.js";
+import {
+  CRITERIA_MAX,
+  DEPENDS_MAX,
+  DRAFT_LIMIT,
+  DRAFT_TITLE_MAX,
+  LONG_TEXT_MAX,
+  MERGE_DETAIL_MAX,
+  REJECTED_MAX,
+  bad,
+  checkText,
+  dropDraft,
+  isObject,
+  oneLine,
+  type Draft,
+  type DraftChange,
+  type DraftState,
+  type Field,
+  type Source,
+} from "./draft.js";
 import { IMPACT_OVERLAP_AREAS_MAX, areaOverlaps } from "./draft-impact.js";
-import { SPLIT_MAX, SPLIT_TEXT_MAX, confirmRefusal } from "./draft-split.js";
+import { SPLIT_MAX, SPLIT_TEXT_MAX, confirmRefusal, refuseSplit } from "./draft-split.js";
 import { RefinementError } from "./errors.js";
-import { cut } from "./talk.js";
+import { chars, cut } from "./talk.js";
 
 // This file may import values from draft.ts, draft-split.ts and draft-impact.ts (both take only types from draft.ts).
 
@@ -119,6 +137,111 @@ export function moveCriterion(st: DraftState, draftId: string, criterionId: stri
     drafts: st.drafts.map((x) => (x === d ? { ...d, criteria: d.criteria.filter((y) => y !== c) } : x === t ? { ...t, criteria: [...t.criteria, c] } : x)),
     line: { what: "criterion-moved", detail: oneLine(c.text) },
   };
+}
+
+/** A title in the log line of a merge: on one line, cut to this many characters. */
+export const MERGE_NAME_MAX = 20;
+
+/** The text of two drafts together: one text when only one is there or both are equal, else both with an empty line between. */
+function joined(x: Field | undefined, y: Field | undefined, label: string): Field | undefined {
+  if (!x || !y || x.text === y.text) return x ?? y;
+  const text = `${x.text}\n\n${y.text}`;
+  if (chars(text) > LONG_TEXT_MAX) throw bad(`the ${label} of the two drafts together can have at most ${LONG_TEXT_MAX} characters`);
+  return { text, from: x.from === "typed" && y.from === "typed" ? "typed" : "accepted-edited" };
+}
+
+/**
+ * Merges draft `input.with` into the draft `draftId` and removes it. The first keeps its fields (an empty one is taken from the second);
+ * criteria, depends-on and rejected suggestions of the second follow; texts are joined; checks and waiting suggestions are cleared.
+ * Others that depended on the second now depend on the first. Links that would make a part depend on a later part (or on its original)
+ * are removed and named in the log line. No architect run.
+ */
+export function mergeDrafts(st: DraftState, draftId: string, input: unknown): DraftChange {
+  const a = st.drafts.find((x) => x.id === draftId);
+  if (!a) throw new RefinementError("not-found", "no such story draft");
+  if (!isObject(input) || typeof input.with !== "string") throw bad("send with: the draft to merge into this one");
+  if (input.with === draftId) throw bad("a draft cannot be merged with itself");
+  const b = st.drafts.find((x) => x.id === input.with);
+  if (!b) throw new RefinementError("not-found", "no such story draft to merge with");
+  refuseSplit(st, a.id);
+  refuseSplit(st, b.id);
+  if (b.published) throw new RefinementError("bad-state", `a story draft that is on GitHub as issue #${b.published.issue}; it cannot be changed here`);
+
+  if (a.criteria.length + b.criteria.length > CRITERIA_MAX) throw new RefinementError("limit", `at most ${CRITERIA_MAX} acceptance criteria`);
+  const seen = new Set(a.criteria.map((c) => c.id));
+  const criteria = [...a.criteria, ...b.criteria.map((c) => (seen.has(c.id) ? { ...c, id: randomUUID() } : c))];
+
+  const outOfScope = joined(a.outOfScope, b.outOfScope, "out of scope text");
+  const notes = joined(a.notes, b.notes, "notes for the builder");
+
+  const ownIds = new Set(a.dependsOn.map((x) => x.id));
+  const keys = new Set<string>();
+  const key = (x: { issue?: number; draft?: string }) => (x.issue !== undefined ? `i${x.issue}` : `d${x.draft}`);
+  const dependsOn: Draft["dependsOn"] = [];
+  for (const x of a.dependsOn) {
+    if (x.draft === b.id) continue;
+    keys.add(key(x));
+    dependsOn.push(x);
+  }
+  for (const x of b.dependsOn) {
+    if (x.draft === a.id || keys.has(key(x))) continue;
+    keys.add(key(x));
+    dependsOn.push(ownIds.has(x.id) ? { ...x, id: randomUUID() } : x);
+  }
+
+  const rejected = [...(a.rejected ?? []), ...(b.rejected ?? [])].slice(-REJECTED_MAX);
+  const { suggestions: _s, review: _r, impact: _i, split: _p, readiness: _y, rejected: _j, title: _t, who: _w, what: _h, why: _z, outOfScope: _o, notes: _n, ...rest } = a;
+  const pick = (k: "title" | "who" | "what" | "why") => (a[k] ?? b[k] ? { [k]: a[k] ?? b[k] } : {});
+  const merged: Draft = {
+    ...rest,
+    ...pick("title"),
+    ...pick("who"),
+    ...pick("what"),
+    ...pick("why"),
+    criteria,
+    ...(outOfScope ? { outOfScope } : {}),
+    dependsOn,
+    ...(notes ? { notes } : {}),
+    ...(rejected.length ? { rejected } : {}),
+    ...(a.addReviewLabel || b.addReviewLabel ? { addReviewLabel: true as const } : {}),
+  };
+
+  // Others that depended on the second now depend on the first, never twice.
+  const repointed = st.drafts.map((x) => {
+    if (x === a) return merged;
+    if (x === b || !x.dependsOn.some((y) => y.draft === b.id)) return x;
+    const both = x.dependsOn.some((y) => y.draft === a.id);
+    return { ...x, dependsOn: both ? x.dependsOn.filter((y) => y.draft !== b.id) : x.dependsOn.map((y) => (y.draft === b.id ? { ...y, draft: a.id } : y)) };
+  });
+  const dropped = dropDraft({ ...st, drafts: repointed }, b.id).drafts;
+
+  // No part depends on a later part of its split or on its original.
+  const title = (d: Draft | undefined) => cut(oneLine(d?.title?.text ?? ""), MERGE_NAME_MAX) || "(no title)";
+  const removed: string[] = [];
+  const drafts = dropped.map((d) => {
+    if (!d.part) return d;
+    const order = dropped.find((x) => x.id === d.part!.of)?.splitInto ?? [];
+    const me = order.indexOf(d.id);
+    const wrong = (x: { draft?: string }) => x.draft !== undefined && (x.draft === d.part!.of || order.indexOf(x.draft) > me);
+    if (!d.dependsOn.some(wrong)) return d;
+    for (const x of d.dependsOn.filter(wrong)) removed.push(`"${title(d)}" → "${title(dropped.find((y) => y.id === x.draft))}"`);
+    return { ...d, dependsOn: d.dependsOn.filter((x) => !wrong(x)) };
+  });
+
+  if (drafts.find((x) => x.id === a.id)!.dependsOn.length > DEPENDS_MAX) throw new RefinementError("limit", `at most ${DEPENDS_MAX} depends-on items`);
+  let detail = `"${title(a)}" + "${title(b)}"`;
+  if (removed.length) {
+    // Every removed link is named; only when they cannot all fit, the rest is counted.
+    const all = `${detail}; removed ${removed.join(", ")}`;
+    if (chars(all) <= MERGE_DETAIL_MAX) detail = all;
+    else {
+      let n = removed.length;
+      const shown = () => `${detail}; removed ${removed.slice(0, n).join(", ")} and ${removed.length - n} more`;
+      while (n > 0 && chars(shown()) > MERGE_DETAIL_MAX) n--;
+      detail = shown();
+    }
+  }
+  return { ...st, drafts, line: { what: "drafts-merged", detail } };
 }
 
 export type PartWarning =
