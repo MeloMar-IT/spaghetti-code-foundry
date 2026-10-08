@@ -9,17 +9,11 @@ export interface DepIssue {
 
 const HEADER = /^[ \t]*(?:#{1,6}[ \t]*|\*\*)?(?:depends[ \t]+on|blocked[ \t]+by)\b[*:\s]*(.*)$/im;
 
-/** The text of the "Depends on" line or section (up to the next heading), or "". */
+/** The text of the "Depends on" line or section (up to the next heading), or "". Exactly the piece of the body that dependencyRange names. */
 export function dependencyText(body: string): string {
-  const m = HEADER.exec(body ?? "");
-  if (!m) return "";
-  const rest = body.slice(m.index + m[0].length).split("\n");
-  const lines = [m[1] ?? ""];
-  for (const line of rest.slice(1)) {
-    if (/^\s*#{1,6}\s/.test(line) || /^\s*\*\*[^*]+\*\*\s*$/.test(line)) break;
-    lines.push(line);
-  }
-  return lines.join("\n").trim().slice(0, 1000);
+  const text = body ?? "";
+  const r = dependencyRange(text);
+  return r ? text.slice(r.start, r.end) : "";
 }
 
 /** The source of the pattern for a "#12" reference: not part of a longer word or "owner/repo#12". */
@@ -40,8 +34,8 @@ export function dependencyRange(body: string): { start: number; end: number } | 
   }
   const raw = text.slice(first, pos);
   const start = first + (raw.length - raw.trimStart().length);
-  const end = Math.max(start, Math.min(first + raw.trimEnd().length, start + 1000));
-  return { start, end };
+  const full = first + raw.trimEnd().length;
+  return { start, end: Math.max(start, Math.min(full, start + 1000)) };
 }
 
 const norm =(s: string) =>

@@ -1,6 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { dependantComment, findDependants, originalComment, rangeHash, replaceMarker, rewriteDependsOn } from "../src/refinement/dependants.js";
 
+describe("Windows line ends", () => {
+  const body = "Intro #12\r\n### Depends on\r\n#12\r\n- #13 and #12\r\n\r\n### Notes\r\n#12";
+  it("rewriteDependsOn keeps every line end", () => {
+    const r = rewriteDependsOn(body, 12, [31, 32])!;
+    expect(r.before).toBe("#12\r\n- #13 and #12");
+    expect(r.after).toBe("#31, #32\r\n- #13 and #31, #32");
+    expect(r.body).toBe("Intro #12\r\n### Depends on\r\n" + r.after + "\r\n\r\n### Notes\r\n#12");
+  });
+  it("rangeHash is over the exact text", () => {
+    const h = rangeHash(body)!;
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+    expect(rangeHash(body.replace("Intro", "Other").replace("Notes\r\n#12", "Notes\r\nx"))).toBe(h);
+    expect(rangeHash(body.replace(/\r\n/g, "\n"))).not.toBe(h);
+  });
+  it("findDependants gives the CRLF before and after", () => {
+    const open = [{ number: 5, title: "Five", body: "### Depends on\r\n#12\r\n- #6\r\n" }];
+    expect(findDependants(open, { number: 12, title: "Twelve" }, [31, 32])).toEqual([
+      { issue: 5, title: "Five", byHand: false, before: "#12\r\n- #6", after: "#31, #32\r\n- #6" },
+    ]);
+  });
+});
+
 describe("rewriteDependsOn", () => {
   it("replaces references inside the range only", () => {
     const body = "Intro #12\n### Depends on\n#12, #123, owner/repo#12 and #12\n### Notes\n#12";

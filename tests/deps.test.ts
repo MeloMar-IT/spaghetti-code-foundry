@@ -55,6 +55,11 @@ describe("dependencyRange", () => {
     "x\n### Depends on\n#12\n- #13\n\n### Notes\nabc",
     "a\n**Depends on:** #5 and #6\n**Notes**\nz",
     "### Depends on\n\nNone\n",
+    "Depends on: #3, #4\r\nmore\r\n\r\n## Notes\r\nx",
+    "x\r\n### Depends on\r\n#12\r\n- #13\r\n\r\n### Notes\r\nabc",
+    "a\r\n**Depends on:** #5 and #6\r\n**Notes**\r\nz",
+    "### Depends on\r\n\r\nNone\r\n",
+    "### Depends on\r\n#1\r\n#2\r\n#3\r\n",
   ];
   it.each(forms)("matches dependencyText for %j", (body) => {
     const r = dependencyRange(body)!;
@@ -72,6 +77,30 @@ describe("dependencyRange", () => {
     const lr = dependencyRange(long)!;
     expect(lr.end - lr.start).toBe(1000);
     expect(long.slice(lr.start, lr.end)).toBe(dependencyText(long));
+  });
+  it("keeps the line ends of a CRLF body", () => {
+    expect(dependencyText("### Depends on\r\n#12\r\n- #13")).toBe("#12\r\n- #13");
+    expect(dependencyText("Depends on: #3, #4\r\nmore\r\n\r\n## Notes\r\nx")).toBe("#3, #4\r\nmore");
+    expect(dependencyText("### Depends on\r\n\r\nNone\r\n")).toBe("None");
+    expect(dependencyText("Depends on:\r\n")).toBe("");
+    const e = dependencyRange("Depends on:\r\n")!;
+    expect(e.start).toBe(e.end);
+    expect(dependencyText("nothing\r\nhere")).toBe("");
+    expect(dependencyRange("nothing\r\nhere")).toBeUndefined();
+  });
+  it("finds the same dependencies with CRLF", () => {
+    expect(dependencies("### Depends on\r\nStory 6 — Prepare for installation\r\n- #2\r\n\r\n### Notes\r\n#7", 12, all)).toEqual([2, 6]);
+    expect(dependencies("### Depends on\r\nNone\r\n", 5, all)).toEqual([]);
+  });
+  it("never makes the range longer than 1000 characters, with CRLF too", () => {
+    const long = `### Depends on\r\n${"#1 ".repeat(800)}\r\n`;
+    const lr = dependencyRange(long)!;
+    expect(lr.end - lr.start).toBe(1000);
+    expect(long.slice(lr.start, lr.end)).toBe(dependencyText(long));
+    const multi = `### Depends on\r\n${"a\r\n".repeat(500)}`;
+    const mr = dependencyRange(multi)!;
+    expect(mr.end - mr.start).toBeLessThanOrEqual(1000);
+    expect(multi.slice(mr.start, mr.end)).toBe(dependencyText(multi));
   });
   it("DEP_REF_SOURCE matches a plain reference only", () => {
     const re = () => new RegExp(DEP_REF_SOURCE, "g");
