@@ -1,9 +1,9 @@
 import "../setup.js"; // must stay the first import: temporary FACTORY_HOME, cleaned environment
-import { startSeeded } from "./seed.js";
+import { largeFromEnv, startSeeded } from "./seed.js";
 
 // The browser tests start this as a child process: it prints one line with the seed and runs until it is told to stop.
 try {
-  const seeded = await startSeeded();
+  const seeded = await startSeeded({ large: largeFromEnv(process.env) });
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
