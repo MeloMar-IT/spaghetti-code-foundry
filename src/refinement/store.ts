@@ -11,6 +11,7 @@ import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from 
 import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
 import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
+import { CLOSED, ReplacedBySchema, ReplacingSchema, withDone, withJournal, withReplaced, withWrite, type Closed, type Found, type WriteEvidence } from "./replace-journal.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { draftFromStory, type StoryFields } from "./issue-import.js";
@@ -18,6 +19,7 @@ import { DRAFT_LOG_KINDS, DraftsSchema, ISSUE_URL, MERGE_DETAIL_MAX, type Draft,
 import { ASK_MAX, DETAIL_MAX, LISTS, ROUND_LOG_LINES, TALK_LOG_KINDS, TalkSchema, accept, addAsked, addRound, answer, changeText, chars, cut, emptyTalk, isTalkKind, reject, remove, type RoundInput, type Talk, type TalkChange, type TalkLine } from "./talk.js";
 
 export { RefinementError, type RefinementErrorCode } from "./errors.js";
+export { markOf } from "./replace-journal.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
 export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact", "ready", "split"] as const;
@@ -48,7 +50,7 @@ const OPEN_STATES = STATES.filter((s) => s !== "dropped") as Exclude<SessionStat
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const CONTROL_IN_IDEA = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
-const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed", "source-refreshed"] as const;
+const OLD_KINDS = ["created", "renamed", "dropped", "restored", "architect-started", "architect-resumed", "architect-brief", "architect-failed", "round-started", "architect-round", "imported", "source-label-removed", "source-refreshed", "issue-replaced"] as const;
 const LogEntry = z
   .object({ at: z.iso.datetime(), by: z.uuid(), what: z.enum([...OLD_KINDS, ...TALK_LOG_KINDS, ...DRAFT_LOG_KINDS]), detail: z.string().max(DETAIL_MAX).optional(), list: z.enum(LISTS).optional() })
   .strict()
@@ -88,6 +90,11 @@ const SourceSchema = z
       })
       .strict()
       .optional(),
+    /** How far the replacement of the issue by its parts got; kept until it is finished. */
+    replacing: ReplacingSchema.optional(),
+    replacedBy: ReplacedBySchema.optional(),
+    closed: z.enum(CLOSED).optional(),
+    closedAt: z.iso.datetime().optional(),
   })
   .strict();
 export type IssueSource = z.infer<typeof SourceSchema>;
@@ -839,19 +846,6 @@ export function recordPublished(actor: Actor, id: string, draftId: string, issue
   );
 }
 
-/**
- * The draft that stands for the issue a session came from, or undefined when none does. Sessions made since the mark exists have it in
- * `source.draft`. An older session is worked out from what it kept (nothing is written): it is the first draft, when it is not a part and
- * no draft was ever removed; else it is not known, and nothing stands for the issue.
- */
-export function markOf(s: Pick<Session, "source" | "drafts" | "log">): string | undefined {
-  if (!s.source) return undefined;
-  if (s.source.draft !== undefined) return s.source.draft;
-  if (s.log.some((l) => l.what === "draft-removed")) return undefined;
-  const first = s.drafts[0];
-  return first && !first.part ? first.id : undefined;
-}
-
 /** Forgets the pending update (the replacement did not reach GitHub). Only while the session is being published. */
 export function clearPendingUpdate(actor: Actor, id: string, opts: StoreOptions = {}): Session {
   return change(actor, id, opts, false, (s) => (s.source?.pending ? { ...s, source: (({ pending: _p, ...rest }) => rest)(s.source) } : undefined), true);
@@ -870,6 +864,46 @@ export function recordPendingUpdate(actor: Actor, id: string, old: { title: stri
     (s) => {
       if (!s.source) throw new RefinementError("bad-state", "this session did not come from an issue");
       return { ...s, source: { ...s.source, pending: { ...old } } };
+    },
+    true,
+  );
+}
+
+const NO_SOURCE = "this session did not come from an issue";
+const withSource = (actor: Actor, id: string, opts: StoreOptions, fn: (src: IssueSource) => IssueSource | undefined): Session =>
+  change(
+    actor,
+    id,
+    opts,
+    false,
+    (s) => {
+      if (!s.source) throw new RefinementError("bad-state", NO_SOURCE);
+      const source = fn(s.source);
+      return source ? { ...s, source } : undefined;
+    },
+    true,
+  );
+
+/** Stores the parts and the journal of the replacement, merged with the one kept; `cut` stays once set. Only while the session is being published. */
+export const recordReplacing = (actor: Actor, id: string, input: { parts: number[]; found: readonly Found[]; cut?: boolean }, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withJournal(src, input));
+/** Stores the write evidence of one dependant. Only while the session is being published. */
+export const recordDependantWrite = (actor: Actor, id: string, issue: number, ev: WriteEvidence, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withWrite(src, issue, ev));
+/** Sets `outcome` and `done` of one dependant in one write. Only while the session is being published. */
+export const recordDependantDone = (actor: Actor, id: string, issue: number, outcome: string, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withDone(src, issue, outcome));
+
+/** The issue is replaced by its parts: `replacedBy`, `closed` and `closedAt` are set, the journal goes, one log line. Only while the session is being published. */
+export function recordReplaced(actor: Actor, id: string, end: { closed: Closed; closedAt?: string }, opts: StoreOptions = {}): Session {
+  return change(
+    actor,
+    id,
+    opts,
+    false,
+    (s, at) => {
+      if (!s.source) throw new RefinementError("bad-state", NO_SOURCE);
+      const r = withReplaced(s.source, end);
+      if (!r) return undefined;
+      room(s, LOG_LIMIT - 1);
+      return { ...s, source: r.source, updated: at, log: [...s.log, { at, by: actor.id, what: "issue-replaced", detail: cut(`#${s.source.issue}: ${r.parts.map((n) => `#${n}`).join(", ")}`, TITLE_MAX) }] };
     },
     true,
   );
