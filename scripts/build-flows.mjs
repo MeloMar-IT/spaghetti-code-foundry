@@ -628,25 +628,32 @@ write("issue-plan", {
 });
 
 {
-  const testsRun = [
+  const testsRunFull = [
     'git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers',
     'cmd="$FACTORY_VAR_TEST_CMD"',
     'if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
     'if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi',
     'marker="{{run.dir}}/tests.marker"; touch "$marker"',
     'echo "\\$ $cmd"',
-    'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
     'tail -150 "{{run.dir}}/tests.log"',
     'echo; echo "=== summary ==="',
     '{ "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
     'exit "$code"',
   ].join("\n");
+  // Inside a story (after coding, after review fixes) a quicker command may run instead, for example only
+  // the tests the change touches (`quick_test_cmd`). The full command always runs before the change and
+  // on the merge result, so nothing reaches develop without the full tests.
+  const testsRun = testsRunFull.replace(
+    'echo "\\$ $cmd"',
+    'if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi\necho "\\$ $cmd"',
+  );
   // Tests of code that was already tested (before the change, after the merge) run once more when they
   // fail: on a busy machine a timing-sensitive test can fail by chance. A real failure fails twice.
-  const testsRunRetry = testsRun.replace(
-    'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
-    'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?\n' +
-      'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
+  const testsRunRetry = testsRunFull.replace(
+    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?\n' +
+      'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
   );
   // Also: when this exact code (a clean tree) already passed these tests in another run, they are not run
   // again — the tests before a change run on the develop the previous story just tested.
@@ -662,8 +669,8 @@ write("issue-plan", {
     '  code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"',
     '  echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"',
     'else',
-    '  sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
-    '  ' + 'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
+    '  "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+    '  ' + 'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
     '  tail -150 "{{run.dir}}/tests.log"',
     '  echo; echo "=== summary ==="',
     '  { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
@@ -673,7 +680,7 @@ write("issue-plan", {
     'exit "$code"',
   ].join("\n");
   const tests = (id, fixId, next) => [
-    { id, type: "shell", timeout_sec: 3600, run: testsRun, on_failure: fixId, ...(next ? { on_success: next } : {}) },
+    { id, type: "shell", timeout_sec: 7200, run: testsRun, on_failure: fixId, ...(next ? { on_success: next } : {}) },
     {
       id: fixId,
       type: "claude",
@@ -1532,10 +1539,57 @@ write("issue-plan", {
     on_success: "test_develop",
     on_failure: "resolve_conflicts",
   };
+  // The full tests run on the merge result BEFORE the run takes its turn at develop, so several stories
+  // test side by side and the turn itself is short: if develop did not move meanwhile, merge_develop gives
+  // exactly this code, test_develop finds it "already tested", and it is pushed at once. If develop moved,
+  // or the tests fail here, nothing is lost: test_develop runs them as before (and fix_develop follows).
+  const pretestMerge = {
+    id: "pretest_merge",
+    type: "shell",
+    repo_access: true,
+    description: "Make the merge with develop on the side, to test it ahead of the merge turn",
+    run: [
+      'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD); rm -f "{{run.dir}}/trial-merge"',
+      'skip() { echo "not tested ahead: $1 — the merge step tests as usual"; exit 0; }',
+      '[ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] || skip "reuse_test_results is off"',
+      '# Cut off during an earlier try (the workspace is still on the trial merge): go back to the feature branch first.',
+      'if [ "$f" = HEAD ] && [ -s "{{run.dir}}/feature-branch" ]; then git merge --abort >/dev/null 2>&1; git checkout -q -f "$(cat "{{run.dir}}/feature-branch")" && f=$(git rev-parse --abbrev-ref HEAD); fi',
+      '[ "$f" != HEAD ] && [ "$f" != "$dev" ] || skip "not on the feature branch"',
+      'echo "$f" > "{{run.dir}}/feature-branch"',
+      '[ -z "$(git status --porcelain 2>/dev/null)" ] || skip "there are uncommitted changes"',
+      'git fetch -q origin "$dev" || skip "cannot fetch $dev"',
+      'git checkout -q --detach "origin/$dev" || skip "cannot check out $dev"',
+      '# The same merge, in the same direction, as merge_develop makes (so the files are identical).',
+      'if git merge --no-ff --no-edit -m "trial merge of $f" "$f" >/dev/null 2>&1; then',
+      '  git rev-parse --short "origin/$dev" > "{{run.dir}}/trial-merge"; echo "TRIAL: $f merged with $dev at $(cat "{{run.dir}}/trial-merge")"',
+      'else',
+      '  git merge --abort >/dev/null 2>&1; git checkout -q -f "$f" || { echo "cannot go back to $f"; exit 1; }',
+      '  echo "not tested ahead: the merge with $dev has conflicts — they are resolved in the merge step"',
+      'fi',
+    ].join("\n"),
+    on_success: "pretest_tests",
+  };
+  // Its own step without repo_access: the test command never gets the repository's credential.
+  const pretestTests = {
+    id: "pretest_tests",
+    type: "shell",
+    timeout_sec: 7200,
+    description: "Test the merge with develop ahead of the merge turn (the turn then needs no test run when develop did not move)",
+    run: [
+      'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)',
+      'if [ ! -s "{{run.dir}}/trial-merge" ]; then echo "nothing to test ahead"; exit 0; fi',
+      '( ' + testsRunReuse.split("\n").join("\n  ") + ' ); code=$?',
+      '[ "$code" -eq 0 ] && echo "tested ahead: $f merged with $dev at $(cat "{{run.dir}}/trial-merge")" || echo "the tests fail on the merge with $dev — the merge step runs them again and the fix follows"',
+      'rm -f "{{run.dir}}/trial-merge"',
+      'git checkout -q -f "$f" || { echo "cannot go back to $f"; exit 1; }',
+      'exit 0',
+    ].join("\n"),
+    on_success: "merge_develop",
+  };
   const testDevelop = {
     id: "test_develop",
     type: "shell",
-    timeout_sec: 3600,
+    timeout_sec: 7200,
     description: "The merged develop must pass the tests before it is pushed",
     run: testsRunReuse,
     on_success: "push_develop",
@@ -1715,6 +1769,8 @@ write("issue-plan", {
     ...s.slice(s.findIndex((x) => x.id === "guard"), s.findIndex((x) => x.id === "commit")).map((x) => structuredClone(x)),
     byId("commit"),
     pushFeature,
+    pretestMerge,
+    pretestTests,
     mergeDevelop,
     resolveConflicts,
     finishMerge,
@@ -1733,7 +1789,7 @@ write("issue-plan", {
   for (const id of ["plan", "revise_plan"]) gitflowSteps.find((x) => x.id === id).max_budget_usd = 8;
   for (const x of gitflowSteps) if (["merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "fix_develop", "commit_develop_fix"].includes(x.id)) x.jump_only = true;
   gitflowSteps.splice(gitflowSteps.findIndex((x) => x.id === "review_2"), 0, reviewGate);
-  gitflowSteps.find((x) => x.id === "push_feature").on_success = "merge_develop";
+  gitflowSteps.find((x) => x.id === "push_feature").on_success = "pretest_merge";
   gitflowSteps.find((x) => x.id === "push_develop").on_success = "report";
   write("issue-gitflow", {
     title: "Plan and code an issue on a feature branch, merged into develop (gitflow)",
@@ -1761,7 +1817,7 @@ write("issue-plan", {
       forbidden_paths: "", docs_required: "", union_merge_files: "", agent_env: "",
       risk_threshold: "75", review_plan_label: "Factory_review_plan", auto_split_max_risk: "50", trigger_label: "",
       max_files: "15", max_code_lines: "800", delete_merged_branches: "yes", close_when_merged: "yes",
-      revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes",
+      revise_above_risk: "75", review_twice_above_risk: "off", reuse_test_results: "yes", quick_test_cmd: "", test_slots: "2",
       hotfix_labels: "bug", hotfix_prefix: "hotfix/",
     },
     steps: gitflowSteps,
@@ -1806,7 +1862,7 @@ write("release-daily", {
       run: [
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
-        'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
+        '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
         'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
         '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',
@@ -1958,7 +2014,7 @@ write("daily-pr", {
         'git checkout -q -B "$branch" "origin/$branch"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
-        'sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
+        '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
         'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
         '{ echo "### Checks on this branch"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
         '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',

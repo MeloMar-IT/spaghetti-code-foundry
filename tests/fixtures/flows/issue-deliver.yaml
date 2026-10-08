@@ -88,7 +88,7 @@ steps:
       "$FACTORY_TOOLS/daily-branch" prepare
   - id: baseline_tests
     type: shell
-    timeout_sec: 3600
+    timeout_sec: 7200
     run: |-
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
@@ -101,8 +101,8 @@ steps:
         code=0; echo "not run again: this exact code already passed these tests ($(cat "$passed_dir/$key"))"
         echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
       else
-        sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+        "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
         tail -150 "{{run.dir}}/tests.log"
         echo; echo "=== summary ==="
         { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -461,15 +461,16 @@ steps:
     on_success: guard
   - id: run_tests
     type: shell
-    timeout_sec: 3600
+    timeout_sec: 7200
     run: |-
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
-      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -519,15 +520,16 @@ steps:
       {{steps.review_1.output}}
   - id: run_tests_1
     type: shell
-    timeout_sec: 3600
+    timeout_sec: 7200
     run: |-
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
-      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -577,15 +579,16 @@ steps:
       {{steps.review_2.output}}
   - id: run_tests_2
     type: shell
-    timeout_sec: 3600
+    timeout_sec: 7200
     run: |-
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      if [ -n "$FACTORY_VAR_QUICK_TEST_CMD" ]; then cmd="$FACTORY_VAR_QUICK_TEST_CMD"; echo "the quick tests of this story (the full tests run on the merge result):"; fi
       echo "\$ $cmd"
-      sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
