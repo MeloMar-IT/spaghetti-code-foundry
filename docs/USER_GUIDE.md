@@ -440,7 +440,8 @@ a **What happens next** block with **You** as who and the approval message as th
 
 - **Resume** continues a stopped, failed, cancelled or interrupted run from the step where it
   stopped, with everything it already did kept. Fix the cause first (e.g. answer the question,
-  fix the environment), then press **↻ Resume**.
+  fix the environment), then press **↻ Resume**. A Codex step with `resume:` continues the earlier
+  session only when it runs with the same Codex folder; otherwise it starts a new session and the log says why.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).

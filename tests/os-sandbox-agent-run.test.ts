@@ -162,6 +162,10 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
       expect(sessionId).toBeTruthy();
       expect(out(s, "b")).toContain(sessionId!);
       expect(out(s, "a")).toContain(`${s.runDir}/home/.`);
+      if (agent === "codex") {
+        expect(s.history.filter((h) => h.codexHome !== "run")).toHaveLength(0);
+        expect(s.history.map((h) => h.codexHome)).toEqual(["run", "run"]);
+      }
     });
   }
 

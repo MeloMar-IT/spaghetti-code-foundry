@@ -11,6 +11,7 @@ import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
+import { codexHomeId, codexResumeRefusal } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
 
@@ -134,8 +135,21 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const sandboxed = boxed ? false : asked;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
   const effort = step.effort ?? d.effort;
-  const { asked: resumeAsked, id: resumeId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
+  const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
+  let resumeId = askedId;
   if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
+  const prev = step.resume ? ctx.steps[step.resume] : undefined;
+  // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
+  let home: string | undefined;
+  if (t.agent === "codex") {
+    const seen = (n: string) => (n in env ? env[n] : short ? undefined : process.env[n]);
+    home = codexHomeId({ run: boxed, codexHome: seen("CODEX_HOME"), home: seen("HOME") });
+    const reason = resumeId ? codexResumeRefusal(prev!.codex_home, home) : undefined;
+    if (reason) {
+      resumeId = undefined;
+      engine.log(`    · not resuming ${step.resume}: ${reason}`);
+    }
+  }
   const common = {
     prompt: render(step.prompt, ctx),
     systemPrompt: step.system_prompt ? render(step.system_prompt, ctx) : undefined,
@@ -166,7 +180,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
