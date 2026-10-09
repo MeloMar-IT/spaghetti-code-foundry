@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { estimateTokens } from "./catalogue.js";
 
 // The text a Claude session gets for the skills its run locked: one bounded, delimited block in front of the task.
@@ -98,4 +99,42 @@ export function renderSkillPayload(skills: readonly PayloadSkill[], limits: { ma
 /** The prompt of a Claude session: the block, an empty line, then the task. Unchanged when the block is "". */
 export function withSkillPayload(prompt: string, payloadText: string): string {
   return payloadText ? `${payloadText}\n\n${prompt}` : prompt;
+}
+
+export type SkillContextState = "loaded" | "reloaded" | "reused";
+
+/** "sha256:<hex>" of the block text; "" for an empty text. */
+export function skillPayloadDigest(text: string): string {
+  return text ? `sha256:${createHash("sha256").update(text).digest("hex")}` : "";
+}
+
+/** One line for a session that already holds the block: ids and versions only. */
+export function skillReminder(loaded: readonly string[]): string {
+  return `The <${SKILL_PAYLOAD_TAG}> block given earlier in this session still applies: ${loaded.join(", ")}.`;
+}
+
+export interface SkillAttach {
+  state: SkillContextState;
+  /** What goes in front of the task. */
+  text: string;
+  digest: string;
+  /** What this step adds to the prompt (0 when reused). */
+  attachedBytes: number;
+  attachedEstimatedTokens: number;
+}
+
+/**
+ * Decide what a Claude session gets. `continues`: the CLI continues an earlier session; `holds`: the digest of
+ * the block that session received; `again`: this is not the first session of the step (resume, retry, fallback).
+ */
+export function attachSkillPayload(
+  payload: Pick<SkillPayload, "text" | "loaded" | "bytes" | "estimatedTokens">,
+  session: { continues: boolean; holds?: string; again: boolean },
+): SkillAttach | undefined {
+  if (!payload.text) return undefined;
+  const digest = skillPayloadDigest(payload.text);
+  if (session.continues && session.holds === digest) {
+    return { state: "reused", text: skillReminder(payload.loaded), digest, attachedBytes: 0, attachedEstimatedTokens: 0 };
+  }
+  return { state: session.again ? "reloaded" : "loaded", text: payload.text, digest, attachedBytes: payload.bytes, attachedEstimatedTokens: payload.estimatedTokens };
 }

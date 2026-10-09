@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill runtime 5 — reuse skills across repairs and reload them on fallback (#180).
+  - **Behaviour.** A Claude step with `resume:` that continues a session holding the same locked block gets a one-line reminder instead of the full skill text. A new session (retry, fallback to another model or provider, or a resume that cannot continue) gets the complete block once. The lock is still verified before every session; a changed registry stops the step.
+  - **Logs and records.** One line per session: `skill context: reused|loaded|reloaded …` with ids and sizes only, and `! skill context: rejected (…)`. The step record `skills` gains `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; the step record gains `skills_digest`. Older run files stay valid.
+  - **Code.** `attachSkillPayload`, `skillPayloadDigest`, `skillReminder` in `src/skills/payload.ts`; `sessionToResume` in `src/agents/run.ts`; the load log line moved from `skillSession` to the runner. The agent note says the `<foundry-skills>` block may come from an earlier prompt of the session.
+  - **Docs.** `docs/USER_GUIDE.md` "Skills in Claude sessions".
+  - **Tests.** `tests/skill-payload.test.ts`, `tests/agents.test.ts`, `tests/engine-skill-lock.test.ts`, `tests/skill-run-lock-flow.test.ts`.
+
 - Work tracking 2c — dependency chain in a side panel instead of dimming the board (#375).
   - **Button.** A card or row with blockers has **What is in the way?** (`aria-expanded`, `aria-controls`). A card without a run opens the panel on Enter. Nothing on the board is dimmed.
   - **Panel.** New `ui/work-panel.js`: `chainOrder(item, items)` (pure; deepest blocker first, direct blockers from `after` marked, safe against cycles, uses `next.blockers` and `after` from the same `GET /api/board` answer, no new request) and `panelView`. It shows title, issue link, status, sentence, next move and where, owner, age, "Open run" and "In the way of #N" with each story's status and next move, or a GitHub link when it is not on the board. Chain entries on the board open in the panel; **Back** returns.
