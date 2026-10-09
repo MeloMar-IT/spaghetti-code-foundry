@@ -176,6 +176,33 @@ describe("homeView", () => {
     expect(links(root).filter((l) => l.attrs.class?.includes("primary")).map((l) => l.attrs.href)).toEqual(["#/start"]);
   });
 
+  it("every Tab stop has a unique data-focus", () => {
+    const entries = (n: number, kind: any, over: any = {}) => Array.from({ length: n }, (_, i) => run(`${kind}${i}`, kind, { startedAt: iso(i), ...over }));
+    const runs = [
+      ...entries(7, "running"),
+      { ...run("n", "approval"), next: { ...rec("approval", "n"), where: { label: "PR", url: "https://github.com/o/r/pull/1" } } },
+      run("d", "done", { status: "succeeded", finishedAt: iso(1) }),
+    ];
+    const root = view(ui.homeView(ui.homeModel(runs, [job("j")]), { prompts: ["One", "Two"] }));
+    const stops = [...root.all("a").filter((a) => a.attrs.href), ...root.all("button"), ...root.all("summary")];
+    const names = stops.map((s) => s.attrs["data-focus"]);
+    expect(names.every(Boolean)).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    for (const want of ["home-action", "home-open-n", "home-more-active", "home-summary-recently-completed", "home-ask-0", "home-ask-1", "home-status-n"]) {
+      expect(names.some((x) => x === want) || root.querySelectorAll("[data-focus]").some((e) => e.attrs["data-focus"] === want)).toBe(true);
+    }
+    const all = root.querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
+    expect(all.some((x) => x?.startsWith("home-details-"))).toBe(true);
+    const empty = view(ui.homeView(ui.homeModel([], []))).querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
+    expect(empty).toEqual(expect.arrayContaining(["home-start", "home-repos"]));
+  });
+
+  it("a job without an id uses x", () => {
+    const root = view([ui.workRow({ run: null, job: { ...job("j"), runId: undefined } })]);
+    const all = root.querySelectorAll("[data-focus]").map((e) => e.attrs["data-focus"]);
+    expect(all.some((x) => x?.endsWith("-x"))).toBe(true);
+  });
+
   it("Ask section: last with prompts, absent without, click calls onAsk", () => {
     const m = ui.homeModel([run("a", "running")], []);
     expect(headings(view(ui.homeView(m)))).not.toContain("Ask SCF");
@@ -212,32 +239,95 @@ describe("renderHome", () => {
     expect(a.runs).toHaveBeenCalledTimes(2);
   });
 
-  it("the newest answer wins over a slower older one", async () => {
+  it("one request at a time: a tick during a slow load sends no second request, then one follow-up", async () => {
     let slow!: (v: any) => void;
     const a = api([run("a", "running")]);
     const main = new FakeElement("main");
     const off = await ui.renderHome(main, { a });
     a.runs.mockImplementationOnce(() => new Promise((r) => { slow = r; }));
     await vi.advanceTimersByTimeAsync(30_000); // starts the slow load
+    expect(a.runs).toHaveBeenCalledTimes(2);
     a.runs.mockResolvedValue([run("new", "running")]);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(main.textContent).toContain("task new");
+    await vi.advanceTimersByTimeAsync(30_000); // a tick during the flight
+    expect(a.runs).toHaveBeenCalledTimes(2);
     slow([run("old", "running")]);
     await flush();
+    expect(a.runs).toHaveBeenCalledTimes(3);
     expect(main.textContent).toContain("task new");
-    expect(main.textContent).not.toContain("task old");
     off();
   });
 
-  it("a first-load error rejects; a refresh error keeps the page", async () => {
-    const bad = { ...api([]), runs: vi.fn(async () => { throw new Error("down"); }) };
-    await expect(ui.renderHome(new FakeElement("main"), { a: bad })).rejects.toThrow("down");
+  it("a first-load failure resolves with a cleanup, shows the error with Retry, and Retry draws", async () => {
+    const a = api([run("a", "running")]);
+    a.runs.mockRejectedValueOnce(new Error("down"));
+    const main = new FakeElement("main");
+    const off = await ui.renderHome(main, { a });
+    expect(typeof off).toBe("function");
+    expect(main.textContent).toContain("Home could not be loaded.");
+    const retry = main.querySelectorAll("button").find((b) => b.attrs["data-focus"] === "home-retry")!;
+    expect(retry.textContent).toBe("Retry");
+    retry.click();
+    await flush();
+    expect(main.textContent).toContain("task a");
+    expect(main.textContent).not.toContain("Home could not be loaded.");
+    off();
+  });
+
+  it("a refresh failure keeps the page and shows one banner with Retry", async () => {
     const a = api([run("a", "running")]);
     const main = new FakeElement("main");
     const off = await ui.renderHome(main, { a });
     a.runs.mockRejectedValue(new Error("down"));
     await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(main.textContent).toContain("task a");
+    expect(main.querySelectorAll("button").filter((b) => b.attrs["data-focus"] === "home-refresh-retry")).toHaveLength(1);
+    off();
+  });
+
+  it("shows a skeleton with a hidden label before the first answer, and an Updated note after it", async () => {
+    let first!: (v: any) => void;
+    const a = api([run("a", "running")]);
+    a.runs.mockImplementationOnce(() => new Promise((r) => { first = r; }));
+    const main = new FakeElement("main");
+    const p = ui.renderHome(main, { a });
+    await flush();
+    expect(main.all("div").some((d) => d.attrs.class?.startsWith("skeleton"))).toBe(true);
+    expect(main.textContent).toContain("Loading Home");
+    first([run("a", "running")]);
+    const off = await p;
+    expect(main.all("div").some((d) => d.attrs.class?.startsWith("skeleton"))).toBe(false);
+    expect(main.textContent).toContain("Updated");
+    off();
+  });
+
+  it("a hidden tab makes no request", async () => {
+    const a = api([run("a", "running")]);
+    (document as any).visibilityState = "hidden";
+    try {
+      const off = await ui.renderHome(new FakeElement("main"), { a });
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(a.runs).not.toHaveBeenCalled();
+      off();
+    } finally {
+      (document as any).visibilityState = "visible";
+    }
+  });
+
+  it("keeps the scroll position across a redraw", async () => {
+    const a = api([run("a", "running")]);
+    const main = new FakeElement("main");
+    const off = await ui.renderHome(main, { a });
+    const box = main.children[0] as FakeElement;
+    const root = (document as any).documentElement;
+    root.scrollTop = 120;
+    const real = box.replaceChildren.bind(box);
+    box.replaceChildren = (...nodes: any[]) => { root.scrollTop = 0; real(...nodes); };
+    a.runs.mockResolvedValue([run("b", "running")]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(main.textContent).toContain("task b");
+    expect(root.scrollTop).toBe(120);
+    root.scrollTop = 0;
     off();
   });
 

@@ -73,8 +73,8 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 
 | Workspace | Loading | Empty | Partial | Stale | Offline / provider failure | Permission | Success |
 |---|---|---|---|---|---|---|---|
-| Home | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Board | Skeleton under the heading (#424) | planned in part N | planned in part N | Old cards stay; "Could not refresh. Showing data from …" with Retry, and "Updated HH:MM" (#424) | First load: `errorState` with Retry (#424) | planned in part N | planned in part N |
+| Home | Done (#425): skeleton before the first answer, on Home and Your turn | planned in part N | Done (#425): a failed refresh keeps the items and shows the banner once | Done (#425): "Updated" note on the standalone Your turn page; an unchanged poll does not redraw | Done (#425): a first-load failure shows `errorState` with Retry; the page never rejects | planned in part N | planned in part N |
 | Refinement | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Start work | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |

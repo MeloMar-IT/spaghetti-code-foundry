@@ -233,6 +233,32 @@ describe("Your turn", () => {
     stop();
   });
 
+  it("every control is named in the failure states, and the focus is kept when the banner appears", async () => {
+    const failing = async (url: string) => {
+      asked.push(url);
+      return { ok: false, status: 500, statusText: "x", json: async () => ({ error: "down" }) };
+    };
+    const okFetch = (globalThis as any).fetch;
+    (globalThis as any).fetch = failing;
+    const first = connected();
+    const stopFirst = await turn.renderYourTurn(first);
+    expectNamed(first);
+    expect(auditPage(first)).toEqual([]);
+    stopFirst();
+    (globalThis as any).fetch = okFetch;
+
+    answers["/api/your-turn"] = turnData([turnItem(5)]);
+    const main = connected();
+    const stop = await turn.renderYourTurn(main);
+    named(main, "turn-dismiss-k5").focus();
+    (globalThis as any).fetch = failing;
+    await tick(5000);
+    expect(main.textContent).toContain("Could not refresh");
+    expectNamed(main);
+    expect(doc().activeElement?.attrs["data-focus"]).toBe("turn-dismiss-k5");
+    stop();
+  });
+
   it("holds the redraw while a dialog is open and draws the newest answer after it closed", async () => {
     answers["/api/your-turn"] = turnData([turnItem(5)]);
     const main = connected();
