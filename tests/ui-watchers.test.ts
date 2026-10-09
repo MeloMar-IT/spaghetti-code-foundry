@@ -175,12 +175,14 @@ describe("the page", () => {
   it("Delete asks first, then sends the DELETE", async () => {
     watchers = [stored()];
     const main = await draw();
-    (globalThis as any).confirm = () => false;
     press(button(cardOf(main, "w"), "Delete"));
     await flush();
+    press(button(root(), "Cancel"));
+    await flush();
     expect(sent).toEqual([]);
-    (globalThis as any).confirm = () => true;
     press(button(cardOf(main, "w"), "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
     await flush();
     expect(sent).toEqual([{ method: "DELETE", url: "/api/admin/repos/r1/watchers/w", body: undefined }]);
   });
@@ -193,8 +195,9 @@ describe("the page", () => {
     await flush();
     expect(toastText()).toBe("the sentence of the server");
     answers = [{ status: 404, error: "no such watcher" }];
-    (globalThis as any).confirm = () => true;
     press(button(cardOf(await draw(), "w"), "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
     await flush();
     expect(toastText()).toBe("no such watcher");
     expect(sent.some((s) => s.url === "/api/config")).toBe(false);

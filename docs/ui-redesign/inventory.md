@@ -83,7 +83,7 @@ Admin preview: `/user/?as=<id>` (`ui/view-as.js`) draws these pages for the chos
 
 ## States
 
-Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js:97`). All other routes leave `main` as it was until the first `await` ends.
+Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js`). Since part 8 all six Administration pages (`#/users`, `#/watchers`, `#/problems`, `#/dashboard`, `#/audit`, `#/settings`) draw a skeleton (`loadingState`) at once and an `errorState` with Retry on failure; a failed reload of Users, Watchers or Problems keeps the list and shows a `staleNote`; a failed part of the Dashboard is a `partNote` on its section, and a failed monitor call on Watchers is an `errorState` in the monitor card. Save on Settings shows "Saving…", "Saved at …" or "Not saved." next to the button. All other routes leave `main` as it was until the first `await` ends.
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|

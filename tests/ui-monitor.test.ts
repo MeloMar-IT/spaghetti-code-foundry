@@ -122,23 +122,50 @@ describe("the monitor's card", () => {
 
   it("from unreadable, a refused confirm sends nothing", async () => {
     state = { state: "unreadable" };
-    (globalThis as any).confirm = () => false;
     const main = await draw();
+    const dialog = (text: string) => (document as any).getElementById("modal-root").all("button").find((b: FakeElement) => b.textContent === text);
     sent = [];
     buttonOf(cards(main)[0]!)!.click();
     await new Promise((r) => setTimeout(r, 20));
+    dialog("Cancel").click();
+    await new Promise((r) => setTimeout(r, 20));
     expect(sent).toEqual([]);
-    (globalThis as any).confirm = () => true;
     buttonOf(cards(main)[0]!)!.click();
+    await new Promise((r) => setTimeout(r, 20));
+    dialog("Switch on").click();
     await new Promise((r) => setTimeout(r, 20));
     expect(sent[0]!.url).toBe("/api/monitor/on");
   });
 
-  it("a failing GET /api/monitor still draws the page, without the row", async () => {
+  it("a failing GET /api/monitor still draws the page: the monitor card has a note with Retry", async () => {
     stateFails = true;
     const main = await draw();
     expect(cards(main)).toHaveLength(2);
     expect(main.textContent).not.toContain("Bug stories");
+    const errs = main.all("div").filter((d) => /\bstate-error\b/.test(d.attrs.class ?? ""));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]!.textContent).toContain("Could not load the monitor's state.");
+    expect(cards(main)[1]!.textContent).toContain("issues");
+    const retry = errs[0]!.all("button").find((b) => b.textContent === "Retry")!;
+    stateFails = false;
+    retry.click();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(main.all("div").filter((d) => /\bstate-error\b/.test(d.attrs.class ?? ""))).toHaveLength(0);
+    expect(main.textContent).toContain("Bug stories");
+  });
+});
+
+describe("confirmUnreadable", () => {
+  const dialog = (text: string) => (document as any).getElementById("modal-root").all("button").find((b: FakeElement) => b.textContent === text);
+  it("resolves false on Cancel and true on Switch on; the button is not dangerous", async () => {
+    const mod = await import("../ui/monitor.js" as string);
+    let answer = mod.confirmUnreadable();
+    expect(dialog("Switch on").attrs.class).not.toContain("danger");
+    dialog("Cancel").click();
+    expect(await answer).toBe(false);
+    answer = mod.confirmUnreadable();
+    dialog("Switch on").click();
+    expect(await answer).toBe(true);
   });
 });
 

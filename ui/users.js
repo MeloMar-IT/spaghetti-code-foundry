@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { errorText, linkHash } from "./auth.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { emptyState, loadingState, staleNote } from "./states.js";
 import { rememberView } from "./view-as.js";
 
 const text = (s) => String(s ?? "").trim();
@@ -394,13 +395,31 @@ const onPage = () => {
   }
 };
 
-/** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. Returns a cleanup. */
-export async function renderUsers(main, { me = "", notice, page = browserPage } = {}) {
+// A broken limits store must not take the page down: the column then says "not available".
+const loadUsers = () => Promise.all([api.users(), api.limits().catch(() => null)]);
+const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "status" }, notice.text) : null);
+let reloads = 0; // the newest reload wins
+
+/** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. `data` is a list already loaded. Returns a cleanup. */
+export async function renderUsers(main, { me = "", notice, page = browserPage, data } = {}) {
   const mine = ++generation;
-  // A broken limits store must not take the page down: the column then says "not available".
-  const [users, limits] = await Promise.all([api.users(), api.limits().catch(() => null)]);
+  if (!data && onPage()) mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Users")), loadingState("Loading users…", { rows: 5, shape: "table" }));
+  const [users, limits] = data ?? await loadUsers();
   if (mine !== generation || !onPage()) return () => {};
-  const reload = (next) => renderUsers(main, { me, notice: next, page }).catch((e) => toast(errorText(e), "error"));
+  const at = Date.now();
+  const note = h("div", {}, noticeLine(notice));
+  // The list stays when the reload fails: a note says how old it is, and the notice of the last action is kept.
+  const reload = async (next) => {
+    const my = ++reloads;
+    let fresh;
+    try {
+      fresh = await loadUsers();
+    } catch {
+      if (my === reloads && mine === generation && onPage()) mount(note, noticeLine(next), staleNote(at, { failed: true, onRetry: () => reload(next) }));
+      return;
+    }
+    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh });
+  };
 
   const act = async (u, kind) => {
     let loaded = {};
@@ -463,8 +482,8 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
       h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
       h("button", { class: "primary", onClick: add }, "+ Add user")),
-    notice ? h("p", { class: "status ok", role: "status" }, notice.text) : null,
-    h("table", { class: "table" },
+    note,
+    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : h("table", { class: "table" },
       h("caption", { class: "sr-only" }, "Users"),
       h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
       h("tbody", {}, users.map(row))));

@@ -347,3 +347,125 @@ describe("the pages", () => {
     expect(readFileSync("ui/user/index.html", "utf8")).not.toContain("#/problems");
   });
 });
+
+describe("states", () => {
+  const cls = (main: FakeElement, name: string) => main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes(name));
+  const stale = (main: FakeElement) => main.all("p").filter((p) => (p.attrs.class ?? "").includes("stale-note"));
+  const dialog = (text: string) => modalRoot().all("button").find((b) => b.textContent === text);
+  const down = () => {
+    const inner = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) =>
+      url === "/api/monitor" ? { ok: false, status: 500, statusText: "x", json: async () => ({ error: "broken" }) } : inner(url, init);
+    return inner;
+  };
+  const withMute = () => {
+    state.findings = [finding(1), finding(4, { state: "muted", mute: { id: "m1", kind: "finding", reason: "noise" } })];
+  };
+  const withAll = () => {
+    state.findings = [finding(21)]; // an id no other test opened: the open rows are kept between pages
+  };
+
+  it("draws a skeleton on the first load", async () => {
+    const inner = (globalThis as any).fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (url === "/api/monitor") await gate;
+      return inner(url, init);
+    };
+    const main = new FakeElement("div");
+    const done = ui.renderProblems(main);
+    await wait();
+    expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(true);
+    release();
+    await done;
+    expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(false);
+  });
+
+  it("a failed first load shows an error with Retry, and Retry draws the page", async () => {
+    const inner = down();
+    const main = await draw();
+    const err = cls(main, "state-error")[0]!;
+    expect(err.textContent).toContain("The problems could not be loaded.");
+    (globalThis as any).fetch = inner;
+    button(err, "Retry")!.click();
+    await wait();
+    expect(cls(main, "state-error")).toHaveLength(0);
+    expect(main.textContent).toContain("Detectors");
+  });
+
+  it("a failed reload keeps the table and shows a failed stale note; Retry redraws", async () => {
+    withMute();
+    const main = await draw();
+    const inner = down();
+    button(rowOf(main, "sentence 4"), "End mute")!.click();
+    await wait();
+    expect(rowOf(main, "sentence 4")).toBeDefined();
+    expect(stale(main)).toHaveLength(1);
+    expect(stale(main)[0]!.attrs.class).toContain("failed");
+    (globalThis as any).fetch = inner;
+    button(stale(main)[0]!, "Retry")!.click();
+    await wait();
+    expect(stale(main)).toHaveLength(0);
+  });
+
+  it("a slow older reload does not overwrite a newer one", async () => {
+    withMute();
+    const main = await draw();
+    const inner = (globalThis as any).fetch;
+    const waiting: (() => void)[] = [];
+    let n = 0;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (url !== "/api/monitor") return inner(url, init);
+      const mine = ++n;
+      if (mine === 1) await new Promise<void>((r) => waiting.push(r));
+      return { ok: true, status: 200, statusText: "x", json: async () => ({ ...state, findings: [finding(mine === 1 ? 9 : 2)] }) };
+    };
+    const reload = main.all("button").find((b) => b.attrs["aria-label"] === "Reload")!;
+    reload.click();
+    await wait();
+    reload.click();
+    await wait();
+    waiting.forEach((r) => r());
+    await wait();
+    expect(main.textContent).toContain("sentence 2");
+    expect(main.textContent).not.toContain("sentence 9");
+  });
+
+  it("a failed details load shows an error in the row; Retry asks again", async () => {
+    withAll();
+    fails["GET /api/monitor/findings/0000000000000021"] = "unknown finding";
+    const main = await draw();
+    sent = [];
+    button(rowOf(main, "sentence 21"), "Details")!.click();
+    await wait();
+    const err = cls(main, "state-error")[0]!;
+    expect(err.textContent).toContain("The details could not be loaded.");
+    delete fails["GET /api/monitor/findings/0000000000000021"];
+    button(err, "Retry")!.click();
+    await wait();
+    expect(sent.filter((s) => s.url.startsWith("/api/monitor/findings/"))).toHaveLength(2);
+    expect(main.textContent).toContain("Flows: issue-gitflow");
+  });
+
+  it("the unreadable switch goes through the dialog", async () => {
+    state = { ...base(), state: "unreadable" };
+    const main = await draw();
+    sent = [];
+    button(main, "Switch the monitor on")!.click();
+    await wait();
+    dialog("Cancel")!.click();
+    await wait();
+    expect(sent).toEqual([]);
+    button(main, "Switch the monitor on")!.click();
+    await wait();
+    dialog("Switch on")!.click();
+    await wait();
+    expect(sent[0]!.url).toBe("/api/monitor/on");
+  });
+
+  it("no findings is the shared empty state", async () => {
+    const main = await draw();
+    expect(cls(main, "empty")[0]!.textContent).toBe("No findings.");
+  });
+});

@@ -67,7 +67,10 @@ const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c i
 const field = (name: string) => walk(main()).find((e) => e.attrs.name === name)!;
 const rows = () => main().all("tr").filter((r) => r.all("td").length);
 const link = () => main().all("a").find((a) => a.textContent === "Export CSV");
-const errors = () => walk(main()).filter((e) => e.attrs.class === "errors");
+const errors = () => walk(main()).filter((e) => e.attrs.class === "state-error");
+const whats = () => walk(main()).filter((e) => e.attrs.class === "state-what").map((e) => e.textContent);
+const skeleton = () => walk(main()).some((e) => e.attrs["aria-busy"] === "true");
+const retryButton = () => main().all("button").find((b) => b.textContent === "Retry");
 const show = async () => {
   const cleanup = ui.renderAudit(main());
   await flush();
@@ -190,7 +193,7 @@ describe("filters", () => {
     await flush();
     expect(rows()).toHaveLength(0);
     expect(main().all("table")).toHaveLength(0);
-    expect(walk(main()).some((e) => e.attrs.class === "spinner")).toBe(true);
+    expect(skeleton()).toBe(true);
   });
 });
 
@@ -226,7 +229,8 @@ describe("more, empty and errors", () => {
   it("shows a server error, then recovers on a filter change", async () => {
     answers.push({ status: 500, error: "the audit log is not working; see the server log" });
     await show();
-    expect(errors().map((e) => e.textContent)).toEqual(["the audit log is not working; see the server log"]);
+    expect(whats()).toEqual(["The audit log could not be loaded. the audit log is not working; see the server log"]);
+    expect(retryButton()).toBeDefined();
     expect(main().all("table")).toHaveLength(0);
     expect(field("action")).toBeDefined();
     await change("action", "edit");
@@ -236,15 +240,48 @@ describe("more, empty and errors", () => {
   it("shows a network error", async () => {
     answers.push("throw");
     await show();
-    expect(errors()[0]!.textContent).toBe("Could not reach the server.");
+    expect(whats()[0]).toContain("The server could not be reached.");
+  });
+  it("Retry loads the list again", async () => {
+    answers.push({ status: 500, error: "down" });
+    await show();
+    retryButton()!.click();
+    await flush();
+    expect(errors()).toHaveLength(0);
+    expect(rows()).toHaveLength(2);
+  });
+  it("draws a skeleton on the first load and on a reload", async () => {
+    heldGets.push([]);
+    const wait = heldGets[0]!;
+    ui.renderAudit(main());
+    await flush();
+    expect(skeleton()).toBe(true);
+    wait.forEach((r) => r());
+    await flush();
+    expect(skeleton()).toBe(false);
+    heldGets.push([]);
+    const wait2 = heldGets[0]!;
+    field("action").value = "edit";
+    field("action").fire("change");
+    await flush();
+    expect(skeleton()).toBe(true);
+    wait2.forEach((r) => r());
+    await flush();
+    expect(skeleton()).toBe(false);
+  });
+  it("says No entries in the shared empty state", async () => {
+    entries = [];
+    await show();
+    expect(walk(main()).some((e) => e.attrs.class === "empty" && e.textContent === "No entries.")).toBe(true);
   });
   it("shows an error when the users cannot be read", async () => {
     const real = (globalThis as any).fetch;
     (globalThis as any).fetch = async (url: string, init: unknown) =>
       url === "/api/users" ? { ok: false, status: 500, statusText: "x", json: async () => ({ error: "users broke" }) } : real(url, init);
     await show();
-    expect(errors()[0]!.textContent).toBe("users broke");
+    expect(whats()[0]).toContain("users broke");
     expect(field("action")).toBeDefined();
+    expect(retryButton()).toBeDefined();
   });
 });
 
@@ -255,7 +292,8 @@ describe("From after To", () => {
     const before = gets.length;
     await change("from", "2026-10-03");
     expect(gets).toHaveLength(before);
-    expect(errors()[0]!.textContent).toBe("The From date is after the To date.");
+    expect(whats()).toEqual(["The From date is after the To date."]);
+    expect(retryButton()).toBeUndefined();
     expect(link()).toBeUndefined();
     await change("from", "2026-10-01");
     expect(gets).toHaveLength(before + 1);

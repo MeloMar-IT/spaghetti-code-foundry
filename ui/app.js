@@ -381,6 +381,13 @@ let routeGen = 0;
 const sinceEl = h("div", { class: "since" });
 sinceEl.hidden = true;
 
+/** Draws a page into a box of its own: once the person leaves, a late answer lands in a box that is no longer on the page. */
+async function renderInBox(render) {
+  const box = h("div", {});
+  mount(main, box);
+  await render(box);
+}
+
 async function route() {
   const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
@@ -414,10 +421,11 @@ async function route() {
     }
     else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
-    else if (section === "dashboard") await renderDashboard(main);
-    else if (section === "watchers") await renderWatchers(main);
-    else if (section === "problems") await renderProblems(main);
-    else if (section === "settings") await renderSettings(main);
+    // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
+    else if (section === "dashboard") await renderInBox(renderDashboard);
+    else if (section === "watchers") await renderInBox(renderWatchers);
+    else if (section === "problems") await renderInBox(renderProblems);
+    else if (section === "settings") await renderInBox(renderSettings);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
     else if (section === "credentials") {
