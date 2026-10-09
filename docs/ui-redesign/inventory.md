@@ -97,7 +97,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/flows/:name` | "No steps yet" in the graph (`graph.js:37`) | errors box; validation errors in `ui.errors` | none |
 | `#/new` | blank editor | errors box | none |
 | `#/library` | none found | errors box | none |
-| `#/start` | `NO_FLOWS_ADMIN`, `NO_REPOS` | errors box | none |
+| `#/start` | `NO_FLOWS_ADMIN` with a flow-editor link, `NO_REPOS` (`user/start.js`, #436) | skeleton, then `errorState` with Retry, `permissionState` on 403; a failing repository list only in step 2; a failed Start is an alert under the form | none |
 | `#/runs` | "No runs yet. Open a flow and press ▶ Run." (`runs.js:90`) | errors box | poll 30 s (`runs.js:93`) |
 | `#/runs/:id` | "No steps" in the graph | errors box; stream loss gives a toast (`runs.js:345`) | event stream |
 | `#/repos` | "No repositories yet..." (`repos.js:395`) | errors box | none |
@@ -112,7 +112,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/users` | none found | errors box | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
-| `/user/#/start` | `NO_FLOWS` and `NO_REPOS` | errors box | none |
+| `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
 | `/user/#/runs/:id` | `NOT_FOUND` card, `NO_STEPS`, `NO_CHANGES` | card with the error and a link back (`user/runs.js:339`) | stream and poll 30 s (`user/runs.js:487`) |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
