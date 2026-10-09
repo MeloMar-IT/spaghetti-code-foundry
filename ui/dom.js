@@ -68,14 +68,91 @@ export function debounce(fn, ms) {
   };
 }
 
+const TOAST_MS = 3500;
+const TOAST_SAME_MS = 5000;
 let toastTimer;
-export function toast(msg, kind = "info") {
+let toastText; // the text shown last; the same text again within 5 s of its last call is announced once
+let toastAt = 0;
+let toastMsg; // the message node; kept while the same text repeats, so the live region does not announce it again
+let toastRun; // the action of the newest toast
+let toastOpener; // what had the focus when the toast was shown
+
+/** Where the focus goes after the toast: the opener while it is on the page, else the main area. */
+function toastFocusBack() {
+  const back = toastOpener && toastOpener.isConnected !== false ? toastOpener : document.getElementById("main");
+  if (!back) return;
+  if (back.id === "main") back.setAttribute("tabindex", "-1");
+  back.focus?.();
+}
+
+/**
+ * Hides the toast and empties it (a hidden toast has no Tab stops and nothing for a screen reader to find).
+ * `back: false`: the caller puts the focus back itself, after its work.
+ */
+function closeToast(back = true) {
   const el = document.getElementById("toast");
+  clearTimeout(toastTimer);
+  const inside = !!el.contains?.(document.activeElement) && document.activeElement !== el;
+  el.className = "";
+  toastRun = undefined;
+  // The message goes too: a hidden toast must not stay in the accessibility tree, and removing text is not announced.
+  el.replaceChildren();
+  if (inside && back) toastFocusBack();
+}
+
+/**
+ * Feedback after an action. `kind` "error" (or `sticky`) stays until the ✕ is pressed; the others go after 3.5 s.
+ * `action: { label, run }` draws one button (Undo); it runs once and closes the toast.
+ */
+export function toast(msg, kind = "info", { action, sticky = false } = {}) {
+  const el = document.getElementById("toast");
+  const stays = kind === "error" || sticky;
+  const text = String(msg ?? "");
+  const now = Date.now();
+  const same = text === toastText && now - toastAt < TOAST_SAME_MS && !!toastMsg && el.children[0] === toastMsg;
+  toastAt = now;
+  if (!same) {
+    toastText = text;
+    toastMsg = h("span", { class: "toast-msg" }, text);
+  }
   el.setAttribute("role", kind === "error" ? "alert" : "status");
-  el.textContent = msg;
+  el.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+  toastRun = action?.run;
+  toastOpener = document.activeElement;
+  const buttons = [];
+  if (action) {
+    buttons.push(h("button", { type: "button", class: "toast-action", onClick: async () => {
+      const run = toastRun;
+      if (!run) return;
+      const inside = !!el.contains?.(document.activeElement);
+      closeToast(false);
+      try {
+        await run();
+      } catch (e) {
+        toast(e?.message || "Something went wrong.", "error");
+      }
+      // After the work: a redraw may have replaced the opener.
+      if (inside) toastFocusBack();
+    } }, action.label));
+  }
+  if (stays) buttons.push(h("button", { type: "button", class: "toast-close", "aria-label": "Dismiss", onClick: () => closeToast() }));
+  el.replaceChildren(toastMsg, ...buttons);
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = ""), 3500);
+  if (!stays) toastTimer = setTimeout(() => closeToast(), TOAST_MS);
+}
+
+/** The one confirmation dialog. Resolves true only on the confirm button; Escape, ✕, the backdrop and Cancel give false. */
+export function confirmDialog({ title, text, confirm = "Delete", cancel = "Cancel", danger = true } = {}) {
+  let cancelBtn;
+  const done = modal(title, (close) => {
+    cancelBtn = h("button", { type: "button", onClick: () => close(false) }, cancel);
+    return h("div", { class: "stack" }, h("p", {}, text),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn,
+        h("button", { type: "button", class: danger ? "danger" : "primary", onClick: () => close(true) }, confirm)));
+  });
+  cancelBtn.focus();
+  return done.then((answer) => answer === true);
 }
 
 let modalSeq = 0;

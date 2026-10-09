@@ -179,6 +179,8 @@ async function whileBusy(btn, fn) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The page drawn last (`id` is undefined for the list), so an Undo knows what to draw again.
+let openPage = { id: undefined, reload: async () => {} };
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
@@ -279,16 +281,25 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const reload = () => renderRefinement(main, { admin, id, readOnly }).then((c) => {
     reloaded = c;
   }, (e) => toast(errorText(e), "error"));
+  openPage = { id, reload };
+  const restoreNow = async (sid) => {
+    try {
+      await api.restoreRefinement(sid);
+      toast("Session restored");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const restore = (btn, sid) =>
     whileBusy(btn, async () => {
-      try {
-        await api.restoreRefinement(sid);
-        toast("Session restored");
-      } catch (e) {
-        toast(errorText(e), "error");
-      }
+      await restoreNow(sid);
       await reload();
     });
+  // Undo after Drop runs when the person may be elsewhere: draw only the page they are on, never the dropped session over it.
+  const undoDrop = async (sid) => {
+    await restoreNow(sid);
+    if (onPage() && (openPage.id === undefined || openPage.id === sid)) await openPage.reload();
+  };
   let leaveDrafts = () => {};
   const cleanup = () => {
     if (reloaded) return reloaded();
@@ -412,7 +423,8 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
           return whileBusy(btn, async () => {
             try {
               await api.dropRefinement(s.id);
-              toast("Session dropped");
+              // Only the owner can restore; Undo stays until used or replaced, so the keyboard can reach it.
+              toast("Session dropped", "info", s.mine ? { sticky: true, action: { label: "Undo", run: () => undoDrop(s.id) } } : {});
             } catch (err) {
               toast(errorText(err), "error");
             }

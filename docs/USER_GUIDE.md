@@ -209,6 +209,8 @@ The same rules as for a user apply: only a published flow, only your own reposit
 
 Home asks again every 30 seconds.
 
+**Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
+
 ### Your turn
 
 ![Needs you on Home](images/home.png)
@@ -2256,7 +2258,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/since` | yes | no | what changed since a time |
 | `GET /api/your-turn` | yes | no | what waits for you |
 | `POST /api/your-turn/dismiss` | yes | no | dismiss an item |
-| `POST /api/your-turn/restore` | yes | no | restore dismissed items |
+| `POST /api/your-turn/restore` | yes | no | restore dismissed items; with `{ "key": "…" }` only that item |
 | `GET /api/your-turn/detail` | yes | no | the questions, plan or split of an item |
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |

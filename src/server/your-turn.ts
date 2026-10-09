@@ -216,6 +216,14 @@ export function dismissTurn(ctx: ApiContext, key: string, now = new Date()) {
   writeStore(store);
 }
 
+/** Brings dismissed items back: the one with `key`, or all of them without a key. An unknown key is not an error. */
+export function restoreTurn(key?: string): void {
+  if (key === undefined) return writeStore({});
+  const store = readStore();
+  delete store[key];
+  writeStore(store);
+}
+
 export const yourTurnRoutes: Route = async (ctx, req, res, seg, method) => {
   if (seg[0] !== "your-turn") return false;
   if (!seg[1] && method === "GET") return send(res, 200, yourTurn(ctx)), true;
@@ -224,8 +232,9 @@ export const yourTurnRoutes: Route = async (ctx, req, res, seg, method) => {
     return send(res, 200, yourTurn(ctx)), true;
   }
   if (seg[1] === "restore" && !seg[2] && method === "POST") {
-    await readJson(req);
-    writeStore({});
+    const body = await readJson(req);
+    // Only a missing "key" restores everything; null, an empty or a non-string key is refused.
+    restoreTurn("key" in body ? str(body, "key") : undefined);
     return send(res, 200, yourTurn(ctx)), true;
   }
   return false;

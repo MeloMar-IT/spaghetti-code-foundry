@@ -499,6 +499,12 @@ steps:
     expect(existsSync(join(home, "your-turn.json"))).toBe(true);
     expect(readdirSync(home).filter((f) => f.endsWith(".tmp"))).toEqual([]);
 
+    for (const key of [5, null, ""]) expect((await json("POST", "/api/your-turn/restore", { key })).status).toBe(400);
+    expect(mine(await turn())).toBeUndefined();
+    const keyed = await json("POST", "/api/your-turn/restore", { key: item.key });
+    expect(keyed.status).toBe(200);
+    expect(mine((await keyed.json()) as Turn)).toBeDefined();
+    expect((await dismiss(item.key)).status).toBe(200);
     expect((await json("POST", "/api/your-turn/restore", {})).status).toBe(200);
     expect(mine(await turn())).toBeDefined();
     await json("POST", `/api/runs/${runId}/approve`, {});

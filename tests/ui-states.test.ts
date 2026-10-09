@@ -199,13 +199,39 @@ describe("staleNote", () => {
   });
 });
 
+describe("banner", () => {
+  const root = (el: FakeElement) => el;
+  it("is an alert for error and a status for the other kinds", () => {
+    expect(root(ui.banner("error", "t")).attrs.role).toBe("alert");
+    expect(root(ui.banner("info", "t")).attrs.role).toBe("status");
+    expect(root(ui.banner("warn", "t")).attrs.role).toBe("status");
+    expect(ui.banner("warn", "Stay").textContent).toBe("Stay");
+  });
+  it("treats an unknown kind as info", () => {
+    const b = ui.banner("loud", "t");
+    expect(b.attrs.role).toBe("status");
+    expect(b.attrs["data-kind"]).toBe("info");
+    expect(b.attrs.class).toContain("scf-banner--neutral");
+  });
+  it("draws a button action and a link action; no actions means no action row", () => {
+    const onClick = vi.fn();
+    const b = ui.banner("info", "t", [{ label: "Retry", onClick }, { label: "Open", href: "#/x" }]);
+    const btn = b.all("button").find((e: FakeElement) => e.textContent === "Retry");
+    btn.click();
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(b.all("a").map((a: FakeElement) => a.attrs.href)).toEqual(["#/x"]);
+    expect(ui.banner("info", "t").all("button")).toHaveLength(0);
+    expect(ui.banner("info", "t", []).textContent).toBe("t");
+  });
+});
+
 describe("module and styles", () => {
   const src = readFileSync("ui/states.js", "utf8");
-  it("imports only dom.js, sets no inline style and exports the six functions", () => {
-    expect([...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1])).toEqual(["./dom.js"]);
+  it("imports dom.js and the kit, sets no inline style and exports the seven functions", () => {
+    expect([...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1])).toEqual(["./dom.js", "./kit/actions.js", "./kit/display.js"]);
     expect(src).not.toContain("style:");
     expect([...src.matchAll(/^export function (\w+)/gm)].map((m) => m[1]).sort()).toEqual(
-      ["emptyState", "errorState", "explainError", "loadingState", "permissionState", "staleNote"]);
+      ["banner", "emptyState", "errorState", "explainError", "loadingState", "permissionState", "staleNote"]);
   });
 
   it("keeps the old rules and adds the new ones", () => {

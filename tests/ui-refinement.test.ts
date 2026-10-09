@@ -405,6 +405,73 @@ describe("the session page", () => {
     await flush();
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drop", body: {} }]);
   });
+  describe("Undo after Drop", () => {
+    const undo = () => walk((document as any).getElementById("toast")).find((e) => e.tag === "button" && e.textContent === "Undo");
+    it("offers Undo on an own session; it restores and draws the session again", async () => {
+      sessions = [session()];
+      await showPage();
+      press(button(main(), "Drop"));
+      await flush();
+      expect(toastText()).toContain("Session dropped");
+      sessions = [dropped()];
+      sent = [];
+      gets = [];
+      press(undo());
+      await flush();
+      expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/restore", body: {} }]);
+      expect(gets).toEqual(["/api/refinement/s1"]);
+    });
+    it("offers no Undo when an admin drops someone else's session", async () => {
+      sessions = [session({ mine: false, ownerName: "Ann" })];
+      await showPage("s1", true);
+      press(button(main(), "Drop"));
+      await flush();
+      expect(toastText()).toBe("Session dropped");
+      expect(undo()).toBeUndefined();
+    });
+    it("shows the error text when the undo fails", async () => {
+      sessions = [session()];
+      await showPage();
+      press(button(main(), "Drop"));
+      await flush();
+      answers.push({ status: 409, error: "that session is not dropped" });
+      press(undo());
+      await flush();
+      expect(toastText()).toBe("that session is not dropped");
+    });
+    it("draws the list, not the session page, when the person went back to the list", async () => {
+      sessions = [session()];
+      await showPage();
+      press(button(main(), "Drop"));
+      await flush();
+      (globalThis as any).location.hash = "#/refinement";
+      await showList();
+      gets = [];
+      press(undo());
+      await flush();
+      expect(gets).toEqual(["/api/refinement"]);
+    });
+    it("draws nothing when the person left Refinement", async () => {
+      sessions = [session()];
+      await showPage();
+      press(button(main(), "Drop"));
+      await flush();
+      (globalThis as any).location.hash = "#/your-turn";
+      gets = [];
+      press(undo());
+      await flush();
+      expect(gets).toEqual([]);
+    });
+    it("a declined confirmation sends nothing and shows no toast", async () => {
+      sessions = [session()];
+      await showPage();
+      confirmAnswer = false;
+      press(button(main(), "Drop"));
+      await flush();
+      expect(sent).toEqual([]);
+      expect(toastText()).toBe("");
+    });
+  });
   it("shows an error toast, loads again and enables the button when a drop fails", async () => {
     sessions = [session()];
     await showPage();

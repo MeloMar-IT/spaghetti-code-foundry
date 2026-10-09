@@ -13,7 +13,7 @@ import { nextStep, type NextStep } from "../src/next-step.js";
 import type { Notice } from "../src/notify.js";
 import { TurnNotifier } from "../src/server/notifier.js";
 import { allNext, collectNext, knownRuns } from "../src/server/next.js";
-import { dismissTurn, turnFor } from "../src/server/your-turn.js";
+import { dismissTurn, restoreTurn, turnFor } from "../src/server/your-turn.js";
 import type { ApiContext } from "../src/server/server.js";
 
 // The Your turn rules against a stub context (no server, no GitHub).
@@ -388,6 +388,21 @@ describe("Your turn dismissals", () => {
     dismissTurn(first, items(first)[0]!.key, NOW);
     expect(items(first)).toEqual([]);
     expect(items(withHolds(failedHold(ago(0))))).toEqual([]);
+  });
+
+  it("restoreTurn brings back one item, or all without a key, and an unknown key changes nothing", () => {
+    const ctx = () => withHolds(failedHold(ago(1)), hold(nextStep("failed", { repo: "acme/app", issue: 3, title: "T3" }, { watched: true, failedLabel: "factory:failed" }), { seen: ago(1) }));
+    const [a, b] = items(ctx()).map((i) => i.key) as [string, string];
+    dismissTurn(ctx(), a, NOW);
+    dismissTurn(ctx(), b, NOW);
+    expect(items(ctx())).toEqual([]);
+    restoreTurn("unknown");
+    expect(items(ctx())).toEqual([]);
+    restoreTurn(a);
+    expect(items(ctx()).map((i) => i.key)).toEqual([a]);
+    expect(Object.keys(JSON.parse(readFileSync(join(home, "your-turn.json"), "utf8")).dismissed)).toEqual([b]);
+    restoreTurn();
+    expect(items(ctx())).toHaveLength(2);
   });
 
   it("a hold about a run keeps the run's time after a restart, and a later approval of the same run shows again", () => {
