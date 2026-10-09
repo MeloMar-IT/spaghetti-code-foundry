@@ -74,7 +74,7 @@ export const RULES: Rule[] = [
   r("GET", "since", "no", "what changed since a time"),
   r("GET", "your-turn", "no", "what waits for you"),
   r("POST", "your-turn/dismiss", "no", "dismiss an item"),
-  r("POST", "your-turn/restore", "no", "restore dismissed items"),
+  r("POST", "your-turn/restore", "no", "restore dismissed items; with `{ \"key\": \"…\" }` only that item"),
   r("GET", "your-turn/detail", "no", "the questions, plan or split of an item"),
   r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume"),
   r("GET", "clarity", "no", "how long items waited for you, and what Your turn missed"),
