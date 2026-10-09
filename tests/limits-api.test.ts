@@ -142,7 +142,8 @@ describe("limits API", () => {
       expect.objectContaining({ by: admin.user.id, result: "ok", target: "defaults", detail: "maxConcurrent, dailyBudgetUsd" }),
       expect.objectContaining({ by: admin.user.id, result: "ok", target: ann.user.id, detail: "maxRunsPerDay" }),
     ]);
-    expect(JSON.stringify(lines)).not.toMatch(/5\.5/);
+    // The amount must not appear in a line; the time stamp is left out, as "…:55.5…" holds "5.5" by chance.
+    expect(JSON.stringify(lines.map(({ time: _time, ...rest }) => rest))).not.toMatch(/5\.5/);
     const r = await call(admin, "GET", "/api/audit?action=limits-change");
     expect(r.status).toBe(200);
     expect(r.text).toContain("limits-change");

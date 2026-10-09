@@ -39,6 +39,8 @@ export const ReplacingSchema = z
   .object({
     parts: NUMBERS,
     cut: z.literal(true).optional(),
+    /** The trigger labels taken off the original (GitHub allows at most 100 labels on an issue); kept so a retry names them. */
+    labels: z.array(z.string().min(1).max(100)).max(100).optional(),
     dependants: z
       .array(DependantSchema)
       .max(JOURNAL_MAX)
@@ -146,7 +148,8 @@ export function withJournal(source: IssueSource, input: { parts: number[]; found
   if (source.replacedBy) throw bad("the issue was replaced already");
   const merged = mergeJournal(source.replacing?.dependants ?? [], input.found);
   const cut = input.cut || merged.cut || source.replacing?.cut;
-  const replacing = parsed(ReplacingSchema, { parts: input.parts, dependants: merged.dependants, ...(cut ? { cut: true } : {}) }, "the replacement cannot be kept in the session");
+  const labels = source.replacing?.labels;
+  const replacing = parsed(ReplacingSchema, { parts: input.parts, dependants: merged.dependants, ...(cut ? { cut: true } : {}), ...(labels ? { labels } : {}) }, "the replacement cannot be kept in the session");
   return { ...source, replacing };
 }
 
@@ -162,16 +165,35 @@ function setEntry(source: IssueSource, replacing: Replacing, at: number, entry: 
   return { ...source, replacing: { ...replacing, dependants: replacing.dependants.map((d, i) => (i === at ? next : d)) } };
 }
 
-/** Stores the write evidence of one dependant. Undefined when the same evidence is there already; conflicting evidence is refused. */
-export function withWrite(source: IssueSource, issue: number, ev: WriteEvidence): IssueSource | undefined {
+/**
+ * Stores the write evidence of one dependant. Undefined when the same evidence is there already. Other evidence is refused; with `again` it
+ * replaces the evidence of an entry that is not done (the range changed on GitHub before the write). A done entry is always refused.
+ */
+export function withWrite(source: IssueSource, issue: number, ev: WriteEvidence, again = false): IssueSource | undefined {
   const { replacing, at } = entryOf(source, issue);
   const e = replacing.dependants[at]!;
   if (e.done) throw bad("this dependant is done already");
   if (e.rangeAfter !== undefined) {
     if (e.before === ev.before && e.after === ev.after && e.rangeBefore === ev.rangeBefore && e.rangeAfter === ev.rangeAfter) return undefined;
-    throw bad("this dependant has other write evidence already");
+    if (!again) throw bad("this dependant has other write evidence already");
   }
   return setEntry(source, replacing, at, { ...e, ...ev });
+}
+
+/** Adds trigger labels taken off the original (case-insensitive, first spelling kept). Undefined when nothing is new. */
+export function withLabels(source: IssueSource, labels: readonly string[]): IssueSource | undefined {
+  if (!source.replacing) throw bad("the replacement has not started");
+  const have = source.replacing.labels ?? [];
+  const known = new Set(have.map((l) => l.toLowerCase()));
+  const added: string[] = [];
+  for (const l of labels) {
+    if (known.has(l.toLowerCase())) continue;
+    known.add(l.toLowerCase());
+    added.push(l);
+  }
+  if (!added.length) return undefined;
+  const next = parsed(ReplacingSchema, { ...source.replacing, labels: [...have, ...added] }, "the labels cannot be kept in the session");
+  return { ...source, replacing: next };
 }
 
 /** Sets `outcome` and `done` of one dependant. Undefined when it is done with this outcome already; another outcome is refused. */
@@ -187,7 +209,8 @@ export function withDone(source: IssueSource, issue: number, outcome: string): I
 
 /** Ends the replacement: `replacedBy` from the parts of the journal, `closed`, `closedAt`; the journal goes. Undefined when that is done already. */
 export function withReplaced(source: IssueSource, end: { closed: Closed; closedAt?: string }): { source: IssueSource; parts: number[] } | undefined {
-  const { replacing, replacedBy: was, ...rest } = source;
+  // The build label is always dropped: the trigger labels were taken off the original (or were gone already).
+  const { replacing, replacedBy: was, buildLabel: _label, ...rest } = source;
   if (!replacing) {
     if (was) return undefined;
     throw bad("the replacement has not started");

@@ -25,6 +25,7 @@ import {
   getSession,
   recordDependantDone,
   recordDependantWrite,
+  recordOriginalLabels,
   recordReplaced,
   recordReplacing,
   refinementsPath,
@@ -397,5 +398,62 @@ describe("who may write", () => {
     ];
     for (const f of all(bob)) unchanged(f, "not-found");
     for (const f of all(admin)) unchanged(f, "not-owner");
+  });
+});
+
+describe("recordDependantWrite with again", () => {
+  const ev = { before: "b", after: "a", rangeBefore: "rb", rangeAfter: "ra" };
+  it("overwrites the evidence of an entry that is not done", () => {
+    const id = started();
+    recordDependantWrite(ann, id, 5, ev, T);
+    const other = { before: "b2", after: "a2", rangeBefore: "rb2", rangeAfter: "ra2" };
+    const s = recordDependantWrite(ann, id, 5, other, T, true);
+    expect(s.source!.replacing!.dependants.find((d) => d.issue === 5)).toMatchObject(other);
+  });
+
+  it("is a no-op for equal evidence and refuses a done entry", () => {
+    const id = started();
+    recordDependantWrite(ann, id, 5, ev, T);
+    const before = file();
+    recordDependantWrite(ann, id, 5, ev, T, true);
+    expect(file()).toBe(before);
+    recordDependantDone(ann, id, 5, "rewritten", T);
+    unchanged(() => recordDependantWrite(ann, id, 5, { ...ev, rangeAfter: "x" }, T, true), "bad-state");
+  });
+});
+
+describe("recordOriginalLabels", () => {
+  it("adds labels without repeating one (not case sensitive) and keeps the first spelling", () => {
+    const id = started();
+    expect(recordOriginalLabels(ann, id, ["Factory_go", "Other"], T).source!.replacing!.labels).toEqual(["Factory_go", "Other"]);
+    const before = file();
+    recordOriginalLabels(ann, id, ["factory_go"], T);
+    expect(file()).toBe(before);
+    expect(recordOriginalLabels(ann, id, ["factory_GO", "Third"], T).source!.replacing!.labels).toEqual(["Factory_go", "Other", "Third"]);
+  });
+
+  it("are kept when the journal is recorded again by a retry", () => {
+    const id = started();
+    recordOriginalLabels(ann, id, ["Factory_go"], T);
+    const s = recordReplacing(ann, id, { parts: [40, 41], found: [dep(7)] }, T);
+    expect(s.source!.replacing!.labels).toEqual(["Factory_go"]);
+    expect(s.source!.replacing!.dependants.map((d) => d.issue)).toEqual([3, 5, 7]);
+  });
+
+  it("refuses without a journal and more labels than GitHub allows on an issue", () => {
+    const { id } = makeSplit();
+    unchanged(() => recordOriginalLabels(ann, id, ["a"], T), "bad-state");
+    const id2 = started(13);
+    unchanged(() => recordOriginalLabels(ann, id2, Array.from({ length: 101 }, (_, i) => `l${i}`), T), "bad-state");
+  });
+});
+
+describe("recordReplaced and the build label", () => {
+  it("always drops the build label of the source, also when it was taken off by hand", () => {
+    const id = started();
+    edit((f) => (f.sessions.find((x: any) => x.id === id).source.buildLabel = "Factory_go"));
+    const s = recordReplaced(ann, id, { closed: "open" }, T);
+    expect(s.source).not.toHaveProperty("buildLabel");
+    expect(s.source).not.toHaveProperty("replacing");
   });
 });

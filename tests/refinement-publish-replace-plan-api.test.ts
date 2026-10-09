@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, setRepoReady } from "../src/auth/repos.js";
-import { beginPublishing, endPublishing, recordDependantDone, recordDependantWrite, recordReplaced, recordReplacing, refinementsPath } from "../src/refinement/store.js";
+import { beginPublishing, endPublishing, recordDependantDone, recordDependantWrite, recordReplacing, refinementsPath } from "../src/refinement/store.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -122,7 +122,7 @@ describe("the publish plan of a split issue", () => {
         { issue: 21, title: "Dependant 21", byHand: true },
       ],
     });
-    expect(r.json().notChanged).toBe(12);
+    expect(r.json()).not.toHaveProperty("notChanged");
     nothingWritten();
     expect(readFileSync(refinementsPath(), "utf8")).toBe(before);
     expect((await view(id)).source.replace).toBe("waiting");
@@ -169,17 +169,13 @@ describe("the publish plan of a split issue", () => {
     expect(r.dependants).toEqual([{ issue: 20, title: "Dependant 20", before: "#12", after: "#101, #102" }]);
     expect(JSON.stringify(r)).not.toMatch(/rangeAfter|outcome/);
 
-    // Both parts are on GitHub: the replacement is due.
+    // Both parts are made by this publish, which then finishes the replacement.
     const done = await call(ann, "POST", url(id, "publish"), {});
     expect(done.status).toBe(200);
     v = await view(id);
     expect(parts).toHaveLength(2);
-    expect(v.source.replace).toBe("due");
-    expect((await plan(id)).json().replaces.parts).toEqual([{ issue: 101 }, { issue: 102 }]);
-
-    recordReplaced(actor(), id, { closed: "not_planned", closedAt: "2026-10-09T10:00:00.000Z" });
-    v = await view(id);
-    expect(v.source).toMatchObject({ replace: "done", replacedBy: [101, 102], closed: "not_planned", closedAt: "2026-10-09T10:00:00.000Z" });
+    expect(done.json().replaced).toMatchObject({ issue: 12, parts: [101, 102] });
+    expect(v.source).toMatchObject({ replace: "done", replacedBy: [101, 102], closed: "open" });
     expect(v.source).not.toHaveProperty("replacing");
     const after = (await plan(id)).json();
     expect(after).not.toHaveProperty("replaces");
