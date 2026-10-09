@@ -58,7 +58,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -106,5 +106,10 @@ describe("ui/style.css", () => {
     expect(css).toContain(".table-box { overflow-x: auto; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
     expect(css).toContain(".view-bar {");
+  });
+  it("has the shared state styles", () => {
+    for (const c of [".sr-only {", ".skeleton {", ".state-error:not(.pill) {", ".stale-note {"]) expect(css).toContain(c);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.skeleton-row \{ animation: none/);
+    expect(css).toContain(".pill.fail, .pill.state-error");
   });
 });

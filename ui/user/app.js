@@ -6,6 +6,7 @@ import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { homeHash, renderStart } from "/user/start.js";
 import { showPage } from "/shell.js";
+import { errorState, explainError } from "/states.js";
 import { beginView } from "/view-as.js";
 
 const main = document.getElementById("main");
@@ -44,7 +45,7 @@ async function route() {
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
     else done = await renderMyRuns(box, { readOnly });
   } catch (e) {
-    if (mine === generation && !stopped) mount(box, h("div", { class: "errors" }, e.message));
+    if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
     return;
   }
   // A newer call has taken over: stop what this one started and keep nothing of it.

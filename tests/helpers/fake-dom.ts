@@ -16,6 +16,12 @@ export class FakeElement extends FakeNode {
     add: (n: string) => void this.classList.names.add(n),
     remove: (n: string) => void this.classList.names.delete(n),
     contains: (n: string) => this.classList.names.has(n),
+    toggle: (n: string, force?: boolean) => {
+      const on = force ?? !this.classList.names.has(n);
+      if (on) this.classList.names.add(n);
+      else this.classList.names.delete(n);
+      return on;
+    },
   };
   listeners: Record<string, Listener[]> = {};
   parent?: FakeElement;

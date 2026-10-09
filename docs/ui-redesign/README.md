@@ -17,6 +17,7 @@ An audit of the web UI, as a base for #248–#250. Taken on 2026-10-07 from comm
 | `prototypes.md` | The seven patterns, pages and alternatives, state matrix, route table, health and since mapping, the old run |
 | `walkthroughs.md` | Walkthroughs of the five tasks for both roles and every alternative; locate and primary-action tables; usability and visual check sheets |
 | `decisions.md` | Accepted and rejected decisions with reasons and evidence; owner approval record |
+| `states.md` | UI states (#342): the shared loading, empty, error, permission and stale components in `ui/states.js`, the six patterns and the workspace × state matrix |
 
 ## What the test checks
 
