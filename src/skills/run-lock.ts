@@ -32,7 +32,7 @@ export function safeEvidence(e: string): boolean {
   if (e.startsWith("issue:")) return ISSUE_REF.test(e);
   return safeText(e);
 }
-function projectEvidence(e: string): string {
+export function projectEvidence(e: string): string {
   if (safeEvidence(e)) return e;
   return e.startsWith("catalogue:") ? "catalogue:omitted" : e.startsWith("path:") ? "path:omitted" : "issue:omitted";
 }
