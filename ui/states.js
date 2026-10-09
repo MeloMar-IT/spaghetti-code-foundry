@@ -59,10 +59,10 @@ export function emptyState(text, action) {
   return h("div", { class: "empty" }, h("p", {}, text), action && h("button", { type: "button", class: "primary", onClick: () => action.onClick() }, action.label));
 }
 
-export function errorState(info, { onRetry, back } = {}) {
+export function errorState(info, { onRetry, back, focus = "retry" } = {}) {
   const row = onRetry || back
     ? h("div", { class: "row" },
-        onRetry && h("button", { type: "button", "data-focus": "retry", onClick: () => onRetry() }, "Retry"),
+        onRetry && h("button", { type: "button", "data-focus": focus, onClick: () => onRetry() }, "Retry"),
         back && h("a", { href: back.href }, back.label))
     : null;
   return h("div", { class: "state-error", role: "alert", "data-kind": info.kind },
@@ -76,16 +76,18 @@ export function permissionState(text, back) {
     back && h("a", { href: back.href }, back.label));
 }
 
-export function staleNote(at, { failed = false, onRetry } = {}) {
+/** The text of the stale note: "Updated HH:MM", or when `failed`, "Could not refresh. Showing data from HH:MM.". "" for a good note with no valid time. */
+export function staleText(at, failed = false) {
   const d = at == null ? null : new Date(at);
   const valid = d && !Number.isNaN(d.getTime());
-  if (!failed) {
-    if (!valid) return null;
-    return h("p", { class: "stale-note" }, `Updated ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  }
-  const text = valid
-    ? `Could not refresh. Showing data from ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
-    : "Could not refresh.";
+  const time = valid ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  if (!failed) return time ? `Updated ${time}` : "";
+  return time ? `Could not refresh. Showing data from ${time}.` : "Could not refresh.";
+}
+
+export function staleNote(at, { failed = false, onRetry } = {}) {
+  const text = staleText(at, failed);
+  if (!failed) return text ? h("p", { class: "stale-note" }, text) : null;
   return h("p", { class: "stale-note failed", role: "status" }, text, onRetry && h("button", { type: "button", class: "small", onClick: () => onRetry() }, "Retry"));
 }
 
@@ -93,12 +95,12 @@ const BANNER_TONES = { error: "fail", warn: "warn", info: "neutral" };
 
 /**
  * A message that stays on the page (a required follow-up, stale data, a lost stream). An adapter over the kit banner:
- * "error" is `role="alert"`, the others `role="status"`. An action is `{ label, onClick }` or `{ label, href }`.
+ * "error" is `role="alert"`, the others `role="status"`. An action is `{ label, onClick, focus? }` or `{ label, href, focus? }`; `focus` sets `data-focus`.
  */
 export function banner(kind, text, actions) {
   const k = Object.hasOwn(BANNER_TONES, kind) ? kind : "info";
   const nodes = (actions ?? []).map((a) => (a.href
-    ? link({ href: a.href }, a.label)
-    : button({ size: "small", onClick: a.onClick }, a.label)));
+    ? link({ href: a.href, "data-focus": a.focus }, a.label)
+    : button({ size: "small", onClick: a.onClick, "data-focus": a.focus }, a.label)));
   return kitBanner({ tone: BANNER_TONES[k], actions: nodes.length ? nodes : undefined, "data-kind": k }, text);
 }
