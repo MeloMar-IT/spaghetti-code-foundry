@@ -288,6 +288,30 @@ describe("the dialog", () => {
     expect(sent).toEqual([]);
   });
 
+  it("with no repository at all it links to My repositories", async () => {
+    repos = [];
+    void open();
+    expect(root().textContent).toContain("No repositories yet.");
+    expect(root().textContent).not.toContain("No connected repository");
+    expect(walk(root()).find((e) => e.tag === "a")!.attrs.href).toBe("#/repos");
+    expect(button(root(), "Save watcher")!.attrs.disabled).toBeDefined();
+  });
+
+  it("a network failure says the server could not be reached and enables Save again", async () => {
+    const fetchBefore = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string, init: { method: string }) => {
+      if (init.method === "POST") throw new TypeError("fetch failed");
+      return (fetchBefore as any)(url, init);
+    };
+    void open();
+    inputOf(root(), "Id").value = "w";
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(root().textContent).toContain("Could not reach the server.");
+    expect(root().textContent).not.toContain("fetch failed");
+    expect(button(root(), "Save watcher")!.disabled).toBe(false);
+  });
+
   it("an answer of the API stays in the dialog, as it is", async () => {
     answers = [{ status: 409, error: 'a watcher with the id "w" exists already; choose another id' }];
     let closed = false;

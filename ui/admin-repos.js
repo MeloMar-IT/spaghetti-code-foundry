@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
-import { connectionStatus, methodLabel, plainError } from "./repos.js";
+import { connectionProblem, connectionStatus, loadFailed, methodLabel, plainError } from "./repos.js";
+import { emptyState, loadingState, staleNote } from "./states.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
 const PATTERN_HINT = '"*" matches any text, ? one character.';
@@ -203,14 +204,46 @@ const onPage = () => {
 /** The admin page with the repositories of all accounts. Returns a cleanup. */
 export async function renderAllRepos(main) {
   const mine = ++generation;
-  const repos = await api.allRepos();
-  if (mine !== generation || !onPage()) return () => {};
-  const reload = () => renderAllRepos(main).catch((e) => toast(plainError(e), "error"));
+  let seq = 0; // only the newest fetch of this page draws
+  const state = { repos: [], at: null, stale: false };
+  const live = () => mine === generation && onPage();
+  const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts"));
+  const fetchAll = async (n) => {
+    const repos = await api.allRepos();
+    if (n !== seq) return;
+    state.repos = repos;
+    state.at = new Date();
+    state.stale = false;
+  };
+  const load = async () => {
+    mount(main, head(), loadingState("Loading the repositories", { rows: 3, shape: "table" }));
+    const n = ++seq;
+    try {
+      await fetchAll(n);
+    } catch (e) {
+      if (n !== seq || !live()) return;
+      return mount(main, head(), loadFailed(e, {
+        what: "The repositories could not be loaded.", denied: "Only an admin can see the repositories of all accounts.",
+        back: { href: "#/repos", label: "My repositories" }, onRetry: load,
+      }));
+    }
+    if (n === seq && live()) draw();
+  };
+  // the list on screen stays when it cannot be loaded again
+  const reload = async () => {
+    const n = ++seq;
+    try {
+      await fetchAll(n);
+    } catch {
+      if (n === seq) state.stale = true;
+    }
+    if (n === seq && live()) draw();
+  };
   const row = (repo) => h("tr", {},
     h("td", { class: "mono" }, repo.url),
     h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
     h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
-    h("td", {}, h("span", { class: "pill" }, connectionStatus(repo))),
+    h("td", {}, h("span", { class: "pill" }, connectionStatus(repo)), connectionProblem(repo)),
     h("td", {},
       h("button", { class: "small", onClick: async () => {
         await settingsDialog(repo);
@@ -224,15 +257,17 @@ export async function renderAllRepos(main) {
         await transferDialog(repo);
         reload();
       } }, "Transfer")));
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts")),
-    repos.length
+  const draw = () => mount(main,
+    head(),
+    state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
+    state.repos.length
       ? h("table", { class: "table" },
         h("caption", { class: "sr-only" }, "Repositories of all accounts"),
         h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-        h("tbody", {}, sortRepos(repos).map(row)))
-      : h("div", { class: "empty" }, "No repositories yet."));
+        h("tbody", {}, sortRepos(state.repos).map(row)))
+      : emptyState("No repositories yet."));
+  await load();
   return () => {
-    generation++;
+    if (generation === mine) generation++;
   };
 }
