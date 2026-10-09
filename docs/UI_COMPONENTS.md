@@ -1,18 +1,18 @@
 # UI components (the kit)
 
-The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives. No page uses the kit yet.
+The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives, and record components. No page uses the kit yet.
 
 ## Conventions
 
-- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState), `ui/kit/overlays.js` (tabs, menu, tooltip, dialog, drawer, toast). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
+- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState), `ui/kit/overlays.js` (tabs, menu, tooltip, dialog, drawer, toast), `ui/kit/records.js` (evidence, timelineEntry, timeline, logView, diffView). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
 - **Plain functions.** Each component is a function that returns a DOM element. Props are one object; children follow it (`button(props, ...children)`). `class` is added to the kit classes. Other props (for example `id`, `name`, `aria-*`, `data-*`) go to the element.
 - **No inline styles.** Kit modules never pass `style` to `h()`. A component throws if the caller passes `style`. Use a class.
-- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css`, `display.css` and `overlays.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
+- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css`, `display.css`, `overlays.css` and `records.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
 - **Names.** Block `scf-name`, part `scf-name__part`, variant or state `scf-name--variant`.
 - **Global rules.** The global `button` rules in `ui/style.css` stay. Kit classes are written to look right on top of them.
 - **Unbound.** Controls take `value` and `onInput`/`onChange` and keep no state. They are not the bound inputs in `ui/fields.js`, which are unchanged.
 - **Errors.** A missing required prop (a label, an `href`, `options`) or an unknown variant or size throws an `Error` at once.
-- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts`, `tests/ui-kit-display.test.ts` and `tests/ui-kit-overlays.test.ts`, with `installFakeDom`.
+- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts`, `tests/ui-kit-display.test.ts` and `tests/ui-kit-overlays.test.ts` and `tests/ui-kit-records.test.ts`, with `installFakeDom`.
 
 ## Actions
 
@@ -225,6 +225,52 @@ A click outside also closes it.
 |---|---|
 | Tab, then Enter or Space | Focus and press Dismiss |
 
+## Records
+
+All in `ui/kit/records.js`. They show what a run did and draw without error when data is missing (an old run with no steps, time or cost). Text is always added as text nodes, never as HTML: log and diff content is untrusted step output. Colours come from tokens, so they follow the theme.
+
+### evidence
+
+`evidence({ title, source, href, open, class }, ...children)`
+
+- `title` is required. `open` starts it expanded (default `false`).
+- **Element:** a `<details>` with a `<summary>` that shows the title and names the source ("Source: …", or "Source not recorded" when `source` is missing).
+- `href` adds an "Open source" link in the body. Only `http(s)://`, site-relative (`/…`) and in-page (`#…`) links are used; anything else (for example `javascript:`) is dropped.
+- Keys: the native ones. Tab to the summary, Enter or Space toggles it.
+
+### timeline
+
+`timeline({ label, empty, class }, entries)`
+
+- `label` is required. `entries` is an array of `timelineEntry` nodes; it may be missing.
+- **Element:** an `<ol>` with `aria-label`. With no entries it shows one item with `empty` (default "Nothing recorded.").
+
+### timelineEntry
+
+`timelineEntry({ title, time, tone, actor, class }, ...children)`
+
+- `title` is required. `tone`: `neutral` (default) | `ok` | `fail` | `run` | `warn` | `accent`.
+- **Element:** an `<li>` with the title, an optional `actor` and the children as the body.
+- `time` (ISO text, a number or a `Date`) adds `<time datetime>`. A missing or invalid time adds no time element.
+
+### logView
+
+`logView({ label, lines: [{ text, tone }], follow, empty, class })`
+
+- `label` is required. `lines` may be missing or empty; a line may be a plain string. `tone`: `ok` | `fail` | `step` | `dim`.
+- **Element:** a scroll region with `role="log"`, `aria-label` and `tabindex="0"`, so it scrolls from the keyboard (Tab to it, then arrow keys, Page Up/Down). With no lines it shows the `empty` text (default "No log lines.").
+- `follow` keeps the newest line in view; it is CSS only.
+- The kit draws every line it gets. The caller or the server limits the data.
+
+### diffView
+
+`diffView({ stat, patch, truncated, none, label, class })`
+
+- Takes the `{ stat, patch }` data of `api.diff`, plus `truncated`. `none` is the text for an empty patch (default "No changes.").
+- **Element:** the `stat` in a `<pre>`, then the patch in a focusable `<pre role="region">` named by `label` (default "Diff"). Each line is a `<span>` marked by class as file, hunk, added or removed. The `+` and `-` characters are kept, so the meaning is not in colour only.
+- `truncated` shows "Diff truncated (very large)." The kit does not cut the patch itself.
+- A patch with only a header draws as file and hunk lines, with no added or removed lines.
+
 ## The gallery
 
 The gallery shows every kit component with made-up data. It is a development aid and is off by default.
@@ -253,3 +299,15 @@ Without `--dev`, every path under `/gallery` answers 404. The files ship in the 
 - Give an example for each variant, plus `Long content`, `Disabled` (where the component has it) and `Error` (where it has it).
 - `tests/ui-gallery.test.ts` fails when a kit export has no section, and builds every example in both themes and both densities on the fake DOM. `tests/ui-gallery-server.test.ts` checks that `/gallery/` is served with `dev` and answers 404 without it.
 - The tests check structure, not looks. Open the gallery in a browser to check variants, long content, errors, keyboard focus and the narrow frame.
+
+## Building a new screen
+
+A screen must use only kit components. Check these before it is done:
+
+- [ ] It uses **only kit components**. No one-off buttons, tables, dialogs, logs or diffs. If one is missing, add it to the kit first.
+- [ ] No inline styles, no page-specific global selectors, no colour literals. CSS uses `scf-` classes and tokens.
+- [ ] Every control has an accessible name and works from the keyboard.
+- [ ] Untrusted text (issue text, step output, task) is added as text, never as HTML.
+- [ ] It draws with missing data: no steps, no time, no cost, an empty list.
+- [ ] It looks right in light and dark, comfortable and compact, wide and narrow.
+- [ ] Any new kit component has a gallery section and an entry in this document.

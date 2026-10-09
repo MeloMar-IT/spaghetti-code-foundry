@@ -12,7 +12,7 @@ let LONG: string;
 let view: any;
 const kitExports: Record<string, string[]> = {};
 /** Components with no disabled state, and those whose Long content example opens something when clicked. */
-const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast"];
+const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView"];
 const OPENS = ["dialog", "drawer", "toast"];
 
 beforeAll(async () => {
@@ -57,7 +57,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(21);
+    expect(names.length).toBe(26);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
@@ -154,11 +154,29 @@ describe("the registry", () => {
     }
   });
 
-  it("every overlay component has Notes with its keys, long content and narrow layout", () => {
-    for (const id of ["tabs", "menu", "tooltip", "dialog", "drawer", "toast"]) {
+  it("every overlay and record component has Notes with its keys, long content and narrow layout", () => {
+    for (const id of ["tabs", "menu", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView"]) {
       const text = example(id, "Notes").build().textContent;
       for (const word of ["Keyboard", "Long content", "Narrow layout"]) expect(text, `${id} ${word}`).toContain(word);
     }
+  });
+
+  it("each record section shows its own variants", () => {
+    const nodes = (id: string, name: string) => all(example(id, name).build());
+    const count = (id: string, name: string, c: string) => nodes(id, name).filter((e) => (e.getAttribute("class") ?? "").split(" ").includes(c)).length;
+    expect(count("logView", "500 lines", "scf-log__line")).toBe(500);
+    expect(count("logView", "Empty", "scf-log__empty")).toBe(1);
+    expect(count("logView", "Follow", "scf-log--follow")).toBe(1);
+    expect(count("diffView", "Large diff", "scf-diff__line")).toBeGreaterThanOrEqual(400);
+    for (const k of ["add", "del", "hunk", "file"]) expect(count("diffView", "Large diff", `scf-diff__line--${k}`), k).toBeGreaterThan(0);
+    expect(count("diffView", "Empty", "scf-diff__none")).toBe(1);
+    expect(nodes("diffView", "Truncated").some((e) => e.getAttribute("role") === "status")).toBe(true);
+    expect(count("timeline", "Empty", "scf-timeline__empty")).toBe(1);
+    expect(nodes("timelineEntry", "Missing data").some((e) => e.tag === "time")).toBe(false);
+    expect(nodes("timelineEntry", "Time and actor").some((e) => e.tag === "time" && e.getAttribute("datetime"))).toBe(true);
+    const details = section("evidence").examples.flatMap((e) => all(e.build())).filter((e) => e.tag === "details");
+    expect(details.some((e) => e.getAttribute("open") !== null)).toBe(true);
+    expect(details.some((e) => e.getAttribute("open") === null)).toBe(true);
   });
 
   it("building every example opens nothing and adds no document listener", () => {
