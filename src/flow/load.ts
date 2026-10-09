@@ -47,17 +47,28 @@ export function flowFiles(name: string, repo: string): string[] {
   return out;
 }
 
+export interface FlowIssue { path: (string | number)[]; message: string }
+
+/** A flow that does not parse. `issues` is empty for a YAML syntax error. */
+export class FlowParseError extends Error {
+  constructor(message: string, readonly issues: FlowIssue[] = []) { super(message); }
+}
+
 export function parseFlow(text: string, source = "<flow>"): Flow {
   let raw: unknown;
   try {
     raw = parse(text);
   } catch (e) {
-    throw new Error(`${source}: invalid YAML: ${(e as Error).message}`);
+    throw new FlowParseError(`${source}: invalid YAML: ${(e as Error).message}`);
   }
   const res = FlowSchema.safeParse(raw);
   if (!res.success) {
-    const issues = res.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
-    throw new Error(`${source}: invalid flow\n${issues}`);
+    const issues: FlowIssue[] = res.error.issues.map((i) => ({
+      path: i.path.map((p) => (typeof p === "number" ? p : String(p))),
+      message: i.message,
+    }));
+    const lines = issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
+    throw new FlowParseError(`${source}: invalid flow\n${lines}`, issues);
   }
   return res.data;
 }

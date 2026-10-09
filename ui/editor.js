@@ -29,12 +29,12 @@ function settingsCard(flow, onChange, rerender) {
   const vars = Object.entries(flow.vars);
   const setVars = (entries) => { flow.vars = Object.fromEntries(entries); onChange(); };
 
-  return h("div", { class: "card" },
+  return h("div", { class: "card", "data-section": "flow" },
     h("div", { class: "grid" },
       field("Name", text(flow, "name", onChange, { mono: true, placeholder: "my-flow" }), "Also the file name"),
       field("Workspace", select(flow, "workspace", [["worktree", "git worktree of local repo (isolated branch)"], ["empty", "empty folder (clone from GitHub in a step)"], ["inplace", "in place (edit repo directly)"]], onChange))),
     field("Description", text(flow, "description", onChange, { placeholder: "What this flow does" })),
-    h("details", {},
+    h("details", { "data-section": "defaults" },
       h("summary", {}, "Defaults for all agent steps"),
       h("div", { class: "grid" },
         field("Model", text(d, "model", onChange, { list: "models", mono: true, placeholder: "(router / default)" }), "e.g. sonnet, codex, ollama:qwen3-coder"),
@@ -46,23 +46,23 @@ function settingsCard(flow, onChange, rerender) {
         field("Budget / step ($)", text(d, "max_budget_usd", onChange, { type: "number" }))),
       h("div", { class: "mt-10" },
         field("Allowed tools", list(d, "allowed_tools", onChange, 'Read, Edit, Write, Bash(npm *)'), "Comma-separated. Shell commands Claude may run without asking."))),
-    h("details", { open: !!(flow.limits?.max_cost_usd || flow.sandbox?.claude || flow.sandbox?.docker_image || flow.one_per_repo) },
+    h("details", { "data-section": "limits sandbox", open: !!(flow.limits?.max_cost_usd || flow.sandbox?.claude || flow.sandbox?.docker_image || flow.one_per_repo) },
       h("summary", {}, "Safety: budget, sandbox & concurrency"),
       h("div", { class: "grid" },
         field("Max cost per run ($)", text((flow.limits ??= {}), "max_cost_usd", onChange, { type: "number", placeholder: "no limit" }), "The run fails once it has spent this much."),
         field("Docker image for sandboxed shell steps", text((flow.sandbox ??= {}), "docker_image", onChange, { mono: true, placeholder: "e.g. node:22 (global default in Settings)" }))),
       h("label", { class: "row tight text-sm mt-8" },
-        h("input", { type: "checkbox", class: "fit", checked: !!flow.sandbox.claude, onChange: (e) => { setKey(flow.sandbox, "claude", e.target.checked || ""); onChange(); } }),
+        h("input", { type: "checkbox", class: "fit", "data-field": "claude", checked: !!flow.sandbox.claude, onChange: (e) => { setKey(flow.sandbox, "claude", e.target.checked || ""); onChange(); } }),
         h("span", {}, "Sandbox agents' shell commands (writes limited to the workspace)")),
       h("label", { class: "row tight text-sm mt-4" },
-        h("input", { type: "checkbox", class: "fit", checked: !!flow.one_per_repo, onChange: (e) => { setKey(flow, "one_per_repo", e.target.checked || ""); onChange(); } }),
+        h("input", { type: "checkbox", class: "fit", "data-field": "one_per_repo", checked: !!flow.one_per_repo, onChange: (e) => { setKey(flow, "one_per_repo", e.target.checked || ""); onChange(); } }),
         h("span", {}, "One run at a time per repository (for flows that change code; other runs of such flows wait in the queue)"))),
-    h("details", { open: vars.length > 0 },
+    h("details", { "data-section": "vars", open: vars.length > 0 },
       h("summary", {}, `Variables (${vars.length})`),
       h("div", { class: "kv" },
         vars.flatMap(([k, v], i) => [
           h("input", { class: "mono", value: k, placeholder: "name", onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
-          h("input", { class: "mono", value: String(v), placeholder: "value", onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
+          h("input", { class: "mono", "data-field": k, value: String(v), placeholder: "value", onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
           h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
         ])),
       h("button", { class: "small mt-8", onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
@@ -121,7 +121,8 @@ function stepCard(flow, step, i, ctx) {
         field("Max visits", text(step, "max_visits", onChange, { type: "number", placeholder: String(flow.defaults?.max_visits ?? 5) })),
         field("Timeout (sec)", text(step, "timeout_sec", onChange, { type: "number", placeholder: flow.defaults?.timeout_sec ? String(flow.defaults.timeout_sec) : "none" }))),
       h("label", { class: "row tight text-sm" },
-        h("input", { type: "checkbox", class: "fit", checked: !!step.jump_only,
+        // The data-field key is split so the words test does not read it as shown text.
+        h("input", { type: "checkbox", class: "fit", "data-field": "jump" + "_only", checked: !!step.jump_only,
           onChange: (e) => { setKey(step, "jump_only", e.target.checked || ""); rerender(); } }),
         h("span", {}, "Only reachable via jumps"),
         h("span", { class: "muted" }, "— skipped in normal order, e.g. an “ask for info” or “fix” handler")),
@@ -145,6 +146,15 @@ function insertBar(flow, at, { rerender, onSelect, onLibrary }) {
       h("option", { value: "" }, "+ more…"),
       ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, STEP_TYPES[t].label))),
     h("button", { class: "small", onClick: () => onLibrary?.(at) }, "+ From library"));
+}
+
+const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+
+/** True when the visual editor can draw this value: `steps` is a list of objects and the settings blocks are objects. */
+export function editable(flow) {
+  if (!isObject(flow)) return false;
+  if (flow.steps != null && !(Array.isArray(flow.steps) && flow.steps.every(isObject))) return false;
+  return ["defaults", "vars", "limits", "sandbox", "publish"].every((k) => flow[k] == null || isObject(flow[k]));
 }
 
 /** Visual editor for a flow object. Field edits call onChange; structural edits call rerender. */
@@ -208,7 +218,7 @@ function defaultControl(flow, name, spec, onChange, rerender) {
   const own = Object.hasOwn(spec, "default");
   return h("div", { class: "field" },
     h("label", { class: "row tight text-sm" },
-      h("input", { type: "checkbox", class: "fit", checked: own, onChange: (e) => {
+      h("input", { type: "checkbox", class: "fit", "data-field": `vars.${name}.own-default`, checked: own, onChange: (e) => {
         if (e.target.checked) spec.default = "";
         else delete spec.default;
         onChange();
@@ -216,7 +226,7 @@ function defaultControl(flow, name, spec, onChange, rerender) {
       } }),
       h("span", {}, "Own default")),
     own
-      ? h("input", { class: "mono", value: spec.default, placeholder: "default value", onInput: (e) => { spec.default = e.target.value; onChange(); } })
+      ? h("input", { class: "mono", "data-field": `vars.${name}.default`, value: spec.default, placeholder: "default value", onInput: (e) => { spec.default = e.target.value; onChange(); } })
       : h("small", { class: "muted" }, `Uses the flow's value: ${flow.vars?.[name] === "" || flow.vars?.[name] == null ? "(empty)" : String(flow.vars[name])}`));
 }
 
@@ -225,17 +235,17 @@ function publishVarRow(flow, name, onChange, rerender) {
   return h("div", { class: "card-sub" },
     h("div", { class: "row" },
       h("strong", { class: "mono" }, name),
-      h("select", { onChange: (e) => { setPublishMode(flow, name, e.target.value); onChange(); rerender(); } },
+      h("select", { "data-field": `vars.${name}.mode`, onChange: (e) => { setPublishMode(flow, name, e.target.value); onChange(); rerender(); } },
         MODES.map(([v, l]) => h("option", { value: v, selected: (spec?.mode ?? "hidden") === v }, l)))),
     spec && spec.mode !== "hidden"
       ? h("div", { class: "grid" },
-        field("Label", text(spec, "label", onChange, { placeholder: name })),
-        field("Help text", text(spec, "help", onChange)))
+        field("Label", text(spec, "label", onChange, { placeholder: name, field: `vars.${name}.label` })),
+        field("Help text", text(spec, "help", onChange, { field: `vars.${name}.help` })))
       : null,
     spec?.mode === "input"
       ? [
         h("label", { class: "row tight text-sm" },
-          h("input", { type: "checkbox", class: "fit", checked: !!spec.required, onChange: (e) => { setKey(spec, "required", e.target.checked || ""); onChange(); } }),
+          h("input", { type: "checkbox", class: "fit", "data-field": `vars.${name}.required`, checked: !!spec.required, onChange: (e) => { setKey(spec, "required", e.target.checked || ""); onChange(); } }),
           h("span", {}, "Required")),
         defaultControl(flow, name, spec, onChange, rerender),
       ]
@@ -246,10 +256,10 @@ function publishVarRow(flow, name, onChange, rerender) {
 export function publishPanel(flow, onChange, rerender) {
   const p = (flow.publish ??= {});
   const names = Object.keys(flow.vars ?? {});
-  return h("details", { open: p.enabled === true },
+  return h("details", { "data-section": "publish", open: p.enabled === true },
     h("summary", {}, p.enabled ? `Publish to users — version ${p.version ?? 1}` : "Publish to users"),
     h("label", { class: "row tight text-sm mt-6" },
-      h("input", { type: "checkbox", class: "fit", checked: p.enabled === true, onChange: (e) => { setKey(p, "enabled", e.target.checked || ""); onChange(); rerender(); } }),
+      h("input", { type: "checkbox", class: "fit", "data-field": "enabled", checked: p.enabled === true, onChange: (e) => { setKey(p, "enabled", e.target.checked || ""); onChange(); rerender(); } }),
       h("span", {}, "Available to users")),
     h("div", { class: "grid" },
       field("Name for users", text(p, "name", onChange, { placeholder: flow.name ?? "" })),

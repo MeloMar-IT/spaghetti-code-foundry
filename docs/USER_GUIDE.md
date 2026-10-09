@@ -656,6 +656,12 @@ how steps connect: grey = next, green = on success, red dashed = on failure, pur
   `$FACTORY_VAR_NAME`, not `{{vars.name}}`. An approval message is shown to users, so it may only
   use `{{task}}`, `{{vars.<name>}}` of a variable users see (fixed or input, or `github_repo` or
   `issue`) and `{{steps.<id>.output}}`; the flow is refused on save otherwise.
+- **Problems** — when the flow is not valid, the editor lists each problem on its own row. Click a
+  row to go to it. In the visual editor, a problem in a step selects that step and focuses the
+  field; a problem in *defaults*, *vars*, *limits*, *sandbox* or *publish* opens that section. In
+  the YAML tab, the cursor goes to the line. A YAML syntax error links to its line and column. A
+  problem without a place is plain text. If you have edited the text since the check, rows do
+  nothing until you check again.
 
 ### Let any AI write a flow
 
@@ -2289,7 +2295,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/blocks` | yes | no | list blocks |
 | `PUT /api/blocks/:id` | yes | no | save a block |
 | `DELETE /api/blocks/:id` | yes | no | delete a block |
-| `POST /api/validate` | yes | no | check a flow |
+| `POST /api/validate` | yes | no | check a flow; answers `{ ok, flow }` or `{ ok: false, error, issues }` (`issues` is `[{ path, message }]`, empty for a YAML syntax error) |
 | `POST /api/generate` | yes | no | write a flow with AI |
 | `GET /api/queue` | yes | yes | the queue (a user sees their own queued runs and how many are ahead) |
 | `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
