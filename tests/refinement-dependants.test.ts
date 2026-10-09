@@ -46,6 +46,9 @@ describe("rewriteDependsOn", () => {
     const ok = `### Depends on\n${"x".repeat(990)} #12 y`;
     expect(rewriteDependsOn(ok, 12, [31])!.after.endsWith(" #31 y")).toBe(true);
   });
+  it("writes a number as #n and a string as it is", () => {
+    expect(rewriteDependsOn("### Depends on\n#12\n", 12, ["new issue 2", 31])!.after).toBe("new issue 2, #31");
+  });
   it("handles a single part", () => {
     expect(rewriteDependsOn("Depends on: #12", 12, [31])!.after).toBe("#31");
   });
@@ -82,6 +85,21 @@ describe("findDependants", () => {
   });
   it("keeps upper-case OPEN", () => {
     expect(findDependants([{ number: 5, title: "Five", state: "OPEN", body: "Depends on: #12" }], original, [31]).map((d) => d.issue)).toEqual([5]);
+  });
+  it("writes `shown` while `exclude` only skips parts on GitHub", () => {
+    expect(findDependants(open, original, [31], ["new issue 1", 31])).toEqual([
+      { issue: 4, title: "Four", byHand: true },
+      { issue: 5, title: "Five", byHand: false, before: "#12", after: "new issue 1, #31" },
+    ]);
+    expect(findDependants(open, original, [], ["new issue 1", "new issue 2"]).find((d) => d.issue === 5)!.after).toBe("new issue 1, new issue 2");
+  });
+  it("uses the title given for the original, not the one in the list", () => {
+    const list = [
+      { number: 12, title: "Old name", body: "" },
+      { number: 4, title: "Four", body: "### Depends on\nNew name\n" },
+    ];
+    expect(findDependants(list, { number: 12, title: "New name" }, [31])).toEqual([{ issue: 4, title: "Four", byHand: true }]);
+    expect(findDependants(list, { number: 12, title: "Old name" }, [31])).toEqual([]);
   });
   it("works when the original is not in the list", () => {
     expect(findDependants(open.filter((i) => i.number !== 12), original, [31, 32]).map((d) => d.issue)).toEqual([4, 5]);

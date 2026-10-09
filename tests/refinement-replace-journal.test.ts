@@ -203,12 +203,21 @@ describe("mergeJournal", () => {
     expect("cut" in r).toBe(false);
   });
 
-  it("keeps entries with rangeAfter or done, found or not, and drops open ones that are gone", () => {
+  it("keeps entries with rangeAfter or done, found or not, and keeps open ones that are gone", () => {
     const a = dep(1, { rangeAfter: "ra", title: "A" });
     const b = dep(2, { done: true, outcome: "ok", title: "B" });
     const c = dep(3);
     const r = mergeJournal([a, b, c], [{ issue: 1, title: "Z" }]);
-    expect(r.dependants).toEqual([a, b]);
+    expect(r.dependants).toEqual([a, b, c]);
+    expect(r.dependants[2]).toBe(c);
+  });
+
+  it("keeps a missing open entry through repeated merges, and keeps it once it is done", () => {
+    const c = dep(3);
+    const once = mergeJournal([c], []).dependants;
+    expect(mergeJournal(once, []).dependants).toEqual([c]);
+    const done = { ...c, outcome: "by-hand", done: true as const };
+    expect(mergeJournal([done], []).dependants).toEqual([done]);
   });
 
   it("adds new entries after the stored ones, by number, once", () => {
@@ -256,7 +265,7 @@ describe("recordReplacing", () => {
     const s = recordReplacing(ann, id, { parts: [40, 41], found: [dep(5), dep(3)] }, T);
     expect(s.source!.replacing).toEqual({ parts: [40, 41], dependants: [dep(3), dep(5)] });
     const s2 = recordReplacing(ann, id, { parts: [40, 41], found: [dep(3, { title: "N" }), dep(8)], cut: true }, T);
-    expect(s2.source!.replacing).toEqual({ parts: [40, 41], cut: true, dependants: [dep(3, { title: "N" }), dep(8)] });
+    expect(s2.source!.replacing).toEqual({ parts: [40, 41], cut: true, dependants: [dep(3, { title: "N" }), dep(5), dep(8)] });
     expect(recordReplacing(ann, id, { parts: [40, 41], found: [dep(3)] }, T).source!.replacing!.cut).toBe(true);
     expect(() => checkRefinements()).not.toThrow();
   });

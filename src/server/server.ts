@@ -84,6 +84,8 @@ export interface ServerOptions {
   watcherRetryMs?: number;
   /** How long the publish plan waits for GitHub, in ms (default 15000). A test makes it short. */
   ghTimeoutMs?: number;
+  /** How many pages of 100 open issues are read to find dependants (default 10). A test makes it small. */
+  openIssuePages?: number;
 }
 
 export interface ApiContext {

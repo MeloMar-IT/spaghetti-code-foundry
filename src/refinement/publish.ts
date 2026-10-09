@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { BOT_MARKER } from "../github.js";import { cleanBody, splitSections } from "./issue-import.js";
 import { bad, isObject, oneLine, preview, type Draft } from "./draft.js";
 import { chars } from "./talk.js";
+import { partsOf } from "./replace-journal.js";
 import { acceptedLines, notReadyReason } from "./draft-ready.js";
 import type { ReadyItem } from "./ready-list.js";
 
@@ -42,6 +43,16 @@ export interface PlanInput {
   reviewLabel?: string;
   /** The issue the session came from, and the draft that stands for it (none: nothing stands for it). */
   source?: { issue: number; draft?: string };
+  /** The source issue was replaced by its parts already (`replacedBy` is set). */
+  replaced?: boolean;
+}
+
+export type ReplacePart = { issue: number } | { item: number; title: string };
+/** A split source issue that a publish replaces by its parts (the leaves): where they are, and whether all can be published. */
+export interface Replaces {
+  issue: number;
+  parts: ReplacePart[];
+  ready: boolean;
 }
 
 type Sess = { drafts: Draft[]; epic?: number };
@@ -155,8 +166,14 @@ function inCircle(drafts: readonly Draft[]): Set<string> {
  * The plan of a session: one item per draft that is not split, in the order they would be created, and the ids that would be created.
  * Readiness is worked out now with `isReady` and the list given; the stored state of the session is not used. A ready draft that depends
  * on a draft that is neither ready nor on GitHub is not offered. `leftBehind` names split originals that still hold criteria.
+ * `replaces` is set when the draft that stands for the source issue is split (and the issue was not replaced yet): its leaf parts, and
+ * whether each is ready or on GitHub. `replaced` turns off `replaces` and `notChanged`.
  */
-export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: string[]; willUpdate: string[]; notChanged?: number; leftBehind: LeftBehind[] } {
+export function planOf(
+  s: Sess,
+  o: PlanInput,
+): { items: PlanItem[]; willCreate: string[]; willUpdate: string[]; notChanged?: number; replaces?: Replaces; leftBehind: LeftBehind[] } {
+  const all = s.drafts;
   const left = leftBehind(s.drafts);
   s = { ...s, drafts: withoutSplits(s.drafts) };
   const order = publishOrder(s.drafts);
@@ -167,7 +184,7 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
   // The draft that stands for the source issue, while it is there (not split) and not on GitHub yet.
   const markedId = o.source?.draft !== undefined && byId.has(o.source.draft) ? o.source.draft : undefined;
   const updating = o.source && markedId !== undefined && !o.onGithub.has(markedId) ? { id: markedId, issue: o.source.issue } : undefined;
-  const notChanged = o.source && markedId === undefined ? o.source.issue : undefined;
+  const notChanged = o.source && markedId === undefined && !o.replaced ? o.source.issue : undefined;
 
   const states = new Map<string, { state: PlanState; reason?: string }>();
   const stateOf = (d: Draft): { state: PlanState; reason?: string } => {
@@ -200,6 +217,20 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
     return item === undefined ? undefined : { item };
   };
 
+  const mark = o.source?.draft !== undefined && !o.replaced ? all.find((d) => d.id === o.source!.draft) : undefined;
+  let replaces: Replaces | undefined;
+  if (o.source && mark?.splitInto) {
+    const leaves = partsOf(all, mark.id).map((p) => byId.get(p.id)!);
+    replaces = {
+      issue: o.source.issue,
+      parts: leaves.map((p): ReplacePart => {
+        const n = numberOf(p.id)!;
+        return "issue" in n ? { issue: n.issue } : { item: n.item, title: titleOf(p) };
+      }),
+      ready: leaves.length > 0 && leaves.every((p) => stateOf(p).state !== "not-ready"),
+    };
+  }
+
   const items = order.map((d, i): PlanItem => {
     const { state, reason } = stateOf(d);
     const { title, body } = issueText(d, s, { accepted: acceptedLines(d, o.list), by: o.by, date: o.date, numberOf });
@@ -222,6 +253,7 @@ export function planOf(s: Sess, o: PlanInput): { items: PlanItem[]; willCreate: 
     willCreate: ready.filter((x) => x.updates === undefined).map((x) => x.draft),
     willUpdate: ready.filter((x) => x.updates !== undefined).map((x) => x.draft),
     ...(notChanged !== undefined ? { notChanged } : {}),
+    ...(replaces ? { replaces } : {}),
     leftBehind: left,
   };
 }
