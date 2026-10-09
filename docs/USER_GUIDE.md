@@ -224,6 +224,26 @@ when the findings file cannot be read): counts only, never a name.
 - **Updates:** the page asks every 5 seconds, so what the Foundry knows shows within 5 seconds. Changes on GitHub show after the watcher's next check; when you come back from a GitHub link, the watcher checks at once.
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
 
+### Filters in the address
+
+You can filter **Runs** and the **Board** by repository and, as an admin, by owner. The filter is
+part of the address, so you can share it, and Back and Forward restore it:
+
+- `#/runs?repo=owner%2Fname&owner=<account>` (admin Runs). `repo` and `owner` are the only keys;
+  anything else is ignored. A repository must look like `owner/name`.
+- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`.
+- On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
+  there: a user only ever sees their own runs.
+
+Above the list a filter bar shows one chip per active filter, each with a remove button, and
+**Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
+and offers **Clear filters**; this also happens for a repository your account cannot see.
+
+The browser filters what the server already sent; no call gets a new parameter. The Runs list
+holds the newest 200 runs, so with a repository filter on a full list you see "Only the newest
+200 runs are searched." Older runs of that repository are not shown. The 30-second refresh keeps
+the filter.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.

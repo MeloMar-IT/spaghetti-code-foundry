@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
-import { resolve } from "./ia.js";
+import { resolve, splitHash } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
@@ -73,7 +73,7 @@ async function refreshFlows() {
 }
 
 function renderSidebar() {
-  const inFlows = location.hash.startsWith("#/flows/") || location.hash === "#/new";
+  const inFlows = splitHash(location.hash).path.startsWith("#/flows/") || splitHash(location.hash).path === "#/new";
   const current = inFlows ? S.cur : null;
   mount(sidebar,
     h("div", { class: "side-actions" },
@@ -381,8 +381,11 @@ async function route() {
   const to = resolve("admin", location.hash);
   if (to.hash !== location.hash) history.replaceState(null, "", to.hash);
   const hash = to.hash;
-  const [, section, arg] = hash.split("/").map(decodeURIComponent);
-  const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && hash !== "#/new";
+  const { path } = splitHash(hash);
+  const [, section, arg] = path.split("/").map(decodeURIComponent);
+  const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && path !== "#/new";
+  // Filters change the address without a navigation; the page keeps the address in step.
+  const go = (next) => { history.replaceState(null, "", next); S.lastHash = next; };
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
   if (leavingDraft && section === "flows" && arg && !confirmDiscard()) {
     history.replaceState(null, "", S.lastHash);
@@ -395,7 +398,7 @@ async function route() {
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
     if (section === "home") S.cleanup = await renderYourTurn(main);
-    else if (section === "board") S.cleanup = renderBoard(main, arg);
+    else if (section === "board") S.cleanup = renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
     else if (section === "dashboard") await renderDashboard(main);
     else if (section === "watchers") await renderWatchers(main);
@@ -421,7 +424,14 @@ async function route() {
       else S.cleanup = done;
     }
     else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
-    else if (section === "runs") S.cleanup = await renderRunsList(main, { admin: true });
+    else if (section === "runs") {
+      // The list draws into its own box, so a slow answer that comes after a hash change cannot touch the next page.
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderRunsList(box, { admin: true, query: to.query, go });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
     else if (section === "new") S.cur && !S.cur.name ? renderFlowView() : openNew();
     else if (section === "flows" && arg) await openFlow(arg);
     else welcome();
@@ -434,7 +444,7 @@ async function route() {
 
 window.addEventListener("beforeunload", (e) => S.cur?.dirty && e.preventDefault());
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "s" && S.cur && (location.hash.startsWith("#/flows/") || location.hash === "#/new")) {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s" && S.cur && (splitHash(location.hash).path.startsWith("#/flows/") || splitHash(location.hash).path === "#/new")) {
     e.preventDefault();
     save();
   }

@@ -59,7 +59,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "filters.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -93,7 +93,8 @@ describe("ui/user/app.js", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
     expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
-    expect(app).toContain("await renderMyRuns(box, { readOnly })");
+    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query })");
+    expect(app.indexOf('resolve("user", page.hash)')).toBeLessThan(app.indexOf('showPage("user", to)'));
     for (const c of calls) expect(c, c).toContain("readOnly");
     expect(app).not.toContain('"/runs.js"');
     for (const c of calls) expect(c, c).toContain("{ admin: false");

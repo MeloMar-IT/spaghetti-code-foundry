@@ -315,6 +315,13 @@ describe("showPage with the shell", () => {
     expect(nav[4]!.attrs["aria-current"]).toBe("true");
   });
 
+  it("marks the link of a page whose address has a query", () => {
+    const hrefs = ["#/home", "#/runs", "#/repos", "#/flows", "#/users", "#/start"];
+    nav.forEach((a, i) => a.setAttribute("href", hrefs[i]!));
+    shell.showPage("admin", ia.resolve("admin", "#/runs?owner=u1"));
+    expect(nav[1]!.attrs["aria-current"]).toBe("page");
+  });
+
   it("names the page in the title and on the main area; a detail page names its argument", () => {
     shell.showPage("admin", ia.resolve("admin", "#/runs"));
     expect(byId("page-title").textContent).toBe("Runs");

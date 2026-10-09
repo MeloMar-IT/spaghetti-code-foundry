@@ -290,7 +290,7 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("/")[1] ?? "") === "repos";
+    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "repos";
   } catch {
     return false;
   }

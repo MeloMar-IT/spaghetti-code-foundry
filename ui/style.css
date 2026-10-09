@@ -484,3 +484,7 @@ body.side-closed .side { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   .scrim { transition: opacity var(--motion-base); }
 }
+
+.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); padding: 1px 4px 1px 10px; border-radius: var(--radius-pill); background: var(--panel-2); border: 1px solid var(--border); }
+.filter-chip button { padding: 0 6px; }

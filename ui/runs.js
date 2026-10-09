@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
+import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 
@@ -8,6 +9,9 @@ const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor
 const what = (r) => (r.vars?.issue ? `${r.vars.github_repo}#${r.vars.issue}` : r.vars?.pr ? `${r.vars.github_repo} PR #${r.vars.pr}` : "");
 
 const REFRESH_MS = 30_000;
+/** The server sends at most this many runs, so a repository filter searches only those. */
+export const RUNS_CAP = 200;
+export const CAP_NOTE = "Only the newest 200 runs are searched.";
 const GONE = "deleted user";
 /** The server's owner name as the list shows it: "deleted user" for an account that is gone, "" for no owner. */
 export const ownerLabel = (name) => (name === "deleted account" ? GONE : name ?? "");
@@ -58,23 +62,59 @@ export function stepRow(s) {
   return [h("dt", {}, s.status === "running" ? "Current step" : "Resumes at step"), h("dd", {}, id, h("span", { class: "muted" }, ` — ${about}`))];
 }
 
-/** Runs list; refreshes itself every 30 seconds. Returns a cleanup function that stops that. */
-export async function renderRunsList(main, { admin = true } = {}) {
+/** Runs list; refreshes itself every 30 seconds. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
+export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo } = {}) {
   mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading runs…"));
   let timer;
-  let owner = "";
-  const draw = async () => {
-    // A user gets their own runs and queue; the owner filter and its options are for admins.
-    const [runs, queue, owners] = await Promise.all([api.runs(admin ? owner : ""), api.queue(), admin ? api.runOwners() : []]);
-    if (!main.isConnected) return;
-    const yours = needsYou(runs);
+  let closed = false;
+  let seq = 0;
+  let data = null;
+  // A user gets their own runs and queue; the owner filter and its options are for admins.
+  let filters = { ...(query.repo ? { repo: query.repo } : {}), ...(admin && query.owner ? { owner: query.owner } : {}) };
+
+  // Asks the server (owner filter included) and draws. An older answer never overwrites a newer one, nor a page that was left.
+  const load = async () => {
+    const mine = ++seq;
+    const [runs, queue, owners] = await Promise.all([api.runs(admin ? filters.owner ?? "" : ""), api.queue(), admin ? api.runOwners() : []]);
+    if (closed || mine !== seq || !main.isConnected) return;
+    data = { runs, queue, owners };
+    draw();
+  };
+  // A change of the repository only filters what is here; a change of the owner asks the server again.
+  const setFilters = (next) => {
+    const reload = (next.owner ?? "") !== (filters.owner ?? "");
+    const before = filters;
+    filters = next;
+    go(withQuery("#/runs", filters));
+    if (!reload) return draw();
+    // If the server cannot answer, the address and the filters go back to what the page still shows.
+    load().catch((e) => {
+      if (closed || filters !== next) return;
+      filters = before;
+      go(withQuery("#/runs", filters));
+      if (data) draw();
+      toast(e?.message || "Could not load the runs.", "error");
+    });
+  };
+  const clear = () => setFilters({});
+
+  const draw = () => {
+    const { runs, queue, owners } = data;
+    const shown = filters.repo ? runs.filter((r) => sameRepo(r.vars?.github_repo, filters.repo)) : runs;
+    const pending = filters.repo ? queue.pending.filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue.pending;
+    const yours = needsYou(shown);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
     const table = (list) => h("div", { class: "table-box" }, h("table", { class: "table" },
       h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
       h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin })))));
-    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", onChange: (e) => { owner = e.target.value; draw(); } },
+    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
       h("option", { value: "" }, "All owners"),
-      owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
+      owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
+    const labels = { owner: ownerLabel(owners.find((o) => o.id === filters.owner)?.name) || filters.owner };
+    const note = filters.repo && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    const active = Boolean(filters.repo || filters.owner);
+    // A queued job that matches is a result too.
+    const found = shown.length > 0 || (filters.repo && pending.length > 0);
 
     mount(main,
       h("div", { class: "toolbar" }, h("h1", {}, "Runs"),
@@ -82,16 +122,23 @@ export async function renderRunsList(main, { admin = true } = {}) {
         filter,
         h("span", { class: "spacer" }),
         h("span", { class: "muted", style: { fontSize: "12px" } }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
-        h("button", { onClick: () => draw() }, "↻ Refresh")),
-      queue.pending.length ? h("div", { class: "card", style: { marginBottom: "16px" } },
+        h("button", { onClick: () => load().catch(() => {}) }, "↻ Refresh")),
+      filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
+      note && found ? h("p", { class: "muted" }, note) : null,
+      pending.length ? h("div", { class: "card", style: { marginBottom: "16px" } },
         h("h3", {}, "Queue"),
-        queue.pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); draw(); }))) : null,
+        pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); load().catch(() => {}); }))) : null,
       yours.length ? h("div", { style: { marginBottom: "16px" } }, h("h3", { style: { marginBottom: "8px" } }, `Needs you (${yours.length})`), table(yours)) : null,
-      runs.length ? table(runs) : h("div", { class: "empty" }, owner ? "No runs of this account." : admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
+      shown.length ? table(shown)
+        : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
+          : h("div", { class: "empty" }, admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
   };
-  await draw();
-  timer = setInterval(() => draw().catch(() => {}), REFRESH_MS);
-  return () => clearInterval(timer);
+  await load();
+  timer = setInterval(() => load().catch(() => {}), REFRESH_MS);
+  return () => {
+    closed = true;
+    clearInterval(timer);
+  };
 }
 
 export function logLine(line) {

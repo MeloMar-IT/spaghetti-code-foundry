@@ -368,7 +368,7 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("/")[1] ?? "") === "users";
+    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "users";
   } catch {
     return false;
   }

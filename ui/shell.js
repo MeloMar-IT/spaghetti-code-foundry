@@ -1,5 +1,5 @@
 import { h, mount } from "./dom.js";
-import { subnavFor } from "./ia.js";
+import { splitHash, subnavFor } from "./ia.js";
 
 // The frame around a page: which top link is on, the secondary row, the breadcrumb line and the tab title.
 
@@ -149,7 +149,7 @@ export function showPage(role, to) {
     if (a.getAttribute("data-nav") === key) {
       a.classList.add("active");
       // "page" on the link for this very address; "true" on the link of the area it belongs to.
-      a.setAttribute("aria-current", a.getAttribute("href") === to.hash ? "page" : "true");
+      a.setAttribute("aria-current", a.getAttribute("href") === splitHash(to.hash).path ? "page" : "true");
     } else {
       a.classList.remove("active");
       a.removeAttribute("aria-current");

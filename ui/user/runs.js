@@ -4,7 +4,8 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
-import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
+import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
+import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -132,23 +133,39 @@ export async function decisionDialog(kind, send) {
 // ── My runs ──
 
 /** The My runs page; refreshes every 30 seconds. Returns a cleanup. */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false } = {}) {
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo } = {}) {
   let gone = false;
   let entries = [];
+  let capped = false;
   let seq = 0;
+  // Only the repository filter counts here: a user never filters by owner.
+  let filters = query.repo ? { repo: query.repo } : {};
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
 
+  const setFilters = (next) => {
+    filters = next;
+    go(withQuery("#/runs", filters));
+    draw();
+  };
+  const clear = () => setFilters({});
   const draw = () => {
-    mount(list, entries.length
-      ? h("ul", { class: "run-cards" }, entries.map((e) => runCard(e, readOnly ? null : remove)))
-      : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", href: "#/start" }, "Start work")));
+    const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
+    const note = filters.repo && capped ? CAP_NOTE : null;
+    mount(list,
+      filterBar(filters, { onRemove: () => setFilters({}), onClear: clear }),
+      shown.length
+        ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
+        : filters.repo
+          ? filterEmpty("runs", filters, { note, onClear: clear })
+          : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", href: "#/start" }, "Start work")));
   };
   async function load() {
     const mine = ++seq;
     const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
     if (gone || mine !== seq) return;
     entries = myRunsEntries(runs, queue?.pending);
+    capped = Array.isArray(runs) && runs.length >= RUNS_CAP;
     draw();
   }
   async function remove(job) {
