@@ -167,7 +167,6 @@ export function skillSession(engine: Pick<Engine, "summary" | "config" | "log" |
     const payload = renderSkillPayload(list, { maxTokens: engine.config.skills.selection.max_tokens });
     if (payload.blocked) return { refused: `${SKILL_BLOCKED_PREFIX}${payload.blocked} does not fit the skill context budget (skills.selection.max_tokens)` };
     for (const k of payload.omitted) engine.log(`    ! skill context: ${k} left out: over budget`);
-    if (payload.loaded.length) engine.log(`    · skill context: ${payload.loaded.join(", ")} (${payload.bytes} bytes, about ${payload.estimatedTokens} tokens)`);
     return { payload };
   } catch {
     return { refused: NOT_WRITTEN };

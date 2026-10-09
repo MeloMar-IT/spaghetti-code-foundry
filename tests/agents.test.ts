@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { claudeIsolated, codexSandbox } from "../src/agents/run.js";
+import { claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
 import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
@@ -115,9 +115,26 @@ steps:
     expect(FACTORY_AGENT_NOTE).toContain("do not use, load or look for any other skill");
     expect(FACTORY_AGENT_NOTE).toContain("win over it");
     expect(FACTORY_AGENT_NOTE).toContain("running unattended");
+    expect(FACTORY_AGENT_NOTE).toContain("an earlier prompt of this session");
     const args = buildClaudeArgs({ prompt: "p", cwd: "/w", logFile: "/l", isolated: true, systemPrompt: "extra" });
     expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(FACTORY_AGENT_NOTE + "\n\nextra");
     expect(args).toEqual(expect.arrayContaining(["--strict-mcp-config", "--setting-sources", "project,local", "--disable-slash-commands", "--disallowedTools", "Bash(git push*)"]));
+  });
+
+  it("finds the session a step resumes and the skill block it holds", () => {
+    const steps = {
+      impl: { agent: "claude:anthropic:opus", session_id: "s1", skills_digest: "sha256:x" },
+      old: { agent: "claude:anthropic", session_id: "s2" },
+      none: { agent: "claude:anthropic", session_id: "", skills_digest: "sha256:y" },
+      odd: { agent: "claude:anthropic", session_id: "s3", skills_digest: 7 },
+    };
+    expect(sessionToResume({}, steps, "claude")).toEqual({ asked: false });
+    expect(sessionToResume({ resume: "impl" }, steps, "claude")).toEqual({ asked: true, id: "s1", prevAgent: "claude", holds: "sha256:x" });
+    // another agent cannot continue the session
+    expect(sessionToResume({ resume: "impl" }, steps, "codex")).toEqual({ asked: true, id: undefined, prevAgent: "claude" });
+    expect(sessionToResume({ resume: "old" }, steps, "claude").holds).toBeUndefined();
+    expect(sessionToResume({ resume: "none" }, steps, "claude")).toEqual({ asked: true, id: undefined, prevAgent: "claude" });
+    expect(sessionToResume({ resume: "odd" }, steps, "claude").holds).toBeUndefined();
   });
 
   it.each([

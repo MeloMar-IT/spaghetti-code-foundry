@@ -117,6 +117,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     exit_code: res.exitCode ?? "",
     session_id: res.sessionId ?? "",
     agent: res.agent ?? "",
+    skills_digest: res.skills?.digest ?? "",
     visit,
   };
   engine.save();

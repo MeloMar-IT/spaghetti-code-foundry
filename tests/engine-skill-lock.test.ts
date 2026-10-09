@@ -239,7 +239,18 @@ describe("skillSession", () => {
       expect(p.loaded).toEqual(["a@1.0.0"]);
       expect(p.text).toContain("Package instructions of a.");
     }
-    expect(t.logs.filter((l) => /skill context: a@1\.0\.0 \(\d+ bytes, about \d+ tokens\)/.test(l))).toHaveLength(2);
+    // the per-session "skill context" line is logged where the session starts (runWith), not here
+    expect(t.logs.filter((l) => /skill context: (loaded|reloaded|reused)/.test(l))).toHaveLength(0);
+  });
+
+  it("verifies before every session and never resolves or writes the lock again", () => {
+    const t = setup(gateOutput(["a"]));
+    const discover = vi.fn(() => reg(withText(sk("a"), "Package instructions of a.")));
+    skillSession(t.engine, "claude", { discover });
+    const first = readFileSync(file(t.runDir), "utf8");
+    skillSession(t.engine, "claude", { discover });
+    expect(discover).toHaveBeenCalledTimes(2);
+    expect(readFileSync(file(t.runDir), "utf8")).toBe(first);
   });
 
   it("loads several skills in lock order, and only the locked ones", () => {

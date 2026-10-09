@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { estimateTokens } from "../src/skills/catalogue.js";
-import { renderSkillPayload, withSkillPayload, type PayloadSkill } from "../src/skills/payload.js";
+import { attachSkillPayload, renderSkillPayload, skillPayloadDigest, skillReminder, withSkillPayload, type PayloadSkill } from "../src/skills/payload.js";
 
 const sk = (id: string, o: Partial<PayloadSkill> = {}): PayloadSkill => ({
   id, version: "1.0.0", digest: `sha256:${"a".repeat(64)}`, selection: "requested", requiredBy: [],
@@ -106,5 +106,43 @@ describe("withSkillPayload", () => {
   });
   it("leaves the prompt alone without a block", () => {
     expect(withSkillPayload("task", "")).toBe("task");
+  });
+
+  describe("attachSkillPayload", () => {
+    const payload = { text: '<foundry-skills count="1">\n<foundry-skill id="demo" version="1.0.0" digest="d">\nSECRET BODY\n</foundry-skill>\n</foundry-skills>', loaded: ["demo@1.0.0"], bytes: 120, estimatedTokens: 30 };
+    const digest = skillPayloadDigest(payload.text);
+
+    it("gives nothing for an empty text", () => {
+      expect(attachSkillPayload({ ...payload, text: "" }, { continues: true, holds: digest, again: true })).toBeUndefined();
+    });
+    it("reuses a session that holds the same block: one line, no body", () => {
+      const a = attachSkillPayload(payload, { continues: true, holds: digest, again: true })!;
+      expect(a.state).toBe("reused");
+      expect(a.text).toBe(skillReminder(["demo@1.0.0"]));
+      expect(a.text).not.toContain("<foundry-skill id=");
+      expect(a.text).not.toContain("SECRET BODY");
+      expect([a.attachedBytes, a.attachedEstimatedTokens]).toEqual([0, 0]);
+      expect(a.digest).toBe(digest);
+    });
+    it("reloads when the session holds another block or none", () => {
+      for (const holds of ["sha256:other", undefined]) {
+        const a = attachSkillPayload(payload, { continues: true, holds, again: true })!;
+        expect(a.state).toBe("reloaded");
+        expect(a.text).toBe(payload.text);
+        expect(a.attachedBytes).toBe(120);
+      }
+    });
+    it("a new session is reloaded when it is a later one, loaded when it is the first", () => {
+      expect(attachSkillPayload(payload, { continues: false, holds: digest, again: true })!.state).toBe("reloaded");
+      expect(attachSkillPayload(payload, { continues: false, again: false })!.state).toBe("loaded");
+    });
+  });
+
+  it("digests the block text and lists the reminder on one line", () => {
+    expect(skillPayloadDigest("")).toBe("");
+    expect(skillPayloadDigest("abc")).toBe(skillPayloadDigest("abc"));
+    expect(skillPayloadDigest("abc")).not.toBe(skillPayloadDigest("abd"));
+    expect(skillPayloadDigest("abc")).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(skillReminder(["a@1.0.0", "b@2.0.0"])).toBe("The <foundry-skills> block given earlier in this session still applies: a@1.0.0, b@2.0.0.");
   });
 });
