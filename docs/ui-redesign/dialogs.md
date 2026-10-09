@@ -73,10 +73,10 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (button) |
 | `ui/admin.js:160` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
 | `ui/admin.js:228` | confirm | Remove these workspaces now? | Clean workspaces |
-| `ui/app.js:95` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:258` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:279` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:300` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/app.js:96` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:259` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:280` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:301` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |

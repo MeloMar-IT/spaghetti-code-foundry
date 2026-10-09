@@ -19,7 +19,8 @@ export class FakeElement extends FakeNode {
     contains: (n: string) => this.classList.names.has(n),
     toggle: (n: string, force?: boolean) => {
       const on = force ?? !this.classList.names.has(n);
-      if (on) this.classList.names.add(n); else this.classList.names.delete(n);
+      if (on) this.classList.names.add(n);
+      else this.classList.names.delete(n);
       return on;
     },
   };

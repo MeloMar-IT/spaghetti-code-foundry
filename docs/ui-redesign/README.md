@@ -20,7 +20,7 @@ An audit of the web UI, as a base for #248–#250. Taken on 2026-10-07 from comm
 | `decisions.md` | Accepted and rejected decisions with reasons and evidence; owner approval record |
 | [rollout.md](rollout.md) | State of the rollout: what is built and what is not, what moved where by address, old addresses |
 | `visual-system-demo.html` | Foundation 2 (#322): a runs table and a refinement talk with the real `ui/tokens.css` and `ui/style.css`; switches for theme and density. Open from disk. Not checked in a browser |
-
+| `states.md` | UI states (#342): the shared loading, empty, error, permission and stale components in `ui/states.js`, the six patterns and the workspace × state matrix |
 ## What the test checks
 
 `tests/ui-redesign-audit.test.ts` compares the tables with the code, in both directions: the admin routes in `route()` (`ui/app.js`), the user routes in `USER_HASH` (`ui/auth.js`), the nav links of both displays, the call sites of `modal(`, the native `confirm(` and `prompt(` calls and the files with 10 or more inline styles. It also checks that the findings are typed, that the results table has five empty rows, and that every image in `docs/images/` is named.

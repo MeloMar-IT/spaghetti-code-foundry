@@ -6,6 +6,7 @@ import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
 import { resolve } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
+import { errorState, explainError } from "./states.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
@@ -440,7 +441,7 @@ async function route() {
     else welcome();
   } catch (e) {
     if (mine !== routeGen) return; // a late error must not replace the page that is shown now
-    mount(main, h("div", { class: "errors" }, e.message));
+    mount(main, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
   }
   renderSidebar();
 }
