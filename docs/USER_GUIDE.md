@@ -2733,6 +2733,41 @@ scf eval evals/my-suite.yaml --models sonnet,codex,ollama:qwen3-coder
 The report shows pass rate, average cost, tokens, time and fix loops per variant, and appears on
 the Dashboard.
 
+#### Skill checks
+
+A case can also check which skills the run used. Add `skills:` to the case:
+
+```yaml
+    skills:
+      selected: [kafka]             # must be in the run's skill lock
+      absent: [react]               # must not be selected, and must not reach any session
+      one_of: [postgres, mysql]     # ambiguous task: exactly one of these
+      max_tokens: 1500              # largest skill block given to one session (estimated tokens)
+      max_attached_tokens: 3000     # skill tokens added to prompts over the whole run
+```
+
+All fields are optional. A skill id may appear only once in `selected`, `absent` and `one_of`. Versions are not compared.
+
+Three skill verdicts are reported next to quality (the `check`, or "the run succeeded"):
+
+- **Selection** — the right skills were chosen and the wrong ones were not.
+- **Context** — the skill text stayed within `max_tokens` and `max_attached_tokens`. `max_tokens` compares with the block each session got, not with the lock's estimate. A reuse on resume adds 0; a reload adds again.
+- **Activation** — the selected skills reached the agent. Every coder session that has skills must hold each expected skill. Other skills do not matter. Reviewer steps are not checked for expected skills. The status is `loaded`, `not-loaded`, `refused` (the run stopped on a skill integrity, selection or resolve error) or `none`.
+
+A case passes only if quality and all skill checks pass, so a run that succeeded can still fail on wrong selection or on budget. The report has `qualityRate` and a `skills` block (selection, context and activation rates, over the runs that have skill checks). `scf eval` prints a second table with these, and the Dashboard shows a "Skills" column (`—` when a variant has no skill checks). Reports from before this change stay valid.
+
+The tests run offline with the fake agents. Codex and local-model skill loading is not covered yet.
+
+#### Evidence to promote a skill version
+
+Before a new version of a skill replaces the pinned one, keep this evidence with the change:
+
+1. An eval suite with cases for positive (named), indirect, negative (`absent`), ambiguous (`one_of`), conflict, tamper, resume and fallback tasks.
+2. Selection, context and activation all pass for the new version, and quality is not worse than the old version on the same cases.
+3. The skill context stays within the declared budget (`max_tokens`, `max_attached_tokens`).
+4. The same suite run on each agent that is configured (Claude, Codex, a local model). Say which were run and which were not.
+5. The report file or the eval run IDs, linked in the pull request that changes the pin.
+
 ---
 
 ## 9. Command line

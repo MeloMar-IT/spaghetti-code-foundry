@@ -9,6 +9,7 @@ import type { RunSummary } from "./engine/state.js";
 import { FACTORY_HOME, loadFlow } from "./flow/load.js";
 import type { Flow } from "./flow/schema.js";
 import { Scheduler } from "./queue/scheduler.js";
+import { evaluateSkillRun, SkillExpectSchema, type SkillEvalResult } from "./skills/eval.js";
 import { runShell } from "./steps/shell.js";
 
 const CaseSchema = z
@@ -20,6 +21,8 @@ const CaseSchema = z
     vars: z.record(z.string(), z.string()).default({}),
     /** Shell command run in the workspace afterwards; exit 0 = pass. Default: the run succeeded. */
     check: z.string().optional(),
+    /** Skill checks: skills that must be selected or absent, and the context budget. Reported apart from the check. */
+    skills: SkillExpectSchema.optional(),
   })
   .strict();
 
@@ -43,7 +46,12 @@ export interface EvalResult {
   attempt: number;
   runId: string;
   status: RunSummary["status"];
+  /** Overall verdict: quality, and the skill checks when the case has them. */
   passed: boolean;
+  /** Output quality alone (the check, or the run succeeded). Absent in older reports: then it equals `passed`. */
+  quality?: boolean;
+  /** Selection, context and activation verdicts. Only for cases with `skills`. */
+  skills?: SkillEvalResult;
   checkOutput?: string;
   costUsd: number;
   tokens: number;
@@ -55,6 +63,9 @@ export interface VariantSummary {
   variant: string;
   runs: number;
   passRate: number;
+  qualityRate?: number;
+  /** Rates over the results that have skill checks. Absent when the variant has none. */
+  skills?: { runs: number; selectionRate: number; contextRate: number; activationRate: number };
   avgCostUsd: number;
   avgTokens: number;
   avgMinutes: number;
@@ -122,15 +133,26 @@ function summarize(results: EvalResult[]): VariantSummary[] {
   for (const r of results) by.set(r.variant, [...(by.get(r.variant) ?? []), r]);
   const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
   const round = (n: number, d = 4) => Math.round(n * 10 ** d) / 10 ** d;
-  return [...by].map(([variant, rs]) => ({
+  const rate = (rs: EvalResult[], f: (r: EvalResult) => boolean) => round(rs.filter(f).length / rs.length, 3);
+  return [...by].map(([variant, rs]): VariantSummary => {
+    const withSkills = rs.filter((r) => r.skills);
+    return {
     variant,
     runs: rs.length,
     passRate: round(rs.filter((r) => r.passed).length / rs.length, 3),
+    qualityRate: rate(rs, (r) => r.quality ?? r.passed),
+    ...(withSkills.length ? { skills: {
+      runs: withSkills.length,
+      selectionRate: rate(withSkills, (r) => r.skills!.selection.ok),
+      contextRate: rate(withSkills, (r) => r.skills!.context.ok),
+      activationRate: rate(withSkills, (r) => r.skills!.activation.ok),
+    } } : {}),
     avgCostUsd: round(avg(rs.map((r) => r.costUsd))),
     avgTokens: Math.round(avg(rs.map((r) => r.tokens ?? 0))),
     avgMinutes: round(avg(rs.map((r) => r.minutes)), 2),
     avgFixLoops: round(avg(rs.map((r) => r.fixLoops)), 2),
-  }));
+    };
+  });
 }
 
 export async function runEval(o: {
@@ -140,6 +162,7 @@ export async function runEval(o: {
   flowsFilter?: string[];
   modelsOverride?: string[];
   claudeBin?: string;
+  codexBin?: string;
   log: (m: string) => void;
 }): Promise<{ report: EvalReport; file: string }> {
   const suite = loadSuite(o.suitePath);
@@ -152,7 +175,7 @@ export async function runEval(o: {
   }).map((f) => ({ ...f, one_per_repo: false })); // cases get their own worktrees: run them in parallel
   // Routing rules would override the model under test.
   const config = models?.length ? { ...o.config, router: { ...o.config.router, rules: [] } } : o.config;
-  const scheduler = new Scheduler({ runsDir: o.runsDir, config: () => config, claudeBin: o.claudeBin });
+  const scheduler = new Scheduler({ runsDir: o.runsDir, config: () => config, claudeBin: o.claudeBin, codexBin: o.codexBin });
   const repos = new Map<string, string>();
   const startedAt = new Date().toISOString();
   const jobs: Promise<EvalResult>[] = [];
@@ -165,22 +188,24 @@ export async function runEval(o: {
         const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo, vars: c.vars }, { source: `eval ${suite.name}` });
         jobs.push((async () => {
           const s = (await scheduler.wait(runId))!;
-          let passed = s.status === "succeeded";
+          let quality = s.status === "succeeded";
           let checkOutput: string | undefined;
           if (c.check && s.workdir && existsSync(s.workdir)) {
             const logFile = join(s.runDir, "eval-check.log");
             const r = await runShell({ command: c.check, cwd: s.workdir, env: {}, logFile, timeoutMs: 600_000 });
-            passed = r.ok;
+            quality = r.ok;
             checkOutput = r.output.slice(-2000);
           }
+          const skills = c.skills ? evaluateSkillRun(s, c.skills) : undefined;
+          const passed = quality && (skills?.ok ?? true);
           const res: EvalResult = {
-            variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, checkOutput,
+            variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, quality, ...(skills ? { skills } : {}), checkOutput,
             costUsd: s.totalCostUsd,
             tokens: s.history.reduce((n, h) => n + (h.tokens ? h.tokens.input + h.tokens.output : 0), 0),
             minutes: s.finishedAt ? (new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 60_000 : 0,
             fixLoops: s.history.reduce((n, h) => n + (h.visit > 1 ? 1 : 0), 0),
           };
-          o.log(`${passed ? "✔" : "✘"} ${flow.name} · ${c.name}#${attempt} · ${s.status} · $${s.totalCostUsd.toFixed(3)} · run ${runId}`);
+          o.log(`${passed ? "✔" : "✘"} ${flow.name} · ${c.name}#${attempt} · ${s.status} · $${s.totalCostUsd.toFixed(3)} · run ${runId}${skills ? ` · selection ${skills.selection.ok ? "✔" : "✘"} · context ${skills.context.ok ? "✔" : "✘"} · activation ${skills.activation.ok ? "✔" : "✘"} (${skills.activation.status})` : ""}`);
           return res;
         })());
       }

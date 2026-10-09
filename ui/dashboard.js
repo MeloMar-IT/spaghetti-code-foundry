@@ -187,10 +187,12 @@ export async function renderDashboard(main) {
           h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")) : null,
       h("div", { class: "card span-all" }, h("h3", {}, "Evaluations"),
         pevals.error ? partNote("evals", pevals.error, retry) : evals.length ? h("table", { class: "table compact" },
-          h("thead", {}, h("tr", {}, ["Suite", "When", "Variant", "Runs", "Pass", "Avg cost", "Avg tokens", "Avg time", "Fix loops"].map((x) => h("th", {}, x)))),
+          h("thead", {}, h("tr", {}, ["Suite", "When", "Variant", "Runs", "Pass", "Quality", "Skills", "Avg cost", "Avg tokens", "Avg time", "Fix loops"].map((x) => h("th", {}, x)))),
           h("tbody", {}, evals.flatMap((e) => e.summary.map((v, i) => h("tr", {},
             h("td", {}, i === 0 ? h("b", {}, e.suite) : ""), h("td", { class: "muted" }, i === 0 ? new Date(e.startedAt).toLocaleString() : ""),
             h("td", { class: "mono" }, v.variant), h("td", {}, v.runs), h("td", {}, rateBar(Math.round(v.passRate * v.runs), v.runs)),
+            h("td", { class: "mono" }, pct(Math.round((v.qualityRate ?? v.passRate) * v.runs), v.runs)),
+            h("td", { class: "mono" }, v.skills ? `selection ${pct(v.skills.selectionRate, 1)} · context ${pct(v.skills.contextRate, 1)} · activation ${pct(v.skills.activationRate, 1)}` : "—"),
             h("td", { class: "mono" }, usd(v.avgCostUsd, 3)), h("td", { class: "mono" }, v.avgTokens ? `${Math.round(v.avgTokens / 1000)}k` : "—"), h("td", { class: "mono" }, `${v.avgMinutes}m`), h("td", {}, v.avgFixLoops))))))
           : h("p", { class: "muted" }, "No evaluations yet. Run: ", h("code", {}, "scf eval evals/example.yaml"))),
       s ? h("div", { class: "card" }, h("h3", {}, "Most loops (fix cycles)"),
