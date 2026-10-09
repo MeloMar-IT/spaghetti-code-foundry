@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -208,7 +209,7 @@ describe("module and styles", () => {
   });
 
   it("keeps the old rules and adds the new ones", () => {
-    const css = readFileSync("ui/style.css", "utf8");
+    const css = readUiCss(); // ui/style.css only imports the files under ui/css/
     for (const c of [".empty {", ".errors {", ".spinner {", ".sr-only {", ".skeleton {", ".stale-note {"]) expect(css).toContain(c);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.skeleton-row \{ animation: none/);
     // the status pill with the same class name must not get the box styles

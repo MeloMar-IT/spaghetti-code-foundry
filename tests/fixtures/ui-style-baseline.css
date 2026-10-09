@@ -199,6 +199,20 @@ details[open] > summary { margin-bottom: 10px; }
 .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
 .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: var(--radius-round); animation: spin .8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.skeleton { display: grid; gap: 10px; padding: 14px 0; }
+.skeleton-row { height: 14px; border-radius: var(--radius-sm); background: var(--border); animation: skeleton-pulse 1.2s ease-in-out infinite; }
+@keyframes skeleton-pulse { 50% { opacity: .45; } }
+.skeleton-table .skeleton-row { height: 28px; }
+.skeleton-cards { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.skeleton-cards .skeleton-row { height: 90px; }
+.skeleton-detail .skeleton-row:first-of-type { width: 40%; height: 22px; }
+@media (prefers-reduced-motion: reduce) { .skeleton-row { animation: none; } }
+.state-error:not(.pill) { background: var(--fail-soft); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 14px; }
+.state-error:not(.pill) p { margin: 0 0 6px; }
+.state-error:not(.pill) .state-what { color: var(--fail); font-weight: 550; overflow-wrap: anywhere; }
+.state-error:not(.pill) .row { margin-top: 8px; }
+.stale-note { color: var(--muted); font-size: var(--text-meta); display: flex; gap: 8px; align-items: center; }
+.stale-note.failed { color: var(--fail); }
 .ico { width: var(--size-icon); height: var(--size-icon); flex: none; display: inline-block; vertical-align: text-bottom; }
 .ico-sm { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 .ico.spin { animation: spin .8s linear infinite; }
