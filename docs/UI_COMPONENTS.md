@@ -1,18 +1,18 @@
 # UI components (the kit)
 
-The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls and display primitives. No page uses the kit yet.
+The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives. No page uses the kit yet.
 
 ## Conventions
 
-- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
+- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState), `ui/kit/overlays.js` (tabs, menu, tooltip, dialog, drawer, toast). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
 - **Plain functions.** Each component is a function that returns a DOM element. Props are one object; children follow it (`button(props, ...children)`). `class` is added to the kit classes. Other props (for example `id`, `name`, `aria-*`, `data-*`) go to the element.
 - **No inline styles.** Kit modules never pass `style` to `h()`. A component throws if the caller passes `style`. Use a class.
-- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css` and `display.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
+- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css`, `display.css` and `overlays.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
 - **Names.** Block `scf-name`, part `scf-name__part`, variant or state `scf-name--variant`.
 - **Global rules.** The global `button` rules in `ui/style.css` stay. Kit classes are written to look right on top of them.
 - **Unbound.** Controls take `value` and `onInput`/`onChange` and keep no state. They are not the bound inputs in `ui/fields.js`, which are unchanged.
 - **Errors.** A missing required prop (a label, an `href`, `options`) or an unknown variant or size throws an `Error` at once.
-- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts` and `tests/ui-kit-display.test.ts`, with `installFakeDom`.
+- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts`, `tests/ui-kit-display.test.ts` and `tests/ui-kit-overlays.test.ts`, with `installFakeDom`.
 
 ## Actions
 
@@ -141,6 +141,89 @@ Tones for `card`, `badge` and `banner`: `neutral` | `ok` | `fail` | `run` | `war
 `emptyState({ title, text, action, level, class, ...attrs })`
 
 - `title` is required. **Element:** a heading (`h3` by default; `level` 2–6), optional text, and an optional `action` node (for example a `button`).
+
+## Overlays and navigation
+
+All in `ui/kit/overlays.js`. Keyboard and focus rules are built in, so a page writes none. Menus and tooltips are placed with classes only (below or above the trigger, start or end aligned); there are no computed inline positions.
+
+### tabs
+
+`tabs({ label, tabs: [{ id, label, build }], selected, onSelect, class })`
+
+- `label` and at least one tab are required. Each tab needs a unique `id`, a `label` and a `build` function; `selected` must be a tab id. Otherwise it throws. The first tab is selected by default.
+- A panel is built the first time its tab is selected. `onSelect(id)` runs when the selection changes.
+- **Element:** `role="tablist"` with `role="tab"` buttons (`aria-selected`, `aria-controls`) and one `role="tabpanel"` per tab (`aria-labelledby`). Roving `tabindex`: only the selected tab is a tab stop.
+
+| Key | Action |
+|---|---|
+| Tab | Moves into the selected tab, then to the panel |
+| Right / Left | Next / previous tab; wraps at the ends |
+| Home / End | First / last tab |
+
+### menu
+
+`menu({ label, trigger, items: [{ label, onSelect, danger, disabled }], placement, align, class })`
+
+- `placement`: `below` (default) | `above`. `align`: `start` (default) | `end`. `label` is required and `items` must be an array.
+- **Element:** a trigger button with `aria-haspopup="menu"` and `aria-expanded`, and a `role="menu"` list of `role="menuitem"` buttons. A trigger that is not a string gets `aria-label` from `label`. With no items the trigger is disabled. A disabled item has `aria-disabled="true"` and is skipped by the arrow keys.
+
+| Key | Action |
+|---|---|
+| Enter, Space, Down (on the button) | Open, focus on the first enabled item |
+| Up (on the button) | Open, focus on the last enabled item |
+| Down / Up (in the menu) | Next / previous enabled item; wraps |
+| Home / End | First / last enabled item |
+| Enter, Space (on an item) | Run `onSelect`, close, focus back on the button |
+| Escape | Close, focus back on the button |
+| Tab | Close |
+
+A click outside also closes it.
+
+### tooltip
+
+`tooltip({ text, placement, align, class }, target)`
+
+- `placement`: `above` (default) | `below`. `align`: `start` | `end`. `text` and a DOM `target` are required.
+- Returns a wrapper that holds the target and the bubble (`role="tooltip"`). The target gets `aria-describedby` (an existing value is kept).
+- Shows on hover and on focus; Escape hides it.
+- **Never put the only copy of needed information in a tooltip.** Touch users may not see it.
+
+### dialog
+
+`dialog({ title, build, busy, dismissOnBackdrop })` returns a promise, like `modal` in `ui/dom.js`.
+
+- `build(close)` returns the content; `close(value)` closes the dialog and resolves the promise with `value`. A second `close` call does nothing. A dismissal (Escape, the Close button, a backdrop click) resolves with `undefined`.
+- `busy()` returns `true` while work runs. Then Escape, the Close button and the backdrop do not close it.
+- `dismissOnBackdrop` defaults to `true`.
+- **Element:** mounts into `#modal-root` (in `ui/index.html`, `ui/user/index.html` and the gallery page) with `role="dialog"`, `aria-modal="true"` and `aria-labelledby` pointing at its heading.
+- **Focus:** the first text field gets focus, or the box when there is none. Tab and Shift+Tab stay inside (the same `tabStops` and `trapTarget` as `modal`). On close, focus returns to the opener.
+- **Stacking:** a dialog or drawer can open on top of another. Only the top layer gets keys; the layers below are `inert`. Closing the top layer returns focus to the layer below.
+
+| Key | Action |
+|---|---|
+| Escape | Close (not while `busy()`) |
+| Tab / Shift+Tab | Next / previous control; wraps inside the dialog |
+
+### drawer
+
+`drawer({ title, side, build, busy, dismissOnBackdrop })`
+
+- The same contract and keys as `dialog`, drawn as a side panel. `side`: `end` (default) | `start`.
+- `dismissOnBackdrop` defaults to `false`, so a stray click does not lose what the user typed in a form.
+- On a narrow layout it takes the full width.
+
+### toast
+
+`toast(message, { tone, timeout })`
+
+- `tone`: `info` (default) | `ok` | `warn` | `fail`. `timeout` in ms, default 3500; `0` keeps it until dismissed.
+- `role="status"`, or `role="alert"` for `fail`. A `fail` toast always stays until dismissed. Several toasts stack.
+- Makes its own container on first use, so it does not need the `#toast` element. Returns a function that dismisses the toast; every toast also has a Dismiss button.
+- The old `modal` and `toast` in `ui/dom.js` are unchanged.
+
+| Key | Action |
+|---|---|
+| Tab, then Enter or Space | Focus and press Dismiss |
 
 ## The gallery
 
