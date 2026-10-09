@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { errorText } from "./auth.js";
-import { h, mount } from "./dom.js";
+import { h, markInvalid, mount } from "./dom.js";
 
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
 export const ACTIONS = ["app-repos-change", "block", "create", "credential-add", "credential-remove", "delete", "edit", "flow-publish", "limits-change", "link",
@@ -77,7 +77,8 @@ function table(entries) {
       e.detail ? h("div", { class: "muted" }, e.detail) : null),
     h("td", {}, h("span", { class: e.result === "failed" ? "pill fail" : "pill ok" }, e.result)));
   return h("table", { class: "table" },
-    h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result"].map((t) => h("th", {}, t)))),
+    h("caption", { class: "sr-only" }, "Audit log"),
+    h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result"].map((t) => h("th", { scope: "col" }, t)))),
     h("tbody", {}, entries.map(row)));
 }
 
@@ -104,8 +105,11 @@ export function renderAudit(main) {
     const problem = filterProblem(values);
     if (problem) {
       mount(exportSlot);
-      return mount(result, h("div", { class: "errors" }, problem));
+      // marked but not focused: this runs on `change`, while the person is still picking a date
+      for (const d of [from, to]) d.setAttribute("aria-invalid", "true");
+      return mount(result, h("div", { class: "errors", role: "alert" }, problem));
     }
+    markInvalid([from, to]);
     const filters = auditFilters(values);
     mount(exportSlot, h("a", { class: "btn", href: api.auditExportUrl(filters), download: "audit.csv" }, "Export CSV"));
     mount(result, loading());
@@ -113,7 +117,7 @@ export function renderAudit(main) {
     try {
       data = await api.audit(filters);
     } catch (e) {
-      if (my === loads && live()) mount(result, h("div", { class: "errors" }, errorText(e)));
+      if (my === loads && live()) mount(result, h("div", { class: "errors", role: "alert" }, errorText(e)));
       return;
     }
     if (my !== loads || !live()) return;
@@ -133,7 +137,7 @@ export function renderAudit(main) {
     try {
       users = await api.users();
     } catch (e) {
-      if (live()) mount(result, h("div", { class: "errors" }, errorText(e)));
+      if (live()) mount(result, h("div", { class: "errors", role: "alert" }, errorText(e)));
       return;
     }
     if (!live()) return;

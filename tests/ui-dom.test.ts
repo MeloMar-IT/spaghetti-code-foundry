@@ -278,3 +278,43 @@ describe("toast", () => {
     expect(el("toast").textContent).toBe("fine");
   });
 });
+
+describe("markInvalid, showError and fieldFor", () => {
+  const field = () => new FakeElement("input");
+  it("markInvalid marks one field and clears the others", () => {
+    const [a, b] = [field(), field()];
+    dom.markInvalid([a, b], a);
+    expect(a.attrs["aria-invalid"]).toBe("true");
+    expect(doc().activeElement).toBe(a);
+    dom.markInvalid([a, b], b);
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    expect(b.attrs["aria-invalid"]).toBe("true");
+  });
+  it("markInvalid without a field only clears, and keeps the focus", () => {
+    const [a, b] = [field(), field()];
+    dom.markInvalid([a, b], a);
+    b.focus();
+    dom.markInvalid([a, b]);
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    expect(doc().activeElement).toBe(b);
+    dom.markInvalid([a, undefined, null]);
+  });
+  it("showError writes the text and marks the field; an empty message clears both", () => {
+    const [line, a] = [new FakeElement("p"), field()];
+    dom.showError(line, "bad", { fields: [a], field: a });
+    expect(line.textContent).toBe("bad");
+    expect(a.attrs["aria-invalid"]).toBe("true");
+    dom.showError(line, "", { fields: [a], field: a });
+    expect(line.textContent).toBe("");
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    dom.showError(line, "no field");
+    expect(line.textContent).toBe("no field");
+  });
+  it("fieldFor returns the key of the first match, or undefined", () => {
+    const pairs = [[/^a/, "first"], [/b/, "second"]];
+    expect(dom.fieldFor("abc", pairs)).toBe("first");
+    expect(dom.fieldFor("xbx", pairs)).toBe("second");
+    expect(dom.fieldFor("zzz", pairs)).toBeUndefined();
+    expect(dom.fieldFor(undefined, pairs)).toBeUndefined();
+  });
+});

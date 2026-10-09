@@ -36,6 +36,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Glyphs.** New `glyph()` in `ui/dom.js` marks decorative glyphs (`✕`, `◆`, `›`, step icons) `aria-hidden`; their controls have names.
   - **AI-written content.** New `aiProps(what)` and `AI_LABEL` in `ui/dom.js` make a region named "Written by AI: <what>" around architect suggestions, talk, drafts, impact and planner questions (`ui/refinement-*.js`, `ui/turn-act.js`, `ui/user/runs.js`). The visible marking is unchanged.
   - **Tests.** `tests/ui-a11y-equivalents.test.ts` (new): table rows equal the chart data, the rate text, text for every run status, and `audit()` on the dashboard and a refinement session. Line numbers in `docs/ui-redesign/dialogs.md` and the style baseline are updated.
+- Accessibility 3 — labels and error messages in administration, repositories and sign-in (#387).
+  - **Behaviour.** Screen-reader users can fill in the administration, repository, watcher, model, user and sign-in forms and understand their errors. No API call changed.
+  - **Names.** Every form control in `ui/admin.js`, `ui/watcher-form.js`, `ui/repos.js`, `ui/admin-repos.js`, `ui/users.js`, `ui/models.js`, `ui/audit.js`, `ui/monitor.js`, `ui/problems.js` and `ui/auth.js` has an accessible name: a `<label>` where the text is visible, `aria-label` otherwise. Checkboxes made by the local `input` and `check` helpers are inside their label.
+  - **Errors.** Errors in these forms and dialogs use `role="alert"`. When the server error names a field, that field gets `aria-invalid="true"` and focus. Secret fields stay empty in the DOM.
+  - **Tables.** Data tables on these pages have `<th scope="col">` headers and a `<caption class="sr-only">` or `aria-label`.
+  - **Helpers.** `ui/dom.js` gets `markInvalid(fields, field)` (clears `aria-invalid` on all, marks and focuses one), `showError(line, message, { fields, field })` and `fieldFor(message, pairs)` (finds the field named by an error message).
+  - **Tests.** `tests/ui-a11y-admin.test.ts` (new) runs `audit()` on each page and each dialog opened through `modal()`, with zero serious violations; `tests/ui-dom.test.ts` covers the new helpers. `docs/ui-redesign/dialogs.md` has the new line numbers in `ui/repos.js`.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
   - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.

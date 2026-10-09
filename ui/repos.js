@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
 
 /**
  * The ways to sign in to a repository. A later method (the GitHub App) is another entry:
@@ -136,14 +136,25 @@ const connectionCell = (repo) => {
 const methodOf = (methods, id) => methods.find((m) => m.id === id) ?? { id, fields: [] };
 
 /** What is missing in the input, or "" when it can be sent. */
-export function repoProblem({ url, method, values = {}, needUrl = true, needSecret = true, methods = METHODS }) {
-  if (needUrl && !text(url)) return "Fill in the repository URL.";
+export const repoProblem = (x) => repoProblemAt(x).text;
+
+/** Like repoProblem, with the control at fault: `{ text, field }`, `field` being "url" or the key of a method field. */
+export function repoProblemAt({ url, method, values = {}, needUrl = true, needSecret = true, methods = METHODS }) {
+  if (needUrl && !text(url)) return { text: "Fill in the repository URL.", field: "url" };
   for (const f of methodOf(methods, method).fields) {
     if (f.secret && !needSecret) continue;
-    if (!text(values[f.key])) return `Fill in the ${f.label.toLowerCase()}.`;
+    if (!text(values[f.key])) return { text: `Fill in the ${f.label.toLowerCase()}.`, field: f.key };
   }
-  return "";
+  return { text: "", field: undefined };
 }
+
+// Which control a server sentence is about (src/auth/repo-url.ts, src/server/api-repos.ts). The URL entry covers address errors and a duplicate, not quota ("at most N repositories").
+const REPO_PAIRS = [
+  [/GitHub App|may choose|authentication|method/i, "method"],
+  [/address|host name|\bport\b|\bpath\b|transport|ssh form|you have that repository|^the repository (?:must|is empty)|repository is written/i, "url"],
+  [/user name/i, "username"],
+  [/token/i, "token"],
+];
 
 /** The request body: only the fields of the chosen method, trimmed; an empty secret is left out. */
 export function repoBody({ url, method, values = {}, withUrl = true, methods = METHODS }) {
@@ -187,7 +198,9 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
     delete values.url;
     let els = {};
     const area = h("div", { class: "stack" });
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const controls = () => ({ ...(urlInput ? { url: urlInput } : {}), ...els, method: select });
+    const fail = (m, key) => showError(err, m, { fields: Object.values(controls()), field: controls()[key ?? fieldFor(m, REPO_PAIRS)] });
     const draw = () => {
       const m = methodOf(methods, select.value);
       els = {};
@@ -214,7 +227,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       // keep what was typed in plain fields; a secret is not carried over to another method
       for (const [k, v] of Object.entries(read())) if (!methods.some((m) => m.fields.some((f) => f.key === k && f.secret))) values[k] = v;
       draw();
-      err.textContent = "";
+      fail("");
     });
     draw();
 
@@ -226,8 +239,8 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       const withUrl = !repo || !!els.url;
       const input = { url: els.url ? v.url : urlInput?.value, method, values: v, methods };
       const needSecret = !repo || method !== repo.method;
-      const problem = repoProblem({ ...input, needUrl: withUrl, needSecret });
-      if (problem) return void (err.textContent = problem);
+      const problem = repoProblemAt({ ...input, needUrl: withUrl, needSecret });
+      if (problem.text) return void fail(problem.text, problem.field);
       const body = repoBody({ ...input, withUrl });
       if (repo) {
         const same = method === repo.method && Object.entries(body).every(([k, x]) => k === "method" || (k !== "token" && x === repo[k]));
@@ -235,7 +248,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       }
       busy = true;
       save.disabled = true;
-      err.textContent = "";
+      fail("");
       pending = (async () => {
         try {
           if (repo) await api.setRepoAuth(repo.id, body);
@@ -243,7 +256,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
         } catch (e) {
           busy = false;
           if (closed) return toast(plainError(e), "error");
-          err.textContent = plainError(e);
+          fail(plainError(e));
           save.disabled = false;
           return;
         }
@@ -383,14 +396,15 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
       h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
       h("span", { class: "spacer" }), readOnly ? null : h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
-    notice ? h("p", { class: "status bad" }, notice.text,
+    notice ? h("p", { class: "status bad", role: "alert" }, notice.text,
       notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
         const btn = e.currentTarget;
         return whileBusy(btn, () => remove(notice.retryId, true));
       } }, "Try again")] : null) : null,
     repos.length
       ? h("div", { class: "table-box" }, h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", ""].map((t) => h("th", {}, t)))),
+        h("caption", { class: "sr-only" }, "My repositories"),
+        h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
         h("tbody", {}, repos.map(row))))
       : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", readOnly ? null : h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
   return () => {

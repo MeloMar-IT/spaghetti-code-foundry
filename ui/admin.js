@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { fieldFor, h, markInvalid, modal, mount, timeAgo, toast } from "./dom.js";
 import { monitorLists } from "./monitor.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
 import { watcherSemanticOf } from "./icons.js";
@@ -200,7 +200,7 @@ export async function renderWatchers(main) {
     h("div", { class: "toolbar" }, h("h1", {}, "Watchers"),
       h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
       h("span", { class: "spacer" }),
-      h("button", { onClick: reload }, "↻"),
+      h("button", { onClick: reload, "aria-label": "Reload" }, "↻"),
       monitor.length ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor(null))) && reload() }, "+ Add the monitor"),
       add()),
     watchers.length ? [
@@ -237,7 +237,7 @@ function diskSection(section) {
   };
   return section("Disk",
     h("p", { class: "muted flush" }, "Each run keeps its workspace (worktree or clone) so you can inspect or resume it. Clean up old ones here or with ", h("code", {}, "scf clean"), "."),
-    h("div", { class: "row" }, h("span", {}, "Runs finished more than"), days, h("span", {}, "days ago")),
+    h("label", { class: "row" }, h("span", {}, "Runs finished more than"), days, h("span", {}, "days ago")),
     purge.row, paused.row,
     h("div", { class: "row" }, h("button", { onClick: () => go(true) }, "Preview"), h("button", { class: "danger", onClick: () => go(false) }, "Clean up"), out));
 }
@@ -281,6 +281,13 @@ export async function renderSettings(main) {
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
   const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
   const err = h("div");
+  // the controls a server sentence can name, by the key of the setting
+  const fields = {
+    allowed_hosts: hostsIn, listen: listenSel, daily_budget_usd: budget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
+    slack_webhook: slack, command: cmd, throttle_minutes: throttle, quiet_hours: quietFrom, daily_summary_at: summaryAt, gh_token_env: botToken,
+    app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
+  };
+  const SETTINGS_PAIRS = Object.keys(fields).map((k) => [new RegExp(k === "name" || k === "email" || k === "repo" || k === "command" ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
     const next = {
@@ -308,9 +315,11 @@ export async function renderSettings(main) {
     try {
       await api.saveConfig(next);
       mount(err);
+      markInvalid(Object.values(fields));
       toast("Settings saved");
     } catch (e) {
-      mount(err, h("div", { class: "errors" }, e.message));
+      mount(err, h("div", { class: "errors", role: "alert" }, e.message));
+      markInvalid(Object.values(fields), fields[fieldFor(e.message, SETTINGS_PAIRS)]);
     }
   };
 

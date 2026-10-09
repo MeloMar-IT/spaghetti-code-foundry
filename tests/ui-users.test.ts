@@ -267,7 +267,7 @@ describe("the list", () => {
   it("shows the columns and one row per account", async () => {
     users.push(user({ id: "u2", name: "Bob", status: "blocked", lastSignIn: null }), user({ id: "u3", name: "Cy", hasPassword: false, lastSignIn: null }));
     await show();
-    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", ""]);
+    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", "Actions"]);
     const cells = (n: string) => rowOf(n).all("td").map((t) => t.textContent);
     expect(cells("Root").slice(0, 4)).toEqual(["Root (you)", "root@example.com", "admin", "active"]);
     expect(cells("Ann").slice(0, 7)).toEqual(["Ann", "ann@example.com", "user", "active", "just now", "2", "no limits"]);
