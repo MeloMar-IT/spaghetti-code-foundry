@@ -83,27 +83,19 @@ browser's address bar, type the password twice, and press **Set password**. Then
 The link works once and for 24 hours. If the page says "this link is not valid any more", ask your
 admin for a new one.
 
-| Page | What it is for |
-|---|---|
-| **Home** (includes *Your turn*) | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
-| **Board** | Where every story is, in columns per repository |
-| **Flows** | Your flows and the built-in ones: edit, create, run |
-| **Library** | Reusable blocks of steps to drop into flows |
-| **Refinement** | Where a rough idea grows into a story before it goes to the backlog |
-| **Runs** | Everything that ran or is running; the ones that need you on top |
-| **My repositories** | The repositories you work in, and how the Foundry signs in to them |
-| **All repositories** | Admin: the repositories of all accounts, their settings, and transfer to another account |
-| **Credentials** | Admin: the stored credentials of all accounts, without any secret |
-| **Watchers** | Automatic runs from GitHub issues, PR comments, red CI, or a schedule |
-| **Models** | Which agents and models are available, and which model runs which step |
-| **Dashboard** | Spend, success rate, where runs fail, eval results |
-| **Users** | The accounts: add, edit, block and delete them (admins only) |
-| **Audit** | Who did what, with filters and a CSV export (admins only) |
-| **Settings** | Budget, safety, notifications, bot identity, disk clean-up |
+| Place | Pages in it | What it is for |
+|---|---|---|
+| **Home** | — | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
+| **Board** | — | Where every story is, in columns per repository |
+| **Refinement** | — | Where a rough idea grows into a story before it goes to the backlog |
+| **Runs** | — | Everything that ran or is running; the ones that need you on top |
+| **Repositories** | My repositories, All repositories, Credentials | My repositories: The repositories you work in, and how the Foundry signs in to them. All repositories: Admin: the repositories of all accounts, their settings, and transfer to another account. Credentials: Admin: the stored credentials of all accounts, without any secret |
+| **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
+| **Administration** | Users, Watchers, Models, Problems, Dashboard, Audit, Settings | Users: The accounts: add, edit, block and delete them (admins only). Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity, disk clean-up |
 
 **Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories, All repositories, Credentials), Flows (Flows, Library) and Administration (Users, Watchers, Models, Problems, Dashboard, Audit, Settings). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
-An account with the role `user` works on its own display at `/user/`, with **Start work** in the top bar, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
+An account with the role `user` works on its own display at `/user/`, with **Home**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 ![Home of a user](images/user-home.png)
 
@@ -134,13 +126,40 @@ Foundry itself, and on the right when each repository was last checked.
 #### The day in four steps
 
 1. Put the build label on your issues on GitHub (or let a watcher's schedule do the work).
-2. Open **Your turn**. Answer questions and approve risky plans; one button each.
+2. Open **Home**. Answer questions and approve risky plans; one button each.
 3. Look at **Board** when you want to know where a story is and why.
-4. Merge the daily release pull request when it shows up under Your turn.
+4. Merge the daily release pull request when it shows up under **Needs you** on Home.
 
 Everything else continues by itself.
 
 Everything the UI does is also available from the command line (see [section 9](#9-command-line)).
+
+### Old and new interface
+
+**How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
+
+**What moved where.**
+
+| Before | Now | Address |
+|---|---|---|
+| Your turn | Home (Needs you) | `#/your-turn` |
+| Library | Flows → Library | `#/library` |
+| My repositories | Repositories → My repositories | `#/repos` |
+| All repositories | Repositories → All repositories | `#/all-repos` |
+| Credentials | Repositories → Credentials | `#/credentials` |
+| Users | Administration → Users | `#/users` |
+| Watchers | Administration → Watchers | `#/watchers` |
+| Models | Administration → Models | `#/models` |
+| Problems | Administration → Problems | `#/problems` |
+| Dashboard | Administration → Dashboard | `#/dashboard` |
+| Audit | Administration → Audit | `#/audit` |
+| Settings | Administration → Settings | `#/settings` |
+
+**Start work** is now a button in the top bar.
+
+**When the old one goes away.** It already has. The old menu was replaced in place, and all old addresses keep working.
+
+**More.** The state of the rollout is in [ui-redesign/rollout.md](ui-redesign/rollout.md).
 
 ---
 
@@ -183,7 +202,7 @@ The same rules as for a user apply: only a published flow, only your own reposit
 - **Active:** work that is running or queued. Each row says what happens next.
 - **Problems (admin):** problems of the Foundry that Needs you does not already show.
 - **Recently completed:** closed until you open it.
-- **Metrics (admin):** closed until you open it; a link goes to the Dashboard.
+- **Metrics (admin):** closed until you open it; a link goes to the Dashboard (Administration → Dashboard).
 - **Each row:** one main button and a **Details** link to the run. A section shows 5 rows and "+n more".
 - **Empty and all clear:** with nothing yet, Home offers **Start work**; when nothing needs you it says "Nothing needs you."
 - **Users** see only their own work: no cost, model, health or other accounts.
@@ -196,7 +215,7 @@ Home asks again every 30 seconds.
 
 **Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 
-- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (see "Two tries, then a person").
+- **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (Administration → Watchers; see "Two tries, then a person").
 - **Owner (admins):** an item that has a run shows the owner's name, `deleted user` when the account is gone, and nothing otherwise. Users see no owner name.
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
@@ -220,7 +239,7 @@ When you open the app after a break of 30 minutes or more, a strip under the hea
 - **Merged into develop:** the run pushed the story to `develop`. This counts even if a later step failed. A story shows under one of these two lines, from its newest run.
 - **Releases to main:** a release pull request or the rolling Foundry pull request was merged. Other pull requests do not count.
 - **Failed:** runs that failed. A run that a newer run of the same issue replaced, or that was interrupted, is left out.
-- **Newly waiting for you:** items that started to wait for you since your last visit. The line links to **Your turn**.
+- **Newly waiting for you:** items that started to wait for you since your last visit. The line links to **Needs you** on Home.
 - **Only the newest five** of each line are listed, followed by "+N more".
 - **Per browser:** the time of your last visit is kept in this browser and shared by its tabs. **Dismiss** hides the strip in all tabs. Nothing shows when nothing changed.
 - **Notes:** if GitHub could not be read, or a limit was reached (20 repositories, 200 merged pull requests, 2000 finished runs), the strip says so. If that leaves it empty, it stays hidden and tries again after 5 minutes.
@@ -255,7 +274,7 @@ when the findings file cannot be read): counts only, never a name.
 
 **Board** shows where every story is, like a parcel tracker. There is one board per repository; with more than one repository you get tabs.
 
-- **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which the Your turn page does not list), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
+- **Columns:** *Your turn* (something waits for you; here it also holds a run you stopped yourself, which the list on Home does not show), *Waiting for another story*, *Queued* (also paused by a limit), *Planning*, *Coding*, *Reviewing*, *Merging* (also finished work that waits for the scheduled release), *Done* (grouped Today and This week) and *Failed*.
 - **Which stories show:** every issue a watcher tracks, at any age. Other runs on an issue show for 7 days after they end. Done shows the last 7 days. Evaluation runs and runs without an issue never show.
 - **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its run page. A story that has no run yet is not a link; use the issue link on it.
 - **Owner (admins):** a card that has a run shows the owner's name, `deleted user` when the account is gone, and nothing for a card without a run or owner. **All owners** above the board hides the cards of other owners in the page; it makes no new call. Users see no owner name.
@@ -967,7 +986,7 @@ monitor:
   seen is still checked on GitHub every 6 hours, so a close or a reopen is noticed.
 - **Two tries, then a person.** The monitor counts the bug stories it made for a finding. After
   two that did not fix it, it makes no third: the finding *needs you*, the log says so once
-  (`story-skipped`, reason `two_tries`), and **Your turn** shows one item for it. A story that
+  (`story-skipped`, reason `two_tries`), and **Needs you** on Home shows one item for it. A story that
   existed before the upgrade counts as one. Nothing becomes "needs you" while bug stories are off,
   quiet after a restart or stopped by the breaker, or while the finding is muted.
   - **Try again or mute.** On the Watchers page the findings list shows "needs you" and a **Try
@@ -1336,9 +1355,9 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 | I want to… | Do this |
 |---|---|
 | Build an issue, or a whole epic | Add `Factory_go` to each issue (select them all in GitHub's issue list → Labels). Give stories a **Depends on** section so they are built in order. |
-| Answer the questions | Reply on the issue, or `/defaults` — or in the app, on Your turn |
+| Answer the questions | Reply on the issue, or `/defaults` — or in the app, on Home |
 | Check a plan before it is coded | Add `Factory_review_plan` before (or together with) `Factory_go` |
-| Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on Your turn |
+| Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on Home |
 | Retry after an error | Remove `Factory_ERROR` to start over, or resume the run on its page to continue at the failed step |
 | Stop the Foundry from touching an issue | Remove `Factory_go`, or add an excluded label |
 | Get the work into `main` | Merge the release pull request `develop` → `main` (gitflow), or the rolling Foundry pull request |
@@ -1618,7 +1637,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
   and the split approval are approval steps).
 
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
-lands in **Your turn** (a question, a risky plan or split, a release pull request, a failure, a
+lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
 watcher error). Nothing is sent for progress. A run that succeeds is told only if you switch on
 "Also notify when a run succeeds" (off by default; runs that finished before you switched it on are
 not told).
@@ -1816,7 +1835,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
-| `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action on the Your turn page (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
+| `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
 call that changes nothing (the same repository settings again, a flow saved without a change, an unpublished flow). If an old key
