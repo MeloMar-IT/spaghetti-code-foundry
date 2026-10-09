@@ -190,6 +190,7 @@ steps:
     on_success: run_tests
   - id: review_1
     type: claude
+    skill_role: reviewer
     agent: codex
     permission_mode: dontAsk
     allowed_tools:
@@ -249,6 +250,7 @@ steps:
     on_success: run_tests_1
   - id: review_2
     type: claude
+    skill_role: reviewer
     agent: codex
     permission_mode: dontAsk
     allowed_tools:

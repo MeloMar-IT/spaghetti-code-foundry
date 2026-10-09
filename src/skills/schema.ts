@@ -13,10 +13,17 @@ export const SKILL_VERSION_RE = new RegExp(`^(?=.{1,64}$)${NUM}\\.${NUM}\\.${NUM
 export const SKILL_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 export const SKILL_ROLES =["planner", "coder", "reviewer", "tester"] as const;
+/** Limits of the review context a reviewer session gets (config skills.review). */
+export const REVIEW_DEFAULTS = { maxTokens: 3000, maxSkillTokens: 1000 } as const;
+export const REVIEW_RANGE = { maxTokens: [100, 20000], maxSkillTokens: [50, 5000] } as const;
+/** What a claude step may declare as `skill_role`: the coder is the default and needs no field. */
+export const STEP_SKILL_ROLES = ["coder", "reviewer"] as const;
+export type StepSkillRole = (typeof STEP_SKILL_ROLES)[number];
 export const SKILL_RISKS = ["low", "medium", "high"] as const;
 export const SKILL_FOLDERS = ["references", "scripts", "assets", "evals"] as const;
 export const SKILL_LIMITS = {
   skillMdBytes: 65536,
+  reviewMdBytes: 8192,
   manifestBytes: 16384,
   fileBytes: 262144,
   totalBytes: 2097152,
@@ -145,6 +152,8 @@ export interface SkillPackage extends SkillManifest {
   allowedTools?: string;
   /** SKILL.md without the frontmatter, trimmed. */
   instructions: string;
+  /** REVIEW.md, trimmed. Absent without the file. */
+  review?: string;
   /** Digest of every file in the package (raw bytes, paths included). */
   digest: string;
   files: Record<SkillFolder, SkillFile[]>;

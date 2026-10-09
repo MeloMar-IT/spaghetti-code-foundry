@@ -107,6 +107,7 @@ steps: [...]                  # required, at least one
   resume: plan                      # optional: continue the session of an earlier claude step (by id)
   max_budget_usd: 3                 # optional: stop this step at this cost
   sandbox: true                     # optional: agent's shell commands may only write inside the workspace
+  skill_role: reviewer              # optional: give this read-only step compact review checks from the run's skills (coder is the default)
 ```
 
 - The step **output** is the agent's final answer. It succeeds unless the agent errors (or

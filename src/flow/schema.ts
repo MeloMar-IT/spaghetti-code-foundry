@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STEP_SKILL_ROLES } from "../skills/schema.js";
 import { varEnvName } from "../engine/template.js";
 
 /** Reserved transition targets. Anything else must be a step id. */
@@ -75,6 +76,32 @@ const baseStep = {
   timeout_sec: z.number().positive().optional(),
 };
 
+const WRITE_TOOL = /^(Edit|Write|MultiEdit|NotebookEdit|Bash)\b/;
+/** The only tools a reviewer step may name: they read files and nothing else. Anything else (also MCP or plugin tools) is refused. */
+const REVIEW_TOOL = /^(Read|Glob|Grep|LS)(\(.*\))?$/;
+
+/** A step that cannot write: plan mode, or dontAsk without a writing tool. */
+export function readOnlyStep(
+  step: { permission_mode?: string; allowed_tools?: string[] },
+  defaults: { permission_mode?: string; allowed_tools?: string[] },
+): boolean {
+  const mode = step.permission_mode ?? defaults.permission_mode ?? "acceptEdits";
+  const tools = step.allowed_tools ?? defaults.allowed_tools ?? [];
+  return mode === "plan" || (mode === "dontAsk" && !tools.some((t) => WRITE_TOOL.test(t)));
+}
+
+/** Why a step may not run as a reviewer, or undefined. A reviewer is read-only and names only read tools. */
+export function reviewerStepProblem(
+  step: { permission_mode?: string; allowed_tools?: string[]; resume?: string },
+  defaults: { permission_mode?: string; allowed_tools?: string[] },
+): string | undefined {
+  if (step.resume) return "a reviewer step must be read-only and cannot resume another step's session (the coder's context must stay out)";
+  if (!readOnlyStep(step, defaults)) return "a reviewer step must be read-only (permission_mode plan, or dontAsk without Edit, Write or Bash tools)";
+  const tools = step.allowed_tools ?? defaults.allowed_tools ?? [];
+  const bad = tools.find((t) => !REVIEW_TOOL.test(t));
+  return bad === undefined ? undefined : "a reviewer step may allow only the tools Read, Glob, Grep and LS";
+}
+
 export const ClaudeStepSchema = z
   .object({
     ...baseStep,
@@ -95,6 +122,8 @@ export const ClaudeStepSchema = z
     max_budget_usd: z.number().positive().optional(),
     /** Run Claude's bash tool in Claude Code's sandbox (writes limited to the workspace). Default: flow sandbox.claude. */
     sandbox: z.boolean().optional(),
+    /** The skill context of this session: coder (default; the full skills) or reviewer (compact REVIEW.md checks; the step must be read-only). */
+    skill_role: z.enum(STEP_SKILL_ROLES).optional(),
   })
   .strict();
 
@@ -252,6 +281,10 @@ export const FlowSchema = z
         ctx.addIssue({ code: "custom", path: ["steps", i, "id"], message: `"${s.id}" is a reserved word` });
       }
       ids.add(s.id);
+      if (s.type === "claude" && s.skill_role === "reviewer") {
+        const problem = reviewerStepProblem(s, flow.defaults);
+        if (problem) ctx.addIssue({ code: "custom", path: ["steps", i, "skill_role"], message: problem });
+      }
     });
     checkStepRefs(flow.steps, ids, (path, message) => ctx.addIssue({ code: "custom", path, message }));
     for (const [key, spec] of Object.entries(flow.publish?.vars ?? {})) {
