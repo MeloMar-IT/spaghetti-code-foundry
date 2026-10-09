@@ -18,6 +18,9 @@ const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  doc().visibilityState = "visible";
+  doc().activeElement = null;
+  doc().getElementById("modal-root").replaceChildren();
   calls = [];
   winListeners = {};
   (globalThis as any).addEventListener = (t: string, f: (e?: unknown) => void) => (winListeners[t] ??= []).push(f);
@@ -33,8 +36,14 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   delete (globalThis as any).addEventListener;
   delete (globalThis as any).removeEventListener;
-  delete (globalThis as any).confirm;
 });
+
+const doc = () => (globalThis as any).document;
+const root = () => doc().getElementById("modal-root") as FakeElement;
+const dialogButton = (text: string) => root().all("button").find((b) => b.textContent === text)!;
+const fireDoc = (t: string) => { for (const f of [...(doc().listeners[t] ?? [])]) f(); };
+const hide = () => { doc().visibilityState = "hidden"; fireDoc("visibilitychange"); };
+const show = () => { doc().visibilityState = "visible"; fireDoc("visibilitychange"); };
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const good = { ok: true, summary: "All good", problems: [], repos: [] };
@@ -108,6 +117,10 @@ describe("renderHealth", () => {
     ui.renderHealth(e, null);
     expect(e.textContent).toBe("The Foundry server does not answer. Check that it is still running.");
     expect(e.attrs.class).toBe("health bad");
+    expect(e.all("b")[0]!.attrs.role).toBe("alert");
+    const ok = el();
+    ui.renderHealth(ok, good);
+    expect(ok.all("b")[0]!.attrs.role).toBeUndefined();
   });
 });
 
@@ -135,40 +148,219 @@ describe("loadHealth", () => {
     expect(e.textContent).toBe("All good");
   });
 
-  it("cancels the run after a confirm, then asks again; without a confirm it posts nothing", async () => {
-    const e = el();
+  const openCancel = async (e: FakeElement) => {
     const p = ui.loadHealth(e);
     calls[0]!.answer(bad);
     await p;
-    (globalThis as any).confirm = () => false;
-    e.all("button")[0]!.click();
+    const btn = e.all("button")[0]!;
+    btn.focus();
+    btn.click();
+    await flush();
+    return btn;
+  };
+
+  it("Keep running posts nothing", async () => {
+    const e = el();
+    const btn = await openCancel(e);
+    expect(root().textContent).toContain("Cancel this run?");
+    expect(root().textContent).toContain("You can resume it later.");
+    expect(dialogButton("Cancel the run")).toBeDefined();
+    dialogButton("Keep running").click();
     await flush();
     expect(calls).toHaveLength(1);
-    (globalThis as any).confirm = () => true;
-    e.all("button")[0]!.click();
+    expect(root().children).toHaveLength(0);
+    expect(doc().activeElement).toBe(btn);
+  });
+
+  it("Cancel the run posts the cancel, then asks health again", async () => {
+    const e = el();
+    await openCancel(e);
+    dialogButton("Cancel the run").click();
     await flush();
     expect(calls[1]).toMatchObject({ method: "POST", url: "/api/runs/r1/cancel" });
     calls[1]!.answer({});
     await flush();
     expect(calls[2]).toMatchObject({ url: "/api/health" });
   });
+
+  it("a failed cancel still asks health again", async () => {
+    const e = el();
+    await openCancel(e);
+    dialogButton("Cancel the run").click();
+    await flush();
+    calls[1]!.answer({}, false);
+    await flush();
+    expect(calls[2]).toMatchObject({ url: "/api/health" });
+  });
 });
 
 describe("startHealth", () => {
-  it("loads at once, on a page change and every 30 seconds, until stopped", async () => {
+  it("asks at once, once at a time, on a page change and every 30 seconds, until stopped", async () => {
     const stop = ui.startHealth(el());
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("/api/health");
-    winListeners.hashchange![0]!();
-    expect(calls).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(29_000);
-    expect(calls).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(calls).toHaveLength(3);
-    stop();
+    try {
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.url).toBe("/api/health");
+      winListeners.hashchange![0]!();
+      expect(calls).toHaveLength(1);
+      calls[0]!.answer(good);
+      await flush();
+      expect(calls).toHaveLength(2);
+      calls[1]!.answer(good);
+      await flush();
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toHaveLength(3);
+    } finally {
+      stop();
+    }
     expect(winListeners.hashchange).toHaveLength(0);
+    expect(doc().listeners.visibilitychange ?? []).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(calls).toHaveLength(3);
+  });
+
+  it("draws the no-answer node once while the failure lasts", async () => {
+    const e = el();
+    const stop = ui.startHealth(e);
+    try {
+      calls[0]!.answer({}, false);
+      await flush();
+      const b = e.all("b")[0]!;
+      await vi.advanceTimersByTimeAsync(30_000);
+      calls[1]!.answer({}, false);
+      await flush();
+      expect(e.all("b")[0]).toBe(b);
+      expect(doc().getElementById("health-btn").textContent).toBe("No answer");
+    } finally {
+      stop();
+    }
+  });
+
+  it("does not redraw an unchanged answer", async () => {
+    const e = el();
+    const stop = ui.startHealth(e);
+    try {
+      calls[0]!.answer(bad);
+      await flush();
+      const first = e.children[0];
+      await vi.advanceTimersByTimeAsync(30_000);
+      calls[1]!.answer(bad);
+      await flush();
+      expect(e.children[0]).toBe(first);
+      await vi.advanceTimersByTimeAsync(30_000);
+      calls[2]!.answer(good);
+      await flush();
+      expect(e.textContent).toBe("All good");
+    } finally {
+      stop();
+    }
+  });
+
+  it("loadHealth goes through the poller; after stop it asks at once", async () => {
+    const e = el();
+    const stop = ui.startHealth(e);
+    try {
+      ui.loadHealth(e);
+      ui.loadHealth(e);
+      expect(calls).toHaveLength(1);
+      calls[0]!.answer(good);
+      await flush();
+      expect(calls).toHaveLength(2);
+      calls[1]!.answer(good);
+      await flush();
+    } finally {
+      stop();
+    }
+    const p = ui.loadHealth(e);
+    expect(calls).toHaveLength(3);
+    calls[2]!.answer(bad);
+    await p;
+    expect(e.textContent).toContain("2 problems");
+  });
+
+  it("a one-off answer does not draw over the poller", async () => {
+    const e = el();
+    ui.loadHealth(e);
+    const stop = ui.startHealth(e);
+    try {
+      calls[1]!.answer(good);
+      await flush();
+      calls[0]!.answer(bad);
+      await flush();
+      expect(e.textContent).toBe("All good");
+    } finally {
+      stop();
+    }
+  });
+
+  it("starting twice stops the first one: one listener set, one toggle per click", async () => {
+    const chip = doc().getElementById("health-btn") as FakeElement;
+    chip.listeners = {};
+    const e = el();
+    const stop1 = ui.startHealth(e);
+    const stop2 = ui.startHealth(e);
+    try {
+      expect(winListeners.hashchange).toHaveLength(1);
+      expect(chip.listeners.click).toHaveLength(1);
+      expect(doc().listeners.visibilitychange).toHaveLength(1);
+      calls[calls.length - 1]!.answer(good);
+      await flush();
+      chip.click();
+      expect(e.hidden).toBe(false);
+    } finally {
+      stop1();
+      stop2();
+    }
+    expect(winListeners.hashchange).toHaveLength(0);
+    expect(chip.listeners.click).toHaveLength(0);
+  });
+
+  it("a hidden tab makes no request; returning makes one", async () => {
+    doc().visibilityState = "hidden";
+    const stop = ui.startHealth(el());
+    try {
+      expect(calls).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(90_000);
+      winListeners.hashchange![0]!();
+      expect(calls).toHaveLength(0);
+      show();
+      await flush();
+      expect(calls).toHaveLength(1);
+      calls[0]!.answer(good);
+      await flush();
+      hide();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls).toHaveLength(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it("does not redraw while a dialog is open, then draws the held answer", async () => {
+    const e = el();
+    const chip = doc().getElementById("health-btn") as FakeElement;
+    const stop = ui.startHealth(e);
+    try {
+      calls[0]!.answer(bad);
+      await flush();
+      chip.click();
+      const btn = e.all("button")[0]!;
+      btn.focus();
+      btn.click();
+      await flush();
+      await vi.advanceTimersByTimeAsync(30_000);
+      calls[1]!.answer({ ...bad, summary: "3 problems" });
+      await flush();
+      expect(e.textContent).toContain("2 problems");
+      expect(root().children.length).toBeGreaterThan(0);
+      dialogButton("Keep running").click();
+      await vi.advanceTimersByTimeAsync(250);
+      expect(e.textContent).toContain("3 problems");
+      expect(doc().activeElement.attrs["data-focus"]).toBe("health-cancel-r1");
+    } finally {
+      stop();
+    }
   });
 });
 

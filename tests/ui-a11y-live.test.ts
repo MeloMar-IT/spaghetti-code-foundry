@@ -412,6 +412,50 @@ describe("Health", () => {
     expect(h1.attrs.tabindex).toBe("-1");
     stop();
   });
+
+  it("says 'does not answer' once, as an alert", async () => {
+    const el = new FakeElement("div");
+    (globalThis as any).fetch = async (url: string) => {
+      asked.push(url);
+      throw new TypeError("down");
+    };
+    const stop = health.startHealth(el);
+    try {
+      await flush();
+      const b = el.all("b")[0]!;
+      expect(b.attrs.role).toBe("alert");
+      expect(auditPage(el)).toEqual([]);
+      await tick(30_000);
+      expect(el.all("b")[0]).toBe(b);
+    } finally {
+      stop();
+    }
+  });
+
+  it("does not redraw while the Cancel dialog is open, and the focus goes back to Cancel run", async () => {
+    const el = new FakeElement("div");
+    const chip = doc().getElementById("health-btn") as FakeElement;
+    answers["/api/health"] = bad(["r1"]);
+    const stop = health.startHealth(el);
+    try {
+      await flush();
+      chip.fire("click");
+      const before = named(el, "health-cancel-r1");
+      before.focus();
+      before.click();
+      await flush();
+      answers["/api/health"] = bad(["r0", "r1"]);
+      await tick(30_000);
+      expect(named(el, "health-cancel-r1")).toBe(before);
+      const keep = (doc().getElementById("modal-root") as FakeElement).all("button").find((b) => b.textContent === "Keep running")!;
+      keep.click();
+      await tick(250);
+      expectKept(el, "health-cancel-r1", before);
+      expect(asked.some((u) => u.includes("/cancel"))).toBe(false);
+    } finally {
+      stop();
+    }
+  });
 });
 
 // ── My runs ──

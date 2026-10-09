@@ -84,7 +84,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 
 ## Background refresh (part 3, #344)
 
-`ui/live.js` is the shared helper for pages that refresh themselves. No page uses it yet (part 3a); pages move to it in the next parts. It imports only `./dom.js` and `./states.js`.
+`ui/live.js` is the shared helper for pages that refresh themselves. Pages move to it part by part; the health line (`ui/health.js`) is the first. It imports only `./dom.js` and `./states.js`.
 
 | Export | What it does |
 |---|---|
@@ -106,6 +106,8 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 - `stop()`: no further requests, draws or `onState`; timers are cleared and the document and window listeners are removed.
 
 **Live states.** At the start `body` holds `heading()` and `loadingState`. A first failure shows `heading()` and `errorState` with Retry (not re-mounted on a repeat). After data, `note` holds "Updated HH:MM" (nothing when `quiet`). A later failure fills `alert` with one `banner("error", staleText(at, true), [Retry])`, mounted once across repeats; the next success empties it. Retry buttons have `data-focus` `${focus}-retry` (first load) and `${focus}-refresh-retry` (banner); without `focus` they are `retry` and `refresh-retry`.
+
+**The health line (part 3e, #427).** `ui/health.js` uses `poller` with `hold: dialogOpen`. It is the exception: it keeps its own text "The Foundry server does not answer…" (`role="alert"`, drawn once while the failure lasts) and does not use `liveStates`. A failed request is drawn as the answer `null`, so `onState` is not used. Known trade-off: a server that goes down while the tab is hidden shows when the person returns.
 
 ## Done in this part
 

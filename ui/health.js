@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { confirmDialog, h, mount, toast } from "./dom.js";
+import { dialogOpen, poller } from "./live.js";
 import { nextParts } from "./next.js";
 import { lastOkText } from "./admin.js";
 
@@ -16,7 +17,7 @@ export function renderHealth(el, health, { onCancel } = {}) {
   el.hidden = false;
   if (!health) {
     el.setAttribute("class", "health bad");
-    mount(el, h("b", {}, NO_ANSWER));
+    mount(el, h("b", { role: "alert" }, NO_ANSWER));
     return;
   }
   el.setAttribute("class", health.ok ? "health ok" : "health bad");
@@ -40,42 +41,57 @@ export function renderHealth(el, health, { onCancel } = {}) {
       health.update?.text ?? "") : null);
 }
 
-let gen = 0; // the newest request wins
+let gen = 0; // the newest one-off request wins
+let poll = null; // the poller of startHealth, while one is started
+let stopCurrent = null; // the full cleanup of the startHealth that is running
 
-/** Asks the server and draws the line; the newest request wins. Never rejects. */
-export async function loadHealth(el) {
-  const g = ++gen;
-  const health = await api.health().catch(() => null);
-  if (g !== gen) return;
-  renderHealth(el, health, {
-    onCancel: async (runId) => {
-      if (!confirm("Cancel this run? You can resume it later.")) return;
-      await api.cancelRun(runId).catch((e) => toast(e.message, "error"));
-      loadHealth(el);
-    },
-  });
+/** Draws one answer into the line and the chip. */
+function drawHealth(el, health) {
+  renderHealth(el, health, { onCancel: (runId) => cancelRun(el, runId) });
   last = { health };
   showHealth(el, document.getElementById("health-btn"), health);
 }
 
-/** Loads the line now, on every page change and every 30 seconds; returns a stop function. */
+/** Asks in the Foundry's own dialog; on yes cancels the run and asks health again. */
+async function cancelRun(el, runId) {
+  if (!(await confirmDialog({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" }))) return;
+  await api.cancelRun(runId).catch((e) => toast(e.message, "error"));
+  loadHealth(el);
+}
+
+/** Asks the server and draws the line. Through the poller while one is started (one request at a time); otherwise the newest request wins. Never rejects. */
+export async function loadHealth(el) {
+  if (poll) return poll.refresh();
+  const g = ++gen;
+  const health = await api.health().catch(() => null);
+  if (g !== gen) return;
+  drawHealth(el, health);
+}
+
+/** Loads the line now, on every page change and every 30 seconds while the tab is visible; returns a stop function. */
 export function startHealth(el, { every = REFRESH_MS } = {}) {
-  const load = () => loadHealth(el);
-  load();
-  const timer = setInterval(load, every);
-  globalThis.addEventListener?.("hashchange", load);
+  stopCurrent?.();
+  gen++; // a one-off request still in flight must not draw over the poller
+  const mine = poller({ load: () => api.health().catch(() => null), draw: (health) => drawHealth(el, health), every, hold: dialogOpen });
+  poll = mine;
+  const onHash = () => poll?.refresh();
+  globalThis.addEventListener?.("hashchange", onHash);
   const chip = document.getElementById("health-btn");
   const toggle = () => {
     open = !open;
     if (last) showHealth(el, chip, last.health);
   };
   chip?.addEventListener?.("click", toggle);
-  return () => {
-    clearInterval(timer);
-    globalThis.removeEventListener?.("hashchange", load);
+  const stop = () => {
+    mine.stop();
+    if (poll === mine) poll = null;
+    if (stopCurrent === stop) stopCurrent = null;
+    globalThis.removeEventListener?.("hashchange", onHash);
     chip?.removeEventListener?.("click", toggle);
     open = false;
   };
+  stopCurrent = stop;
+  return stop;
 }
 
 let open = false; // the person pressed the chip
