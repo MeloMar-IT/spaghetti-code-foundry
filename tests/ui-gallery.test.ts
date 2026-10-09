@@ -11,6 +11,9 @@ let sections: Section[];
 let LONG: string;
 let view: any;
 const kitExports: Record<string, string[]> = {};
+/** Components with no disabled state, and those whose Long content example opens something when clicked. */
+const NO_DISABLED = ["tabs", "tooltip", "dialog", "drawer", "toast"];
+const OPENS = ["dialog", "drawer", "toast"];
 
 beforeAll(async () => {
   restore = installFakeDom();
@@ -54,7 +57,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(8);
+    expect(names.length).toBe(14);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
@@ -64,10 +67,12 @@ describe("the registry", () => {
     expect(missing(["button", "newThing"], sections)).toEqual(["newThing"]);
   });
 
-  it("every section has Long content and Disabled examples", () => {
+  it("every section has Long content, and Disabled where the component has that state", () => {
     for (const s of sections) {
-      expect(s.examples.map((e) => e.name), s.id).toContain("Long content");
-      expect(s.examples.map((e) => e.name), s.id).toContain("Disabled");
+      const names = s.examples.map((e) => e.name);
+      expect(names, s.id).toContain("Long content");
+      if (NO_DISABLED.includes(s.id)) expect(names, s.id).not.toContain("Disabled");
+      else expect(names, s.id).toContain("Disabled");
     }
     expect(section("field").examples.map((e) => e.name)).toContain("Error");
   });
@@ -95,10 +100,13 @@ describe("the registry", () => {
   });
 
   it("every Disabled example has a really disabled control", () => {
-    for (const s of sections) {
+    for (const s of sections.filter((x) => !NO_DISABLED.includes(x.id))) {
       const off = all(example(s.id, "Disabled").build()).filter(isOff);
       expect(off.length, s.id).toBeGreaterThan(0);
     }
+    const menus = all(example("menu", "Disabled").build());
+    expect(menus.some((e) => e.getAttribute("role") === "menuitem" && e.getAttribute("aria-disabled") === "true")).toBe(true);
+    expect(menus.some((e) => e.tag === "button" && e.getAttribute("aria-haspopup") === "menu" && e.getAttribute("disabled") !== null)).toBe(true);
     expect(all(example("button", "Disabled").build()).filter((e) => e.tag === "button" && isOff(e)).length).toBe(4);
     expect(all(example("iconButton", "Disabled").build()).filter((e) => e.tag === "button" && isOff(e)).length).toBe(4);
     expect(all(example("checkbox", "Disabled").build()).filter((e) => e.tag === "input" && isOff(e)).length).toBe(2);
@@ -109,7 +117,34 @@ describe("the registry", () => {
 
   it("every Long content example shows the long text", () => {
     expect(LONG.length).toBeGreaterThan(150);
-    for (const s of sections) expect(shown(example(s.id, "Long content").build()), s.id).toContain(LONG);
+    for (const s of sections) {
+      const built = example(s.id, "Long content").build();
+      if (!OPENS.includes(s.id)) {
+        expect(shown(built), s.id).toContain(LONG);
+        continue;
+      }
+      // These open something when clicked: look at what appears, then close it.
+      all(built).find((e) => e.tag === "button")!.click();
+      const host = s.id === "toast" ? (document.body as unknown as FakeElement) : (document.getElementById("modal-root") as unknown as FakeElement);
+      expect(shown(host), s.id).toContain(LONG);
+      const closer = all(host).find((e) => e.tag === "button" && e.getAttribute("aria-label") === (s.id === "toast" ? "Dismiss" : "Close"))!;
+      closer.click();
+      expect(shown(host), s.id).not.toContain(LONG);
+    }
+  });
+
+  it("every overlay component has Notes with its keys, long content and narrow layout", () => {
+    for (const id of ["tabs", "menu", "tooltip", "dialog", "drawer", "toast"]) {
+      const text = example(id, "Notes").build().textContent;
+      for (const word of ["Keyboard", "Long content", "Narrow layout"]) expect(text, `${id} ${word}`).toContain(word);
+    }
+  });
+
+  it("building every example opens nothing and adds no document listener", () => {
+    const before = Object.values((document as any).listeners).flat().length;
+    for (const s of sections) for (const e of s.examples) e.build();
+    expect((document.getElementById("modal-root") as unknown as FakeElement).children).toEqual([]);
+    expect(Object.values((document as any).listeners).flat().length).toBe(before);
   });
 
   it("the field Error example has an alert", () => {
@@ -180,7 +215,7 @@ describe("the view", () => {
     const main = document.getElementById("gallery-main") as unknown as FakeElement;
     const bar = document.getElementById("gallery-bar") as unknown as FakeElement;
     expect(root.getAttribute("data-theme")).toBe("dark");
-    expect(main.children.filter((c) => c instanceof FakeElement && c.tag === "section").length).toBe(8);
+    expect(main.children.filter((c) => c instanceof FakeElement && c.tag === "section").length).toBe(sections.length);
     const before = [...main.children];
     bar.all("button").find((b) => b.textContent === "compact")!.click();
     expect(replaceState.mock.calls[0]![2]).toBe("?theme=dark&density=compact&width=wide");
@@ -198,9 +233,9 @@ describe("the page and its style", () => {
     expect(html.match(/<script/g)?.length).toBe(1);
     expect(html).toContain('<script type="module" src="/gallery/gallery.js"></script>');
     expect(html).not.toMatch(/<style|style=|\son\w+=|prefs-boot/);
+    // Outside the frame: the frame is a container, which would make it the containing block of fixed overlays.
     const frame = html.indexOf('id="gallery-frame"');
-    expect(html.indexOf('id="modal-root"')).toBeGreaterThan(frame);
-    expect(html.indexOf('id="modal-root"')).toBeLessThan(html.indexOf("</div>", frame));
+    expect(html.indexOf('id="modal-root"')).toBeGreaterThan(html.indexOf("</div>", frame));
   });
   it("has gallery rules that use tokens and a container named scf-page", () => {
     const css = readFileSync("ui/css/pages/gallery.css", "utf8");

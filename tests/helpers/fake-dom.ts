@@ -39,7 +39,12 @@ export class FakeElement extends FakeNode {
   }
   private adopt(nodes: (FakeNode | string)[]) { for (const n of nodes) if (n instanceof FakeElement) n.parent = this; }
   append(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.children.push(...nodes); }
-  replaceChildren(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.text = undefined; this.children = [...nodes]; }
+  replaceChildren(...nodes: (FakeNode | string)[]) {
+    for (const c of this.children) if (c instanceof FakeElement && c.parent === this) c.parent = undefined;
+    this.adopt(nodes);
+    this.text = undefined;
+    this.children = [...nodes];
+  }
   get parentNode(): FakeElement | null { return this.parent ?? null; }
   /** Takes the element out of its parent, as the DOM does. */
   remove(): void {
