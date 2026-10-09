@@ -7,9 +7,9 @@ export function setKey(obj, key, v) {
   else obj[key] = v;
 }
 
-export function text(obj, key, onChange, { placeholder, mono, list, type = "text", onCommit } = {}) {
+export function text(obj, key, onChange, { placeholder, mono, list, type = "text", onCommit, field: fieldKey = key } = {}) {
   return h("input", {
-    type, placeholder, list, class: mono ? "mono" : null,
+    type, placeholder, list, class: mono ? "mono" : null, "data-field": fieldKey,
     value: obj[key] ?? "",
     onInput: (e) => {
       const raw = e.target.value;
@@ -22,20 +22,20 @@ export function text(obj, key, onChange, { placeholder, mono, list, type = "text
 
 export function area(obj, key, onChange, { rows = 4, placeholder } = {}) {
   return h("textarea", {
-    rows, placeholder, value: obj[key] ?? "",
+    rows, placeholder, "data-field": key, value: obj[key] ?? "",
     onInput: (e) => { setKey(obj, key, e.target.value); onChange(); },
   });
 }
 
 export function select(obj, key, options, onChange, { emptyLabel } = {}) {
   const opts = emptyLabel != null ? [["", emptyLabel], ...options] : options;
-  return h("select", { onChange: (e) => { setKey(obj, key, e.target.value); onChange(); } },
+  return h("select", { "data-field": key, onChange: (e) => { setKey(obj, key, e.target.value); onChange(); } },
     opts.map(([v, l]) => h("option", { value: v, selected: (obj[key] ?? "") === v }, l)));
 }
 
 export function list(obj, key, onChange, placeholder) {
   return h("input", {
-    placeholder, class: "mono", value: (obj[key] ?? []).join(", "),
+    placeholder, class: "mono", "data-field": key, value: (obj[key] ?? []).join(", "),
     onInput: (e) => {
       setKey(obj, key, e.target.value.split(",").map((s) => s.trim()).filter(Boolean));
       onChange();

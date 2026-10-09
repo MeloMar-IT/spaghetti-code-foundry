@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { auditAction } from "../auth/audit.js";
 import { effectiveVars } from "../engine/runner.js";
 import { blockDir, listBlocks, parseBlock } from "../flow/blocks.js";
-import { flowDir, flowFiles, listFlows, parseFlow, type FlowScope } from "../flow/load.js";
+import { flowDir, flowFiles, FlowParseError, listFlows, parseFlow, type FlowScope } from "../flow/load.js";
 import { stampVersion, userFlow, type UserFlow } from "../flow/publish.js";
 import type { Flow } from "../flow/schema.js";
 import { flowUsers } from "../flow/usage.js";
@@ -111,7 +111,7 @@ export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg
     try {
       return send(res, 200, { ok: true, flow: parseFlow(str(body, "yaml")) }), true;
     } catch (e) {
-      return send(res, 200, { ok: false, error: (e as Error).message }), true;
+      return send(res, 200, { ok: false, error: (e as Error).message, issues: e instanceof FlowParseError ? e.issues : [] }), true;
     }
   }
 

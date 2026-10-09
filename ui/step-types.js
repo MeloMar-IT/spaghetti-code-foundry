@@ -90,7 +90,7 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
 
 function checkbox(obj, key, label, onChange, inherited) {
   return h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px" } },
-    h("input", { type: "checkbox", style: { width: "auto" }, checked: obj[key] ?? !!inherited, onChange: (e) => { setKey(obj, key, e.target.checked || (inherited ? false : "")); onChange(); } }),
+    h("input", { type: "checkbox", "data-field": key, style: { width: "auto" }, checked: obj[key] ?? !!inherited, onChange: (e) => { setKey(obj, key, e.target.checked || (inherited ? false : "")); onChange(); } }),
     h("span", {}, label));
 }
 

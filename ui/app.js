@@ -2,8 +2,8 @@ import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
-import { cleanFlow, renderEditor } from "./editor.js";
-import { resolve } from "./ia.js";
+import { cleanFlow, editable, renderEditor } from "./editor.js";
+import { openInVisual, openInYaml, problemsOf, renderProblems as renderFlowProblems } from "./flow-problems.js"; import { resolve } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
@@ -55,7 +55,7 @@ const S = { info: null, flows: [], cur: null, cleanup: null, lastHash: "", me: "
 function tryParse(text) {
   try {
     const v = YAML.parse(text);
-    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+    return editable(v) ? v : null;
   } catch {
     return null;
   }
@@ -240,7 +240,7 @@ async function validate() {
   c.validation = r;
   ui.status.className = `status ${r.ok ? "ok" : "bad"}`;
   ui.status.textContent = r.ok ? "✓ valid" : "✕ invalid";
-  mount(ui.errors, r.ok ? null : h("div", { class: "errors" }, r.error.replace(/^<flow>: /, "")));
+  mount(ui.errors, r.ok ? null : renderFlowProblems(problemsOf(r, yaml, YAML), { mode: c.mode, onOpen: (p) => openProblem(p, yaml) }));
 }
 const validateSoon = debounce(validate, 300);
 
@@ -459,4 +459,15 @@ async function startAdmin() {
   if (to) history.replaceState(null, "", to);
   route();
   startSince(document.getElementById("since"));
+}
+
+/** Goes to the place of a problem; does nothing when the text changed since it was checked. */
+function openProblem(p, yaml) {
+  const c = S.cur;
+  if (!c || c.yaml !== yaml) return false;
+  if (c.mode === "yaml") {
+    const textarea = ui.body.querySelector(".yaml-editor");
+    return textarea?.value === yaml && openInYaml(textarea, p, YAML);
+  }
+  return openInVisual(ui.body, p, select);
 }

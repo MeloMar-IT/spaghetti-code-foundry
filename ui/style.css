@@ -114,6 +114,8 @@ details[open] > summary { margin-bottom: 10px; }
 .insert { display: flex; justify-content: center; gap: 6px; padding: 6px 0; opacity: .35; transition: opacity var(--motion-base); }
 .insert:hover, .insert:focus-within { opacity: 1; }
 .steps { display: grid; }
+.problem-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+button.problem-link { border: none; background: transparent; padding: 0; color: inherit; font: inherit; text-align: left; text-decoration: underline; white-space: pre-wrap; cursor: pointer; }
 .errors { background: var(--fail-soft); color: var(--fail); border-radius: var(--radius-md); padding: 10px 12px; white-space: pre-wrap; font-family: var(--mono); font-size: var(--text-meta); margin-bottom: 14px; }
 .yaml-editor { min-height: 70vh; width: 100%; tab-size: 2; }
 .small-select { width: auto; font-size: var(--text-small); padding: 3px 6px; }
