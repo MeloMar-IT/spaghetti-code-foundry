@@ -123,6 +123,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
       resolution,
       request,
       sourceOf: (id, version) => (reg.byKey.get(`${id}@${version}`)?.source === "builtin" ? "builtin" : "admin"),
+      categoryOf: (id, version) => reg.byKey.get(`${id}@${version}`)?.pkg.category,
       planHash,
       commit: s.workdir ? commit : undefined,
       now: deps.now,

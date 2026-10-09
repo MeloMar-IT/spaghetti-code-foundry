@@ -660,6 +660,23 @@ describe("the Runs pages for a user", () => {
     stop();
   });
 
+  it("the run page draws the Skills card only when the update has a skill view", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const { handlers } = stubEventSource();
+    const main = connected();
+    const stop = runs.renderRunDetail(main, "r1", { admin: true });
+    const skillView = { lock: "ok", requested: [], resolved: [{ id: "a", version: "1.0.0", requiredBy: [], integrity: "verified", digest: `sha256:${"a".repeat(64)}`, source: "admin" }] };
+    handlers.update!({ data: JSON.stringify({ summary: { ...RUN, skillView } }) });
+    const card = main.all("section").filter((el) => el.attrs["aria-label"] === "Skills");
+    expect(card).toHaveLength(1);
+    expect(card[0]!.textContent).toContain("a@1.0.0");
+    expect(card[0]!.textContent).toContain("Digest");
+    handlers.update!({ data: JSON.stringify({ summary: RUN }) });
+    expect(main.all("section").filter((el) => el.attrs["aria-label"] === "Skills")).toHaveLength(0);
+    expect(main.textContent).toContain("walk");
+    stop();
+  });
+
   it("ownerLabel, ownerNames and ownerText", async () => {
     const runs = (await import("../ui/runs.js" as string)) as any;
     expect(runs.ownerLabel("Ann")).toBe("Ann");

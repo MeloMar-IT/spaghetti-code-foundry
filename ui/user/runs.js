@@ -6,6 +6,7 @@ import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { createLog } from "../run-output.js";
+import { skillsCard } from "../run-skills.js";
 import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
@@ -393,7 +394,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         h("dl", { class: "meta" },
           work ? row("Repository", work) : null,
           s.branch ? row("Branch", s.branch) : null,
-          versionRow(s))));
+          versionRow(s))),
+      skillsCard(s.skillView, { repo: s.vars?.github_repo }));
   }
 
   async function refresh() {

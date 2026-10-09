@@ -4,6 +4,7 @@ import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from 
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
+import { skillsCard } from "./run-skills.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 
@@ -386,7 +387,8 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
           s.workdir ? [h("dt", {}, "Workspace"), h("dd", {}, s.workdir)] : null,
           versionRow(s),
           stepRow(s),
-          card ? null : detailsRow(s))));
+          card ? null : detailsRow(s))),
+      skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
     // A failed run opens on its steps, once, unless the reader already chose a tab.
     if (card && !picked && !(prev && prev.status === "failed" && prev.next?.failure)) return showTab("steps");
     if (tab === "steps" && (!prev || prev.history.length !== s.history.length)) showTab("steps");

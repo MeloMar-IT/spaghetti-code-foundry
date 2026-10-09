@@ -307,6 +307,21 @@ describe("renderMyRun", () => {
   const box = () => one(main, "textarea");
   const send = async (text: string) => { box().value = text; form().fire("submit", { preventDefault() {} }); await flush(); };
 
+  it("shows the Skills card from the skill view, without a digest, and none without it", async () => {
+    const skillView = {
+      lock: "ok", requested: [{ id: "a", version: "1.0.0", by: "plan", state: "selected" }],
+      resolved: [{ id: "a", version: "1.0.0", requiredBy: [], integrity: "verified", estimatedTokens: 50 }],
+    };
+    state.summary = summaryOf({ skillView });
+    await open();
+    const section = one(main, "section", { "aria-label": "Skills" });
+    expect(section.textContent).toContain("a@1.0.0");
+    expect(section.textContent).not.toContain("Digest");
+    state.summary = summaryOf();
+    await open();
+    expect(find(main, "section", { "aria-label": "Skills" })).toHaveLength(0);
+  });
+
   it("shows the answer form under the questions", async () => {
     state.summary = asking();
     await open();

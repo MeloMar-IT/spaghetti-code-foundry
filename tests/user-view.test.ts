@@ -110,6 +110,14 @@ describe("userRun", () => {
     expect(keys(u)).not.toContain("ownerName");
   });
 
+  it("passes the skill view through, with the folders of the run hidden, and adds nothing without it", () => {
+    const skillView = { lock: "ok" as const, requested: [{ id: "a", by: "plan" as const, state: "missing" as const, message: "See /srv/work/r1 for it." }], resolved: [] };
+    const u = userRun({ ...full, workdir: "/srv/work/r1", skillView } as unknown as RunSummary & { skillView: typeof skillView });
+    expect(u.skillView).toMatchObject({ lock: "ok", requested: [{ id: "a", message: "See (folder) for it." }] });
+    expect(keys(u)).toEqual([...keys(userRun(full)), "skillView"].sort());
+    expect("skillView" in userRun(full)).toBe(false);
+  });
+
   it("does not show the source of a run, so a watcher's id stays hidden", () => {
     const u = userRun({ ...full, source: "watcher secret-w issue #7" } as unknown as RunSummary);
     expect(keys(u)).not.toContain("source");

@@ -1,7 +1,8 @@
 import type { Config } from "../config.js";
 import type { RunSummary } from "../engine/state.js";
 import { discoverSkills } from "./registry.js";
-import { PLAN_PHASE_STEPS, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError } from "./request.js";
+import { planHashOf } from "./run-lock.js";
+import { PLAN_PHASE_STEPS, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError } from "./request.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
 import { assessSkills, type SkillPlan } from "./unresolved.js";
 
@@ -12,6 +13,8 @@ export interface RunSkillPlan extends SkillPlan {
   /** The plan gate whose request was checked. */
   gate: string;
   at: string;
+  /** Hash of the output of that gate, so a page can tell whether this plan belongs to the latest gate. Absent on older runs. */
+  planHash?: string;
   /** How many times the request was checked (a resume checks again). */
   checks: number;
 }
@@ -56,7 +59,10 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
       plan = failClosed(CHECK_FAILED);
     }
   }
-  run.skillPlan = { ...plan, gate: stepId, at: new Date().toISOString(), checks: (previous?.checks ?? 0) + 1 };
+  const gate = planGateRecord(run);
+  run.skillPlan = {
+    ...plan, gate: stepId, at: new Date().toISOString(), ...(gate && gate.id === stepId ? { planHash: planHashOf(gate.output) } : {}), checks: (previous?.checks ?? 0) + 1,
+  };
   for (const w of plan.warnings) log(`⚠ ${w}`);
   if (plan.action !== "stop") return undefined;
   log(`■ ${plan.reason}`);

@@ -7,6 +7,7 @@ import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { liveLogFile, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { discoverSkills, pinSkill } from "../src/skills/registry.js";
+import { planHashOf } from "../src/skills/run-lock.js";
 import { planRunSkills, recheckRunSkills } from "../src/skills/run-plan.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -78,6 +79,13 @@ describe("planRunSkills and recheckRunSkills", () => {
     const reason = planRunSkills(run, cfg(), "risk_gate", noop, { discover: () => { throw new Error("boom"); } });
     expect(reason).toBe("skills not resolved: the skills could not be checked");
     expect(run.skillPlan).toMatchObject({ action: "stop", gate: "risk_gate", checks: 1 });
+  });
+
+  it("keeps the hash of the gate output it checked", () => {
+    const run = mk(["a"]);
+    planRunSkills(run, cfg(), "risk_gate", noop, { discover: () => { throw new Error("boom"); } });
+    const gate = run.history.find((h) => h.id === "risk_gate")!;
+    expect(run.skillPlan!.planHash).toBe(planHashOf(gate.output));
   });
 
   it("counts the checks and logs warnings and the stop", () => {
