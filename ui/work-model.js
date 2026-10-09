@@ -42,6 +42,9 @@ const time = (iso) => {
   return Number.isNaN(t) ? undefined : t;
 };
 
+/** The key of a story: `repo#issue`. */
+export const keyOf = (item) => item.key ?? `${item.repo}#${item.issue}`;
+
 /** Every card of every repository: `{ ...card, repo, columnTitle }`. */
 export function workItems(data) {
   const out = [];

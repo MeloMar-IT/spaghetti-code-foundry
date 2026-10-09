@@ -1,9 +1,10 @@
 import { api } from "./api.js";
-import { h, mount } from "./dom.js";
+import { h, mount, tabStops, toast, trapTarget } from "./dom.js";
 import { workBoard } from "./work-board.js";
 import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
-import { DEFAULTS, applyFilters, boardPrefs, columnsOf, facets, groupItems, isFiltered, workItems } from "./work-model.js";
+import { DEFAULTS, applyFilters, boardPrefs, columnsOf, facets, groupItems, isFiltered, keyOf, workItems } from "./work-model.js";
+import { PANEL_ID, panelView } from "./work-panel.js";
 import { cleanPrefs, loadPrefs, savePrefs } from "./work-prefs.js";
 
 // The Work page (redesign): every story as a board or a list, from GET /api/board. Status, column, sentence and
@@ -66,7 +67,7 @@ export function workView(data, prefs, handlers) {
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderWork(main, wantedRepo, { user, store, now } = {}) {
+export function renderWork(main, wantedRepo, { user, store, now, media = globalThis.matchMedia?.("(max-width: 760px)") } = {}) {
   let closed = false;
   let data;
   let last;
@@ -74,6 +75,11 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
   let bodyEl;
   let menuOpen = false; // the Display menu stays open when the page draws itself again
   const stops = new Map(); // the card with the Tab stop of each board column
+  // The side panel: the key of the open story, the stories before it (for Back), the control that opened it. Never saved.
+  let open = null;
+  let history = [];
+  let opener = null;
+  let slot;
   let prefs = loadPrefs(user, store);
   if (wantedRepo) prefs = { ...prefs, repo: wantedRepo };
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
@@ -100,12 +106,71 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
     onMenu: (v) => { menuOpen = v; },
     onLeave: (card) => { if (card.watcher) left = card.watcher; },
     get now() { return now?.(); },
+    get openKey() { return open; },
+    onOpen: (item, focusName) => openPanel(item, focusName),
   };
+
+  function panelNodes() {
+    const items = workItems(data);
+    const item = open && items.find((i) => keyOf(i) === open);
+    if (!item) return [];
+    return [panelView(item, items, {
+      onClose: closePanel, onBack: history.length ? back : undefined, onPick: pickStory, onLeave: handlers.onLeave, now: now?.(), narrow: !!media?.matches,
+    })];
+  }
+
+  /** Draws the panel in its slot. The focus stays on the same control of the panel; `focusTitle` moves it to the heading. */
+  function showPanel(focusTitle) {
+    const active = document.activeElement;
+    const name = active && slot.contains(active) ? active.getAttribute("data-focus") : null;
+    slot.replaceChildren(...panelNodes());
+    for (const el of main.querySelectorAll("[data-way]")) el.setAttribute("aria-expanded", String(el.getAttribute("data-way") === open));
+    const same = !focusTitle && name ? [...slot.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name) : null;
+    (same ?? (focusTitle || name ? slot.querySelector("h2") : null))?.focus({ preventScroll: true });
+  }
+
+  function openPanel(item, focusName) {
+    if (open === keyOf(item)) return closePanel();
+    history = [];
+    opener = focusName;
+    open = keyOf(item);
+    showPanel(true);
+  }
+
+  function pickStory(item) {
+    history.push(open);
+    open = keyOf(item);
+    showPanel(true);
+  }
+
+  function back() {
+    open = history.pop();
+    showPanel(true);
+  }
+
+  function focusOpener() {
+    const to = opener && [...main.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === opener);
+    if (to) to.focus({ preventScroll: true });
+    else {
+      const top = main.querySelector("h1");
+      top?.setAttribute("tabindex", "-1");
+      top?.focus({ preventScroll: true });
+    }
+    opener = null;
+  }
+
+  function closePanel() {
+    open = null;
+    history = [];
+    showPanel(false);
+    focusOpener();
+  }
 
   function draw() {
     const nodes = workView(data, prefs, handlers);
     bodyEl = nodes[nodes.length - 1];
-    mount(main, nodes);
+    slot = h("div", { id: PANEL_ID, class: "work-panel-slot" }, panelNodes());
+    mount(main, [...nodes.slice(0, -1), h("div", { class: "work-split" }, bodyEl, slot)]);
   }
 
   const fetchOnce = async () => {
@@ -124,7 +189,18 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
     last = text;
     data = next;
     prefs = cleanPrefs(prefs, data);
+    // The panel follows the data: a story that is gone closes it (and drops out of Back).
+    const keys = new Set(workItems(data).map(keyOf));
+    history = history.filter((k) => keys.has(k));
+    let inPanel = false;
+    if (open && !keys.has(open)) {
+      toast(`#${open.slice(open.lastIndexOf("#") + 1)} is no longer on the board`);
+      inPanel = !!slot?.contains(document.activeElement);
+      open = null;
+      history = [];
+    }
     draw();
+    if (inPanel) focusOpener();
   };
 
   // One request at a time: a slow server is never asked again before it answered.
@@ -155,7 +231,22 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
     if (!closed) load();
   };
   document.addEventListener("visibilitychange", onVisible);
+  const onKey = (e) => {
+    if (!open) return;
+    if (e.key === "Escape") return closePanel();
+    if (e.key !== "Tab" || !media?.matches) return;
+    const to = trapTarget(tabStops(slot), document.activeElement, e.shiftKey);
+    if (to) {
+      e.preventDefault();
+      to.focus();
+    }
+  };
+  document.addEventListener("keydown", onKey);
+  const onMedia = () => { if (open) showPanel(!!media?.matches); }; // into the dialog: the focus goes in with it
+  media?.addEventListener?.("change", onMedia);
   return () => {
+    document.removeEventListener("keydown", onKey);
+    media?.removeEventListener?.("change", onMedia);
     closed = true;
     clearInterval(timer);
     clearInterval(ageTimer);

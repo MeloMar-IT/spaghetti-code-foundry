@@ -109,7 +109,8 @@ describe("workCard", () => {
       for (const [other, t] of Object.entries(hide)) if (other !== prop) expect(el.textContent, `${prop}/${other}`).toContain(t);
     }
     const bare = text(prefs({ props: [] }));
-    expect(bare.children).toHaveLength(1);
+    expect(bare.children).toHaveLength(2); // the head and the "What is in the way?" line
+    expect(text(prefs({ props: [] }), card({ after: [] })).children).toHaveLength(1);
     expect(bare.textContent).toContain("Eighty-nine");
   });
   it("has no blocker line without blockers, and plain text for a name that is not GitHub's", () => {
