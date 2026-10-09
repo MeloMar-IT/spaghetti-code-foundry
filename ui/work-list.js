@@ -8,10 +8,10 @@ import { ageText } from "./work-model.js";
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 
 /** A link to an issue on GitHub; plain text when the repository is not a GitHub name. */
-function issueLink(repo, issue, onClick) {
+export function issueLink(repo, issue, onClick, focus) {
   return REPO_OK.test(repo ?? "")
     ? h("a", {
-      href: `https://github.com/${repo}/issues/${issue}`, target: "_blank", rel: "noopener", class: "mono",
+      href: `https://github.com/${repo}/issues/${issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": focus,
       onClick: (e) => { e?.stopPropagation?.(); onClick(); },
     }, `#${issue}`)
     : h("span", { class: "mono" }, `#${issue}`);
@@ -24,10 +24,10 @@ function rowView(item, cols, handlers) {
   const open = () => { globalThis.location.hash = `#/runs/${item.runId}`; };
   const own = item.runId && n.where?.url === `#/runs/${item.runId}`;
   const cells = [
-    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), n.text ? h("div", { class: "muted" }, n.text) : null),
+    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), cols.next && n.text ? h("div", { class: "muted" }, n.text) : null),
   ];
   if (cols.repo) cells.push(h("td", { class: "muted" }, item.repo));
-  cells.push(h("td", {}, n.status || item.columnTitle));
+  cells.push(h("td", {}, n.status || item.columnTitle, cols.step && item.step ? h("div", { class: "muted work-step" }, item.step) : null));
   if (cols.next) {
     cells.push(h("td", {},
       h("span", { class: `pill ${whoClass(n)}` }, n.who), " ", n.action ?? "",
@@ -49,7 +49,7 @@ function rowView(item, cols, handlers) {
 
 /** Brings the age cells under `root` up to date without drawing the list again. */
 export function refreshAges(root, now = new Date()) {
-  for (const el of root.querySelectorAll("td[data-since]")) {
+  for (const el of root.querySelectorAll("[data-since]")) {
     const text = ageText(el.getAttribute("data-since"), now);
     if (el.textContent !== text) el.textContent = text;
   }
@@ -59,7 +59,8 @@ export function refreshAges(root, now = new Date()) {
 export function listView(groups, prefs, handlers = {}) {
   const props = prefs.props ?? [];
   const cols = {
-    repo: props.includes("repo") && new Set(groups.flatMap((g) => g.items.map((i) => i.repo))).size > 1,
+    repo: props.includes("repo"),
+    step: props.includes("step"),
     next: props.includes("next"),
     blockers: props.includes("blockers"),
     owner: props.includes("owner"),
@@ -71,6 +72,6 @@ export function listView(groups, prefs, handlers = {}) {
   return groups.map((g) => h("div", { class: "work-group" },
     g.title ? h("h3", {}, g.title, " ", h("span", { class: "muted" }, String(g.items.length))) : null,
     g.items.length
-      ? h("table", { class: "table work-list" }, h("thead", {}, headRow()), h("tbody", {}, ...g.items.map((i) => rowView(i, cols, handlers))))
+      ? h("table", { class: prefs.compact ? "table work-list compact" : "table work-list" }, h("thead", {}, headRow()), h("tbody", {}, ...g.items.map((i) => rowView(i, cols, handlers))))
       : null));
 }

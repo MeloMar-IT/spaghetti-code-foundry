@@ -77,7 +77,11 @@ describe("groupItems", () => {
     expect(g.map((x: any) => x.title)).toEqual(TITLES);
     expect(g.find((x: any) => x.id === "merging").items).toEqual([]);
   });
-  it("shows only the chosen columns", () => expect(group({ status: ["coding"] }).map((x: any) => x.id)).toEqual(["coding"]));
+  it("keeps all columns under a status filter; the filter narrows the items", () => {
+    const g = m.groupItems(m.applyFilters(items(), { ...D(), status: ["coding"] }), { ...D(), status: ["coding"] }, m.columnsOf(data));
+    expect(g).toHaveLength(9);
+    expect(g.filter((x: any) => x.items.length).map((x: any) => x.id)).toEqual(["coding"]);
+  });
   it("groups by repository, sorted", () => expect(group({ group: "repo" }).map((x: any) => x.title)).toEqual(["acme/app", "acme/lib"]));
   it("groups by owner with the label for a gone account, and No owner last", () => {
     expect(group({ group: "owner" }).map((x: any) => x.title)).toEqual(["Ann", "deleted user", "No owner"]);

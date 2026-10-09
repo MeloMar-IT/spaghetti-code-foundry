@@ -265,12 +265,17 @@ when the findings file cannot be read): counts only, never a name.
 
 The redesigned pages are still being built. An admin turns them on in **Settings → Redesign** with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
 
-With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows the **Work** page as a list of stories.
+With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows the **Work** page: the stories as a board or a list.
 
 - **Filter:** by repository, owner, status (any of the nine columns), who has the next move, and a text box that matches the title and `#issue`. **N of M stories** shows when a filter hides some. If nothing matches you see "No story matches the filters." and **Clear filters**.
-- **Group and order:** group by status (default), repository, owner, next move or none. Order by issue number (default), age (oldest first) or title. Done stays newest first when grouped by status and ordered by issue number. Each group heading shows a count.
+- **Group and order:** in the **Display** menu. Group by status (default), repository, owner, next move or none. Order by issue number (default), age (oldest first) or title. Done stays newest first when grouped by status and ordered by issue number. Each group heading shows a count.
+- **Board and List:** the switch **Board | List** changes the layout. Both show the same stories, filters, grouping, order and counts; switching asks the server for nothing and keeps your filters. Board is the default. The board has one column per group, with title and count. Grouped by status, all nine columns show, also when empty, and a status filter hides stories, not columns. Grouping "none" shows the board by status, and the Display menu says so.
+- **Cards:** a card shows on at most four lines: the issue (link to GitHub) and title; who has the next move and what to do; "Blocked by #88, #87" (links) when the story waits for others; repository, owner and age in small text. "goes first" and the step line stay. Hold the pointer on a card to read the full sentence. A card whose next move is yours has a mark ("Your turn"), not only a colour; a blocked card has a **Blocked** pill. Click a card, or press Enter on it, to open its run; the links inside do not open the run.
+- **Display menu:** choose what a card or row shows (repository, next move, blockers, owner, age, step), **Compact cards**, group by and order by. The choices apply to board and list. The menu stays open when the page updates.
 - **Rows:** issue link to GitHub, title, repository (when more than one shows), status, who has the next move and what to do, the stories it waits for, owner and age. Click a row, or press Enter on it, to open its run.
-- **Saved choices:** your filters, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
+- **Keys on the board:** each column has one Tab stop (the card you used last). Up and Down move in the column; Left and Right move to the same place in the next column that has cards; Home and End go to the first and last card of the column; Enter opens the run. Tab reaches the links inside a card. Focus stays on the same card when the board updates.
+- **Touch and narrow screens (up to 760 px):** columns scroll sideways and snap into place. Each column scrolls on its own, with its heading kept in view, and buttons and links in cards are at least 44 px tall. Nothing needs hover. On a large board, column bodies have a maximum height and scroll.
+- **Saved choices:** your layout, filters, display choices, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
 - **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
 
 ### The runs list

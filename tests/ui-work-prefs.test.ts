@@ -26,6 +26,19 @@ describe("loadPrefs / savePrefs", () => {
     expect(p.loadPrefs("u1", s)).toMatchObject({ repo: "a/b", group: "repo" });
     expect(plain(p.loadPrefs("u2", s))).toEqual(plain(m.DEFAULTS));
   });
+  it("keeps layout, props and compact per account, and drops an unknown prop", () => {
+    const s = mem();
+    p.savePrefs("u1", { ...m.DEFAULTS, layout: "list", props: ["age", "step"], compact: true }, s);
+    expect(p.loadPrefs("u1", s)).toMatchObject({ layout: "list", props: ["age", "step"], compact: true });
+    expect(p.loadPrefs("u2", s)).toMatchObject({ layout: "board", compact: false });
+    expect(p.cleanPrefs({ v: 2, props: ["step", "nope", "age"] }).props).toEqual(["step", "age"]);
+  });
+  it("adds the step to props saved before it existed, and keeps a later choice to hide it", () => {
+    expect(p.cleanPrefs({ props: ["age", "owner"] }).props).toEqual(["owner", "age", "step"]);
+    expect(p.cleanPrefs({ props: [] }).props).toEqual(["step"]);
+    expect(p.cleanPrefs({ v: 2, props: ["age"] }).props).toEqual(["age"]);
+    expect(p.cleanPrefs({ props: [] , v: 2 }).props).toEqual([]);
+  });
   it("uses scf.work.local without an account", () => {
     const s = mem();
     p.savePrefs(undefined, m.DEFAULTS, s);
@@ -50,7 +63,7 @@ describe("loadPrefs / savePrefs", () => {
 describe("cleanPrefs", () => {
   it("drops unknown keys", () => expect("junk" in p.cleanPrefs({ junk: 1 })).toBe(false));
   it("replaces wrong values by the defaults or filters them", () => {
-    const c = p.cleanPrefs({ group: "x", order: 5, status: "coding", props: ["age", "nope"], compact: "yes", layout: "grid" });
+    const c = p.cleanPrefs({ group: "x", order: 5, status: "coding", v: 2, props: ["age", "nope"], compact: "yes", layout: "grid" });
     expect(c).toMatchObject({ group: "status", order: "issue", status: [], props: ["age"], compact: false, layout: "board" });
     expect(p.cleanPrefs({ status: ["coding", 3, "coding"] }).status).toEqual(["coding"]);
   });
@@ -65,7 +78,7 @@ describe("cleanPrefs", () => {
     c.status.push("done");
     c.props.push("x");
     expect(m.DEFAULTS.status).toEqual([]);
-    expect(m.DEFAULTS.props).toEqual(["repo", "next", "blockers", "owner", "age"]);
+    expect(m.DEFAULTS.props).toEqual(["repo", "next", "blockers", "owner", "age", "step"]);
   });
   const card = (over: Record<string, unknown>) => ({ issue: 1, repo: "a/b", ...over });
   it("clears a repository or owner that is gone, and keeps one that exists", () => {
