@@ -666,3 +666,6 @@ body.side-closed .side { display: none; }
   .work-panel { position: fixed; inset: 0; z-index: var(--layer-overlay); width: auto; max-width: none; max-height: none; margin: 0; border: 0; border-radius: unset; }
   .work-panel a, .work-panel button { display: inline-flex; align-items: center; min-height: 44px; }
 }
+.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); padding: 1px 4px 1px 10px; border-radius: var(--radius-pill); background: var(--panel-2); border: 1px solid var(--border); }
+.filter-chip button { padding: 0 6px; }

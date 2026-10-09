@@ -458,7 +458,7 @@ describe("renderWork", () => {
 describe("source", () => {
   const read = (f: string) => readFileSync(f, "utf8");
   it("switches the board route on the setting", () => {
-    expect(read("ui/app.js")).toContain("S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg)");
+    expect(read("ui/app.js")).toContain("S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go })");
   });
   it("uses no inline style", () => {
     for (const f of ["ui/work.js", "ui/work-list.js", "ui/work-model.js", "ui/work-prefs.js", "ui/work-board.js", "ui/work-display.js"]) expect(read(f), f).not.toMatch(/style\s*:/);

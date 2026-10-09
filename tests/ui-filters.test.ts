@@ -136,7 +136,7 @@ describe("the routers", () => {
 
 describe("ui/style.css", () => {
   it("has the filter bar and chip rules", async () => {
-    const css = (await import("node:fs")).readFileSync("ui/style.css", "utf8");
+    const css = (await import("./helpers/ui-css.js")).readUiCss();
     expect(css).toContain(".filter-bar {");
     expect(css).toContain(".filter-chip {");
   });
@@ -180,7 +180,7 @@ describe("the admin Runs list", () => {
     m.isConnected = true;
     return m;
   };
-  const rows = (m: FakeElement) => m.all("tr").filter((r) => r.attrs.class === "link").map((r) => r.all("a")[0]!.textContent);
+  const rows = (m: FakeElement) => m.all("tr").filter((r) => r.attrs.class === "link").map((r) => r.all("b")[0]!.textContent);
   const chips = (m: FakeElement) => m.all("span").filter((s) => s.attrs.class === "filter-chip").map((s) => s.textContent.replace("×", ""));
   const queued = (m: FakeElement) => m.all("span").filter((s) => s.attrs.class === "mono").map((s) => s.textContent);
   const pick = (m: FakeElement, value: string) => m.all("select")[0]!.fire("change", { target: { value } });
