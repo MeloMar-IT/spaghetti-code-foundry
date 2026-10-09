@@ -103,6 +103,23 @@ export function modal(title, build, { busy = () => false } = {}) {
   });
 }
 
+/** Marks `field` (may be undefined) as the one at fault and focuses it; every control in `fields` loses the mark first. */
+export function markInvalid(fields, field) {
+  for (const f of fields) f?.removeAttribute("aria-invalid");
+  if (!field) return;
+  field.setAttribute("aria-invalid", "true");
+  field.focus();
+}
+
+/** Shows `message` in the alert line `line` ("" clears it) and marks `field`. */
+export function showError(line, message, { fields = [], field } = {}) {
+  line.textContent = message || "";
+  markInvalid(fields, message ? field : undefined);
+}
+
+/** The key of the first [RegExp, key] pair that matches the message; undefined when none does. */
+export const fieldFor = (message, pairs) => pairs.find(([re]) => re.test(String(message ?? "")))?.[1];
+
 export function timeAgo(iso) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
   if (s < 60) return "just now";

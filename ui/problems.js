@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { h, mount, showError, toast } from "./dom.js";
 import { mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 
 const when = (iso) => new Date(iso).toLocaleString();
@@ -94,7 +94,7 @@ function switchRow(m, reload) {
       h("span", { class: isOn ? "status ok" : "status bad" }, monitorSentence(m)),
       h("span", { class: "spacer" }),
       h("button", { class: "small", onClick: click }, wantOn ? "Switch the monitor on" : "Switch the monitor off"),
-      h("button", { class: "small", title: "Reload", onClick: reload }, "↻")),
+      h("button", { class: "small", title: "Reload", "aria-label": "Reload", onClick: reload }, "↻")),
     h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
 }
 
@@ -114,7 +114,7 @@ function detailRow(f, cache, cols) {
       h("div", {}, "Runs: ", d.runs?.length
         ? d.runs.map((r) => h("span", {}, h("a", { href: `#/runs/${r.id}` }, r.id), ` (${r.status}${r.startedAt ? `, ${when(r.startedAt)}` : ""}) `))
         : h("span", { class: "muted" }, "No run yet.")));
-  }, (e) => cell.replaceChildren(h("span", { class: "status bad" }, e.message)));
+  }, (e) => cell.replaceChildren(h("span", { class: "status bad", role: "alert" }, e.message)));
   return h("tr", {}, cell);
 }
 
@@ -156,8 +156,8 @@ function findingsTable(m, reload, redraw, cache) {
   });
   const left = m.findings.length - rows.length;
   return h("div", {},
-    h("table", { class: "table compact" },
-      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story", ""].map((c) => h("th", {}, c)))),
+    h("table", { class: "table compact", "aria-label": "Findings" },
+      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
       h("tbody", {}, body)),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
@@ -165,16 +165,17 @@ function findingsTable(m, reload, redraw, cache) {
 function detectorsTable(m, reload) {
   const rows = (m.detectors ?? []).map((d) => {
     const mute = (m.mutes ?? []).find((x) => x.kind === "detector" && x.detector === d.name);
-    const err = h("span", { class: "status bad" });
+    const err = h("span", { class: "status bad", role: "alert" });
     const inputs = Object.entries(d.thresholds ?? {}).map(([k, v]) => ({ key: k, el: h("input", { type: "number", step: "any", value: String(v), class: "w-80", "aria-label": `${d.name} ${thresholdLabel(k)}` }), label: thresholdLabel(k) }));
+    const show = (message, input) => showError(err, message, { fields: inputs.map((i) => i.el), field: input?.el });
     const save = async () => {
-      err.textContent = "";
+      show("");
       const values = {};
       for (const i of inputs) {
         const text = String(i.el.value ?? "").trim();
         const n = Number(text);
         if (!text || !Number.isFinite(n)) {
-          err.textContent = "Give a number.";
+          show("Give a number.", i);
           return;
         }
         values[i.key] = n;
@@ -186,7 +187,7 @@ function detectorsTable(m, reload) {
         toast("Threshold saved");
         await reload();
       } catch (e) {
-        err.textContent = e.message;
+        show(e.message, inputs.find((i) => e.message.includes(`"${i.key}"`)));
       }
     };
     return h("tr", {},
@@ -199,8 +200,8 @@ function detectorsTable(m, reload) {
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return h("table", { class: "table compact" },
-    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", ""].map((c) => h("th", {}, c)))),
+  return h("table", { class: "table compact", "aria-label": "Detectors" },
+    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, rows));
 }
 
@@ -211,7 +212,7 @@ export async function renderProblems(main) {
   try {
     m = await api.monitor();
   } catch (e) {
-    mount(main, h("h1", {}, "Problems"), h("p", { class: "status bad" }, e.message));
+    mount(main, h("h1", {}, "Problems"), h("p", { class: "status bad", role: "alert" }, e.message));
     return;
   }
   shown = PAGE;

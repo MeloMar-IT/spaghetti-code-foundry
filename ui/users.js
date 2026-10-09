@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { errorText, linkHash } from "./auth.js";
-import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
 import { rememberView } from "./view-as.js";
 
 const text = (s) => String(s ?? "").trim();
@@ -90,8 +90,8 @@ const para = (t) => h("p", { class: "flush" }, t);
 
 /** The one-time link: a read-only field to select, a Copy button, and what the admin has to do with it. */
 function linkView(link, user, page, onDone) {
-  const field = h("input", { name: "link", class: "mono", readonly: true, value: link, onFocus: (e) => e.currentTarget.select?.() });
-  const note = h("p", { class: "status flush" });
+  const field = h("input", { name: "link", class: "mono", readonly: true, "aria-label": "Set-password link", value: link, onFocus: (e) => e.currentTarget.select?.() });
+  const note = h("p", { class: "status flush", role: "status" });
   return stack(
     para("This link works once, for 24 hours. Send it to the user yourself: the Foundry does not send it."),
     blockedLinkText(user) ? para(blockedLinkText(user)) : null,
@@ -99,7 +99,9 @@ function linkView(link, user, page, onDone) {
     note,
     h("div", { class: "row" },
       h("button", { onClick: async () => {
-        note.textContent = (await copyText(page.clipboard(), link)) ? "Copied." : "Could not copy. Select the link and copy it yourself.";
+        const copied = await copyText(page.clipboard(), link);
+        note.setAttribute("role", copied ? "status" : "alert");
+        note.textContent = copied ? "Copied." : "Could not copy. Select the link and copy it yourself.";
       } }, "Copy"),
       h("span", { class: "spacer" }),
       h("button", { class: "primary", onClick: onDone }, "Done")));
@@ -110,22 +112,23 @@ function linkView(link, user, page, onDone) {
  * An error shows in the dialog and the button works again. `done(answer, { close, closed, mountIn })` may keep the dialog open.
  * Resolves with the answer once the dialog is closed and a started call has finished.
  */
-function callDialog({ title, body, label, danger = false, prepare, done }) {
+function callDialog({ title, body, label, danger = false, prepare, done, fields = {}, fieldOf }) {
   let pending = null;
   let closed = false;
   const shown = modal(title, (close) => {
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const show = (m) => showError(err, m, { fields: Object.values(fields), field: fields[fieldOf?.(m)] });
     const content = stack();
     const btn = h("button", { class: danger ? "danger" : "primary", onClick: () => go() }, label);
     let busy = false;
     const go = () => {
       if (busy) return;
       const call = prepare();
-      if (typeof call === "string") return void (err.textContent = call);
+      if (typeof call === "string") return void show(call);
       if (call === null) return close(undefined);
       busy = true;
       btn.disabled = true;
-      err.textContent = "";
+      show("");
       pending = (async () => {
         let answer;
         try {
@@ -133,7 +136,7 @@ function callDialog({ title, body, label, danger = false, prepare, done }) {
         } catch (e) {
           busy = false;
           if (closed) return void toast(errorText(e), "error");
-          err.textContent = errorText(e);
+          show(errorText(e));
           btn.disabled = false;
           return undefined;
         }
@@ -155,7 +158,12 @@ function userForm(u) {
   const role = h("select", { name: "role" }, ROLES.map((r) => h("option", { value: r }, r)));
   role.value = u?.role ?? "user";
   const read = () => ({ name: name.value, email: email.value, role: role.value });
-  return { read, nodes: [f("Name", name), f("E-mail", email), f("Role", role)] };
+  return {
+    read,
+    nodes: [f("Name", name), f("E-mail", email), f("Role", role)],
+    fields: { name, email, role },
+    fieldOf: (m) => fieldFor(m, [[/name/i, "name"], [/e-mail/i, "email"], [/role/i, "role"]]),
+  };
 }
 
 const own = (u, me) => (u.id === me ? [para("This is your own account: you are signed out at once.")] : []);
@@ -171,6 +179,8 @@ const addDialog = (_u, { page }) => {
   return callDialog({
     title: "Add user",
     body: form.nodes,
+    fields: form.fields,
+    fieldOf: form.fieldOf,
     label: "Add user",
     prepare: () => userProblem(form.read()) || (() => api.addUser(newUserBody(form.read()))),
     done: showLink(null, page, "The link was not shown. Use New link on the account to make one."),
@@ -208,6 +218,8 @@ const editDialog = (u) => {
   return callDialog({
     title: `Edit ${u.name}`,
     body: form.nodes,
+    fields: form.fields,
+    fieldOf: form.fieldOf,
     label: "Save",
     prepare: () => {
       const input = form.read();
@@ -309,6 +321,8 @@ function limitsForm(current, hintOf) {
   const inputs = Object.fromEntries(LIMIT_FIELDS.map(({ key }) => [key, h("input", { name: key, inputmode: "decimal", autocomplete: "off", value: current?.[key] === undefined ? "" : String(current[key]), placeholder: hintOf(key) })]));
   return {
     nodes: LIMIT_FIELDS.map(({ key, label }) => f(label, inputs[key])),
+    fields: inputs,
+    fieldOf: (m) => LIMIT_FIELDS.find(({ key, label }) => m.includes(key) || m.startsWith(label.replace(" (USD)", "")))?.key,
     read: () => readLimits(Object.fromEntries(LIMIT_FIELDS.map(({ key }) => [key, inputs[key].value]))),
   };
 }
@@ -327,6 +341,8 @@ const limitsDialog = (u, { limits }) => {
   return callDialog({
     title: `Limits of ${u.name}`,
     body: [para("Leave a field empty to use the default."), ...form.nodes],
+    fields: form.fields,
+    fieldOf: form.fieldOf,
     label: "Save",
     prepare: limitsPrepare(form, current, (patch) => api.saveUserLimits(u.id, patch)),
   });
@@ -338,6 +354,8 @@ const defaultLimitsDialog = (_u, { limits }) => {
   return callDialog({
     title: "Default limits",
     body: [para("These apply to every account, admins too, unless the account has its own. Empty means no limit. All three are enforced; the daily budget needs cost limits to be on in Settings."), ...form.nodes],
+    fields: form.fields,
+    fieldOf: form.fieldOf,
     label: "Save",
     prepare: limitsPrepare(form, current, (patch) => api.saveDefaultLimits(patch)),
   });
@@ -347,7 +365,7 @@ const defaultLimitsDialog = (_u, { limits }) => {
 export const appReposBody = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 
 const appReposDialog = (u, { repos }) => {
-  const area = h("textarea", { name: "appRepos", class: "mono full", rows: 8 });
+  const area = h("textarea", { name: "appRepos", class: "mono full", rows: 8, "aria-label": "App repositories, one per line" });
   area.value = repos.join("\n");
   return callDialog({
     title: `App repositories of ${u.name}`,
@@ -355,6 +373,8 @@ const appReposDialog = (u, { repos }) => {
       para(`Repositories ${u.name} may connect with the GitHub App. One per line: owner/name, or owner/* for all repositories of an owner. An empty list allows none. Connections that exist already keep working.`),
       ...(u.role === "admin" ? [para("An admin is not limited; the list counts only if the account becomes a user.")] : []),
       area],
+    fields: { area },
+    fieldOf: () => "area",
     label: "Save",
     prepare: () => () => api.setUserAppRepos(u.id, appReposBody(area.value)),
   });
@@ -443,9 +463,10 @@ export async function renderUsers(main, { me = "", notice, page = browserPage } 
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
       h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
       h("button", { class: "primary", onClick: add }, "+ Add user")),
-    notice ? h("p", { class: "status ok" }, notice.text) : null,
+    notice ? h("p", { class: "status ok", role: "status" }, notice.text) : null,
     h("table", { class: "table" },
-      h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", ""].map((t) => h("th", {}, t)))),
+      h("caption", { class: "sr-only" }, "Users"),
+      h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
       h("tbody", {}, users.map(row))));
   return () => {
     generation++;
