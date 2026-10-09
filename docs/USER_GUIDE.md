@@ -9,9 +9,9 @@ This guide walks through the web UI, writing your own flows, automating work fro
 choosing models, and keeping it all safe. How it is built is in [DESIGN.md](DESIGN.md); what we
 learned building it is in [LESSONS_LEARNED.md](LESSONS_LEARNED.md).
 
-![Your turn: only what waits for you](images/your-turn.png)
+![Home: what needs you, what is running, what finished](images/home.png)
 
-*The pictures in this guide show a demo repository, `acme/webshop`, with made-up stories.*
+*The pictures in this guide are made from test data: the repository `acme/app`, the accounts Test Admin and Ann, and runs named "Seeded … run".*
 
 Formerly **claude-factory**. The command is now `scf` (`factory` still works), the repository is `MeloMar-IT/spaghetti-code-foundry` and the data folder is `~/.spaghetti-code-foundry` (see [section 11](#11-upgrading-from-claude-factory)). The `<repo>/.claude-factory` folder, the labels (`claude-factory`, `factory:*`) and `factory/…` branches keep the old name.
 
@@ -105,6 +105,8 @@ admin for a new one.
 
 An account with the role `user` works on its own display at `/user/`, with **Start work** in the top bar, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Start work, Runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
+![Home of a user](images/user-home.png)
+
 **Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. With none, the page says "No flows yet. Ask your administrator to publish one." (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. With no repository the page says so. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, its sentence is shown and what you typed stays. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
 **My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes every 30 seconds. With no runs it says so and offers **Start work**.
@@ -190,7 +192,7 @@ Home asks again every 30 seconds.
 
 ### Your turn
 
-![Your turn](images/your-turn.png)
+![Needs you on Home](images/home.png)
 
 **Your turn** lists only what waits for you, one button each: questions to answer, approvals, failed or stopped work, a release pull request to merge, and a watcher that has an error. It never lists work that is running, queued, paused by a limit or waiting for another story, and never evaluation runs.
 

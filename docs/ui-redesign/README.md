@@ -35,7 +35,7 @@ What is not checked: how the pages look, and the wiring in a real browser. The r
 ## What is open
 
 - Measured time, errors and confidence for the five tasks. The owner runs the sessions with people (protocol in `measurement.md`).
-- Screenshots at 1440, 1280, 768 and 390. The 19 images in `docs/images/` are desktop only and are not a baseline.
+- Screenshots at 1280, 768 and 390. The 19 images in `docs/images/` are captured from the redesign at 1440 px (`npm run test:ui -- --grep @guide`); they are desktop only.
 - Overflow and layout-shift observations. The responsive and layout-shift notes are guesses from code, each with the observation that would confirm it.
 
 Two follow-up issues are for the owner to open: (1) the sessions for measured time, errors and confidence; (2) a capture runner for the four widths, which is a new dependency and needs its own decision. They are not opened here, and neither carries `Factory_go`.

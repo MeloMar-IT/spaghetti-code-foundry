@@ -87,4 +87,6 @@ export const SHOTS: readonly Shot[] = [
   { name: "repos", guide: "user", role: "user", path: "/user/#/repos", expect: "acme/app" },
   { name: "watchers", guide: "admin", role: "admin", path: "/#/watchers", expect: "+ Add watcher" },
   { name: "watcher-form", guide: "admin", role: "admin", path: "/#/watchers", expect: "Add a watcher" },
+  { name: "home", guide: "admin", role: "admin", path: "/#/home", expect: "Seeded gate run" },
+  { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "Seeded failed run" },
 ];

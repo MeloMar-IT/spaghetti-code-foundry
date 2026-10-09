@@ -23,8 +23,14 @@ describe("screenshot manifest", () => {
     expect(validateManifest(SHOTS)).toEqual([]);
     expect(validateManifest(SHOTS, PREPARE)).toEqual([]);
     expect(SHOTS.map((s) => s.name)).toEqual(["sign-in", "board", "runs", "flows", "flow-yaml", "library", "models",
-      "run-dialog", "run-log", "run-steps", "run-diff", "run-waiting", "settings", "dashboard", "repos", "watchers", "watcher-form"]);
-    expect(Object.keys(PREPARE)).toEqual(["flow-yaml", "run-dialog", "run-log", "run-steps", "run-diff", "watcher-form"]);
+      "run-dialog", "run-log", "run-steps", "run-diff", "run-waiting", "settings", "dashboard", "repos", "watchers", "watcher-form", "home", "user-home"]);
+    expect(Object.keys(PREPARE)).toEqual(["flow-yaml", "run-dialog", "run-log", "run-steps", "run-diff", "watcher-form", "home"]);
+  });
+  it("the Home shots have the agreed fields", () => {
+    expect(SHOTS.slice(-2)).toEqual([
+      { name: "home", guide: "admin", role: "admin", path: "/#/home", expect: "Seeded gate run" },
+      { name: "user-home", guide: "user", role: "user", path: "/user/#/home", expect: "Seeded failed run" },
+    ]);
   });
   it("uses only known placeholders", () => {
     for (const s of SHOTS) {
@@ -44,7 +50,7 @@ describe("screenshot manifest", () => {
     }
   });
   it("every prepare entry of this part has a step", () => {
-    for (const n of ["run-dialog", "run-log", "run-steps", "run-diff", "watcher-form"]) {
+    for (const n of ["run-dialog", "run-log", "run-steps", "run-diff", "watcher-form", "home"]) {
       expect(typeof PREPARE[n]?.act, n).toBe("function");
     }
   });
