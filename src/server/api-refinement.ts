@@ -8,6 +8,7 @@ import { getUser, type User } from "../auth/users.js";
 import { auditAction } from "../auth/audit.js";
 import { architectView, askArchitect, settleSession, stopArchitect, type ArchitectDeps, type ArchitectRequest } from "../refinement/architect.js";
 import { draftRemarks } from "../refinement/draft-check.js";
+import { replaceState } from "../refinement/replace-journal.js";
 import { impactView } from "../refinement/draft-impact.js";
 import { partWarnings } from "../refinement/draft-parts.js";
 import { SPLIT_READ_ONLY, splitView } from "../refinement/draft-split.js";
@@ -191,8 +192,10 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
-    // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown.
-    ...(s.source ? { source: (({ pending: _pending, draft: _draft, ...rest }) => ({ ...rest, ...(markOf(s) !== undefined ? { draft: markOf(s) } : {}) }))(s.source) } : {}),
+    // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown, and the journal of a replacement is not shown, only how far it is.
+    ...(s.source
+      ? { source: (({ pending: _pending, draft: _draft, replacing: _replacing, ...rest }) => ({ ...rest, ...(markOf(s) !== undefined ? { draft: markOf(s) } : {}), ...(replaceState(s) ? { replace: replaceState(s) } : {}) }))(s.source) }
+      : {}),
     state: s.state,
     // The Definition of Ready of the repository, only while the repository is there (a removed one has no list of its own).
     ...(repoAvailable ? { readyList: list } : {}),

@@ -196,6 +196,49 @@ describe("withoutSplits", () => {
   });
 });
 
+describe("planOf replaces", () => {
+  const source = { issue: 12, draft: uid(1) };
+  const ready = (n: number) => mk(n, { part: { of: uid(1) }, ready: true });
+  const split = (parts: Draft[]) => [mk(1, { splitInto: parts.filter((p) => p.part?.of === uid(1)).map((p) => p.id), criteria: [] }), ...parts];
+  it("names the leaves when all are ready", () => {
+    const r = plan(split([ready(2), ready(3)]), { source });
+    expect(r.replaces).toEqual({ issue: 12, parts: [{ item: 1, title: "Story 2" }, { item: 2, title: "Story 3" }], ready: true });
+    expect(r.notChanged).toBe(12);
+  });
+  it("shows a part on GitHub as its issue", () => {
+    const r = plan(split([ready(2), ready(3)]), { source, onGithub: new Map([[uid(2), 101]]) });
+    expect(r.replaces).toEqual({ issue: 12, parts: [{ issue: 101 }, { item: 2, title: "Story 3" }], ready: true });
+  });
+  it("is not ready when a leaf is not", () => {
+    expect(plan(split([ready(2), mk(3, { part: { of: uid(1) } })]), { source }).replaces!.ready).toBe(false);
+  });
+  it("uses the leaves of nested splits", () => {
+    const drafts = [
+      mk(1, { splitInto: [uid(2), uid(3)], criteria: [] }),
+      ready(2),
+      mk(3, { part: { of: uid(1) }, splitInto: [uid(4), uid(5)], criteria: [] }),
+      mk(4, { part: { of: uid(3) }, ready: true }),
+      mk(5, { part: { of: uid(3) }, ready: true }),
+    ];
+    const r = plan(drafts, { source });
+    expect(r.replaces!.parts.map((p) => ("title" in p ? p.title : p.issue))).toEqual(["Story 2", "Story 4", "Story 5"]);
+    expect(r.replaces!.ready).toBe(true);
+  });
+  it("gives neither replaces nor notChanged once replaced", () => {
+    const r = plan(split([ready(2), ready(3)]), { source, replaced: true });
+    expect(r.replaces).toBeUndefined();
+    expect(r.notChanged).toBeUndefined();
+  });
+  it("gives notChanged only for a removed mark", () => {
+    const r = plan([ready(2)], { source: { issue: 12, draft: uid(9) } });
+    expect(r.notChanged).toBe(12);
+    expect(r.replaces).toBeUndefined();
+  });
+  it("gives nothing without a source", () => {
+    expect(plan(split([ready(2), ready(3)])).replaces).toBeUndefined();
+  });
+});
+
 describe("leftBehind", () => {
   it("is empty without a split, and for an original without criteria", () => {
     expect(leftBehind([mk(1)])).toEqual([]);

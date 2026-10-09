@@ -11,10 +11,10 @@ export interface Rewrite {
   after: string;
 }
 
-const refs = (parts: readonly number[]) => parts.map((p) => `#${p}`).join(", ");
+const refs = (parts: readonly (number | string)[]) => parts.map((p) => (typeof p === "number" ? `#${p}` : p)).join(", ");
 
 /** Replaces every "#<original>" in the "Depends on" text with the parts. Undefined when there is nothing to replace. */
-export function rewriteDependsOn(body: string, original: number, parts: readonly number[]): Rewrite | undefined {
+export function rewriteDependsOn(body: string, original: number, parts: readonly (number | string)[]): Rewrite | undefined {
   const range = dependencyRange(body);
   if (!range || !parts.length) return undefined;
   const before = body.slice(range.start, range.end);
@@ -53,17 +53,23 @@ export interface Dependant {
   after?: string;
 }
 
-/** The open issues that depend on the original, by number. `exclude` are the parts: they are skipped and they replace the original. */
-export function findDependants(open: readonly DependantSource[], original: { number: number; title: string }, exclude: readonly number[]): Dependant[] {
-  const all = open.map(({ number, title, state }) => ({ number, title, state }));
-  if (!all.some((i) => i.number === original.number)) all.push({ number: original.number, title: original.title, state: undefined });
+/** The open issues that depend on the original, by number. `exclude` are the parts on GitHub: they are skipped. `shown` is what the rewrite writes for the original (a number as `#n`, a string as it is). */
+export function findDependants(
+  open: readonly DependantSource[],
+  original: { number: number; title: string },
+  exclude: readonly number[],
+  shown: readonly (number | string)[] = exclude,
+): Dependant[] {
+  // The title given for the original wins over the one in the list: it is the live one.
+  const all = open.filter((i) => i.number !== original.number).map(({ number, title, state }) => ({ number, title, state }));
+  all.push({ number: original.number, title: original.title, state: undefined });
   const out: Dependant[] = [];
   for (const i of open) {
     if (i.number === original.number || exclude.includes(i.number)) continue;
     if (i.state && i.state.toLowerCase() !== "open") continue;
     const body = i.body ?? "";
     if (!dependencies(body, i.number, all).includes(original.number)) continue;
-    const r = rewriteDependsOn(body, original.number, exclude);
+    const r = rewriteDependsOn(body, original.number, shown);
     out.push(r ? { issue: i.number, title: i.title, byHand: false, before: r.before, after: r.after } : { issue: i.number, title: i.title, byHand: true });
   }
   return out.sort((a, b) => a.issue - b.issue);

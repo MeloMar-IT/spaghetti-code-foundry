@@ -102,7 +102,7 @@ export function replaceStarted(s: Basis): boolean {
   return mark !== undefined && partsOf(s.drafts, mark).some((p) => p.published);
 }
 
-/** Merges the journal kept with a fresh scan. Pure; it never returns more than `JOURNAL_MAX` entries (`cut: true` then). */
+/** Merges the journal kept with a fresh scan. A stored entry that is no longer found stays until it is done. Pure; it never returns more than `JOURNAL_MAX` entries (`cut: true` then). */
 export function mergeJournal(stored: readonly Dependant[], found: readonly Found[]): { dependants: Dependant[]; cut?: true } {
   const scan = new Map<number, Found>();
   for (const f of found) if (!scan.has(f.issue)) scan.set(f.issue, f);
@@ -111,12 +111,11 @@ export function mergeJournal(stored: readonly Dependant[], found: readonly Found
   for (const e of stored) {
     if (known.has(e.issue)) continue;
     known.add(e.issue);
-    if (e.rangeAfter !== undefined || e.done) {
+    const f = scan.get(e.issue);
+    if (e.rangeAfter !== undefined || e.done || !f) {
       list.push(e);
       continue;
     }
-    const f = scan.get(e.issue);
-    if (!f) continue;
     const { title: _t, byHand: _h, before: _b, after: _a, ...kept } = e;
     list.push({ ...kept, ...pick(f) });
   }

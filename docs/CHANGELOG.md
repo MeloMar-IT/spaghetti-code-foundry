@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement 9e-3a — the publish plan shows how a split issue will be replaced (#417). Nothing is written; no UI change.
+  - `GET /api/refinement/:id/publish` has `replaces: { issue, parts, ready, cut?, dependants }`, with `before`/`after` or `byHand` for each open issue that depends on the original.
+  - `GET /api/refinement/:id` has `source.replace` (`waiting`, `due`, `done`) and no longer shows `source.replacing`.
+  - New server option `openIssuePages` (default 10).
+  - `mergeJournal` keeps an unfinished entry that the scan no longer finds.
 - Work tracking 2c — dependency chain in a side panel instead of dimming the board (#375).
   - **Button.** A card or row with blockers has **What is in the way?** (`aria-expanded`, `aria-controls`). A card without a run opens the panel on Enter. Nothing on the board is dimmed.
   - **Panel.** New `ui/work-panel.js`: `chainOrder(item, items)` (pure; deepest blocker first, direct blockers from `after` marked, safe against cycles, uses `next.blockers` and `after` from the same `GET /api/board` answer, no new request) and `panelView`. It shows title, issue link, status, sentence, next move and where, owner, age, "Open run" and "In the way of #N" with each story's status and next move, or a GitHub link when it is not on the board. Chain entries on the board open in the panel; **Back** returns.
