@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { glyph, h, mount, toast } from "./dom.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
@@ -134,7 +134,7 @@ function routingCard(cfg, specs, localSpec) {
     cell(r, "min_visit", { type: "number", min: 1, class: "mono w-70", placeholder: "1" }),
     cell(r, "model", { list: "models", placeholder: "model spec" }),
     h("td", {}, h("button", { class: "small", title: "Move up", disabled: i === 0, onClick: () => { rules.splice(i - 1, 0, rules.splice(i, 1)[0]); draw(); } }, "↑"),
-      h("button", { class: "small danger", onClick: () => { rules.splice(i, 1); draw(); } }, "✕")))) :
+      h("button", { class: "small danger", title: "Remove rule", "aria-label": "Remove rule", onClick: () => { rules.splice(i, 1); draw(); } }, glyph("✕"))))) :
     h("tr", {}, h("td", { colspan: 5, class: "muted" }, "No rules: steps use their own model, then the flow's, then the default.")));
   draw();
 

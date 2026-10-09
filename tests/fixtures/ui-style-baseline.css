@@ -107,6 +107,8 @@ a.pill.refinement:hover { text-decoration: underline; }
 .status { font-size: var(--text-small); }
 .status.ok { color: var(--ok); }
 .status.bad { color: var(--fail); }
+.status.ok:not(:empty):not(.has-glyph)::before { content: "✓ "; content: "✓ " / ""; }
+.status.bad:not(:empty):not(.has-glyph)::before { content: "✕ "; content: "✕ " / ""; }
 .dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-round); background: var(--accent); display: inline-block; }
 .dirty-dot.clean { visibility: hidden; }
 

@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, modal, toast } from "./dom.js";
+import { aiProps, h, modal, toast } from "./dom.js";
 
 // The talk of a refinement session: the architect's questions, the person's answers and the map. Every text is set as text, never as HTML.
 
@@ -155,6 +155,8 @@ function questionCard(s, q, can, ctx) {
     return ctx.send(e.currentTarget, () => forget(key, api.answerQuestion(s.id, q.id, { text: t })));
   };
   return h("div", { class: "card" },
+    // Only the architect's question, reason and options are in the AI region; the person's answer and form stay outside it.
+    h("div", { class: "stack", ...aiProps("question from the architect") },
     h("div", { class: "row" }, h("span", { class: "pill" }, VIEW_LABELS[q.view] ?? q.view), h("b", {}, q.text)),
     h("p", { class: "muted" }, `Why it matters: ${q.why}`),
     h("ol", {}, q.options.map((o, i) => {
@@ -163,7 +165,7 @@ function questionCard(s, q, can, ctx) {
         q.recommended === n ? h("span", { class: "pill ok" }, "Recommended") : null,
         !answered && can ? h("button", { class: "small", "data-focus": `opt-${q.id}-${n}`, "aria-label": `Choose option ${n}`,
           onClick: (e) => ctx.send(e.currentTarget, () => api.answerQuestion(s.id, q.id, { option: n })) }, "Choose") : null);
-    })),
+    }))),
     answered ? h("p", { class: "said" }, h("b", {}, "Answer: "), answerText(q)) : null,
     !answered && can ? [
       h("label", { class: "field" }, h("span", {}, "My own answer"), area),
@@ -195,7 +197,7 @@ function questionsSection(s, talk, can, kind, ctx) {
     rounds.map((r, i) => [
       h("h3", {}, `Round ${i + 1}`),
       r.questions.map((q) => questionCard(s, q, can, ctx)),
-      r.done ? h("p", { class: "status ok" }, doneText(r.done)) : null,
+      r.done ? h("p", { class: "status ok", ...aiProps("closing note of the round") }, doneText(r.done)) : null,
     ]),
     line,
     !rounds.length && !line ? h("p", { class: "muted" }, !s.brief ? NO_BRIEF : "No questions yet.") : null,
@@ -206,7 +208,7 @@ function questionsSection(s, talk, can, kind, ctx) {
     h("h3", {}, "Questions to the architect"),
     talk.asked.map((a) => h("div", { class: "card" },
       h("p", { class: "said" }, h("b", {}, "Question: "), a.question),
-      h("p", { class: "said" }, h("b", {}, "The architect: "), a.answer))),
+      h("p", { class: "said", ...aiProps("answer of the architect") }, h("b", {}, "The architect: "), a.answer))),
     waiting ? h("div", { class: "card" },
       pendingQuestion(s) ? h("p", { class: "said" }, h("b", {}, "Question: "), pendingQuestion(s)) : null,
       ctx.line,
@@ -241,7 +243,7 @@ function mapSection(s, talk, can, ctx) {
                 return ctx.send(btn, () => api.removeMapEntry(s.id, e.id));
               } }, "Remove"),
             ] : null)),
-          proposals.map((p) => h("li", { class: "entry" }, h("span", { class: "pill" }, "Proposed"), " ", h("span", { class: "said" }, p.text),
+          proposals.map((p) => h("li", { class: "entry" }, h("span", aiProps("proposed map entry"), h("span", { class: "pill" }, "Proposed"), " ", h("span", { class: "said" }, p.text)),
             can ? [
               h("button", { class: "small", "data-focus": `accept-${p.id}`, onClick: (e) => ctx.send(e.currentTarget, () => api.acceptProposal(s.id, p.id)) }, "Accept"),
               h("button", { class: "small", "data-focus": `reject-${p.id}`, onClick: (e) => ctx.send(e.currentTarget, () => api.rejectProposal(s.id, p.id)) }, "Reject"),

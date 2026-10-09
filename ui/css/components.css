@@ -48,6 +48,9 @@ a.pill.refinement:hover { text-decoration: underline; }
 .status { font-size: var(--text-small); }
 .status.ok { color: var(--ok); }
 .status.bad { color: var(--fail); }
+/* Not by colour alone: a glyph before the text. Empty lines and marks that already are a glyph get none. */
+.status.ok:not(:empty):not(.has-glyph)::before { content: "✓ "; content: "✓ " / ""; }
+.status.bad:not(:empty):not(.has-glyph)::before { content: "✕ "; content: "✕ " / ""; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--card-pad); display: grid; gap: var(--stack-gap); }
 .card.jump-only { border-style: dashed; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }

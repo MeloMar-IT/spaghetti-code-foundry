@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { glyph, h } from "./dom.js";
 import { area, field, insertAtCursor, list, select, setKey, text } from "./fields.js";
 
 const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"];
@@ -78,7 +78,7 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
           entries.flatMap(([k, v], j) => [
             h("input", { class: "mono", value: k, placeholder: "var", onChange: (e) => { entries[j][0] = e.target.value.trim(); setVars(entries); rerender(); } }),
             h("input", { class: "mono", value: v, placeholder: "value (may use {{vars.x}})", onInput: (e) => { entries[j][1] = e.target.value; setVars(entries); } }),
-            h("button", { class: "icon", onClick: () => { entries.splice(j, 1); setVars(entries); rerender(); } }, "✕"),
+            h("button", { class: "icon", title: "Remove variable", "aria-label": "Remove variable", onClick: () => { entries.splice(j, 1); setVars(entries); rerender(); } }, glyph("✕")),
           ])),
         h("button", { class: "small", onClick: () => { entries.push([`var${entries.length + 1}`, ""]); setVars(entries); rerender(); } }, "+ Variable for sub-flow"),
       ];
@@ -108,7 +108,7 @@ export function stepAdvanced(flow, step, { onChange, rerender, targets }) {
         h("span", { class: "muted" }, "go to"),
         h("select", { onChange: (e) => { routes[j].goto = e.target.value; setRoutes(routes); rerender(); } },
           opts.map(([v, l]) => h("option", { value: v, selected: r.goto === v }, l))),
-        h("button", { class: "icon", onClick: () => { routes.splice(j, 1); setRoutes(routes); rerender(); } }, "✕")))),
+        h("button", { class: "icon", title: "Remove route", "aria-label": "Remove route", onClick: () => { routes.splice(j, 1); setRoutes(routes); rerender(); } }, glyph("✕"))))),
     h("button", { class: "small", onClick: () => { step.routes = [...routes, { if: "", goto: "" }]; rerender(); } }, "+ Route"),
     h("small", { class: "muted block mt-6 mb-10" }, "Checked on success, before “On success”. First match wins."),
     field("When resumed after stopping here, restart at",

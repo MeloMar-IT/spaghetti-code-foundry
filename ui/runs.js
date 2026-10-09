@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, timeAgo, toast } from "./dom.js";
+import { glyph, h, mount, timeAgo, toast } from "./dom.js";
 import { icon } from "./icons.js";
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
@@ -165,13 +165,16 @@ export function failureCard(s, { onStep } = {}) {
     s.reason ? h("details", { class: "raw" }, h("summary", {}, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
 
+/** The mark of a finished step: the glyph for the eye, a word for screen readers. */
+const stepMark = (ok) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, glyph(ok ? "✔" : "✘"), h("span", { class: "sr-only" }, ok ? "Succeeded" : "Failed"));
+
 /** One finished step: summary line, the raw error under "Details", and the output or transcript when opened. `open`: shown opened. */
 export function stepEntry(runId, s, i, { open = false } = {}) {
   // A user's view has no output: a plain row that cannot be opened and never asks for a transcript.
   if (!("output" in s)) {
     return h("div", { class: "tl" },
       h("div", { class: "row" },
-        h("span", { class: `pill ${s.ok ? "ok" : "fail"}` }, s.ok ? "✔" : "✘"),
+        stepMark(s.ok),
         h("b", { class: "mono" }, s.id),
         s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
         h("span", { class: "muted" }, s.type === "agent" ? "Agent" : s.type),
@@ -196,7 +199,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
     onToggle: (e) => { if (e.target.open) load(); },
   },
     h("summary", {},
-      h("span", { class: `pill ${s.ok ? "ok" : "fail"}` }, s.ok ? "✔" : "✘"),
+      stepMark(s.ok),
       h("b", { class: "mono" }, s.id),
       s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
       h("span", { class: "muted" }, s.agent ? s.agent : s.type),

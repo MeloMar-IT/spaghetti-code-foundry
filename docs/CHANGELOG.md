@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Accessibility 5 — text equivalents for charts, status colours, icons and AI-written content (#389).
+  - **Cost chart.** The bars are no longer tab stops and the tooltip no longer has `role="status"` (it is for the pointer only). "Show as table" now sits under the chart with one row (day, cost, runs) for every bar, including days with no runs (`costChart`, `costTable` in `ui/dashboard.js`).
+  - **Rates.** `rateBar` hides the track from screen readers and reads as text, for example "12 of 15, 80%" (`rateText`).
+  - **Status.** Colour is no longer the only difference: finished steps in `ui/runs.js` and `ui/user/runs.js` have a `.sr-only` word (Succeeded, Failed) next to the glyph, and the other status marks got text or icon differences. Status text still comes from the server.
+  - **Glyphs.** New `glyph()` in `ui/dom.js` marks decorative glyphs (`✕`, `◆`, `›`, step icons) `aria-hidden`; their controls have names.
+  - **AI-written content.** New `aiProps(what)` and `AI_LABEL` in `ui/dom.js` make a region named "Written by AI: <what>" around architect suggestions, talk, drafts, impact and planner questions (`ui/refinement-*.js`, `ui/turn-act.js`, `ui/user/runs.js`). The visible marking is unchanged.
+  - **Tests.** `tests/ui-a11y-equivalents.test.ts` (new): table rows equal the chart data, the rate text, text for every run status, and `audit()` on the dashboard and a refinement session. Line numbers in `docs/ui-redesign/dialogs.md` and the style baseline are updated.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
   - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.

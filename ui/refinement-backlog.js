@@ -12,7 +12,7 @@ export const CHECKS = [
 /** One mark: ✓ or ✗, with the check in words for a screen reader and a tooltip. `missing` are the "Depends on" numbers that were not found. */
 export function checkMark(ok, label, missing = []) {
   const said = `${label}: ${ok ? "yes" : "no"}${!ok && missing.length ? ` — not found: ${missing.map((n) => `#${n}`).join(", ")}` : ""}`;
-  return h("span", { class: ok ? "status" : "status bad", title: said, "aria-label": said }, ok ? "✓" : "✗");
+  return h("span", { class: ok ? "status has-glyph" : "status bad has-glyph", title: said, "aria-label": said }, ok ? "✓" : "✗");
 }
 
 let chosen = ""; // the repository chosen last, kept while the person is on other pages

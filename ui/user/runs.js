@@ -2,7 +2,7 @@
 // answers and show its sentences when it refuses. Relative imports, so a test can load them.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
-import { h, modal, mount, timeAgo, toast } from "../dom.js";
+import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
 import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
 
@@ -364,7 +364,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         steprow ? h("dl", { class: "meta" }, steprow) : null),
       h("div", { class: "card mb-16" },
         s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere" }, h("b", {}, "Questions"), "\n", s.questions) : null,
+        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", s.questions) : null,
         h("dl", { class: "meta" },
           work ? row("Repository", work) : null,
           s.branch ? row("Branch", s.branch) : null,

@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { aiProps, h } from "./dom.js";
 import { isEmpty } from "./refinement-remarks.js";
 
 // The architect's view on the draft page: what the draft touches, depends on, risks and its size. Advice only: nothing here changes a
@@ -61,6 +61,7 @@ export function viewNodes(s, d, act) {
   const v = d.impact;
   if (!v) return [];
   const titleById = (id) => titleOf((s.drafts ?? []).find((o) => o.id === id));
+  const tail = [];
   const out = [h("p", { class: "muted" }, impactMeta(v),
     v.outOfDate ? [" ", h("span", { class: "pill" }, OUT_OF_DATE), " ", OUT_OF_DATE_WHY] : null)];
 
@@ -96,10 +97,11 @@ export function viewNodes(s, d, act) {
     out.push(h("h4", {}, "Plan review"), h("p", {}, v.planReview.text, basis("estimate")));
     out.push(h("ul", {}, (v.sensitive ?? []).map((x) => h("li", {}, h("b", {}, x.topic), basis(x.basis), h("span", { class: "said" }, x.why)))));
     const label = v.planReview.label;
-    if (act && label) out.push(labelBox(d, act, `${LABEL_ASK} ("${label}")`));
-    else if (!act && label && d.addReviewLabel) out.push(h("p", { class: "muted" }, `The review label "${label}" is added when this story is published.`));
+    // The label choice is the person's, not the architect's: it stays outside the AI region.
+    if (act && label) tail.push(labelBox(d, act, `${LABEL_ASK} ("${label}")`));
+    else if (!act && label && d.addReviewLabel) tail.push(h("p", { class: "muted" }, `The review label "${label}" is added when this story is published.`));
   }
-  return out;
+  return [h("div", { class: "stack", ...aiProps("the architect's view") }, out), ...tail];
 }
 
 const labelBox = (d, act, text) => h("label", { class: "check check-row" },

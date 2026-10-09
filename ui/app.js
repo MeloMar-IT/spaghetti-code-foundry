@@ -241,7 +241,7 @@ async function validate() {
   if (c !== S.cur || yaml !== c.yaml) return; // stale
   c.validation = r;
   ui.status.className = `status ${r.ok ? "ok" : "bad"}`;
-  ui.status.textContent = r.ok ? "✓ valid" : "✕ invalid";
+  ui.status.textContent = r.ok ? "valid" : "invalid";
   mount(ui.errors, r.ok ? null : h("div", { class: "errors" }, r.error.replace(/^<flow>: /, "")));
 }
 const validateSoon = debounce(validate, 300);

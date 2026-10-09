@@ -85,7 +85,7 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
     svg("g", { class: `node${selected === i ? " sel" : ""}${s.jump_only ? " jump" : ""}`, transform: `translate(${X},${y(i)})`, onClick: () => onSelect?.(i) },
       svg("rect", { width: W, height: H, rx: 8 }),
       svg("rect", { class: `bar ${s.type}`, width: 4, height: H - 12, x: 6, y: 6, rx: 2 }),
-      svg("text", { x: 18, y: 20, "font-weight": 600, "font-size": 13 }, clip(`${ICON[s.type] ?? "?"} ${s.id ?? "?"}`, 26)),
+      svg("text", { x: 18, y: 20, "font-weight": 600, "font-size": 13 }, svg("tspan", { "aria-hidden": "true" }, `${ICON[s.type] ?? "?"} `), clip(s.id ?? "?", 24)),
       svg("text", { x: 18, y: 37, class: "sub" }, clip(subtitle(s), 28)),
       s.on_success === "stop" || s.on_failure === "stop"
         ? svg("text", { x: W - 8, y: 20, "text-anchor": "end", class: "sub stop" }, "■ stop") : null,
