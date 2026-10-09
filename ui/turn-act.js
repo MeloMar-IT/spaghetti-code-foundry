@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, modal, mount, toast } from "./dom.js";
+import { aiProps, h, modal, mount, toast } from "./dom.js";
 
 // The buttons and panels of Your turn that answer, approve, reject or retry an item. Every action is a normal
 // comment on the issue (the server posts it); the panels only collect the text.
@@ -64,11 +64,11 @@ export function questionsPanel(item, detail, { onAct, close }) {
     actions.push(mk({ onClick: form }, "Answer…"));
     mount(panel,
       questions.length
-        ? questions.map((q) => h("div", { class: "turn-q" },
+        ? questions.map((q) => h("div", { class: "turn-q", ...aiProps(`question ${q.n}`) },
             h("b", {}, `Q${q.n}. ${q.title}`),
             q.text ? h("div", { class: "turn-text" }, q.text) : null,
             q.recommendation ? h("div", {}, `Recommendation: ${q.recommendation}`) : null))
-        : h("pre", { class: "turn-text" }, detail.text ?? ""),
+        : h("pre", { class: "turn-text", ...aiProps("questions") }, detail.text ?? ""),
       h("div", { class: "row" }, ...actions, h("button", { onClick: () => close() }, "Close")));
   };
   const form = () => {
@@ -90,8 +90,8 @@ export function questionsPanel(item, detail, { onAct, close }) {
     buttons.push(post, back);
     mount(panel,
       ...boxes.map(({ q, box }) => h("label", { class: "turn-q" },
-        h("b", {}, q.n === undefined ? q.title : `Q${q.n}. ${q.title}`),
-        q.recommendation ? h("div", { class: "muted" }, `Recommendation: ${q.recommendation}`) : null,
+        h("b", q.n === undefined ? {} : aiProps(`question ${q.n}`), q.n === undefined ? q.title : `Q${q.n}. ${q.title}`),
+        q.recommendation ? h("div", { class: "muted", ...aiProps("recommendation") }, `Recommendation: ${q.recommendation}`) : null,
         box,
         q.recommendation ? h("button", { class: "small", onClick: (e) => { e?.preventDefault?.(); box.value = FILLER; } }, "Use recommendation") : null)),
       h("div", { class: "row" }, post, back));

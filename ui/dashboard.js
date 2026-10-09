@@ -11,13 +11,13 @@ function tile(label, value, sub) {
 }
 
 /** Single-series bar chart of daily cost: one accent hue, bars anchored to the baseline, hover tooltip per bar. */
-function costChart(days) {
+export function costChart(days) {
   const W = 720, H = 180, L = 44, B = 22, T = 10;
   const max = Math.max(0.01, ...days.map((d) => d.costUsd));
   const nice = (() => { const p = 10 ** Math.floor(Math.log10(max)); return Math.ceil(max / p) * p; })();
   const bw = (W - L) / days.length;
   const yv = (v) => T + (H - T - B) * (1 - v / nice);
-  const tip = h("div", { class: "chart-tip", role: "status" });
+  const tip = h("div", { class: "chart-tip", "aria-hidden": "true" });
   const grid = [0, 0.5, 1].map((f) => [
     svg("line", { x1: L, x2: W, y1: yv(nice * f), y2: yv(nice * f), class: "grid-line" }),
     svg("text", { x: L - 6, y: yv(nice * f) + 4, "text-anchor": "end", class: "axis" }, usd(nice * f, nice < 1 ? 2 : 0)),
@@ -35,7 +35,7 @@ function costChart(days) {
       tip.style.top = `${(Math.min(y, H - B - 20) / H) * 100}%`;
       tip.classList.add("show");
     };
-    return svg("g", { class: "bar-hit", onMouseenter: show, onMouseleave: () => tip.classList.remove("show"), tabindex: 0, onFocus: show, onBlur: () => tip.classList.remove("show") },
+    return svg("g", { class: "bar-hit", onMouseenter: show, onMouseleave: () => tip.classList.remove("show") },
       svg("rect", { x: L + i * bw, y: T, width: bw, height: H - T - B, fill: "transparent" }),
       path ? svg("path", { d: path, class: "bar" }) : null);
   });
@@ -46,9 +46,20 @@ function costChart(days) {
     tip);
 }
 
-function rateBar(ok, total) {
+/** Every bar of the cost chart as a table row: day, cost and runs. */
+export function costTable(days) {
+  return h("details", {}, h("summary", {}, "Show as table"),
+    h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Cost"), h("th", {}, "Runs"))),
+      h("tbody", {}, days.map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", { class: "mono" }, usd(d.costUsd, 3)), h("td", {}, d.runs))))));
+}
+
+export const rateText = (ok, total) => `${ok} of ${total}, ${pct(ok, total)}`;
+
+/** A rate as a bar and its percentage; the words ("12 of 15, 80%") are there for screen readers. */
+export function rateBar(ok, total) {
   const w = total ? (ok / total) * 100 : 0;
-  return h("span", { class: "rate" }, h("span", { class: "rate-track" }, h("span", { class: "rate-fill", style: { width: `${w}%` } })), h("span", { class: "mono" }, pct(ok, total)));
+  return h("span", { class: "rate" }, h("span", { class: "rate-track", "aria-hidden": "true" }, h("span", { class: "rate-fill", style: { width: `${w}%` } })),
+    h("span", { class: "mono" }, h("span", { class: "sr-only" }, `${ok} of ${total}, `), pct(ok, total)));
 }
 
 /** A length of time in plain words: "less than a minute", "5 min", "2 h 10 min", "3 days". `up` rounds up instead of to the nearest. */
@@ -141,10 +152,7 @@ export async function renderDashboard(main) {
     yours.length || rest.length ? h("div", { class: "card" }, h("h3", {}, "Waiting — what happens next"),
       yours.map(group),
       yours.length && rest.length ? h("div", { class: "hold-rest" }, rest.map(group)) : rest.map(group)) : null,
-    h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay),
-      h("details", {}, h("summary", {}, "Show as table"),
-        h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Runs"), h("th", {}, "Cost"))),
-          h("tbody", {}, s.byDay.filter((d) => d.runs).reverse().map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", {}, d.runs), h("td", { class: "mono" }, usd(d.costUsd, 3)))))))),
+    h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay), costTable(s.byDay)),
     h("div", { class: "dash-grid" },
       h("div", { class: "card" }, h("h3", {}, "By flow"),
         s.byFlow.length ? h("table", { class: "table compact" },

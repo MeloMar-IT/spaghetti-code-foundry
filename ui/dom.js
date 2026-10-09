@@ -18,6 +18,13 @@ export function h(tag, props = {}, ...children) {
   return el;
 }
 
+/** A glyph for the eye only: hidden from screen readers. The control around it needs its own name. */
+export const glyph = (g) => h("span", { "aria-hidden": "true" }, g);
+
+export const AI_LABEL = "Written by AI";
+/** Props that make an element a named region of AI-written content: "Written by AI: <what>". */
+export const aiProps = (what) => ({ role: "region", "aria-label": `${AI_LABEL}: ${what}` });
+
 export const svg = (tag, props = {}, ...children) => h(tag, { ...props, svg: true }, ...children);
 
 const TAB_STOPS = "a[href], button, input, select, textarea, summary, [tabindex]";
@@ -102,7 +109,7 @@ export function modal(title, build, { busy = () => false } = {}) {
     };
     document.addEventListener("keydown", onKey);
     const box = h("div", { class: "modal", role: "dialog", "aria-labelledby": titleId, "aria-modal": "true", tabindex: "-1" },
-      h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, "✕")),
+      h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, glyph("✕"))),
       build(close));
     mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
     (box.querySelector("textarea, input") ?? box).focus();

@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { aiProps, h, mount, toast } from "./dom.js";
 import { impactKey, impactNodes } from "./refinement-impact.js";
 import { draftStateText, readyKey, readyNodes } from "./refinement-ready.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
@@ -129,6 +129,19 @@ function issueLink(d) {
 }
 
 const dependsItem = (x) => (x.issue !== undefined ? { id: x.id, issue: x.issue } : { id: x.id, draft: x.draft });
+/** Marks `el` as AI-written while the visible value came from a suggestion (`from` "accepted" or "accepted, then edited"); clears it otherwise. */
+function markAi(el, from, what) {
+  if (!el) return;
+  if (String(from).startsWith("accepted")) {
+    const p = aiProps(what);
+    el.setAttribute("role", p.role);
+    el.setAttribute("aria-label", p["aria-label"]);
+  } else {
+    el.removeAttribute("role");
+    el.removeAttribute("aria-label");
+  }
+}
+
 const nodes = (v) => [v].flat(Infinity).filter(Boolean);
 
 /**
@@ -312,7 +325,9 @@ export function draftSection(ctx) {
   const savedText = (row, d) => d?.criteria.find((c) => c.id === row.id)?.text ?? "";
   // Where the text on the page came from: it follows what is visible, also while it is not saved.
   const markRow = (row, d = draftOf(row.did)) => {
-    row.mark.textContent = fromText(shownFrom(d?.criteria.find((c) => c.id === row.id), row.ta.value));
+    const from = shownFrom(d?.criteria.find((c) => c.id === row.id), row.ta.value);
+    row.mark.textContent = fromText(from);
+    markAi(row.li, from, "accepted acceptance criterion");
   };
   const syncRow = (row, d) => {
     if (!unsaved.has(row.key) && row.ta !== document.activeElement) {
@@ -400,7 +415,10 @@ export function draftSection(ctx) {
   const markField = (f) => {
     const el = ed.fields.get(f);
     const mark = ed.marks.get(f);
-    if (el && mark) mark.textContent = fromText(shownFrom(draftOf(ed.did)?.[f], el.value));
+    if (!el || !mark) return;
+    const from = shownFrom(draftOf(ed.did)?.[f], el.value);
+    mark.textContent = fromText(from);
+    markAi(mark.parent, from, `accepted text for ${LABELS[f]}`);
   };
 
   const dependsText = (x) => (x.issue !== undefined ? `#${x.issue}` : `${draftTitle(draftOf(x.draft))} (draft)`);
@@ -416,7 +434,7 @@ export function draftSection(ctx) {
     ed.dependsKey = key;
     const select = others.length ? h("select", { "aria-label": "Another draft" }, others.map((o) => h("option", { value: o.id }, draftTitle(o)))) : null;
     if (select) select.value = others[0].id;
-    ed.depList.replaceChildren(...nodes(d.dependsOn.length ? h("ul", {}, d.dependsOn.map((x) => h("li", { class: "entry" }, h("span", {}, dependsText(x)), h("small", { class: "muted" }, fromText(x.from)),
+    ed.depList.replaceChildren(...nodes(d.dependsOn.length ? h("ul", {}, d.dependsOn.map((x) => h("li", { class: "entry" }, h("span", String(x.from).startsWith("accepted") ? aiProps("accepted suggestion for Depends on") : {}, dependsText(x)), h("small", { class: "muted" }, fromText(x.from)),
       h("button", { class: "danger", onClick: (e) => changeDepends(e.currentTarget, d.id, (list) => list.filter((y) => y.id !== x.id)) }, "Remove")))) : h("p", { class: "muted" }, NONE)));
     ed.depChoose.replaceChildren(...nodes(select ? [select, h("button", { onClick: (e) => {
       if (!select.value) return undefined;

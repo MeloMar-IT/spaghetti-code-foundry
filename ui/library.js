@@ -1,6 +1,6 @@
 import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
-import { h, modal, mount, toast } from "./dom.js";
+import { glyph, h, modal, mount, toast } from "./dom.js";
 
 const RESERVED = ["next", "end", "fail", "stop"];
 const CATEGORY_ORDER = ["GitHub", "Git", "Claude", "Agents", "Checks"];
@@ -45,7 +45,7 @@ function blockCard(b, onClick) {
     h("span", { class: "row" }, h("b", {}, blk?.name ?? b.id), h("span", { class: "spacer" }), b.scope !== "builtin" ? h("span", { class: "pill" }, b.scope) : null),
     h("span", { class: "muted d" }, blk?.description ?? b.error ?? ""),
     h("span", { class: "chips" }, (blk?.steps ?? []).map((s) =>
-      h("span", { class: `pill ${s.type}` }, `${s.type === "claude" ? "◆" : "$"} ${s.id}${s.jump_only ? " ↪" : ""}`))));
+      h("span", { class: `pill ${s.type}` }, glyph(s.type === "claude" ? "◆" : "$"), " ", h("span", { class: "sr-only" }, s.type === "claude" ? "Agent step: " : "Shell step: "), `${s.id}${s.jump_only ? " ↪" : ""}`))));
 }
 
 /** Modal to pick a block. Resolves with the block listing or undefined. */

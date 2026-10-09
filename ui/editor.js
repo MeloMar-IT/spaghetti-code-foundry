@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { glyph, h } from "./dom.js";
 import { area, field, insertAtCursor, list, select, setKey, text } from "./fields.js";
 import { STEP_TYPES, stepBody, stepAdvanced } from "./step-types.js";
 
@@ -63,7 +63,7 @@ function settingsCard(flow, onChange, rerender) {
         vars.flatMap(([k, v], i) => [
           h("input", { class: "mono", value: k, placeholder: "name", onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
           h("input", { class: "mono", value: String(v), placeholder: "value", onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
-          h("button", { class: "icon", title: "Remove", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, "✕"),
+          h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
         ])),
       h("button", { class: "small mt-8", onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
       h("small", { class: "muted block mt-6" }, "Use as {{vars.name}} in prompts and shell commands; override per run.")),
@@ -105,7 +105,7 @@ function stepCard(flow, step, i, ctx) {
           rerender();
         },
       }),
-      h("span", { class: `pill ${step.type}` }, `${STEP_TYPES[step.type]?.icon ?? "?"} ${step.type}`),
+      h("span", { class: `pill ${step.type}` }, glyph(STEP_TYPES[step.type]?.icon ?? "?"), " ", step.type),
       h("span", { class: "spacer" }),
       h("button", { class: "icon", title: "Move up", disabled: i === 0, onClick: () => move(-1) }, "↑"),
       h("button", { class: "icon", title: "Move down", disabled: i === flow.steps.length - 1, onClick: () => move(1) }, "↓"),
@@ -143,7 +143,7 @@ function insertBar(flow, at, { rerender, onSelect, onLibrary }) {
     h("button", { class: "small", onClick: () => add("shell") }, "+ Shell step"),
     h("select", { class: "small-select", title: "More step types", onChange: (e) => { if (e.target.value) add(e.target.value); } },
       h("option", { value: "" }, "+ more…"),
-      ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, `${STEP_TYPES[t].icon} ${STEP_TYPES[t].label}`))),
+      ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, STEP_TYPES[t].label))),
     h("button", { class: "small", onClick: () => onLibrary?.(at) }, "+ From library"));
 }
 

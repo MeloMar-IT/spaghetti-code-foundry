@@ -81,17 +81,17 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
 | `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
-| `ui/refinement-draft.js:440` | confirm | Remove this story draft? | Remove a draft |
-| `ui/refinement-draft.js:567` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
+| `ui/refinement-draft.js:458` | confirm | Remove this story draft? | Remove a draft |
+| `ui/refinement-draft.js:585` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
 | `ui/refinement-parts.js:133` | confirm | Merge "<B>" into "<A>"? ... | Merge two drafts |
 | `ui/refinement-publish.js:306` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
 | `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
-| `ui/refinement-talk.js:240` | confirm | Remove this entry from the map? | Remove a map entry |
+| `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
 | `ui/refinement.js:411` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:288` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:289` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:298` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:302` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:291` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:292` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:301` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:305` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
