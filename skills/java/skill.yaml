@@ -1,0 +1,8 @@
+id: java
+version: 1.0.0
+category: language
+capabilities: [java-language]
+detectors:
+  - type: file
+    glob: "**/*.java"
+roles: [coder, reviewer]
