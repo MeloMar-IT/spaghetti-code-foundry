@@ -474,9 +474,9 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 | **Board** | — | Where every story is |
 | **Refinement** | — | From a rough idea to a story |
 | **Runs** | — | Every run, live log, steps and transcripts, changes |
-| **Repositories** | My repositories, All repositories, Credentials | Repositories and how the Foundry signs in |
+| **Repositories** | — | Repositories and how the Foundry signs in |
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
-| **Administration** | Users, Watchers, Models, Problems, Dashboard, Audit, Settings | Accounts, automation from GitHub, routing, findings of the monitor, cost, audit log, settings |
+| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
 
 **User display:** **Home**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 

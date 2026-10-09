@@ -16,8 +16,8 @@ If the switch is built later, that change updates this page and "Old and new int
 | `#/your-turn` | Your turn | Home (Needs you) |
 | `#/library` | Library | Flows → Library |
 | `#/repos` | My repositories | Repositories → My repositories |
-| `#/all-repos` | All repositories | Repositories → All repositories |
-| `#/credentials` | Credentials | Repositories → Credentials |
+| `#/all-repos` | All repositories | Administration → All repositories |
+| `#/credentials` | Credentials | Administration → Credentials |
 | `#/users` | Users | Administration → Users |
 | `#/watchers` | Watchers | Administration → Watchers |
 | `#/models` | Models | Administration → Models |

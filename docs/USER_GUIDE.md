@@ -89,9 +89,9 @@ admin for a new one.
 | **Board** | — | Where every story is, in columns per repository |
 | **Refinement** | — | Where a rough idea grows into a story before it goes to the backlog |
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
-| **Repositories** | My repositories, All repositories, Credentials | My repositories: The repositories you work in, and how the Foundry signs in to them. All repositories: Admin: the repositories of all accounts, their settings, and transfer to another account. Credentials: Admin: the stored credentials of all accounts, without any secret |
+| **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Users, Watchers, Models, Problems, Dashboard, Audit, Settings | Users: The accounts: add, edit, block and delete them (admins only). Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity, disk clean-up |
+| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
 **Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
@@ -145,8 +145,8 @@ Everything the UI does is also available from the command line (see [section 9](
 | Your turn | Home (Needs you) | `#/your-turn` |
 | Library | Flows → Library | `#/library` |
 | My repositories | Repositories → My repositories | `#/repos` |
-| All repositories | Repositories → All repositories | `#/all-repos` |
-| Credentials | Repositories → Credentials | `#/credentials` |
+| All repositories | Administration → All repositories | `#/all-repos` |
+| Credentials | Administration → Credentials | `#/credentials` |
 | Users | Administration → Users | `#/users` |
 | Watchers | Administration → Watchers | `#/watchers` |
 | Models | Administration → Models | `#/models` |
