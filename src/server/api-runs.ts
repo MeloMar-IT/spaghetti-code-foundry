@@ -22,9 +22,33 @@ import type { NextStep } from "../next-step.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import { gateRun } from "../run-gate.js";
 import { matchesRun, parseRunFilter, runFilterValues } from "./run-filter.js";
-import type { Route } from "./server.js";
+import type { ApiContext, Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
+
+/** A run loaded by folder name. With an owner, the runId and owner inside the file must agree with it. A run.json that cannot be read gives undefined. */
+export function readRun(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
+  try {
+    const s = scheduler.get(dirName);
+    return s && (!owner || (s.runId === dirName && s.owner === owner)) ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Like readRun, but the runId inside the file must always agree with the folder name. */
+export function checkedRun(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
+  const s = readRun(scheduler, dirName, owner);
+  return s && s.runId === dirName ? s : undefined;
+}
+
+/** The newest 200 runs of one archive state (of one account when `owner` is given), the list the records are built from. */
+export function runsListFor(ctx: ApiContext, owner?: string, archived = false): RunSummary[] {
+  return ctx.scheduler.briefs()
+    .filter((b) => (owner === undefined || b.owner === owner) && !!b.archived === archived)
+    .slice(0, 200)
+    .flatMap((b) => checkedRun(ctx.scheduler, b.dirName, owner) ?? []);
+}
 
 
 export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
@@ -75,14 +99,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const runs = scheduler.briefs()
       .filter((b) => matchesRun(b, filter))
       .slice(0, 200)
-      .flatMap((b) => {
-        try {
-          const s = scheduler.get(b.dirName);
-          return s && (!want || (s.runId === b.dirName && s.owner === want)) ? [s] : [];
-        } catch {
-          return []; // a run.json that cannot be read is left out
-        }
-      });
+      .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
     const names = admin ? ownerNames() : undefined;

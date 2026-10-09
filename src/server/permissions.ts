@@ -70,6 +70,7 @@ export const RULES: Rule[] = [
   r("GET", "next", "no", "what happens next, for all runs"),
   r("GET", "health", "no", "server health"),
   r("GET", "board", "no", "the board of all work"),
+  r("GET", "search", "yes", "find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues)"),
   r("GET", "since", "no", "what changed since a time"),
   r("GET", "your-turn", "no", "what waits for you"),
   r("POST", "your-turn/dismiss", "no", "dismiss an item"),
