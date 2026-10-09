@@ -18,6 +18,7 @@ An audit of the web UI, as a base for #248–#250. Taken on 2026-10-07 from comm
 | `prototypes.md` | The seven patterns, pages and alternatives, state matrix, route table, health and since mapping, the old run |
 | `walkthroughs.md` | Walkthroughs of the five tasks for both roles and every alternative; locate and primary-action tables; usability and visual check sheets |
 | `decisions.md` | Accepted and rejected decisions with reasons and evidence; owner approval record |
+| [rollout.md](rollout.md) | State of the rollout: what is built and what is not, what moved where by address, old addresses |
 | `visual-system-demo.html` | Foundation 2 (#322): a runs table and a refinement talk with the real `ui/tokens.css` and `ui/style.css`; switches for theme and density. Open from disk. Not checked in a browser |
 
 ## What the test checks
