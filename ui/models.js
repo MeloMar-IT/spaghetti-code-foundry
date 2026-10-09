@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, glyph, h, markInvalid, mount, toast } from "./dom.js";
+import { emptyState, errorState, explainError, loadingState, permissionState } from "./states.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
@@ -36,25 +37,70 @@ export async function refreshModelLists(st) {
   return st;
 }
 
+// The last model test lives here, not in the page: Reload draws the page again and the result stays.
+const test = { spec: "", busy: false, result: null, error: null, view: null };
+
+/** The provider a test went through: the first name in the target (or the typed spec) that is a provider. */
+const testedProvider = (providers) => {
+  const names = new Set(providers.map((p) => p.name));
+  const tokens = [...String(test.result?.target ?? "").split(":"), ...String(test.spec).split(":")];
+  return tokens.find((t) => names.has(t));
+};
+
+const testSummary = () => (test.result ? `${test.result.ok ? "works" : "failed"} · ${test.result.seconds}s` : "");
+
+function paintTest() {
+  const v = test.view;
+  if (!v) return;
+  test.marks?.();
+  v.btn.disabled = test.busy;
+  if (test.busy) return mount(v.out, h("span", { class: "spinner" }), " asking the model… (local models can take a few minutes)");
+  const r = test.result;
+  if (r) {
+    return mount(v.out, okPill(r.ok, r.ok ? "works" : "failed"), h("span", { class: "mono" }, ` ${r.target} · ${r.seconds}s`),
+      !r.ok ? h("span", { class: "status bad", role: "alert" }, ` ${r.error ?? r.output}`) : null);
+  }
+  if (test.error) mount(v.out, h("span", { class: "status bad", role: "alert" }, `The model could not be tested. ${test.error.message}`));
+  else mount(v.out, null);
+}
+
 function testBox(defaultSpec) {
-  const spec = input(defaultSpec, { class: "mono", list: "models", placeholder: "e.g. ollama:qwen3-coder", "aria-label": "Model to try" });
+  const spec = input(test.spec || defaultSpec, { class: "mono", list: "models", placeholder: "e.g. ollama:qwen3-coder", "aria-label": "Model to try" });
   const out = h("span", { class: "muted" });
   const btn = h("button", { onClick: async () => {
-    btn.disabled = true;
+    if (test.busy) return;
+    test.busy = true;
+    test.spec = spec.value.trim();
     markInvalid([spec]);
-    mount(out, h("span", { class: "spinner" }), " asking the model… (local models can take a few minutes)");
+    paintTest();
     try {
-      const r = await api.testModel(spec.value.trim());
-      mount(out, okPill(r.ok, r.ok ? "works" : "failed"), h("span", { class: "mono" }, ` ${r.target} · ${r.seconds}s`),
-        !r.ok ? h("span", { class: "status bad", role: "alert" }, ` ${r.error ?? r.output}`) : null);
+      test.result = await api.testModel(test.spec);
+      test.error = null;
     } catch (e) {
-      mount(out, h("span", { class: "status bad", role: "alert" }, e.message));
-      if (e.status === 400) markInvalid([spec], spec);
+      test.result = null;
+      test.error = e;
     } finally {
-      btn.disabled = false;
+      test.busy = false;
+      // The page may have been drawn again meanwhile: the newest one shows the answer.
+      paintTest();
+      if (test.error?.status === 400 && test.view) markInvalid([test.view.spec], test.view.spec);
     }
   } }, "Test");
-  return h("div", { class: "row" }, spec, btn, out);
+  test.view = { spec, btn, out };
+  paintTest();
+  return h("div", { class: "row", "data-model-test-row": "" }, spec, btn, out);
+}
+
+// Every change to the config is read, changed and written inside this queue: two actions cannot overwrite each other.
+let configLock = Promise.resolve();
+function changeConfig(change) {
+  const run = configLock.then(async () => {
+    const c = await api.config();
+    change(c);
+    await api.saveConfig(c);
+  });
+  configLock = run.catch(() => {});
+  return run;
 }
 
 function agentsCard(agents) {
@@ -72,7 +118,7 @@ function agentsCard(agents) {
       : null);
 }
 
-function providersCard(cfg, providers, reload) {
+function providersCard(cfg, providers, reload, problem) {
   const custom = new Set(Object.keys(cfg.providers));
   const name = input("", { class: "mono", placeholder: "my-proxy" });
   const kind = h("select", {}, ["ollama", "lmstudio", "anthropic-compatible"].map((k) => h("option", { value: k }, k)));
@@ -87,29 +133,53 @@ function providersCard(cfg, providers, reload) {
       return toast("Name: lowercase letters, digits, - or _", "error");
     }
     markInvalid(inputs);
-    const c = await api.config();
-    c.providers[n] = { kind: kind.value, base_url: url.value.trim() || undefined, api_key_env: keyEnv.value.trim() || undefined, default_model: defModel.value.trim() || undefined };
-    await api.saveConfig(c).then(() => { toast(`Provider ${n} saved`); reload(); }, (e) => {
+    // What was typed when the button was pressed is what is saved, even if the fields change while the config loads.
+    const entry = { kind: kind.value, base_url: url.value.trim() || undefined, api_key_env: keyEnv.value.trim() || undefined, default_model: defModel.value.trim() || undefined };
+    try {
+      await changeConfig((c) => { c.providers[n] = entry; });
+    } catch (e) {
       markInvalid(inputs, fieldFor(e.message, [[/base_url/, url], [/api_key_env/, keyEnv], [/default_model/, defModel], [/"kind"/, kind], [/providers/, name]]));
-      toast(e.message, "error");
-    });
-  };
-  const remove = async (n) => {
-    const c = await api.config();
-    delete c.providers[n];
-    await api.saveConfig(c);
+      return toast(e.message, "error");
+    }
+    toast(`Provider ${n} saved`);
     reload();
   };
+  const remove = async (n) => {
+    try {
+      await changeConfig((c) => { delete c.providers[n]; });
+    } catch (e) {
+      return toast(e.message, "error");
+    }
+    reload();
+  };
+  // The provider row the last test went through says so; a new test result updates it without drawing the page again.
+  const marks = new Map(providers.map((p) => [p.name, h("div", { class: "muted text-2xs" })]));
+  test.marks = () => {
+    const tested = testedProvider(providers);
+    for (const [name, slot] of marks) {
+      const on = name === tested && testSummary();
+      if (on) slot.setAttribute("data-model-test", "");
+      else slot.removeAttribute("data-model-test");
+      mount(slot, on ? `Last test: ${testSummary()}` : null);
+    }
+  };
+  test.marks();
+  const table = problem
+    ? errorState(problem, { onRetry: reload })
+    : providers.length
+      ? h("table", { class: "table compact", "aria-label": "Providers" },
+        h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))),
+        h("tbody", {}, providers.map((p) => h("tr", {},
+          h("td", {}, h("b", { class: "mono" }, p.name), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
+          h("td", {}, okPill(p.ok, p.ok ? "ok" : "unreachable"), h("div", { class: "muted text-2xs" }, p.detail),
+            marks.get(p.name)),
+          h("td", { class: "muted" }, p.agents.join(", ")),
+          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")),
+          h("td", {}, custom.has(p.name) ? h("button", { class: "small danger", onClick: () => remove(p.name) }, "Remove") : null)))))
+      : emptyState("No providers.");
   return section("Providers",
     h("p", { class: "muted flush" }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
-    h("table", { class: "table compact", "aria-label": "Providers" },
-      h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))),
-      h("tbody", {}, providers.map((p) => h("tr", {},
-        h("td", {}, h("b", { class: "mono" }, p.name), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
-        h("td", {}, okPill(p.ok, p.ok ? "ok" : "unreachable"), h("div", { class: "muted text-2xs" }, p.detail)),
-        h("td", { class: "muted" }, p.agents.join(", ")),
-        h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")),
-        h("td", {}, custom.has(p.name) ? h("button", { class: "small danger", onClick: () => remove(p.name) }, "Remove") : null))))),
+    table,
     providers.some((p) => p.kind === "ollama" && p.ok && !p.models.some((m) => /coder|gpt-oss|devstral/.test(m)))
       ? h("p", { class: "muted flush" }, "Tip: general chat models are weak at tool use. Pull a coding model, e.g. ", h("code", {}, "ollama pull qwen3-coder:30b"), " or ", h("code", {}, "ollama pull gpt-oss:20b"), ".")
       : null,
@@ -174,17 +244,22 @@ function routingCard(cfg, specs, localSpec) {
       return toast("Every rule needs a model", "error");
     }
     markInvalid(everyInput());
-    const c = await api.config();
-    c.default_model = defModel.value.trim() || undefined;
-    c.router = {
-      rules: rules.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined && v !== ""))),
-      fallback: fallback.value.split(",").map((s) => s.trim()).filter(Boolean),
-      fallback_on: [onRate.checked && "rate_limit", onBudget.checked && "budget"].filter(Boolean),
+    // Snapshot first: the fields may change while the config loads.
+    const snap = {
+      default_model: defModel.value.trim() || undefined,
+      router: {
+        rules: rules.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined && v !== ""))),
+        fallback: fallback.value.split(",").map((s) => s.trim()).filter(Boolean),
+        fallback_on: [onRate.checked && "rate_limit", onBudget.checked && "budget"].filter(Boolean),
+      },
     };
-    await api.saveConfig(c).then(() => toast("Routing saved"), (e) => {
+    try {
+      await changeConfig((c) => { Object.assign(c, snap); });
+    } catch (e) {
       markInvalid(everyInput(), configField(e.message));
-      toast(e.message, "error");
-    });
+      return toast(e.message, "error");
+    }
+    toast("Routing saved");
   };
 
   return section("Routing",
@@ -205,16 +280,33 @@ function routingCard(cfg, specs, localSpec) {
 }
 
 export async function renderModels(main) {
-  mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Checking agents and providers…"));
-  const [cfg, st] = await Promise.all([api.config(), api.providers()]);
-  void refreshModelLists(st);
-  const reload = () => renderModels(main);
-  const specs = specSuggestions(st.providers);
-  const localSpec = specs.find((s) => /^(ollama|lmstudio):/.test(s) && /coder|gpt-oss|devstral/.test(s)) ?? specs.find((s) => /^(ollama|lmstudio):/.test(s) && !/:(0\.5b|135m|1b)$/.test(s));
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Models"), h("span", { class: "muted" }, "Agents, providers and which model runs which step"),
-      h("span", { class: "spacer" }), h("button", { onClick: reload, "aria-label": "Reload" }, "↻")),
-    agentsCard(st.agents),
-    providersCard(cfg, st.providers, reload),
-    routingCard(cfg, specs, localSpec));
+  // The page draws into its own box, so an answer that comes after another page was mounted cannot touch it.
+  const box = h("div");
+  mount(main, box);
+  let gen = 0;
+  const load = async () => {
+    const mine = ++gen;
+    mount(box, loadingState("Checking agents and providers…", { shape: "table" }));
+    const [cfg, st] = await Promise.allSettled([api.config(), api.providers()]);
+    if (mine !== gen) return;
+    if (cfg.status === "rejected") {
+      mount(box, Number(cfg.reason?.status) === 403
+        ? permissionState("You may not open the model settings.")
+        : errorState(explainError(cfg.reason, { what: "The models page could not be loaded." }), { onRetry: load }));
+      return;
+    }
+    const head = h("div", { class: "toolbar" }, h("h1", {}, "Models"), h("span", { class: "muted" }, "Agents, providers and which model runs which step"),
+      h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻"));
+    if (st.status === "rejected") {
+      // The routing rules do not need the provider list: they stay usable and can be saved.
+      const problem = explainError(st.reason, { what: "The agents and providers could not be checked.", safe: "Routing below still works and can be saved." });
+      mount(box, head, providersCard(cfg.value, [], load, problem), routingCard(cfg.value, specSuggestions([]), undefined));
+      return;
+    }
+    void refreshModelLists(st.value);
+    const specs = specSuggestions(st.value.providers);
+    const localSpec = specs.find((s) => /^(ollama|lmstudio):/.test(s) && /coder|gpt-oss|devstral/.test(s)) ?? specs.find((s) => /^(ollama|lmstudio):/.test(s) && !/:(0\.5b|135m|1b)$/.test(s));
+    mount(box, head, agentsCard(st.value.agents), providersCard(cfg.value, st.value.providers, load), routingCard(cfg.value, specs, localSpec));
+  };
+  await load();
 }

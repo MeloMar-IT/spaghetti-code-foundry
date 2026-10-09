@@ -79,7 +79,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 | Start work | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Repositories | Done (#346): skeleton table on My repositories, All repositories and Credentials | Done (#346): `emptyState`, and the add prompt | Done (#346): a failed `repoMethods` call shows the list with a note that adding is not possible now | Done (#346): `staleNote` with Retry when a reload fails; the list stays | Done (#346): "Connection failed" with the reason stays on the row until the next test | Done (#346): `permissionState` on a 403; no action buttons in the read-only preview | Done (#346): "Repository added" toast; the deploy-key follow-up stays as a banner until the connection works |
-| Build | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
+| Build | skeleton on the flow list, a flow, Library and Models | "No flows yet", welcome page, "No blocks yet", "No providers", "No rules" | Models without the provider list; saved but the list was not refreshed | the flow list keeps the old entries when a reload fails | `errorState` with Retry on each load; inline for save, delete, run, draft and model test | `permissionState` on 403 | toast for Saved / Deleted / Saved block; the model test result stays |
 | Administration | `loadingState` on all six pages (`renderUsers`, `renderWatchers`, `renderProblems`, `renderDashboard`, `renderAudit`, `renderSettings`) | `emptyState` (`renderUsers`, `renderWatchers`, `renderProblems`, `renderAudit`) | `partNote` in `ui/dashboard.js` names each failed call ("Could not load evals."); `errorState` in the monitor card of `renderWatchers` when only the monitor call fails | `staleNote(at, { failed: true, onRetry })` after a failed reload in `renderUsers`, `renderWatchers`, `renderProblems`; `renderAudit` keeps its `my === loads` guard | `errorState(explainError(e, …), { onRetry })` on every page, also for the filter error in `renderAudit` | `explainError` (kind `permission` for a 403) drawn by `errorState`; the server enforces it | `saveNote` next to Save in `renderSettings` plus toast; busy state of Check now in `renderWatchers`; `confirmDialog` for delete watcher, clean up and `confirmUnreadable` |
 
 ## Background refresh (part 3, #344)
@@ -115,3 +115,10 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 - CSS in `ui/style.css`: `.skeleton` (no animation under `prefers-reduced-motion`), `.state-error`, `.stale-note`, `.sr-only`. `.empty`, `.errors` and `.spinner` stay.
 - The three existing error-text helpers are not merged here. Pages keep them until their own part.
 - If #251 or #252 deliver components with other names, the names recorded here win for parts 2–8, and this file is updated with the final names.
+
+## Done in part 7 (#348)
+
+- Build (flows, a flow, Library, Models) has loading, empty, failed, partial and permission states.
+- A failed save, delete, run or draft is explained inline and keeps the draft.
+- The five confirmations use `confirmDialog`; `route()` asks about unsaved changes without blocking.
+- "Draft with Claude" and Run cannot be closed while they work.

@@ -9,6 +9,7 @@ export class FakeElement extends FakeNode {
   children: (FakeNode | string)[] = [];
   style: Record<string, string> = {};
   hidden = false;
+  className = "";
   value = "";
   checked = false;
   disabled = false;
@@ -33,8 +34,15 @@ export class FakeElement extends FakeNode {
     super();
   }
   get localName(): string { return this.tag; }
-  setAttribute(k: string, v: string) { this.attrs[k] = v; }
-  removeAttribute(k: string) { delete this.attrs[k]; }
+  setAttribute(k: string, v: string) {
+    this.attrs[k] = v;
+    // As in a browser, the class attribute is what classList reads.
+    if (k === "class") this.classList.names = new Set(String(v).split(/\s+/).filter(Boolean));
+  }
+  removeAttribute(k: string) {
+    delete this.attrs[k];
+    if (k === "class") this.classList.names = new Set();
+  }
   addEventListener(type: string, fn: Listener) { (this.listeners[type] ??= []).push(fn); }
   removeEventListener(type: string, fn: Listener) { this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l !== fn); }
   /** Calls the listeners of an event type (a submit, for example) with `event`. */
