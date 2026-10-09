@@ -169,6 +169,45 @@ describe("Board", () => {
     expect(main.textContent).toContain("Changed");
     stop();
   });
+
+  it("names every Tab stop while the Could not refresh banner shows", async () => {
+    answers["/api/board"] = boardData([card(89)]);
+    const main = connected();
+    const stop = board.renderBoard(main, "acme/app");
+    await flush();
+    (globalThis as any).fetch = async () => ({ ok: false, status: 500, statusText: "x", json: async () => ({ error: "down" }) });
+    await tick(5000);
+    expect(main.textContent).toContain("Could not refresh");
+    expectNamed(main);
+    expect(named(main, "board-refresh-retry")).toBeTruthy();
+    stop();
+  });
+
+  it("names every Tab stop with an owner filter that matches nothing, also with the banner", async () => {
+    answers["/api/board"] = boardData([card(89, { owner: "u1", ownerName: "Ann" })]);
+    const main = connected();
+    const stop = board.renderBoard(main, "acme/app", { query: { owner: "u9" }, go: vi.fn() });
+    await flush();
+    expectNamed(main);
+    for (const name of ["filter-remove-owner", "filter-clear", "filter-empty-clear", "owner-filter"]) expect(named(main, name)).toBeTruthy();
+    (globalThis as any).fetch = async () => ({ ok: false, status: 500, statusText: "x", json: async () => ({ error: "down" }) });
+    await tick(5000);
+    expectNamed(main);
+    stop();
+  });
+
+  it("keeps the focus on a filter button across a redraw", async () => {
+    answers["/api/board"] = boardData([card(89, { owner: "u1", ownerName: "Ann" })]);
+    const main = connected();
+    const stop = board.renderBoard(main, "acme/app", { query: { owner: "u1" }, go: vi.fn() });
+    await flush();
+    const before = named(main, "filter-clear");
+    before.focus();
+    answers["/api/board"] = boardData([card(89, { owner: "u1", ownerName: "Ann", title: "Changed" })]);
+    await tick(5000);
+    expectKept(main, "filter-clear", before);
+    stop();
+  });
 });
 
 // ── Your turn ──

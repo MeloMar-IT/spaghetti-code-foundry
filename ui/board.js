@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, withQuery } from "./filters.js";
+import { keepScroll, liveStates, poller } from "./live.js";
 import { whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
 
@@ -108,78 +109,56 @@ export function boardView(data, wanted, { highlight, owner = "", onOwner, onChai
       ...body);
   });
   if (owner && !all.some((c) => c.owner === owner)) return [toolbar, bar, chainLine, none()];
-  return [toolbar, bar, chainLine, h("div", { class: "board" }, ...cols)];
+  return [toolbar, bar, chainLine, h("div", { class: "board", "data-scroll": "board" }, ...cols)];
 }
 
 /** Opens the page and returns at once a function that closes it. */
 export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
-  let closed = false;
   let data;
-  let last;
   let highlight;
   let owner = query.owner ?? "";
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
-  const heading = h("div", { class: "toolbar" }, h("h1", {}, "Board"));
+  let live;
+  const body = h("div");
+  const states = liveStates({
+    body,
+    heading: () => h("div", { class: "toolbar" }, h("h1", {}, "Board")),
+    label: "Loading the board", rows: 6, shape: "cards",
+    what: "Could not load the board.",
+    retry: () => live.refresh(),
+    focus: "board",
+  });
+  mount(main, states.alert, body, states.note);
 
-  const draw = () => mount(main, boardView(data, wanted, {
+  const redraw = () => keepScroll(body, () => mount(body, boardView(data, wanted, {
     highlight, owner,
     onOwner: (id) => {
       owner = id;
       go(withQuery(wanted ? boardHash(wanted) : "#/board", owner ? { owner } : {}));
-      draw();
+      redraw();
     },
-    onChain: (issue) => { highlight = issue; draw(); },
-    onClear: () => { highlight = undefined; draw(); },
+    onChain: (issue) => { highlight = issue; redraw(); },
+    onClear: () => { highlight = undefined; redraw(); },
     onLeave: (card) => { if (card.watcher) left = card.watcher; },
-  }));
+  })));
 
-  const fetchOnce = async () => {
-    let next;
-    try {
-      next = await api.board();
-    } catch (e) {
-      if (!closed && !data) mount(main, heading, h("div", { class: "errors" }, e.message));
-      return;
-    }
-    if (closed) return;
-    const text = JSON.stringify(next);
-    if (text === last) return;
-    // A select has the focus: leave the answer for the next tick, so the list under the reader's hands does not change.
-    if (fieldFocused(main)) return;
-    last = text;
-    data = next;
-    if (highlight != null && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.issue === highlight))) highlight = undefined;
-    draw();
-  };
-
-  // One request at a time: a slow server is never asked again before it answered.
-  let busy = false;
-  let again = false; // asked for while busy: ask once more when done
-  const load = async () => {
-    if (busy) { again = true; return; }
-    busy = true;
-    try {
-      await fetchOnce();
-    } finally {
-      busy = false;
-      if (again && !closed) { again = false; load(); }
-    }
-  };
-
-  mount(main, heading, h("p", { class: "muted" }, "Loading…"));
-  const timer = setInterval(() => { if (!busy) load(); }, 5000);
-  load();
-  const onVisible = async () => {
-    if (document.visibilityState !== "visible" || !left) return;
-    const id = left;
-    left = undefined;
-    await api.tickWatcher(id).catch(() => {});
-    load();
-  };
-  document.addEventListener("visibilitychange", onVisible);
-  return () => {
-    closed = true;
-    clearInterval(timer);
-    document.removeEventListener("visibilitychange", onVisible);
-  };
+  const isHeld = () => fieldFocused(main); // a select has the focus: do not change the list under the reader's hands
+  live = poller({
+    load: () => api.board(),
+    draw: (next) => {
+      data = next;
+      if (highlight != null && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.issue === highlight))) highlight = undefined;
+      redraw();
+    },
+    every: 5000,
+    onState: states.onState,
+    hold: isHeld,
+    wake: async () => {
+      if (!left) return;
+      const id = left;
+      left = undefined;
+      await api.tickWatcher(id).catch(() => {});
+    },
+  });
+  return () => live.stop();
 }

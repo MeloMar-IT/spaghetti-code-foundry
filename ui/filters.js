@@ -40,8 +40,8 @@ export const defaultGo = (hash) => {
 
 const describe = (filters, labels) => KEYS.filter((k) => filters?.[k]).map((k) => `${NAMES[k]}: ${labels?.[k] ?? filters[k]}`);
 
-/** The bar above a list: one chip per active filter with a remove button, and Clear filters. Null when no filter is active. */
-export function filterBar(filters, { labels = {}, onRemove, onClear } = {}) {
+/** The bar above a list: one chip per active filter with a remove button, and Clear filters. Null when no filter is active. `focus` is the prefix of the `data-focus` names of its buttons. */
+export function filterBar(filters, { labels = {}, onRemove, onClear, focus = "filter" } = {}) {
   const active = filters ?? {};
   const keys = KEYS.filter((k) => active[k]);
   if (!keys.length) return null;
@@ -49,15 +49,15 @@ export function filterBar(filters, { labels = {}, onRemove, onClear } = {}) {
     keys.map((key) => {
       const text = `${NAMES[key]}: ${labels[key] ?? active[key]}`;
       return h("span", { class: "filter-chip" }, text,
-        h("button", { type: "button", class: "ghost small", "aria-label": `Remove filter ${text}`, onClick: () => onRemove?.(key) }, "×"));
+        h("button", { type: "button", class: "ghost small", "aria-label": `Remove filter ${text}`, "data-focus": `${focus}-remove-${key}`, onClick: () => onRemove?.(key) }, "×"));
     }),
-    h("button", { type: "button", class: "small", onClick: () => onClear?.() }, "Clear filters"));
+    h("button", { type: "button", class: "small", "data-focus": `${focus}-clear`, onClick: () => onClear?.() }, "Clear filters"));
 }
 
-/** What a list shows when the filters match nothing: names them and offers Clear filters. `what` is "runs" or "cards". */
-export function filterEmpty(what, filters, { labels = {}, note, onClear } = {}) {
+/** What a list shows when the filters match nothing: names them and offers Clear filters. `what` is "runs" or "cards". `focus` is the prefix of the button name. */
+export function filterEmpty(what, filters, { labels = {}, note, onClear, focus = "filter" } = {}) {
   return h("div", { class: "empty" },
     h("p", {}, `No ${what} match ${describe(filters, labels).join(", ")}.`),
     note ? h("p", {}, note) : null,
-    h("button", { type: "button", onClick: () => onClear?.() }, "Clear filters"));
+    h("button", { type: "button", "data-focus": `${focus}-empty-clear`, onClick: () => onClear?.() }, "Clear filters"));
 }

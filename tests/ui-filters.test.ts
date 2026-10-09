@@ -112,6 +112,17 @@ describe("filterBar and filterEmpty", () => {
     expect(onClear).toHaveBeenCalledOnce();
     expect(f.filterEmpty("cards", { owner: "u9" }, {}).textContent).not.toContain("A note.");
   });
+
+  it("names the buttons after `focus`, with the default `filter`", () => {
+    const names = (el: FakeElement) => el.all("button").map((b) => b.attrs["data-focus"]);
+    const filters = { repo: "a/b", owner: "u1" };
+    expect(names(f.filterBar(filters))).toEqual(["filter-remove-repo", "filter-remove-owner", "filter-clear"]);
+    expect(names(f.filterBar(filters, { focus: "x" }))).toEqual(["x-remove-repo", "x-remove-owner", "x-clear"]);
+    expect(names(f.filterEmpty("runs", filters))).toEqual(["filter-empty-clear"]);
+    expect(names(f.filterEmpty("runs", filters, { focus: "x" }))).toEqual(["x-empty-clear"]);
+    const all = [...names(f.filterBar(filters)), ...names(f.filterEmpty("runs", filters))];
+    expect(new Set(all).size).toBe(all.length);
+  });
 });
 
 describe("the routers", () => {
