@@ -17,6 +17,18 @@ export function issueLink(repo, issue, onClick, focus) {
     : h("span", { class: "mono" }, `#${issue}`);
 }
 
+/** The "What is in the way?" button of a blocked story; null when nothing blocks it. */
+export function wayButton(item, handlers = {}) {
+  if (!(item.after ?? []).length) return null;
+  const key = item.key ?? `${item.repo}#${item.issue}`;
+  return h("button", {
+    type: "button", class: "ghost small work-way", "data-focus": `way:${key}`, "data-way": key,
+    "aria-expanded": String(handlers.openKey === key),
+    "aria-controls": "work-panel", // PANEL_ID of work-panel.js (importing it here would make an import cycle)
+    onClick: (e) => { e?.stopPropagation?.(); handlers.onOpen?.(item, `way:${key}`); },
+  }, "What is in the way?");
+}
+
 function rowView(item, cols, handlers) {
   const n = item.next ?? {};
   const now = handlers.now ?? new Date();
@@ -24,7 +36,7 @@ function rowView(item, cols, handlers) {
   const open = () => { globalThis.location.hash = `#/runs/${item.runId}`; };
   const own = item.runId && n.where?.url === `#/runs/${item.runId}`;
   const cells = [
-    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), cols.next && n.text ? h("div", { class: "muted" }, n.text) : null),
+    h("td", {}, issueLink(item.repo, item.issue, leave), " ", h("b", {}, item.title), " ", wayButton(item, handlers), cols.next && n.text ? h("div", { class: "muted" }, n.text) : null),
   ];
   if (cols.repo) cells.push(h("td", { class: "muted" }, item.repo));
   cells.push(h("td", {}, n.status || item.columnTitle, cols.step && item.step ? h("div", { class: "muted work-step" }, item.step) : null));

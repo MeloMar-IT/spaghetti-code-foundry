@@ -1,8 +1,8 @@
 import { h } from "./dom.js";
 import { whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
-import { issueLink } from "./work-list.js";
-import { ageText } from "./work-model.js";
+import { issueLink, wayButton } from "./work-list.js";
+import { ageText, keyOf } from "./work-model.js";
 
 // The board layout of the Work page: one column per group, a compact card per story. Every word comes
 // from the server's record. Keyboard: one Tab stop per column (roving tabindex), arrows move between cards.
@@ -32,8 +32,6 @@ export function moveFocus(grid, at, key) {
   }
 }
 
-const keyOf = (item) => item.key ?? `${item.repo}#${item.issue}`;
-
 /** One story as a card: at most four lines — head, next move, blockers, small text. */
 export function workCard(item, prefs, handlers = {}) {
   const props = prefs.props ?? [];
@@ -50,8 +48,10 @@ export function workCard(item, prefs, handlers = {}) {
     yours ? " " : null, yours ? h("span", { class: "pill who-you" }, "Your turn") : null,
     blocked ? " " : null, blocked ? h("span", { class: "pill" }, "Blocked") : null));
   if (on("next") && (n.who || n.action)) parts.push(h("div", { class: "work-card-next" }, n.who ? h("span", { class: `pill ${whoClass(n)}` }, n.who) : null, n.who ? " " : null, n.action ?? ""));
-  if (on("blockers") && blocked) {
-    parts.push(h("div", { class: "work-card-deps" }, "Blocked by ", ...item.after.flatMap((i, k) => [k ? ", " : null, issueLink(item.repo, i, leave)])));
+  if (blocked) {
+    parts.push(h("div", { class: "work-card-deps" },
+      on("blockers") ? ["Blocked by ", ...item.after.flatMap((i, k) => [k ? ", " : null, issueLink(item.repo, i, leave)]), " "] : null,
+      wayButton(item, handlers)));
   }
   const age = on("age") ? ageText(item.since, now) : "";
   const meta = [
@@ -65,7 +65,7 @@ export function workCard(item, prefs, handlers = {}) {
   const attrs = { class: `work-card${yours ? " yours" : ""}${item.runId ? " link" : ""}`, "data-card": keyOf(item), "data-focus": `card:${keyOf(item)}`, title: n.text, tabindex: "-1" };
   if (item.runId) Object.assign(attrs, { role: "link", onClick: open });
   const el = h("div", attrs, ...parts);
-  el.open = item.runId ? open : undefined;
+  el.open = item.runId ? open : handlers.onOpen ? () => handlers.onOpen(item, `card:${keyOf(item)}`) : undefined;
   return el;
 }
 
