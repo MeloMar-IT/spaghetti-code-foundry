@@ -4,7 +4,8 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
-import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
+import { createLog } from "../run-output.js";
+import { aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -197,20 +198,16 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let acting = false;
   let dialogOpen = false;
   let tab = "log";
-  let follow = true;
   let runSeq = 0;
   let queueSeq = 0;
   let tabSeq = 0;
 
   const head = h("div");
   const alertEl = h("p", { class: "status bad", role: "alert" });
-  const logEl = h("pre", { class: "log" });
+  const log = createLog();
   const tabBody = h("div");
   const tabButtons = [];
   const tabsBox = h("div");
-  logEl.addEventListener("scroll", () => {
-    follow = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
-  });
 
   const setAlert = (text) => { alertEl.textContent = text; };
 
@@ -218,7 +215,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     tab = t;
     const mine = ++tabSeq;
     for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, logEl);
+    if (t === "log") return mount(tabBody, log.el);
     if (t === "steps") {
       const steps = summary?.history ?? [];
       return mount(tabBody, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, NO_STEPS));
@@ -239,7 +236,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     tabButtons.push([k, b]);
   }
   mount(tabsBox, h("div", { class: "seg tabs", style: { marginBottom: "12px" } }, tabButtons.map(([, b]) => b)), tabBody);
-  mount(tabBody, logEl);
+  mount(tabBody, log.el);
 
   // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
   let sending = false;
@@ -473,8 +470,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     } catch {
       return;
     }
-    logEl.append(logLine(String(line ?? "")));
-    if (follow) logEl.scrollTop = logEl.scrollHeight;
+    log.add(String(line ?? ""));
   });
   es.onerror = () => {
     // A stream is not a fetch: in a preview a closed stream is checked with a GET, which shows a 403 when the view has ended.

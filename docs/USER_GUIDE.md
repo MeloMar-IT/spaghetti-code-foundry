@@ -295,6 +295,13 @@ its description, or the kind of step when the flow gives none.
 
 - **Changes** — the complete diff the run made, including uncommitted work.
 
+  A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000
+  lines and says "N earlier lines are not shown" above them; it follows the end only while you
+  are at the end. **Changes** lists each file closed (a diff of one file is open) and builds the
+  lines when you open it; a file over 1,500 lines shows the first 1,500 and a **Show all**
+  button. A transcript shows the first 200 events with **Show 200 more**, and a tool result over
+  20,000 characters is cut with **Show all**.
+
   ![Changes](images/run-diff.png)
 
 ### Approvals

@@ -171,7 +171,7 @@ details[open] > summary { margin-bottom: 10px; }
 .tl { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); }
 .tl summary { display: flex; gap: 10px; align-items: center; padding: 8px 12px; color: var(--text); font-size: var(--text-small); }
 .tl pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
-.log { background: var(--color-log-bg); color: var(--color-log-text); border-radius: var(--radius); padding: 12px 14px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.log { overflow-anchor: none; background: var(--color-log-bg); color: var(--color-log-text); border-radius: var(--radius); padding: 12px 14px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
 .log .ok { color: var(--color-log-ok); }
 .log .fail { color: var(--color-log-fail); }
 .log .step { color: var(--color-log-step); font-weight: 600; }
@@ -211,6 +211,12 @@ pre.diff .del { color: var(--fail); background: var(--fail-soft); display: block
 pre.diff .hunk { color: var(--run); display: block; }
 pre.diff .file { font-weight: 700; display: block; }
 .diffstat { background: var(--panel-2); border-radius: var(--radius-md); padding: 8px 10px; margin: 0 0 10px; overflow: auto; }
+.log-note { display: block; color: var(--color-log-dim); }
+.diff-files { display: grid; gap: var(--space-sm); }
+.diff-file { border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--panel); min-width: 0; overflow: hidden; }
+.diff-file > summary { display: flex; gap: var(--space-md); align-items: center; padding: var(--space-sm) var(--space-lg); font-size: var(--text-small); }
+.diff-file pre.diff { border: 0; border-top: var(--border-width) solid var(--border); border-radius: var(--radius-none); }
+.more-row { padding: var(--space-md) var(--space-lg); }
 
 /* ── dashboard ── */
 .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 14px; }

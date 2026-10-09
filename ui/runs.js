@@ -2,6 +2,9 @@ import { api } from "./api.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
+import { createLog, diffView, transcriptView } from "./run-output.js";
+
+export { diffView, logLine } from "./run-output.js";
 
 const money = (n) => (n ? `$${n.toFixed(4)}` : "—");
 const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
@@ -94,37 +97,6 @@ export async function renderRunsList(main, { admin = true } = {}) {
   return () => clearInterval(timer);
 }
 
-export function logLine(line) {
-  const cls = line.startsWith("▶") ? "step" : line.startsWith("✔") ? "ok" : line.startsWith("✘") ? "fail" : line.startsWith("    ·") || line.startsWith("  ") ? "dim" : line.startsWith("⏸") || line.startsWith("↻") ? "step" : null;
-  return h("span", { class: cls }, line + "\n");
-}
-
-// ── transcript ──
-
-function toolSummary(name, input) {
-  const v = input.command ?? input.file_path ?? input.pattern ?? input.path ?? input.url ?? input.description ?? "";
-  return typeof v === "string" ? v : JSON.stringify(v);
-}
-
-function transcriptView(events) {
-  if (!events.length) return h("p", { class: "muted" }, "No transcript recorded.");
-  return h("div", { class: "transcript" }, events.map((e) => {
-    if (e.kind === "raw") return h("pre", { class: "mono" }, e.text || "(no output)");
-    if (e.kind === "text") return h("div", { class: "tx-text" }, e.text);
-    if (e.kind === "result") return h("div", { class: `tx-result${e.isError ? " bad" : ""}` },
-      h("b", {}, e.isError ? "✘ Result" : "✔ Result"),
-      e.costUsd ? h("span", { class: "muted mono" }, ` · $${e.costUsd.toFixed(4)} · ${e.turns} turns`) : e.tokens ? h("span", { class: "muted mono" }, ` · ${Math.round(e.tokens / 1000)}k tokens`) : null,
-      h("div", {}, e.text));
-    const edit = e.name === "Edit" && e.input.old_string != null;
-    return h("details", { class: `tx-tool${e.isError ? " bad" : ""}` },
-      h("summary", {}, h("span", { class: "pill" }, e.name), h("span", { class: "mono tx-arg" }, toolSummary(e.name, e.input))),
-      edit
-        ? h("pre", { class: "diff" }, ...String(e.input.old_string).split("\n").map((l) => h("span", { class: "del" }, `- ${l}\n`)), ...String(e.input.new_string ?? "").split("\n").map((l) => h("span", { class: "add" }, `+ ${l}\n`)))
-        : e.name === "Write" ? h("pre", { class: "mono" }, String(e.input.content ?? "").slice(0, 6000)) : null,
-      e.result != null ? h("pre", { class: "mono tx-out" }, e.result || "(empty)") : null);
-  }));
-}
-
 function stepsView(runId, summary, open = -1) {
   if (!summary.history.length) return h("p", { class: "muted" }, "No steps finished yet.");
   return h("div", { class: "timeline" }, summary.history.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
@@ -212,15 +184,6 @@ export const versionRow = (s) => (s.flowDef?.publish?.enabled ? [h("dt", {}, "Fl
 
 export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { style: { whiteSpace: "pre-wrap" } }, s.reason)] : null);
 
-export function diffView(d, { none = "No changes (or the workspace is not a git checkout)." } = {}) {
-  if (!d.patch) return h("p", { class: "muted" }, none);
-  return h("div", {},
-    h("pre", { class: "mono diffstat" }, d.stat),
-    d.truncated ? h("p", { class: "status bad" }, "Diff truncated (very large).") : null,
-    h("pre", { class: "diff" }, d.patch.split("\n").map((l) =>
-      h("span", { class: l.startsWith("+++") || l.startsWith("---") ? "file" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : l.startsWith("diff ") ? "file" : null }, l + "\n"))));
-}
-
 // ── actions ──
 
 async function act(fn, ok) {
@@ -262,17 +225,13 @@ export function actions(s) {
 
 /** Live run page. Returns a cleanup function that closes the event stream. */
 export function renderRunDetail(main, runId, { admin = true } = {}) {
-  const logEl = h("pre", { class: "log" });
+  const log = createLog();
   const head = h("div");
   const tabBody = h("div");
   let summary;
   let tab = "log";
-  let follow = true;
   let names = null;
   let open = true;
-  logEl.addEventListener("scroll", () => {
-    follow = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
-  });
 
   // The reader picked a tab: the page does not move it any more (a failed run opens on Steps until then).
   let picked = false;
@@ -280,7 +239,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const showTab = async (t, open = -1) => {
     tab = t;
     for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, logEl);
+    if (t === "log") return mount(tabBody, log.el);
     if (t === "steps") return mount(tabBody, summary ? stepsView(runId, summary, open) : null);
     mount(tabBody, h("p", { class: "muted" }, "Computing diff…"));
     mount(tabBody, diffView(await api.diff(runId).catch((e) => ({ patch: "", stat: e.message }))));
@@ -294,7 +253,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     }));
 
   mount(main, head, tabs, tabBody);
-  mount(tabBody, logEl);
+  mount(tabBody, log.el);
 
   const draw = (s) => {
     const prev = summary;
@@ -338,8 +297,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     draw(s);
   });
   es.addEventListener("log", (e) => {
-    logEl.append(logLine(JSON.parse(e.data).line));
-    if (follow) logEl.scrollTop = logEl.scrollHeight;
+    log.add(JSON.parse(e.data).line);
   });
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED) toast("Lost connection to the run stream", "error");

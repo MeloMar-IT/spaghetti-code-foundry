@@ -88,7 +88,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement.js:388` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/repos.js:325` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
 | `ui/repos.js:379` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:244` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:245` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:254` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:258` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:207` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:208` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:217` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:221` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
