@@ -51,7 +51,7 @@ const guard = (fn, ...args) => {
  * Every request goes through one gate: not stopped, the tab is visible, not offline (the offline signal is ignored on a local address),
  * and not waiting for `wake()`. One request at a time; a tick or `refresh()` during a flight gives one follow-up.
  */
-export function poller({ load, draw, every = 5000, onState, hold, wake } = {}) {
+export function poller({ load, draw, every = 5000, onState, hold: isHeld, wake } = {}) {
   const local = LOCAL_HOSTS.includes(globalThis.location?.hostname);
   let stopped = false;
   let busy = false;
@@ -61,7 +61,7 @@ export function poller({ load, draw, every = 5000, onState, hold, wake } = {}) {
   let drawn = null;
   let at;
   let held = null;
-  let holdTimer;
+  let pauseTimer;
   let timer;
   let done;
   const ready = new Promise((resolve) => { done = resolve; });
@@ -80,10 +80,10 @@ export function poller({ load, draw, every = 5000, onState, hold, wake } = {}) {
   };
 
   const release = () => {
-    holdTimer = undefined;
+    pauseTimer = undefined;
     if (stopped) return;
-    if (hold?.()) {
-      holdTimer = setTimeout(release, 250);
+    if (isHeld?.()) {
+      pauseTimer = setTimeout(release, 250);
       return;
     }
     const next = held;
@@ -92,9 +92,9 @@ export function poller({ load, draw, every = 5000, onState, hold, wake } = {}) {
   };
 
   const accept = (data, text) => {
-    if (hold?.()) {
+    if (isHeld?.()) {
       held = { data, text };
-      if (holdTimer === undefined) holdTimer = setTimeout(release, 250);
+      if (pauseTimer === undefined) pauseTimer = setTimeout(release, 250);
       return;
     }
     held = null;
@@ -187,7 +187,7 @@ export function poller({ load, draw, every = 5000, onState, hold, wake } = {}) {
       stopped = true;
       held = null;
       clearInterval(timer);
-      clearTimeout(holdTimer);
+      clearTimeout(pauseTimer);
       document.removeEventListener("visibilitychange", onVisible);
       globalThis.removeEventListener?.("online", onOnline);
       globalThis.removeEventListener?.("offline", onOffline);
