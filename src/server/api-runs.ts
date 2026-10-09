@@ -21,6 +21,7 @@ import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, u
 import type { NextStep } from "../next-step.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import { gateRun } from "../run-gate.js";
+import { matchesRun, parseRunFilter, runFilterValues } from "./run-filter.js";
 import type { Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
@@ -58,26 +59,21 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const owners = [...counts].map(([oid, runs]) => ({ id: oid, name: names.get(oid) ?? DELETED_OWNER, runs }));
     return send(res, 200, owners.sort((a, b) => a.name.localeCompare(b.name))), true;
   }
+  if (seg[0] === "run-filters" && !seg[1] && method === "GET") {
+    // A user gets the values of their own runs only.
+    return send(res, 200, runFilterValues(scheduler.briefs().filter((b) => admin || b.owner === user.id))), true;
+  }
   if (seg[0] !== "runs") return false;
   const id = seg[1];
 
   if (!id && method === "GET") {
-    let ownerParam: string | undefined;
-    const archivedParam = new URL(req.url ?? "/", "http://x").searchParams.get("archived");
-    if (archivedParam !== null && archivedParam !== "1") throw new HttpError(400, "invalid archived");
-    const wantArchived = archivedParam === "1";
-    if (admin) {
-      const o = new URL(req.url ?? "/", "http://x").searchParams.get("owner");
-      if (o !== null) {
-        if (!NAME_RE.test(o) || o.length > 64) throw new HttpError(400, "invalid owner");
-        ownerParam = o;
-      }
-    }
-    const want = admin ? ownerParam : user.id;
-    // The archive choice and the owner are applied before the cap. Loaded by folder name; with an owner, the runId and
-    // owner inside the file must agree with it, else the run is left out.
+    const parsed = parseRunFilter(new URL(req.url ?? "/", "http://x").searchParams, admin);
+    const want = admin ? parsed.owner : user.id;
+    const filter = { ...parsed, owner: want };
+    // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
+    // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
     const runs = scheduler.briefs()
-      .filter((b) => (!want || b.owner === want) && !!b.archived === wantArchived)
+      .filter((b) => matchesRun(b, filter))
       .slice(0, 200)
       .flatMap((b) => {
         try {

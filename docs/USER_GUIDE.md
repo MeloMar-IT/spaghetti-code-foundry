@@ -2211,8 +2211,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/validate` | yes | no | check a flow |
 | `POST /api/generate` | yes | no | write a flow with AI |
 | `GET /api/queue` | yes | yes | the queue (a user sees their own queued runs and how many are ahead) |
-| `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones |
+| `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
+| `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
