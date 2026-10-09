@@ -1,0 +1,5 @@
+id: integration-testing
+version: 1.0.0
+category: quality
+capabilities: [rest-openapi, kafka, ibm-mq, cassandra, oracle, integration-tests, testcontainers]
+roles: [coder, reviewer]
