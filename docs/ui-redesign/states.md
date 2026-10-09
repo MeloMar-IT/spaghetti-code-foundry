@@ -74,7 +74,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 | Workspace | Loading | Empty | Partial | Stale | Offline / provider failure | Permission | Success |
 |---|---|---|---|---|---|---|---|
 | Home | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
-| Board | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
+| Board | Skeleton under the heading (#424) | planned in part N | planned in part N | Old cards stay; "Could not refresh. Showing data from …" with Retry, and "Updated HH:MM" (#424) | First load: `errorState` with Retry (#424) | planned in part N | planned in part N |
 | Refinement | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Start work | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
@@ -84,7 +84,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 
 ## Background refresh (part 3, #344)
 
-`ui/live.js` is the shared helper for pages that refresh themselves. No page uses it yet (part 3a); pages move to it in the next parts. It imports only `./dom.js` and `./states.js`.
+`ui/live.js` is the shared helper for pages that refresh themselves. The Board uses it (part 3b, #424); the other pages move to it in the next parts. It imports only `./dom.js` and `./states.js`.
 
 | Export | What it does |
 |---|---|

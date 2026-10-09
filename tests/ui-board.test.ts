@@ -28,6 +28,7 @@ afterEach(() => {
   vi.useRealTimers();
   globalThis.fetch = realFetch;
   delete (globalThis as any).location;
+  (document as any).visibilityState = "visible";
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
@@ -175,11 +176,14 @@ describe("highlight", () => {
 describe("renderBoard", () => {
   const main = () => new FakeElement("main");
 
-  it("returns a function at once and shows Loading…", () => {
+  it("returns a function at once and shows a skeleton under the heading", () => {
     const m = main();
     const cleanup = ui.renderBoard(m, undefined);
     expect(typeof cleanup).toBe("function");
-    expect(m.textContent).toContain("Loading…");
+    expect(m.children).toHaveLength(3);
+    expect(m.all("h1")[0]!.textContent).toBe("Board");
+    expect(m.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(true);
+    expect(m.textContent).toContain("Loading the board");
     cleanup();
   });
 
@@ -189,11 +193,12 @@ describe("renderBoard", () => {
     calls.shift()!.answer(board());
     await flush();
     expect(m.textContent).toContain("Eighty-nine");
-    const first = m.children;
+    const bodyBox = m.children[1]!;
+    const first = bodyBox.children;
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(board());
     await flush();
-    expect(m.children).toBe(first); // unchanged: not drawn again
+    expect(bodyBox.children).toBe(first); // unchanged: not drawn again
     cleanup();
   });
 
@@ -216,7 +221,8 @@ describe("renderBoard", () => {
     cleanup();
     calls.shift()!.answer(board());
     await flush();
-    expect(m.textContent).toContain("Loading…");
+    expect(m.textContent).toContain("Loading the board");
+    expect(m.textContent).not.toContain("Eighty-nine");
     await vi.advanceTimersByTimeAsync(10_000);
     expect(calls).toHaveLength(0);
   });
@@ -226,7 +232,11 @@ describe("renderBoard", () => {
     const cleanup = ui.renderBoard(m, undefined);
     calls.shift()!.answer({ error: "boom" }, false);
     await flush();
-    expect(find(m, "div", "errors")[0]!.textContent).toBe("boom");
+    const err = find(m, "div", "state-error")[0]!;
+    expect(err.attrs.role).toBe("alert");
+    expect(err.textContent).toContain("Could not load the board.");
+    expect(err.textContent).toContain("boom");
+    expect(m.all("button").some((b) => b.attrs["data-focus"] === "board-retry")).toBe(true);
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(board());
     await flush();
@@ -235,6 +245,7 @@ describe("renderBoard", () => {
     calls.shift()!.answer({ error: "later" }, false);
     await flush();
     expect(m.textContent).toContain("Eighty-nine");
+    expect(m.textContent).toContain("Could not refresh");
     cleanup();
   });
 
@@ -257,10 +268,13 @@ describe("renderBoard", () => {
     const cleanup = ui.renderBoard(m, undefined);
     calls.shift()!.answer(board());
     await flush();
-    const vis = () => (document as any).listeners.visibilitychange![0]();
-    vis(); // nothing remembered yet
+    const vis = () => { for (const f of [...(document as any).listeners.visibilitychange]) f(); };
+    vis(); // nothing remembered yet: one GET, no POST
     await flush();
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "GET", url: "/api/board" });
+    calls.shift()!.answer(board());
+    await flush();
     m.all("a").find((a) => a.attrs.href === "https://github.com/acme/app/issues/89")!.listeners.click![0]!();
     (document as any).visibilityState = "visible";
     vis();
@@ -278,9 +292,10 @@ describe("renderBoard", () => {
     calls.shift()!.answer(board([card({ watcher: undefined })]));
     await flush();
     m.all("a").find((a) => a.attrs.href === "https://github.com/acme/app/issues/89")!.listeners.click![0]!();
-    (document as any).listeners.visibilitychange![0]();
+    for (const f of [...(document as any).listeners.visibilitychange]) f();
     await flush();
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "GET", url: "/api/board" });
     cleanup();
   });
 
