@@ -11,6 +11,7 @@ import { button, iconButton, link } from "../kit/actions.js";
 import { badge, banner, card, emptyState, list, skeleton, table } from "../kit/display.js";
 import { checkbox, field, select, textArea, textInput } from "../kit/forms.js";
 import { dialog, drawer, menu, tabs, toast, tooltip } from "../kit/overlays.js";
+import { diffView, evidence, logView, timeline, timelineEntry } from "../kit/records.js";
 
 export const LONG = "This made-up sentence is much longer than any real label should be, so that it has to wrap or be cut inside a narrow box, and it ends with Supercalifragilisticexpialidocious_Unbroken_Word_Without_Any_Spaces_At_All.";
 
@@ -30,6 +31,27 @@ const TABS = [
 ];
 const ITEMS = [{ label: "Open" }, { label: "Rename" }, { label: "Delete", danger: true }];
 const OPTIONS =[["a", "First option"], ["b", "Second option"], ["c", "Third option"]];
+const LOG_TONES = ["ok", "fail", "step", "dim"];
+const logLines = (n) => Array.from({ length: n }, (_, i) => {
+  const tone = i % 5 === 4 ? undefined : LOG_TONES[i % 5];
+  const mark = { ok: "✔ ", fail: "✘ ", step: "▶ ", dim: "  " }[tone] ?? "  ";
+  return { text: `${mark}line ${i + 1}: made-up output of a step`, tone };
+});
+const PATCH = [
+  "diff --git a/old.txt b/new.txt", "similarity index 80%", "rename from old.txt", "rename to new.txt", "index 1a2b3c..4d5e6f 100644",
+  "--- a/old.txt", "+++ b/new.txt", "@@ -1,3 +1,3 @@", " first line", "-second line", "+second line, changed", " third line",
+  "diff --git a/extra.txt b/extra.txt", "--- a/extra.txt", "+++ b/extra.txt", "@@ -1,1 +1,3 @@", " keep", "+added one", "+added two",
+].join("\n");
+const bigPatch = (files, linesPerFile) => Array.from({ length: files }, (_, f) => {
+  const body = Array.from({ length: linesPerFile }, (_, i) => [` context ${i}`, `-old ${i}`, `+new ${i}`][i % 3]);
+  const count = (...marks) => body.filter((l) => marks.includes(l[0])).length;
+  return [
+    `diff --git a/file${f}.txt b/file${f}.txt`, `--- a/file${f}.txt`, `+++ b/file${f}.txt`, `@@ -1,${count(" ", "-")} +1,${count(" ", "+")} @@`, ...body,
+  ].join("\n");
+}).join("\n");
+const HEADER_ONLY = "diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt";
+const STAT = " old.txt => new.txt | 2 +-\n extra.txt          | 2 ++\n 2 files changed, 3 insertions(+), 1 deletion(-)";
+const ENTRY_TIME = "2026-10-01T10:00:00Z";
 
 export const sections = [
   {
@@ -239,6 +261,66 @@ export const sections = [
       { name: "Stays until dismissed", build: () => button({ onClick: () => toast("This stays until you dismiss it", { tone: "fail" }) }, "Show failure") },
       { name: "Long content", build: () => button({ onClick: () => toast(LONG, { tone: "fail" }) }, "Show long toast") },
       { name: "Notes", build: () => notes("each toast has a Dismiss button; a failure toast stays until dismissed, the others go after a few seconds.", "a long message wraps.", "toasts stack at the bottom and stay inside the window.") },
+    ],
+  },
+  {
+    id: "evidence", title: "Evidence", component: "evidence",
+    examples: [
+      { name: "Closed", build: () => evidence({ title: "Tests passed", source: "step build" }, "42 tests ran with no failures.") },
+      { name: "Open", build: () => evidence({ title: "Review notes", source: "step review", open: true }, "Two findings:", list({ items: ["Rename the helper.", "Add a test."] })) },
+      { name: "With link", build: () => evidence({ title: "Build log", source: "step build", href: "#evidence" }, "The full log is in the run.") },
+      { name: "No source", build: () => evidence({ title: "Old run note" }, "This run did not record where this came from.") },
+      { name: "With a log", build: () => evidence({ title: "Output", source: "step test", open: true }, logView({ label: "Test output", lines: logLines(6) })) },
+      { name: "Long content", build: () => evidence({ title: LONG, source: LONG, open: true }, LONG) },
+      { name: "Notes", build: () => notes("Tab to the summary; Enter or Space opens and closes it.", "a long title wraps.", "the summary wraps; nothing is cut.") },
+    ],
+  },
+  {
+    id: "timelineEntry", title: "Timeline entry", component: "timelineEntry",
+    examples: [
+      { name: "Tones", build: () => timeline({ label: "Entry tones" }, TONES.map((tone) => timelineEntry({ title: `Tone ${tone}`, tone }, `A ${tone} entry.`))) },
+      { name: "Time and actor", build: () => timeline({ label: "Entry with time" }, [timelineEntry({ title: "Build finished", time: ENTRY_TIME, actor: "Maker", tone: "ok" }, "All checks passed.")]) },
+      { name: "Missing data", build: () => timeline({ label: "Old run" }, [timelineEntry({ title: "Step ran" })]) },
+      { name: "Long content", build: () => timeline({ label: "Long entry" }, [timelineEntry({ title: LONG, actor: LONG, time: ENTRY_TIME }, LONG)]) },
+      { name: "Notes", build: () => notes("no keys of its own; controls inside an entry are reached with Tab.", "long titles wrap.", "the time and the actor move under the title.") },
+    ],
+  },
+  {
+    id: "timeline", title: "Timeline", component: "timeline",
+    examples: [
+      { name: "Default", build: () => timeline({ label: "Steps" }, [
+        timelineEntry({ title: "Run started", time: ENTRY_TIME, actor: "Foundry", tone: "run" }),
+        timelineEntry({ title: "Plan written", time: "2026-10-01T10:05:00Z", actor: "Planner", tone: "ok" }, "Three files change."),
+        timelineEntry({ title: "Build failed", time: "2026-10-01T10:20:00Z", actor: "Maker", tone: "fail" }, evidence({ title: "Compiler output", source: "step build" }, "Type error in one file.")),
+        timelineEntry({ title: "Waiting for review", tone: "warn" }),
+      ]) },
+      { name: "Empty", build: () => timeline({ label: "Steps" }, []) },
+      { name: "Long content", build: () => timeline({ label: LONG }, [timelineEntry({ title: LONG }, LONG)]) },
+      { name: "Notes", build: () => notes("no keys of its own; controls inside an entry are reached with Tab.", "long titles wrap.", "the time and the actor move under the title.") },
+    ],
+  },
+  {
+    id: "logView", title: "Log view", component: "logView",
+    examples: [
+      { name: "Default", build: () => logView({ label: "Step log", lines: logLines(12) }) },
+      { name: "Tones", build: () => logView({ label: "Log tones", lines: [{ text: "plain line" }, ...LOG_TONES.map((tone) => ({ text: `a ${tone} line`, tone }))] }) },
+      { name: "500 lines", build: () => logView({ label: "Long log", lines: logLines(500) }) },
+      { name: "Follow", build: () => logView({ label: "Followed log", lines: logLines(200), follow: true }) },
+      { name: "Long content", build: () => logView({ label: "Long lines", lines: [{ text: LONG }, { text: "x".repeat(400), tone: "dim" }, { text: "<b>not bold</b> <script>nothing()</script>" }] }) },
+      { name: "Empty", build: () => logView({ label: "Empty log", lines: [] }) },
+      { name: "Notes", build: () => notes("Tab to the log, then the arrow keys, Page Up and Page Down scroll it.", "long lines wrap inside the box.", "the box keeps the frame width and scrolls up and down.") },
+    ],
+  },
+  {
+    id: "diffView", title: "Diff view", component: "diffView",
+    examples: [
+      { name: "Default", build: () => diffView({ stat: STAT, patch: PATCH }) },
+      { name: "Large diff", build: () => diffView({ patch: bigPatch(40, 12) }) },
+      { name: "Header only", build: () => diffView({ patch: HEADER_ONLY }) },
+      { name: "Truncated", build: () => diffView({ stat: STAT, patch: PATCH, truncated: true }) },
+      { name: "Empty", build: () => diffView({ stat: "", patch: "" }) },
+      { name: "Long content", build: () => diffView({ patch: `diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-old\n+${LONG}` }) },
+      { name: "Notes", build: () => notes("Tab to the diff, then the arrow keys scroll both ways.", "long lines do not wrap; the box scrolls sideways.", "the page does not scroll sideways, only the box.") },
     ],
   },
 ];

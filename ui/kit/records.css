@@ -1,0 +1,97 @@
+/* ui/kit/records.css — evidence, timeline, log and diff components of the component kit.
+   Belongs here: .scf-evidence, .scf-timeline, .scf-log and .scf-diff rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
+
+.scf-evidence {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.scf-evidence[open] > .scf-evidence__summary { margin-bottom: 0; }
+.scf-evidence__summary {
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: var(--text-body);
+  overflow-wrap: anywhere;
+}
+.scf-evidence__summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-evidence__head { display: inline-flex; flex-wrap: wrap; gap: var(--space-md); align-items: baseline; min-width: 0; }
+.scf-evidence__title { font-weight: var(--weight-bold); }
+.scf-evidence__source { color: var(--color-text-muted); font-size: var(--text-meta); }
+.scf-evidence__body {
+  padding: var(--space-md);
+  border-top: var(--border-width) solid var(--color-border);
+  display: grid;
+  gap: var(--stack-gap);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.scf-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.scf-timeline__entry {
+  border-left: 3px solid var(--color-border);
+  padding: var(--space-xs) var(--space-md);
+  min-width: 0;
+}
+.scf-timeline__entry--ok { border-color: var(--color-success); }
+.scf-timeline__entry--fail { border-color: var(--color-danger); }
+.scf-timeline__entry--run { border-color: var(--color-running); }
+.scf-timeline__entry--warn { border-color: var(--color-warning); }
+.scf-timeline__entry--accent { border-color: var(--color-accent); }
+.scf-timeline__head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: baseline; }
+.scf-timeline__title { font-weight: var(--weight-medium); overflow-wrap: anywhere; min-width: 0; }
+.scf-timeline__actor, .scf-timeline__time, .scf-timeline__empty { color: var(--color-text-muted); font-size: var(--text-meta); }
+.scf-timeline__body { margin-top: var(--space-xs); overflow-wrap: anywhere; }
+
+.scf-log {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  max-height: 60vh;
+  overflow: auto;
+  max-width: 100%;
+  min-width: 0;
+}
+.scf-log:focus-visible, .scf-diff__patch:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-log--follow { display: flex; flex-direction: column-reverse; }
+.scf-log__line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.scf-log__line--ok { color: var(--color-success); }
+.scf-log__line--fail { color: var(--color-danger); }
+.scf-log__line--step { color: var(--color-accent); font-weight: var(--weight-bold); }
+.scf-log__line--dim { color: var(--color-text-muted); }
+.scf-log__empty, .scf-diff__none { margin: 0; color: var(--color-text-muted); }
+
+.scf-diff { display: grid; gap: var(--stack-gap); min-width: 0; }
+.scf-diff__stat {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  overflow: auto;
+  max-width: 100%;
+}
+.scf-diff__truncated { margin: 0; color: var(--color-warning); font-size: var(--text-meta); }
+.scf-diff__patch {
+  margin: 0;
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  overflow: auto;
+  max-height: 75vh;
+  max-width: 100%;
+  white-space: pre;
+}
+.scf-diff__line { display: block; }
+.scf-diff__line--add { color: var(--color-success); background: var(--color-success-soft); }
+.scf-diff__line--del { color: var(--color-danger); background: var(--color-danger-soft); }
+.scf-diff__line--hunk { color: var(--color-running); }
+.scf-diff__line--file { font-weight: var(--weight-bold); }
