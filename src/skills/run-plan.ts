@@ -63,6 +63,13 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
   return plan.reason;
 }
 
+/** Stops the run for skills with a fixed reason (fail closed). Returns the reason. */
+export function stopRunSkills(run: RunSummary, gate: string, reason: string, log: (m: string) => void): string {
+  run.skillPlan = { ...failClosed(reason), gate, at: new Date().toISOString(), checks: run.skillPlan?.checks ?? 1 };
+  log(`■ ${reason}`);
+  return reason;
+}
+
 /** After a plan gate: resolves the skills of its request and sets or clears run.skillPlan. Returns the stop reason, or undefined to go on. */
 export function planRunSkills(run: RunSummary, config: Config, stepId: string, log: (m: string) => void, deps: Deps = {}): string | undefined {
   return check(run, config, stepId, log, deps, false);

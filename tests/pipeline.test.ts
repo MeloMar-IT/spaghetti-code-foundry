@@ -7,6 +7,7 @@ import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { explainError } from "../src/errors.js";
 import { commentFirst, commentText, firstLine, nextStep, reportFirst } from "../src/next-step.js";
+import { planBodyHashOf, readPlanRecords } from "../src/skills/plan-record.js";
 import { planSkillRequest } from "../src/skills/request.js";
 import { userRun } from "../src/server/user-view.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -143,6 +144,13 @@ describe("label-driven issue pipeline", () => {
       expect(markers(out)).toEqual([`SKILL_REQUEST: ${REQ("b-skill")}`]);
       expect(out).not.toContain("a-skill");
       expect(planSkillRequest(run)?.skills.map((s) => s.id)).toEqual(["b-skill"]);
+      expect(out).toMatch(/^PLAN_COMMENT_SHA256: sha256:[0-9a-f]{64}$/m);
+      expect(out.trimEnd().split("\n").at(-1)).toMatch(/^SKILL_REQUEST: /);
+      const stored = readPlanRecords("acme/app", "5");
+      if (stored === "invalid") throw new Error("the plan records are invalid");
+      const record = stored.records.find((r) => r.runId === run.runId);
+      expect(record?.request.skills[0]?.id).toBe("b-skill");
+      expect(record?.commentSha256).toBe(planBodyHashOf(comment));
     });
 
     it("uses the empty request when a finished revision has no line, not the draft's", async () => {

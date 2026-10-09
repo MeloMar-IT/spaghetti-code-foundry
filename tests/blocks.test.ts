@@ -185,6 +185,11 @@ describe("every posted comment starts with a first-line variable", () => {
     const run = '{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } | gh issue comment 1 --body-file -\ngh issue comment 2 --body-file -';
     expect(scanShell(run)).toHaveLength(1);
   });
+  bad("a built text without a first line", 'body=$( { echo "🤖 **X**"; echo; } )\nposted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -)');
+  bad("a built text that was never built", 'posted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -)');
+  it("accepts a text built first and piped from printf", () => {
+    expect(scanShell('body=$( { echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } )\nposted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -) || exit 1')).toEqual([]);
+  });
   bad("a call split over lines by continuations", 'echo hi | gh \\\n  issue comment 1 --body "text"');
   it("accepts good shell comments", () => {
     expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } \\\n  | gh issue comment 1 --body-file -')).toEqual([]);

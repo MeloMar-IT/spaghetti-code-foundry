@@ -2731,7 +2731,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
 | `scf eval <suite.yaml> [--flows a,b] [--models …]` | Run an eval suite |
-| `scf clean [--older-than 7] [--purge] [--dry-run]` | Remove old run workspaces |
+| `scf clean [--older-than 7] [--purge] [--dry-run]` | Remove old run workspaces. With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
 | `scf user create [--admin] [--name n] [--email e]` | Create an account. The first one needs `--admin`. Name and e-mail are asked for on a terminal |
 | `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one (never shows passwords, hashes or links) |
 | `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call |
@@ -2741,6 +2741,14 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
+
+**Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
+`<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD
+commit and the technology hash — never the plan text. If the record cannot be written and skills
+are in play, the run stops with `skills not resolved: …` and resumes at `post_plan`; without
+skills it only logs a warning. `scf clean --purge` and the Admin clean-up remove records older than
+the larger of 90 days and the cut-off, and report `and N plan record(s)`. A dry run only counts.
+Records are only touched when the runs folder is the default one in the data folder.
 
 The password is asked twice on a terminal, or read from the first line of stdin; it is never an
 option or an environment variable. A password has 12 to 200 characters and must not be a common

@@ -435,7 +435,8 @@ async function main(argv: string[]): Promise<number> {
       });
       const verb = values["dry-run"] ? "would remove" : "removed";
       process.stdout.write(
-        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""} · ${r.freedMb} MB\n` +
+        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB\n` +
+          (r.planRecordsFailed ? "plan records could not be cleaned (the store is locked or cannot be written) — try again later\n" : "") +
           (r.kept.length ? `kept ${r.kept.length} paused/running run(s) — use --include-paused to clean them too\n` : ""),
       );
       return 0;

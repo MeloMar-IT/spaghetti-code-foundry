@@ -13,9 +13,19 @@ export function scanShell(run: string): string[] {
   for (const m of calls) {
     const at = m.index!;
     const call = run.slice(at).replace(/\\\r?\n/g, " ").split("\n")[0]!;
-    if (!/--body-file\s+-(?=\s|$)/.test(call)) problems.push(`"${call.trim()}" does not read its text from stdin (--body-file -)`);
+    if (!/--body-file\s+-(?=[\s)]|$)/.test(call)) problems.push(`"${call.trim()}" does not read its text from stdin (--body-file -)`);
     const before = run.slice(prev, at);
     prev = at;
+    // The text can be built first, in `name=$( { … } )`, and piped from `printf '%s\n' "$name"`.
+    const via = /printf '%s\\n' "\$(\w+)" \|\s*$/.exec(before);
+    if (via) {
+      const built = [...before.matchAll(new RegExp(`(?<![\\w$])${via[1]}=\\$\\(\\s*(\\{)`, "g"))].at(-1);
+      const text = built ? before.slice(built.index! + built[0].length - 1) : "";
+      const head = new RegExp(`^\\{\\s*echo "\\$(${VAR}|first)";[ \\t]*echo[ \\t]*(?:;|\\r?\\n|$)`).exec(text);
+      if (!head || !/\}[ \t]*\)/.test(text)) problems.push(`the text in $${via[1]} does not print a first-line variable first`);
+      else if (head[1] === "first") usesFirst = true;
+      continue;
+    }
     const opens = [...before.matchAll(/^[ \t]*\{/gm)];
     const open = opens.at(-1);
     if (!open) {

@@ -1,10 +1,13 @@
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { parseFlow } from "../src/flow/load.js";
+import { flowPath } from "./helpers/fake-github.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StoreError } from "../src/auth/store.js";
 import {
-  MAX_PLAN_RECORD_BYTES, PlanRecordSchema, parsePlanCommentFacts, planChanges, planCommentRefOf, planRecordKey, pickPlanRecord,
+  MAX_PLAN_RECORD_BYTES, PlanRecordSchema, planBodyHashOf, parsePlanCommentFacts, planChanges, planCommentRefOf, planRecordKey, pickPlanRecord,
   planStoreSettings, prunePlanRecords, readPlanRecords, storableRequest, technologyHashOf, writePlanRecord, type PlanRecord,
 } from "../src/skills/plan-record.js";
 import type { RepoProfile } from "../src/skills/repo-profile.js";
@@ -308,5 +311,78 @@ describe("parsers", () => {
     expect(planCommentRefOf(url)).toBeUndefined();
     expect(planCommentRefOf(`${url}\n${sha}\n${sha}`)).toBeUndefined();
     expect(planCommentRefOf(`${url}\nPLAN_COMMENT_SHA256: sha256:abc`)).toBeUndefined();
+  });
+});
+
+describe("the generated post_plan", () => {
+  const step = () => {
+    const s = parseFlow(readFileSync(flowPath("issue-plan"), "utf8"), flowPath("issue-plan")).steps.find((x) => x.id === "post_plan");
+    if (!s || s.type !== "shell") throw new Error("post_plan");
+    return s.run;
+  };
+  const toolsWithout = (skip?: string, replace?: string) => {
+    const dir = join(home, "tools");
+    mkdirSync(dir);
+    for (const f of readdirSync(resolve("tools"))) if (f !== skip) symlinkSync(resolve("tools", f), join(dir, f));
+    if (skip && replace !== undefined) {
+      writeFileSync(join(dir, skip), replace);
+      chmodSync(join(dir, skip), 0o755);
+    }
+    return dir;
+  };
+  const run = (tools: string, gh?: string) => {
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    if (gh === undefined) symlinkSync(resolve("tests/fixtures/fake-gh.sh"), join(bin, "gh"));
+    else {
+      writeFileSync(join(bin, "gh"), gh);
+      chmodSync(join(bin, "gh"), 0o755);
+    }
+    const log = join(home, "gh.log");
+    const r = spawnSync("sh", ["-c", step()], {
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:${process.env.PATH}`, FAKE_GH_LOG: log, FACTORY_TOOLS: tools, FACTORY_OUT_PLAN: "## Goal\nx\nPLAN_STATUS: READY",
+        FACTORY_VAR_ISSUE: "5", FACTORY_VAR_GITHUB_REPO: "acme/app", FACTORY_RUN_ID: "r-1", FACTORY_VAR_CODE_LABEL: "Factory_code", FACTORY_VAR_READY_LABEL: "Factory_ready",
+      },
+    });
+    let ghLog = "";
+    try {
+      ghLog = readFileSync(log, "utf8");
+    } catch {
+      // gh was never called
+    }
+    return { status: r.status, stdout: r.stdout, ghLog };
+  };
+
+  it("posts nothing and fails when the plan-comment tool is missing", () => {
+    const r = run(toolsWithout("plan-comment"));
+    expect(r.status).not.toBe(0);
+    expect(r.ghLog).not.toContain("--- comment on");
+  });
+
+  it("posts nothing and fails when the plan-comment tool fails", () => {
+    const r = run(toolsWithout("plan-comment", "#!/bin/sh\nexit 1\n"));
+    expect(r.status).not.toBe(0);
+    expect(r.ghLog).not.toContain("--- comment on");
+  });
+
+  it("prints the link, the hash of the posted body and the request line last", () => {
+    const r = run(toolsWithout());
+    expect(r.status).toBe(0);
+    const lines = r.stdout.trimEnd().split("\n");
+    expect(lines.at(-3)).toMatch(/#issuecomment-1$/);
+    expect(lines.at(-2)).toMatch(/^PLAN_COMMENT_SHA256: sha256:[0-9a-f]{64}$/);
+    expect(lines.at(-1)).toMatch(/^SKILL_REQUEST: /);
+    const ref = planCommentRefOf(r.stdout);
+    expect(ref).toBeDefined();
+    const body = r.ghLog.split("--- comment on #5:\n")[1]!.split("\n--- end comment")[0]!;
+    expect(ref!.sha256).toBe(planBodyHashOf(body));
+  });
+
+  it("fails and prints no hash line when gh fails", () => {
+    const r = run(toolsWithout(), "#!/bin/sh\nexit 1\n");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain("PLAN_COMMENT_SHA256");
   });
 });

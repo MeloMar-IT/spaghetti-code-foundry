@@ -221,16 +221,19 @@ export async function renderWatchers(main) {
 
 function diskSection(section) {
   const days = input("7", { type: "number", min: 0, class: "w-90" });
-  const purge = check(false, "Also delete run logs");
+  const purge = check(false, "Also delete run logs and old plan records (plan records are kept at least 90 days)");
   const paused = check(false, "Include stopped / waiting runs (they can't be resumed afterwards)");
   const out = h("div");
   const go = async (dryRun) => {
-    if (!dryRun && !confirm("Remove these workspaces now? Branches in your repos are kept.")) return;
+    if (!dryRun && !confirm(purge.el.checked
+      ? "Remove these workspaces, run logs and old plan records now? Branches in your repos are kept."
+      : "Remove these workspaces now? Branches in your repos are kept.")) return;
     try {
       const r = await api.clean({ olderThanDays: Number(days.value), purge: purge.el.checked, includePaused: paused.el.checked, dryRun });
       mount(out, h("p", { class: dryRun ? "muted flush" : "status ok flush" },
-        `${dryRun ? "Would remove" : "Removed"} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""} · ${r.freedMb} MB`,
-        r.kept.length ? ` · keeping ${r.kept.length} paused/running` : ""));
+        `${dryRun ? "Would remove" : "Removed"} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB`,
+        r.kept.length ? ` · keeping ${r.kept.length} paused/running` : "",
+        r.planRecordsFailed ? " · plan records could not be cleaned (try again later)" : ""));
     } catch (e) {
       toast(e.message, "error");
     }
