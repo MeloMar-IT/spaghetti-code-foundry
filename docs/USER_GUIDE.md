@@ -637,6 +637,7 @@ how steps connect: grey = next, green = on success, red dashed = on failure, pur
 - **✨ Draft flow with Claude** — describe what you want and Claude writes the YAML.
   **Ask Claude** changes the open flow the same way.
 - **+ From library** inserts a block from the [Library](#the-block-library).
+- **Errors and failed saves.** Errors that stop a save or a run are shown above the editor. If a save, delete or run fails, the reason is shown and your changes stay; use **Retry** to save again. Discarding, overwriting and deleting ask for confirmation in a dialog.
 - **Publish to users** — choose whether users may start this flow ("Available to users"), the
   name and description they see, and for each variable whether it is *hidden* (your value is
   used), *fixed* (shown, cannot be changed) or *user fills in* (with a label, help text,
@@ -773,6 +774,8 @@ text; the architect steps of Refinement take it from there. Insert one with **+ 
 your own block with **☆ Save as block**. Blocks that call `gh` or the remote come with **Needs
 repository access** ticked. A flow built from blocks before this version has copies without it, so
 tick it there or insert the block again.
+
+The Library shows a loading state, an empty state and a failure with **Retry**. A failed delete or save keeps the form with what you typed. The Models page still shows Routing when the providers cannot be checked, and a model test result stays after **Reload**.
 
 ---
 

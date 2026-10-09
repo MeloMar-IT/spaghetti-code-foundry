@@ -79,7 +79,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 | Start work | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Repositories | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
-| Build | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
+| Build | skeleton on the flow list, a flow, Library and Models | "No flows yet", welcome page, "No blocks yet", "No providers", "No rules" | Models without the provider list; saved but the list was not refreshed | the flow list keeps the old entries when a reload fails | `errorState` with Retry on each load; inline for save, delete, run, draft and model test | `permissionState` on 403 | toast for Saved / Deleted / Saved block; the model test result stays |
 | Administration | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 
 ## Background refresh (part 3, #344)
@@ -113,3 +113,10 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 - CSS in `ui/style.css`: `.skeleton` (no animation under `prefers-reduced-motion`), `.state-error`, `.stale-note`, `.sr-only`. `.empty`, `.errors` and `.spinner` stay.
 - The three existing error-text helpers are not merged here. Pages keep them until their own part.
 - If #251 or #252 deliver components with other names, the names recorded here win for parts 2–8, and this file is updated with the final names.
+
+## Done in part 7 (#348)
+
+- Build (flows, a flow, Library, Models) has loading, empty, failed, partial and permission states.
+- A failed save, delete, run or draft is explained inline and keeps the draft.
+- The five confirmations use `confirmDialog`; `route()` asks about unsaved changes without blocking.
+- "Draft with Claude" and Run cannot be closed while they work.
