@@ -6,8 +6,8 @@ import { saveFindings, type Finding } from "../src/monitor/findings.js";
 import { markerHash } from "../src/monitor/story.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let port = 0;
+let base = "";
 let tmp: string;
 let close: () => void;
 let session: TestSession;
@@ -20,7 +20,17 @@ beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "monitor-api-"));
   process.env.FACTORY_HOME = home();
   const { startServer } = await import("../src/server/server.js");
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs") }));
+  // A random port can be taken by a test file that runs at the same time: try another one.
+  for (let tries = 0; ; tries++) {
+    port = 20000 + Math.floor(Math.random() * 20000);
+    base = `http://127.0.0.1:${port}`;
+    try {
+      ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs") }));
+      break;
+    } catch (e) {
+      if (tries >= 5 || (e as { code?: string }).code !== "EADDRINUSE") throw e;
+    }
+  }
   session = await signInAs(base);
   const cfg = (await (await call("GET", "/api/config")).json()) as { watchers: unknown[] };
   expect((await call("PUT", "/api/config", { ...cfg, watchers: [{ id: "mon", source: "monitor", every: "1h" }] })).status).toBe(200);

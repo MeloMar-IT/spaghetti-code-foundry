@@ -395,7 +395,7 @@ describe("a session file that cannot be saved", () => {
 
   it("after the PATCH and the comment of a dependant: 500 that names the comment, and the retry writes nothing twice", async () => {
     const { id } = await dueSession([withDeps(20, "#12")]);
-    const r = await faultAt(id, "gh issue comment 20");
+    const r = await faultAt(id, "issue comment 20");
     expect(r.status).toBe(500);
     expect(r.error()).toMatch(/#20 got a comment/);
     expect(r.error()).toMatch(/publish again/i);
@@ -410,7 +410,7 @@ describe("a session file that cannot be saved", () => {
 
   it("after the comment on the original: 500 that names it, and the retry only ends the replacement", async () => {
     const { id } = await dueSession([withDeps(20, "#12")]);
-    const r = await faultAt(id, "gh issue comment 12");
+    const r = await faultAt(id, "issue comment 12");
     expect(r.status).toBe(500);
     expect(r.error()).toMatch(/#12 got a comment/);
     expect(r.error()).toMatch(/publish again/i);

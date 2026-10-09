@@ -3,7 +3,7 @@ import { commentOnIssue, findOwnComment, issueComments, listOpenIssues, restIssu
 import { dependantComment, dependsOnText, findDependants, originalComment, replaceMarker, rewriteDependsOn, type DependantKind } from "../refinement/dependants.js";
 import type { PullKind } from "../refinement/issue-building.js";
 import { endsWithMarker, type ReplacePart } from "../refinement/publish.js";
-import { markOf, mergeJournal, partsOf, replaceStarted, type Found } from "../refinement/replace-journal.js";
+import { LABELS_MAX, markOf, mergeJournal, partsOf, replaceStarted, type Found } from "../refinement/replace-journal.js";
 import { getSession, recordDependantDone, recordDependantWrite, recordOriginalLabels, recordReplaced, recordReplacing, type Session } from "../refinement/store.js";
 import { labelsOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { HttpError } from "./http.js";
@@ -309,6 +309,12 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
   const wanted = triggerLabels(ctx, s).map((l) => l.toLowerCase());
   const found = original.labels.filter((l) => wanted.includes(l.toLowerCase()));
   if (found.length) {
+    // Every label taken off is journalled first, so a retry can name it; a label that does not fit is not taken off.
+    const have = (getSession(s.id)?.source?.replacing?.labels ?? []).map((l) => l.toLowerCase());
+    const fresh = new Set(found.map((l) => l.toLowerCase()).filter((l) => !have.includes(l)));
+    if (have.length + fresh.size > LABELS_MAX) {
+      throw new HttpError(409, `issue #${n} has more trigger labels than the session can keep (${LABELS_MAX}); ${o.written()}. Take them off by hand and publish again.`);
+    }
     keep(() => recordOriginalLabels(actor, s.id, found));
     await github(`GitHub did not take the label off issue #${n}`, () => setLabels(repo, n, undefined, found, timeout));
     o.wrote({ issue: n, what: "unlabelled" });

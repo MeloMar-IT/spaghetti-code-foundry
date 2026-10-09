@@ -301,6 +301,30 @@ describe("publishing a session that came from an issue", () => {
     expect(stored(id).drafts[0].published).toBeUndefined();
   });
 
+  it("names the writes of the ledger when the session file cannot be saved after the update, the comment and the label", async () => {
+    const { id, did } = await imported();
+    const release = gh.hold("issue edit 12");
+    try {
+      const pending = publish(id, { drafts: [{ draft: did, labels: ["bug"] }] });
+      const end = Date.now() + 20_000;
+      while (!gh.ghLog().includes("gh issue edit 12")) {
+        if (Date.now() > end) throw new Error("timed out waiting for the label call");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const good = readFileSync(refinementsPath(), "utf8");
+      writeFileSync(refinementsPath(), "not json");
+      release();
+      const r = await pending;
+      writeFileSync(refinementsPath(), good);
+      expect(r.status).toBe(500);
+      expect(r.error()).toMatch(/could not be saved in the session; /);
+      expect(r.error()).toMatch(/#12/);
+      expect(r.error()).not.toMatch(/nothing was written/);
+    } finally {
+      release();
+    }
+  });
+
   it("ignores a forged or quoted marker and takes over its own comment", async () => {
     const { id, did } = await imported();
     process.env.FAKE_GH_FAIL = "issue comment";

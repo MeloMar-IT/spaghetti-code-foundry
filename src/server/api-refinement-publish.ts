@@ -316,7 +316,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
     recordPublished(o.actor, s.id, did, { issue: n, url });
   } catch (e) {
     ctx.diagLog?.(`refinement: publish could not record an issue (${e instanceof Error ? e.name : "error"})`);
-    throw new HttpError(500, `The issue ${url} was updated, but it could not be saved in the session. ${again}`);
+    throw new HttpError(500, `The issue ${url} was updated, but it could not be saved in the session; ${o.ledger.text()}. ${again}`);
   }
   return { draft: did, issue: n, url, found: marked };
 }

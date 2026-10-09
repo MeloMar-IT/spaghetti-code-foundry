@@ -35,12 +35,14 @@ export const DependantSchema = z
     done: z.literal(true).optional(),
   })
   .strict();
+/** At most this many removed labels are journalled; a label is only taken off GitHub when it fits (see `fitsLabels`). */
+export const LABELS_MAX = 100;
 export const ReplacingSchema = z
   .object({
     parts: NUMBERS,
     cut: z.literal(true).optional(),
     /** The trigger labels taken off the original (GitHub allows at most 100 labels on an issue); kept so a retry names them. */
-    labels: z.array(z.string().min(1).max(100)).max(100).optional(),
+    labels: z.array(z.string().min(1).max(100)).max(LABELS_MAX).optional(),
     dependants: z
       .array(DependantSchema)
       .max(JOURNAL_MAX)

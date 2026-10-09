@@ -444,7 +444,14 @@ describe("recordOriginalLabels", () => {
     const { id } = makeSplit();
     unchanged(() => recordOriginalLabels(ann, id, ["a"], T), "bad-state");
     const id2 = started(13);
-    unchanged(() => recordOriginalLabels(ann, id2, Array.from({ length: 101 }, (_, i) => `l${i}`), T), "bad-state");
+  });
+
+  it("keeps at most 100 names over all retries, and refuses more without changing the session", () => {
+    const id = started(13);
+    const many = (from: number, n: number) => Array.from({ length: n }, (_, i) => `l${from + i}`);
+    expect(recordOriginalLabels(ann, id, many(0, 100), T).source!.replacing!.labels).toHaveLength(100);
+    unchanged(() => recordOriginalLabels(ann, id, many(200, 1), T), "bad-state");
+    expect(recordOriginalLabels(ann, id, ["L5"], T).source!.replacing!.labels).toHaveLength(100);
   });
 });
 

@@ -285,6 +285,39 @@ describe("publishing a split issue replaces it", () => {
     expect(commentsOf(12)[0]!.body).not.toContain("taken off");
   });
 
+  it("takes every matching trigger label off, also of a disabled watcher and in another spelling", async () => {
+    watch();
+    addRepoWatcher(annRepo().id, { id: "app-w2", label: "Factory_other", enabled: false });
+    started!.ctx.watchers.sync();
+    const { id } = await splitSession([], { original: { labels: ["bug", "factory_GO", "Factory_other"] } });
+    expect((await publish(id)).status).toBe(200);
+    expect(gh.bugIssues().find((i) => i.number === 12)!.labels.map((l) => l.name)).toEqual(["bug"]);
+    const body = commentsOf(12)[0]!.body;
+    expect(body).toContain("labels");
+    expect(body).toContain("`factory_GO`");
+    expect(body).toContain("`Factory_other`");
+    expect(stored(id).source).not.toHaveProperty("buildLabel");
+    expect(stored(id).source).not.toHaveProperty("replacing");
+  });
+
+  it("takes no label off when the journal is full and a new trigger label appeared, and finishes once it is gone", async () => {
+    watch();
+    const { id } = await splitSession([], { original: { labels: ["Factory_go"] } });
+    markPublished(id, [101, 102]);
+    editFile((f) => {
+      f.sessions.find((x: any) => x.id === id).source.replacing = { parts: [101, 102], dependants: [], labels: Array.from({ length: 100 }, (_, i) => `old${i}`) };
+    });
+    const r = await publish(id);
+    expect(r.status).toBe(409);
+    expect(r.error()).toMatch(/more trigger labels/);
+    expect(calls()).not.toContain("edit 12");
+    expect(commentsOf(12)).toEqual([]);
+    expect(stored(id).source.replacing.labels).toHaveLength(100);
+    change(12, { labels: [] });
+    expect((await publish(id)).status).toBe(200);
+    expect(calls()).not.toContain("edit 12");
+  });
+
   it("does not take the label off a second time when the comment on the original failed", async () => {
     watch();
     const { id } = await splitSession([], { original: { labels: ["Factory_go"] } });
