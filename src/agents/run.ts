@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep } from "../flow/schema.js";
 import { resolveClaudeBin, runClaude } from "../steps/claude.js";
-import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
+import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -11,7 +11,7 @@ import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
-import { codexHomeId, codexResumeRefusal } from "./codex-home.js";
+import { codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
 
@@ -26,7 +26,7 @@ export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean)
 
 type Iso = { who: CommitIdentity };
 
-/** A step result; `final` is a refusal that no other try can change (no key for a boxed step). */
+/** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
 async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false): Promise<Ran> {
@@ -115,7 +115,7 @@ export function sessionToResume(
   return { asked: true, id, prevAgent, ...(holds ? { holds } : {}) };
 }
 
-/** A Claude session runs without the personal setup when the server says so, on a user's run, and always when the run's lock holds skills. */
+/** An agent session (Claude or Codex) runs without the personal setup when the server says so, on a user's run, and always when the run's lock holds skills. */
 export function claudeIsolated(isolateAgents: boolean, userRun: boolean, skills?: Pick<SkillPayload, "loaded" | "omitted">, reviewer = false): boolean {
   return isolateAgents || userRun || reviewer || Boolean(skills && (skills.loaded.length || skills.omitted.length));
 }
@@ -125,7 +125,7 @@ function skillsRecord(s?: SkillPayload, attach?: ReturnType<typeof attachSkillPa
   return s ? { skills: { loaded: s.loaded, ...(s.omitted.length ? { omitted: s.omitted } : {}), bytes: s.bytes, estimatedTokens: s.estimatedTokens, ...(s.role ? { role: s.role } : {}), ...(attach ? { state: attach.state, digest: attach.digest, attachedBytes: attach.attachedBytes, attachedEstimatedTokens: attach.attachedEstimatedTokens } : {}) } } : {};
 }
 
-async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<StepResult> {
+async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<Ran> {
   const { isolated, short, boxed, profile, bin } = o;
   const { ctx, flow } = scope;
   const d = flow.defaults;
@@ -141,14 +141,30 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
   // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
   let home: string | undefined;
+  let mode: CodexIsolation | undefined;
   if (t.agent === "codex") {
     const seen = (n: string) => (n in env ? env[n] : short ? undefined : process.env[n]);
-    home = codexHomeId({ run: boxed, codexHome: seen("CODEX_HOME"), home: seen("HOME") });
+    // 1. mode: a boxed step already has the run's folder. A reviewer's skill payload does not isolate a Codex session (until Codex gets coding payloads).
+    if (!boxed) mode = codexIsolationMode({ isolate: claudeIsolated(engine.config.isolate_agents, isolated), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
+    // 2. private folder: never the personal one when it cannot be made
+    if (mode === "private") {
+      const made = privateCodexHome(engine.summary.runDir);
+      if ("refused" in made) return { ok: false, output: made.refused, error: made.refused, final: true };
+      env.CODEX_HOME = made.CODEX_HOME; // over anything agent_env set
+    }
+    // 3. the folder this session lives in
+    home = codexHomeId({ run: boxed || mode === "private", codexHome: seen("CODEX_HOME"), home: seen("HOME") });
+    // 4. resume only in the same folder
     const reason = resumeId ? codexResumeRefusal(prev!.codex_home, home) : undefined;
     if (reason) {
       resumeId = undefined;
       engine.log(`    · not resuming ${step.resume}: ${reason}`);
     }
+    // 5. a CLI that does not list the flag for this command form
+    if (mode === "ignore-config" && !codexExecFlags(bin ?? engine.codexBin ?? resolveCodexBin(), { resume: Boolean(resumeId) }).has("--ignore-user-config")) mode = "unsupported";
+    // 6.
+    const line = mode ? codexIsolationLine(mode) : undefined;
+    if (line) engine.log(`    ${mode === "unsupported" ? "!" : "·"} ${line}`);
   }
   const common = {
     prompt: render(step.prompt, ctx),
@@ -176,6 +192,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       sandboxProfile: profile,
       sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
       reviewer: step.skill_role === "reviewer",
+      agentNote: mode !== undefined && mode !== "off",
+      // unset (not isolated): a reviewer skips the personal config as before; boxed, private and unsupported steps get no flag
+      ignoreUserConfig: mode === "ignore-config" ? true : mode === "off" ? undefined : false,
       effort,
     });
     const p = t.provider.price;

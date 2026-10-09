@@ -400,6 +400,15 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   `src/agents/codex-home.ts`. A step with `resume:` starts a new session, and logs why, when the recorded
   folder differs from its own or none was recorded (a record from before #420), so it never asks Codex for
   a session that folder does not hold.
+- **Codex isolation (#421).** `codexIsolationMode()` picks `private` (a local model or a `CODEX_API_KEY`
+  the step sees: `CODEX_HOME=<runDir>/home/.codex`, made 0700 by `privateCodexHome()`; a failure refuses the
+  step), `ignore-config` (a Codex login: `--ignore-user-config`) or `off`. Boxed steps get no mode.
+  `codexExecFlags()` probes `codex exec --help` or `exec resume --help` per command form (cached 10 min);
+  a CLI without the flag turns `ignore-config` into `unsupported`: no flag, a `!` log line, the step runs.
+  The Foundry assumes this CLI contract: the flag skips `config.toml` only, the sign-in stays in
+  `CODEX_HOME`, and rules are separate (`--ignore-rules` is never passed). `fake-codex.mjs` models exactly
+  this. Not yet checked on a real CLI: whether `exec resume` lists the flag, and whether a private
+  `CODEX_HOME` hides personal skills kept outside it.
   Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not

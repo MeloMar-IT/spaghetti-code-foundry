@@ -200,7 +200,8 @@ ${agentLine}    prompt: |
     demo("1.0.0");
     const s = await runFlow(showFlow("    agent: codex\n"), { ...runOpts(), codexBin });
     expect(s.status).toBe("succeeded");
-    expect(outputOf(s)).not.toContain("<foundry-skills");
+    // the agent note names the tag; only a real block has the count
+    expect(outputOf(s)).not.toContain("<foundry-skills count=");
     expect(s.history.find((h) => h.id === "impl")!.skills).toBeUndefined();
   });
 

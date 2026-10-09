@@ -289,8 +289,9 @@ export const ConfigSchema = z
      */
     hotfix_to_main: z.boolean().default(false),
     /**
-     * Run agent steps without your personal Claude Code setup (MCP servers, plugins, skills,
-     * hooks, user settings). Smaller context every turn and no off-task detours.
+     * Run agent steps without your personal setup: Claude Code skips MCP servers, plugins, skills,
+     * hooks and user settings; Codex skips `~/.codex/config.toml`, or uses a private folder with a key
+     * or a local model. Smaller context every turn and no off-task detours.
      */
     isolate_agents: z.boolean().default(true),
     /** Block pushes whose new commits add secrets (API keys, private keys, .env files). */
