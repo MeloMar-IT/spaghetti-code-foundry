@@ -3,7 +3,22 @@ import { ownerLabel } from "./runs.js";
 // The Work page's data work: flatten the board answer, filter, group, order. Pure; the server's
 // record decides status, column, sentence and blockers — nothing here computes them.
 
-export const DEFAULTS = { layout: "board", repo: "", owner: "", status: [], who: "", text: "", group: "status", order: "issue", props: ["repo", "next", "blockers", "owner", "age"], compact: false };
+/** The properties a card or row can show, in the order of the Display menu. */
+export const PROPS = [
+  { id: "repo", label: "Repository" },
+  { id: "next", label: "Next move" },
+  { id: "blockers", label: "Blockers" },
+  { id: "owner", label: "Owner" },
+  { id: "age", label: "Age" },
+  { id: "step", label: "Step" },
+];
+/** The version of the saved choices; a list saved before it had no "step". */
+export const PREFS_VERSION = 2;
+
+export const DEFAULTS = { v: PREFS_VERSION, layout: "board", repo: "", owner: "", status: [], who: "", text: "", group: "status", order: "issue", props: PROPS.map((p) => p.id), compact: false };
+
+/** The choices as the board reads them: no grouping falls back to status. */
+export const boardPrefs = (prefs) => (prefs.layout !== "list" && prefs.group === "none" ? { ...prefs, group: "status" } : prefs);
 
 export const GROUPS = [
   { id: "status", label: "Group by status" },
@@ -92,8 +107,8 @@ export function groupItems(items, prefs, columns = []) {
       return [...known, ...rest].map((w) => make(w, w, items.filter((i) => i.next?.who === w)));
     }
     default: {
-      const wanted = prefs.status?.length ? columns.filter((c) => prefs.status.includes(c.id)) : columns;
-      return wanted.map((c) => make(c.id, c.title, items.filter((i) => i.column === c.id)));
+      // The status filter narrows the items, not the columns: all of them show, empty ones with a count of 0.
+      return columns.map((c) => make(c.id, c.title, items.filter((i) => i.column === c.id)));
     }
   }
 }

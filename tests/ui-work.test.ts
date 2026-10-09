@@ -51,7 +51,7 @@ const board = (cards: any[] = [card()], repo = "acme/app", more: Record<string, 
   repos: Object.entries({ [repo]: cards, ...more }).map(([r, cs]) => ({ repo: r, columns: COLS.map((id, i) => ({ id, title: TITLES[i], cards: cs.filter((c) => c.column === id) })) })),
 });
 const handlers = () => ({ onChange: vi.fn(), onText: vi.fn(), onClear: vi.fn(), onLeave: vi.fn(), now: NOW });
-const prefs = (over: Record<string, unknown> = {}) => ({ layout: "board", repo: "", owner: "", status: [], who: "", text: "", group: "status", order: "issue", props: ["repo", "next", "blockers", "owner", "age"], compact: false, ...over });
+const prefs = (over: Record<string, unknown> = {}) => ({ layout: "list", repo: "", owner: "", status: [], who: "", text: "", group: "status", order: "issue", props: ["repo", "next", "blockers", "owner", "age", "step"], compact: false, ...over });
 const view = (d: unknown, p = prefs(), h: any = handlers()) => {
   const root = new FakeElement("div");
   root.append(...(ui.workView(d, p, h) as unknown[]).filter(Boolean) as FakeElement[]);
@@ -94,8 +94,15 @@ describe("listView", () => {
     expect(tables[0]!.all("th")[0]).not.toBe(tables[1]!.all("th")[0]);
   });
 
-  it("shows the Repository column only with two repositories", () => {
-    expect(view(board()).all("th").map((t) => t.textContent)).not.toContain("Repository");
+  it("shows the Repository column when ticked, also with one repository, and the step and next sentence only when ticked", () => {
+    expect(view(board()).all("th").map((t) => t.textContent)).toContain("Repository");
+    expect(view(board(), prefs({ props: [] })).all("th").map((t) => t.textContent)).not.toContain("Repository");
+    const withStep = board([card({ step: "Step 2 of 3" })]);
+    expect(view(withStep).textContent).toContain("Step 2 of 3");
+    expect(view(withStep, prefs({ props: ["next"] })).textContent).not.toContain("Step 2 of 3");
+    expect(view(withStep, prefs({ props: ["step"] })).textContent).not.toContain(card().next.text);
+    expect(view(withStep, prefs({ props: ["next"] })).textContent).toContain(card().next.text);
+    expect(view(board(), prefs({ compact: true })).all("table")[0]!.attrs.class).toContain("compact");
     const two = view(board([card()], "acme/app", { "acme/lib": [card({ issue: 3, title: "Lib", column: "queued" })] }));
     expect(two.all("th").map((t) => t.textContent)).toContain("Repository");
     expect(two.textContent).toContain("acme/lib");
@@ -239,6 +246,7 @@ describe("toolbar", () => {
 describe("renderWork", () => {
   const main = () => new FakeElement("main");
   const open = async (d: unknown, wanted?: string, store: any = mem(), user = "u1") => {
+    if (!store.data["scf.work.u1"]) store.data["scf.work.u1"] = JSON.stringify({ layout: "list" });
     const m = main();
     const cleanup = ui.renderWork(m, wanted, { user, store, now: () => NOW });
     calls.shift()!.answer(d);
@@ -411,7 +419,7 @@ describe("renderWork", () => {
 
   it("drops a saved owner that is gone without writing storage", async () => {
     const store = mem();
-    store.data["scf.work.u1"] = JSON.stringify({ owner: "gone" });
+    store.data["scf.work.u1"] = JSON.stringify({ owner: "gone", layout: "list" });
     const before = store.data["scf.work.u1"];
     const { m, cleanup } = await open(board(), undefined, store);
     expect(selected(m, "work-owner")).toBe("");
@@ -453,6 +461,6 @@ describe("source", () => {
     expect(read("ui/app.js")).toContain("S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg)");
   });
   it("uses no inline style", () => {
-    for (const f of ["ui/work.js", "ui/work-list.js", "ui/work-model.js", "ui/work-prefs.js"]) expect(read(f), f).not.toMatch(/style\s*:/);
+    for (const f of ["ui/work.js", "ui/work-list.js", "ui/work-model.js", "ui/work-prefs.js", "ui/work-board.js", "ui/work-display.js"]) expect(read(f), f).not.toMatch(/style\s*:/);
   });
 });

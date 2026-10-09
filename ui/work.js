@@ -1,10 +1,12 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
+import { workBoard } from "./work-board.js";
+import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
-import { DEFAULTS, GROUPS, ORDERS, applyFilters, columnsOf, facets, groupItems, isFiltered, workItems } from "./work-model.js";
+import { DEFAULTS, applyFilters, boardPrefs, columnsOf, facets, groupItems, isFiltered, workItems } from "./work-model.js";
 import { cleanPrefs, loadPrefs, savePrefs } from "./work-prefs.js";
 
-// The Work page (redesign): every story as a list, from GET /api/board. Status, column, sentence and
+// The Work page (redesign): every story as a board or a list, from GET /api/board. Status, column, sentence and
 // blockers come from the server's record; this file only filters, groups, orders and draws.
 
 const AGE_MS = 60_000;
@@ -26,7 +28,8 @@ export function workBody(data, prefs, handlers) {
       h("button", { class: "small", "data-focus": "work-clear", onClick: () => handlers.onClear() }, "Clear filters")));
     return nodes;
   }
-  nodes.push(...listView(groupItems(shown, prefs, columnsOf(data)), prefs, handlers));
+  const groups = groupItems(shown, boardPrefs(prefs), columnsOf(data));
+  nodes.push(...(prefs.layout === "list" ? listView(groups, prefs, handlers) : [workBoard(groups, prefs, handlers)]));
   return nodes;
 }
 
@@ -53,8 +56,12 @@ export function workView(data, prefs, handlers) {
       type: "search", placeholder: "Title or #issue", title: "Find a story by title or issue number", "aria-label": "Find a story", "data-focus": "work-text",
       value: prefs.text, onInput: (e) => handlers.onText(e.target.value),
     }),
-    pick("work-group", "Group the stories", prefs.group, GROUPS.map((g) => ({ id: g.id, name: g.label })), (group) => onChange({ group })),
-    pick("work-order", "Order the stories", prefs.order, ORDERS.map((o) => ({ id: o.id, name: o.label })), (order) => onChange({ order })));
+    h("div", { class: "seg", role: "group", "aria-label": "Layout" },
+      ["board", "list"].map((id) => h("button", {
+        class: prefs.layout === id ? "on" : "", "data-focus": `work-layout-${id}`,
+        "aria-pressed": prefs.layout === id ? "true" : "false", onClick: () => onChange({ layout: id }),
+      }, id === "board" ? "Board" : "List"))),
+    displayMenu(prefs, onChange, { open: handlers.menuOpen, onToggle: handlers.onMenu }));
   return [toolbar, body];
 }
 
@@ -65,12 +72,19 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
   let last;
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
   let bodyEl;
+  let menuOpen = false; // the Display menu stays open when the page draws itself again
+  const stops = new Map(); // the card with the Tab stop of each board column
   let prefs = loadPrefs(user, store);
   if (wantedRepo) prefs = { ...prefs, repo: wantedRepo };
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
 
   const handlers = {
-    onChange: (patch) => { prefs = { ...prefs, ...patch }; savePrefs(user, prefs, store); draw(); },
+    onChange: (patch) => {
+      if (Object.entries(patch).every(([k, v]) => JSON.stringify(prefs[k]) === JSON.stringify(v))) return; // nothing changed: no redraw
+      prefs = { ...prefs, ...patch };
+      savePrefs(user, prefs, store);
+      draw();
+    },
     onText: (value) => {
       prefs = { ...prefs, text: value };
       savePrefs(user, prefs, store);
@@ -81,6 +95,9 @@ export function renderWork(main, wantedRepo, { user, store, now } = {}) {
       savePrefs(user, prefs, store);
       draw();
     },
+    stops,
+    get menuOpen() { return menuOpen; },
+    onMenu: (v) => { menuOpen = v; },
     onLeave: (card) => { if (card.watcher) left = card.watcher; },
     get now() { return now?.(); },
   };

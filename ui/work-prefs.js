@@ -1,9 +1,9 @@
-import { COLUMN_IDS, DEFAULTS, GROUPS, ORDERS, WHO, workItems } from "./work-model.js";
+import { COLUMN_IDS, DEFAULTS, GROUPS, ORDERS, PREFS_VERSION, PROPS, WHO, workItems } from "./work-model.js";
 
 // The Work page's choices (filters, grouping, order), kept per account in this browser.
 // Same store pattern as ui/since.js: missing, throwing or garbage storage means the defaults.
 
-const PROPS = DEFAULTS.props;
+const PROP_IDS = PROPS.map((p) => p.id);
 const defaultStore = () => {
   try {
     return globalThis.localStorage;
@@ -33,7 +33,10 @@ export function cleanPrefs(raw, known) {
   out.text = text(r.text, "");
   out.group = oneOf(r.group, GROUPS.map((g) => g.id), out.group);
   out.order = oneOf(r.order, ORDERS.map((o) => o.id), out.order);
-  out.props = listOf(r.props, PROPS) ?? out.props;
+  out.props = listOf(r.props, PROP_IDS) ?? out.props;
+  // Choices saved before "step" existed: the step stays visible once; a later choice to hide it is kept.
+  if (r.v !== PREFS_VERSION && Array.isArray(r.props) && !out.props.includes("step")) out.props = PROP_IDS.filter((id) => id === "step" || out.props.includes(id));
+  out.v = PREFS_VERSION;
   out.compact = r.compact === true;
   if (known) {
     const items = Array.isArray(known) ? known : workItems(known);
