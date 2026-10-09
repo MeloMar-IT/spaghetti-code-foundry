@@ -16,7 +16,7 @@ const CLEAN = [
   "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
   "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
   "ui/editor.js", "ui/app.js", "ui/step-types.js", "ui/graph.js", "ui/library.js",
-  "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
+  "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
   "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
 ];
 

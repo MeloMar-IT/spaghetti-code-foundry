@@ -8,6 +8,8 @@ import { limitsPath } from "../src/auth/limits.js";
 import { createUser } from "../src/auth/users.js";
 import { parseFlow } from "../src/flow/load.js";
 import { RULES, ruleKey } from "../src/server/permissions.js";
+import { resolveSkills } from "../src/skills/resolve.js";
+import { buildRunSkillLock, planHashOf, runSkillLockSummary, writeRunSkillLock } from "../src/skills/run-lock.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
@@ -288,6 +290,102 @@ describe("runs of other accounts", () => {
     const ev = await stream(s, ann, `/api/runs/${id}/events`);
     expect(ev.text).not.toContain(bobRun);
     expect((await call(s, admin, "GET", `/api/runs/${id}`)).text).toContain(bobRun);
+  });
+
+  describe("skills of a run", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const GATE = { id: "risk_gate", type: "shell", run: "$FACTORY_TOOLS/skill-request" };
+    const req = {
+      version: 1,
+      skills: [{ id: "a", reason: "Needed", evidence: ["catalogue:a"] }, { id: "b", reason: "Also", evidence: ["path:src/b.ts"] }],
+    };
+    const skillRun = (id: string, withLock: boolean) => {
+      const dir = join(s.runsDir, id);
+      mkdirSync(dir, { recursive: true });
+      const output = `READY\nSKILL_REQUEST: ${JSON.stringify(req)}`;
+      const entry = {
+        id: "a", version: "1.0.0", digest, key: "a@1.0.0", source: "admin", label: "x", dir: "/secret/dir", trust: "approved", pin: "pinned", active: true,
+        pkg: { id: "a", version: "1.0.0", description: "d", instructions: "BODY", roles: [], dependencies: [], conflicts: [] },
+      };
+      const resolution = resolveSkills({ skills: [entry], byKey: new Map([[entry.key, entry]]), problems: [] } as never, ["a"]);
+      const lock = buildRunSkillLock({ runId: id, resolution, request: req as never, sourceOf: () => "admin", planHash: planHashOf(output), commit: "f".repeat(40) });
+      const { lockDigest } = withLock ? writeRunSkillLock(dir, lock) : { lockDigest: "" };
+      writeRun(s, id, {
+        owner: ann.user.id,
+        flowDef: { name: "f", steps: [GATE] },
+        history: [{ id: "risk_gate", type: "shell", visit: 1, ok: true, output, startedAt: "2026-01-01T00:00:00.000Z", durationMs: 1, logFile: join(dir, "0.log") }],
+        skillLock: runSkillLockSummary(lock, lockDigest || digest),
+        skillPlan: {
+          version: 1, role: "coder", action: "stop", warnings: [], reason: "skills not resolved", gate: "risk_gate", at: "2026-01-01T00:00:00.000Z", checks: 1,
+          selected: [{ id: "a", version: "1.0.0", digest }],
+          unresolved: [{ id: "b", code: "unknown", kind: "unknown", risk: "low", action: "stop", because: "policy", mandatory: false, message: "No skill b is installed." }],
+        },
+      });
+    };
+
+    it("gives the owner the skill view without digest, source or commit, and an admin with them", async () => {
+      const id = "20260101-000000-skill";
+      skillRun(id, true);
+      const own = await call(s, ann, "GET", `/api/runs/${id}`);
+      expect(own.status).toBe(200);
+      const v = own.json().skillView;
+      expect(v.lock).toBe("ok");
+      expect(v.resolved.map((x: { id: string }) => x.id)).toEqual(["a"]);
+      expect(v.requested.map((x: { id: string; state: string }) => `${x.id}:${x.state}`)).toEqual(["a:selected", "b:missing"]);
+      expect(own.text).not.toMatch(/"(digest|source|commit)"/);
+      expect(own.text).not.toContain(s.runsDir);
+      expect(own.text).not.toContain("BODY");
+      const adm = (await call(s, admin, "GET", `/api/runs/${id}`)).json().skillView;
+      expect(adm.resolved[0]).toMatchObject({ digest, source: "admin" });
+      expect(adm.commit).toBe("f".repeat(40));
+      expect(adm.checkedAt).toEqual(expect.any(String));
+    });
+
+    it("gives another account the same answer as for an unknown run", async () => {
+      const id = "20260101-000000-skill-b";
+      skillRun(id, true);
+      const other = await call(s, bob, "GET", `/api/runs/${id}`);
+      const unknown = await call(s, bob, "GET", "/api/runs/unknown-run");
+      expect(other.status).toBe(404);
+      expect(other.text).toBe(unknown.text);
+    });
+
+    it("leaves the skill view out of the list, and puts it in the first update of the stream", async () => {
+      const id = "20260101-000000-skill-c";
+      skillRun(id, true);
+      const list = (await call(s, ann, "GET", "/api/runs")).json() as { runId: string }[];
+      expect(list.map((r) => r.runId)).toContain(id);
+      expect(list.every((r) => !("skillView" in r))).toBe(true);
+      const ev = await stream(s, ann, `/api/runs/${id}/events`);
+      expect(ev.text).toContain("event: update");
+      expect(ev.text).toContain('"skillView"');
+      expect(ev.text).not.toMatch(/"(digest|source|commit)"/);
+      expect(ev.text).not.toContain(s.runsDir);
+    });
+
+    it("has no skill view for a run without skill fields", async () => {
+      const id = "20260101-000000-skill-d";
+      writeRun(s, id, { owner: ann.user.id });
+      const r = await call(s, ann, "GET", `/api/runs/${id}`);
+      expect(r.status).toBe(200);
+      expect("skillView" in r.json()).toBe(false);
+    });
+
+    it("names a lock that is missing, invalid or unreadable, for both roles", async () => {
+      const id = "20260101-000000-skill-e";
+      skillRun(id, false);
+      const file = join(s.runsDir, id, "skill-lock.json");
+      const seen = async () => [await call(s, ann, "GET", `/api/runs/${id}`), await call(s, admin, "GET", `/api/runs/${id}`)].map((r) => {
+        expect(r.status).toBe(200);
+        return r.json().skillView.lock;
+      });
+      expect(await seen()).toEqual(["missing", "missing"]);
+      writeFileSync(file, "not json");
+      expect(await seen()).toEqual(["changed", "changed"]);
+      rmSync(file);
+      mkdirSync(file);
+      expect(await seen()).toEqual(["changed", "changed"]);
+    });
   });
 
   it("does not give a user another account's run through a run.json that claims its id", async () => {

@@ -2514,7 +2514,7 @@ skills:
 - **High risk always stops,** whatever the policy says. A skill is high risk when its id, category or a capability equals a `high_risk` term. Terms match whole hyphen-separated words, so `insecurity-notes` is not high risk. A package that says `risk: high` is high risk too. A `medium` skill also always stops; only `low` can be warned about. A mandatory skill (`skills.selection.include`) that cannot be used also stops.
 - **Resume:** resuming a stopped run checks the skills again. Install, approve or pin the skill (see [Pinned versions and integrity](#pinned-versions-and-integrity)), then resume. If the stored request cannot be read again, the run stays stopped.
 - **Unchanged:** a run whose plan asks for no skills, with no `skills.selection.include`, is not checked. Older run files stay valid.
-- **Not shown yet:** the stop reason and warnings are in `run.json` and the live log. The run page and GitHub comments do not show them yet.
+- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). GitHub comments do not show them yet.
 
 ### Skills in Claude sessions
 
@@ -2527,6 +2527,23 @@ A Claude session gets only the skills of the run's lock. The Foundry puts their 
 - **Repairs and fallbacks.** The full text is given once per Claude session. A step with `resume:` that continues the session of an earlier step (same agent, same locked block) gets only a one-line reminder with the skill ids, not the text again. A new session gets the complete block exactly once: a retry, a fallback to another model or provider, or a resume that cannot continue the old session. Before every session the lock is checked again; if the skills changed, the step stops.
 - **Log.** `skill context: reused …` (nothing added), `skill context: loaded …` (first session), `skill context: reloaded … new session` (retry, fallback or fresh session) and `! skill context: rejected (…)` (lock check failed). The log shows ids, sizes and token estimates, never the package text. The step record `skills` also gets `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; `skills_digest` is kept for the next resume. Older run files without them still work.
 - **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+
+### Skills on the run page
+
+The run page has a **Skills** card; users see it on their run page too. It has two lists.
+
+- **Requested:** what the plan asked for, and what the administrator always includes. Each item has a state: *Selected*, *Missing* (not installed, or a dependency is unavailable), *Conflicting*, *Not approved*, *Too large* or *Not checked* (no answer yet). The reason, the evidence and the message of a problem are shown when there are any.
+- **Resolved:** the skills the run uses, in load order, with their dependencies. Each row shows version, category, why it was chosen, about how many tokens of context it needs, its integrity, and how the session got it: *Loaded*, *Reloaded*, *Reused* or *Left out (over budget)*. Reviewer steps show *Review checks given*.
+
+Integrity words: *Verified* (the package matches the lock), *Changed*, *Missing*, *No longer pinned*, *Not approved*, *Cannot be verified*, *Not checked* and *Not locked yet* (the run has not reached its first agent step).
+
+- **Up to a minute old.** Integrity and category come from the skill list the server keeps for one minute.
+- **Evidence.** A path is shown as text. An issue is a link when the repository is `owner/name`.
+- **Status line.** The card says when the lock is missing or was changed, when the run planned again (new skills are locked at the next agent step), when the run stopped because a skill cannot be used, and the context estimate.
+- **Admins** also see the source (built-in or administrator folder) and the digest. Users never see digests, sources, commits or folder paths.
+- **Older runs** without skill information show no card.
+
+The same data is the `skillView` field of `GET /api/runs/:id` and of the `update` events of the run stream. The run list does not carry it.
 
 ### Review checks for reviewers
 

@@ -19,6 +19,8 @@ import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
 import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
+import { cachedSkillRegistryAt } from "../skills/registry.js";
+import { runSkillView, type RunSkillView } from "./skill-view.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import { gateRun } from "../run-gate.js";
 import { matchesRun, parseRunFilter, runFilterValues } from "./run-filter.js";
@@ -58,8 +60,13 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const mine = (rid: string) => scheduler.ownerOf(rid) === user.id;
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
   const hide = <T,>(v: T): T => (admin ? v : hideForeign(v, mine));
+  // The skills of a run for its page (see skill-view.ts); the list of runs does not carry it. The registry is the one-minute cache health uses.
+  const withSkills = <T extends RunSummary>(r: T): T & { skillView?: RunSkillView } => {
+    const skillView = runSkillView(r, { admin, registry: () => cachedSkillRegistryAt(ctx.config().skills, Date.now(), undefined, { repo: opts.repo }) });
+    return skillView ? { ...r, skillView } : r;
+  };
   // Present only when an answer sent now would be accepted. The active check is left out on purpose: finish() sends its last update while the run is still active.
   const answerable = (r: RunSummary) => (!scheduler.isQueued(r.runId) && !answerBlock(r, ctx.config().watchers) && answerRoom(r) > 0 ? { canAnswer: true as const } : {});
   // The lock key and the place of a bug story, for a job that resumes a run.
@@ -267,7 +274,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         last = shown(next);
         const can = answerable(e.summary);
         lastCan = "canAnswer" in can;
-        out = { type: "update", summary: shape({ ...e.summary, ...can, next }) };
+        out = { type: "update", summary: shape({ ...withSkills(e.summary), ...can, next }) };
       } else if (!admin) {
         const line = userLogLine(e.line);
         if (line === undefined) return;
@@ -296,7 +303,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   const s = scheduler.get(id);
   if (!s) throw new HttpError(404, "run not found");
-  if (!action && method === "GET") return send(res, 200, hide(shape({ ...s, ...answerable(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
+  if (!action && method === "GET") return send(res, 200, hide(shape({ ...withSkills(s), ...answerable(s), next: view(nextFor(ctx, undefined, !admin)(s)) }))), true;
   if (action === "diff" && method === "GET") {
     if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
     return send(res, 200, runDiff(s)), true;

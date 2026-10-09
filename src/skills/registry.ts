@@ -386,11 +386,16 @@ let cache: { key: string; at: number; reg: SkillRegistry } | undefined;
 
 /** Like discoverSkills, kept for a minute: health asks every 30 seconds. */
 export function cachedSkillRegistry(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): SkillRegistry {
+  return cachedSkillRegistryAt(skills, now, maxAgeMs, opts).registry;
+}
+
+/** Like cachedSkillRegistry, and says when the registry was really read (ms since the epoch). */
+export function cachedSkillRegistryAt(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): { registry: SkillRegistry; at: number } {
   const key = JSON.stringify(skills) + "\0" + (opts.home ?? dataHome()) + "\0" + (opts.repo ?? "");
-  if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return cache.reg;
+  if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return { registry: cache.reg, at: cache.at };
   const reg = discoverSkills(skills, opts);
   cache = { key, at: now, reg };
-  return reg;
+  return { registry: reg, at: now };
 }
 
 export function clearSkillRegistryCache(): void {

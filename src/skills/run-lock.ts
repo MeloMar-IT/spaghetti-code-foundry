@@ -14,7 +14,8 @@ import { SKILL_DIGEST_RE, SKILL_ROLES, SkillIdSchema, SkillVersionSchema } from 
 // It holds no credentials, no host paths and no issue text: free text is projected to a safe form (see safeText).
 
 export const RUN_SKILL_LOCK_FILE = "skill-lock.json";
-export const RUN_SKILL_LOCK_VERSION = 1;
+/** Version 2 locks hold the category of each skill; a lock without any category is still written as version 1. Both are read. */
+export const RUN_SKILL_LOCK_VERSION = 2;
 export const MAX_RUN_SKILL_LOCK_BYTES = 256 * 1024;
 
 /** A path (Unix, home, Windows, UNC, URL) or a secret-looking text. Such text never goes into the lock. */
@@ -50,6 +51,8 @@ export const RunSkillLockEntrySchema = z
     source: z.enum(["admin", "builtin"]),
     role: z.enum(SKILL_ROLES),
     selection: z.enum(RESOLVE_REASONS),
+    /** The category of the package when it was locked (version 2). */
+    category: z.string().min(1).max(64).optional(),
     /** The planner's sentence; absent for mandatory skills and dependencies, or when it was not safe to store. */
     reason: reason.optional(),
     evidence: evidence.optional(),
@@ -60,7 +63,7 @@ export const RunSkillLockEntrySchema = z
 
 export const RunSkillLockSchema = z
   .object({
-    version: z.literal(RUN_SKILL_LOCK_VERSION),
+    version: z.union([z.literal(1), z.literal(RUN_SKILL_LOCK_VERSION)]),
     runId: z.string().regex(/^[\w-]+$/),
     createdAt: z.string().max(64),
     planHash: digest,
@@ -93,19 +96,25 @@ export function buildRunSkillLock(i: {
   resolution: SkillResolution;
   request: SkillRequest;
   sourceOf: (id: string, version: string) => "admin" | "builtin";
+  /** The category of a locked package; when no skill has one the lock is written as version 1. */
+  categoryOf?: (id: string, version: string) => string | undefined;
   planHash: string;
   commit?: string;
   now?: Date;
 }): RunSkillLock {
   const items = new Map(i.request.skills.map((s) => [s.id, s]));
+  const categories = i.resolution.selected.map((s) => {
+    const c = i.categoryOf?.(s.id, s.version);
+    return typeof c === "string" && c ? c : undefined;
+  });
   return RunSkillLockSchema.parse({
-    version: RUN_SKILL_LOCK_VERSION,
+    version: categories.some((c) => c !== undefined) ? RUN_SKILL_LOCK_VERSION : 1,
     runId: i.runId,
     createdAt: (i.now ?? new Date()).toISOString(),
     planHash: i.planHash,
     ...(i.commit && /^[0-9a-f]{40,64}$/.test(i.commit) ? { commit: i.commit } : {}),
     estimatedTokens: i.resolution.estimatedTokens,
-    skills: i.resolution.selected.map((s) => {
+    skills: i.resolution.selected.map((s, n) => {
       const item = items.get(s.id);
       const ev = item ? [...new Set(item.evidence.map(projectEvidence))] : [];
       return {
@@ -115,6 +124,7 @@ export function buildRunSkillLock(i: {
         source: i.sourceOf(s.id, s.version),
         role: i.resolution.role,
         selection: s.reason,
+        ...(categories[n] ? { category: categories[n] } : {}),
         ...(item && safeText(item.reason) ? { reason: item.reason } : {}),
         ...(ev.length ? { evidence: ev } : {}),
         requiredBy: s.requiredBy,

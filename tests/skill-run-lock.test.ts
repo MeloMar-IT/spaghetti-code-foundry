@@ -98,6 +98,33 @@ describe("privacy", () => {
   });
 });
 
+describe("category", () => {
+  const build = (categoryOf?: (id: string, v: string) => string | undefined) => {
+    const r = reg(sk("a"));
+    const req = request({ id: "a" });
+    return buildRunSkillLock({ runId: "run-1", resolution: resolveSkills(r, ["a"]), request: req, sourceOf: () => "admin", planHash: PH, categoryOf, now: new Date("2026-01-01T00:00:00Z") });
+  };
+  it("is stored in a version 2 lock", () => {
+    const lock = build(() => "testing");
+    expect(lock.version).toBe(2);
+    expect(lock.skills[0]!.category).toBe("testing");
+  });
+  it("is absent, and the lock stays version 1, without categoryOf or when it gives nothing", () => {
+    for (const lock of [build(), build(() => undefined)]) {
+      expect(lock.version).toBe(1);
+      expect("category" in lock.skills[0]!).toBe(false);
+    }
+  });
+  it("round-trips through write and read, and a version 1 lock without it still parses", () => {
+    const dir = tmp();
+    const lock = build(() => "testing");
+    const { lockDigest } = writeRunSkillLock(dir, lock);
+    expect(readRunSkillLock(dir)).toEqual({ ok: true, lock, lockDigest });
+    expect(RunSkillLockSchema.safeParse(build()).success).toBe(true);
+    expect(RunSkillLockSchema.safeParse({ ...build(), version: 3 }).success).toBe(false);
+  });
+});
+
 describe("save and load", () => {
   it("round-trips with mode 0600, a digest of the bytes and no temporary file", () => {
     const dir = tmp();
@@ -118,7 +145,7 @@ describe("save and load", () => {
     writeFileSync(file, "{not json");
     expect(readRunSkillLock(dir)).toEqual({ ok: false, reason: "invalid" });
     const lock = lockOf(reg(sk("a")), request({ id: "a" }));
-    writeFileSync(file, JSON.stringify({ ...lock, version: 2 }));
+    writeFileSync(file, JSON.stringify({ ...lock, version: 3 }));
     expect(readRunSkillLock(dir)).toEqual({ ok: false, reason: "invalid" });
     writeFileSync(file, JSON.stringify({ ...lock, extra: true }));
     expect(readRunSkillLock(dir)).toEqual({ ok: false, reason: "invalid" });
