@@ -1,17 +1,14 @@
 import { api } from "./api.js";
-import { h, modal, mount, timeAgo, toast } from "./dom.js";
-import { monitorLists } from "./monitor.js";
+import { confirmDialog, fieldFor, h, markInvalid, modal, mount, timeAgo, toast } from "./dom.js";
+import { check, input } from "./fields.js";
+import { confirmUnreadable, monitorLists } from "./monitor.js";
+import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
 import { watcherSemanticOf } from "./icons.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
 import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
-const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
-const check = (checked, label) => {
-  const el = h("input", { type: "checkbox", class: "fit", checked: !!checked });
-  return { el, row: h("label", { class: "row tight" }, el, h("span", {}, label)) };
-};
 const num = (el) => (el.value.trim() === "" ? undefined : Number(el.value));
 
 /** The notes of a watcher's status (what waits or is wrong with the monitor's bug stories) as a list, or null when there are none. */
@@ -42,7 +39,7 @@ export function storiesRow(m, reload) {
   const isOn = m.state === "on" || m.state === "quiet";
   const wantOn = m.state === "off" || m.state === "unreadable" || m.state === "breaker";
   const click = async () => {
-    if (m.state === "unreadable" && !confirm("The state file cannot be read. Switching on keeps it as monitor-guard.json.broken and starts a fresh one. Go on?")) return;
+    if (m.state === "unreadable" && !(await confirmUnreadable())) return;
     try {
       await (wantOn ? api.monitorOn() : api.monitorOff());
       toast(wantOn ? "Bug stories are on" : "Bug stories are off");
@@ -123,10 +120,43 @@ export function watcherGroups(watchers, repos) {
   };
 }
 
-export async function renderWatchers(main) {
+// The newest reload wins: an older answer that arrives later is dropped.
+let reloads = 0;
+
+/** Everything the Watchers page shows. `monError` is set when only the monitor's state could not be loaded. */
+async function loadWatchers() {
   const [watchers, flows, repos] = await Promise.all([api.watchers(), api.flows(), api.allRepos()]);
-  const reload = () => renderWatchers(main);
-  const mon = watchers.some((w) => w.source === "monitor") ? await api.monitor().catch(() => undefined) : undefined;
+  let mon;
+  let monError;
+  if (watchers.some((w) => w.source === "monitor")) {
+    try {
+      mon = await api.monitor();
+    } catch (e) {
+      monError = e;
+    }
+  }
+  return { watchers, flows, repos, mon, monError };
+}
+
+export async function renderWatchers(main, { data } = {}) {
+  if (!data) {
+    mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Watchers")), loadingState("Loading watchers…", { rows: 4, shape: "cards" }));
+    data = await loadWatchers(); // a failure goes to the router, which draws the error with Retry
+  }
+  const { watchers, flows, repos, mon, monError } = data;
+  const at = Date.now();
+  const note = h("div");
+  const reload = async () => {
+    const my = ++reloads;
+    let fresh;
+    try {
+      fresh = await loadWatchers();
+    } catch {
+      if (my === reloads) mount(note, staleNote(at, { failed: true, onRetry: reload }));
+      return;
+    }
+    if (my === reloads) await renderWatchers(main, { data: fresh });
+  };
   const { groups, gone, monitor, file } = watcherGroups(watchers, repos);
   // a failed call shows the server's sentence as it is; the page is drawn again either way
   const act = async (fn) => {
@@ -135,7 +165,7 @@ export async function renderWatchers(main) {
     } catch (e) {
       toast(e.message, "error");
     }
-    reload();
+    await reload();
   };
 
   const saveMonitor = (existing) => (entry) =>
@@ -144,21 +174,32 @@ export async function renderWatchers(main) {
       const next = monitorEntry(entry);
       c.watchers = existing ? c.watchers.map((x) => (x.id === existing.id ? next : x)) : [...c.watchers, next];
     }, `Watcher ${entry.id} saved`);
-  const checkNow = (w) => h("button", { class: "small", onClick: () => act(async () => { toast("Checking…"); await api.tickWatcher(w.id); }) }, "Check now");
+  const checkNow = (w) => {
+    const busy = h("span", { class: "muted", role: "status" });
+    const btn = h("button", { class: "small", onClick: async () => {
+      btn.disabled = true;
+      mount(busy, h("span", { class: "spinner" }), " Checking…");
+      await act(() => api.tickWatcher(w.id));
+      btn.disabled = false;
+      mount(busy);
+    } }, "Check now");
+    return [busy, btn];
+  };
+  const sure = (w) => confirmDialog({ title: `Delete watcher ${w.id}?`, text: "The watcher stops checking. You can add it again later.", confirm: "Delete watcher" });
 
   const buttons = (w, kind) => {
     if (kind === "file") return [w.enabled ? checkNow(w) : null];
     if (kind === "monitor") {
       return [w.enabled ? checkNow(w) : null,
         h("button", { class: "small", onClick: async () => (await monitorDialog(w, saveMonitor(w))) && reload() }, "Edit"),
-        h("button", { class: "small danger", onClick: () => {
-          if (!confirm(`Delete watcher ${w.id}?`)) return;
-          act(() => saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted"));
+        h("button", { class: "small danger", onClick: async () => {
+          if (!(await sure(w))) return;
+          await act(() => saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted"));
         } }, "Delete")];
     }
-    const del = h("button", { class: "small danger", onClick: () => {
-      if (!confirm(`Delete watcher ${w.id}?`)) return;
-      act(async () => { await api.removeRepoWatcher(w.repoId, w.id); toast("Deleted"); });
+    const del = h("button", { class: "small danger", onClick: async () => {
+      if (!(await sure(w))) return;
+      await act(async () => { await api.removeRepoWatcher(w.repoId, w.id); toast("Deleted"); });
     } }, "Delete");
     // a watcher whose repository is gone can only be deleted: the API refuses to change it
     if (kind === "gone") return [del];
@@ -187,64 +228,42 @@ export async function renderWatchers(main) {
         w.enabled ? lastOkText(st) : "",
         st?.nextTick ? ` · next ${new Date(st.nextTick).toLocaleTimeString()}` : ""),
       w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted text-sm mt-6" }, "What happens next:"), nextList(watcherNext(w))) : null,
-      w.source === "monitor" ? storiesRow(mon, reload) : null,
-      w.source === "monitor" ? monitorLists(mon, reload) : null,
+      w.source !== "monitor" ? null : monError
+        ? errorState(explainError(monError, { what: "Could not load the monitor's state.", safe: "The watcher is shown and keeps checking." }), { onRetry: reload })
+        : [storiesRow(mon, reload), monitorLists(mon, reload)],
       watcherNotes(st),
       st?.lastError ? h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "mono" }, st.lastError)) : null,
       st?.lastActions?.length ? h("details", {}, h("summary", {}, `Recent activity (${st.lastActions.length})`), h("pre", { class: "mono" }, st.lastActions.join("\n"))) : null);
   };
   const section = (title, list, kind, sub) => (list.length ? h("div", {}, h("h3", {}, title), sub ?? null, h("div", { class: "watcher-list" }, list.map((w) => card(w, kind)))) : null);
-  const add = () => h("button", { class: "primary", onClick: async () => (await repoWatcherDialog({ repos, flows, existing: null })) && reload() }, "+ Add watcher");
+  const addWatcher = async () => (await repoWatcherDialog({ repos, flows, existing: null })) && reload();
+  const add = () => h("button", { class: "primary", onClick: addWatcher }, "+ Add watcher");
 
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Watchers"),
       h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
       h("span", { class: "spacer" }),
-      h("button", { onClick: reload }, "↻"),
+      h("button", { onClick: reload, "aria-label": "Reload" }, "↻"),
       monitor.length ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor(null))) && reload() }, "+ Add the monitor"),
       add()),
+    note,
     watchers.length ? [
       ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
         h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null))),
       section("Repository not connected any more", gone, "gone"),
       section("The Foundry itself", monitor, "monitor"),
       section("From config.yaml", file, "file"),
-    ] : h("div", { class: "empty" },
-      h("p", {}, "No watchers yet. A watcher checks a GitHub repo on a schedule and runs a flow: for labelled issues, review comments, red CI on the default branch, or a recurring chore."),
-      add()),
+    ] : emptyState("No watchers yet. A watcher checks a GitHub repo on a schedule and runs a flow: for labelled issues, review comments, red CI on the default branch, or a recurring chore.",
+      { label: "+ Add watcher", onClick: addWatcher }),
     h("p", { class: "muted mt-16" },
       "Watchers run inside this server. To keep them running after you close the terminal or restart your Mac: ",
       h("code", {}, "scf service install")));
 }
 
-// ── disk ──
-
-function diskSection(section) {
-  const days = input("7", { type: "number", min: 0, class: "w-90" });
-  const purge = check(false, "Also delete run logs");
-  const paused = check(false, "Include stopped / waiting runs (they can't be resumed afterwards)");
-  const out = h("div");
-  const go = async (dryRun) => {
-    if (!dryRun && !confirm("Remove these workspaces now? Branches in your repos are kept.")) return;
-    try {
-      const r = await api.clean({ olderThanDays: Number(days.value), purge: purge.el.checked, includePaused: paused.el.checked, dryRun });
-      mount(out, h("p", { class: dryRun ? "muted flush" : "status ok flush" },
-        `${dryRun ? "Would remove" : "Removed"} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""} · ${r.freedMb} MB`,
-        r.kept.length ? ` · keeping ${r.kept.length} paused/running` : ""));
-    } catch (e) {
-      toast(e.message, "error");
-    }
-  };
-  return section("Disk",
-    h("p", { class: "muted flush" }, "Each run keeps its workspace (worktree or clone) so you can inspect or resume it. Clean up old ones here or with ", h("code", {}, "scf clean"), "."),
-    h("div", { class: "row" }, h("span", {}, "Runs finished more than"), days, h("span", {}, "days ago")),
-    purge.row, paused.row,
-    h("div", { class: "row" }, h("button", { onClick: () => go(true) }, "Preview"), h("button", { class: "danger", onClick: () => go(false) }, "Clean up"), out));
-}
-
 // ── settings ──
 
 export async function renderSettings(main) {
+  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Settings")), loadingState("Loading settings…", { rows: 6, shape: "detail" }));
   const [c, info] = await Promise.all([api.config(), api.info()]);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
@@ -279,11 +298,22 @@ export async function renderSettings(main) {
   const hostsIn = input(net.allowed_hosts.join(", "), { class: "mono", placeholder: "mymac.local" });
   const insecure = check(net.allow_insecure_http, "Allow plain HTTP from other computers");
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
+  const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
   const err = h("div");
+  const saveNote = h("span", { class: "status", role: "status" });
+  const saveBtn = h("button", { class: "primary", onClick: () => save() }, "Save");
+  // the controls a server sentence can name, by the key of the setting
+  const fields = {
+    allowed_hosts: hostsIn, listen: listenSel, daily_budget_usd: budget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
+    slack_webhook: slack, command: cmd, throttle_minutes: throttle, quiet_hours: quietFrom, daily_summary_at: summaryAt, gh_token_env: botToken,
+    app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
+  };
+  const SETTINGS_PAIRS = Object.keys(fields).map((k) => [new RegExp(k === "name" || k === "email" || k === "repo" || k === "command" ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
     const next = {
       ...c,
+      ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
@@ -303,18 +333,29 @@ export async function renderSettings(main) {
         : undefined,
       sandbox: { ...c.sandbox, claude: sbxClaude.el.checked || undefined, docker_image: sbxImage.value.trim() || undefined, user_runs: sbxOff.el.checked ? "off" : "required" },
     };
+    saveBtn.disabled = true;
+    saveNote.setAttribute("class", "status");
+    mount(saveNote, "Saving…");
     try {
       await api.saveConfig(next);
       mount(err);
+      markInvalid(Object.values(fields));
+      saveNote.setAttribute("class", "status ok");
+      mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
     } catch (e) {
-      mount(err, h("div", { class: "errors" }, e.message));
+      mount(err, h("div", { class: "errors", role: "alert" }, e.message));
+      markInvalid(Object.values(fields), fields[fieldFor(e.message, SETTINGS_PAIRS)]);
+      saveNote.setAttribute("class", "status bad");
+      mount(saveNote, "Not saved.");
+    } finally {
+      saveBtn.disabled = false;
     }
   };
 
   const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), h("button", { class: "primary", onClick: save }, "Save")),
+    h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), saveNote, saveBtn),
     err,
     section("Budget & capacity",
       limits.row,
@@ -322,6 +363,9 @@ export async function renderSettings(main) {
       h("div", { class: "grid" },
         f("Daily budget ($)", budget, `Spent today: $${info.spentToday.toFixed(2)}. When reached, runs pause (stopped) and resume the next day.`),
         f("Runs at the same time", conc))),
+    section("Redesign",
+      redesign.row,
+      h("p", { class: "muted" }, "Off by default. Applies after you reload the page.")),
     section("Network",
       h("p", { class: "muted flush" }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
       info.listening && info.listening !== net.listen ? h("p", { class: "status bad flush" }, `Now listening on ${info.listening} — restart the server to use ${net.listen}`) : null,
@@ -357,7 +401,6 @@ export async function renderSettings(main) {
     section("Bot identity",
       h("p", { class: "muted flush" }, "By default commits and comments are made as you (your git config and gh login)."),
       h("div", { class: "grid" }, f("Commit author name", botName), f("Commit author email", botEmail), f("Env var with the bot's GitHub token", botToken, "Used as GH_TOKEN for gh and git pushes."))),
-    diskSection(section),
     section("GitHub App",
       h("div", { class: "grid" },
         f("App ID", appId),

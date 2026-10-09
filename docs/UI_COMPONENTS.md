@@ -1,0 +1,313 @@
+# UI components (the kit)
+
+The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives, and record components. No page uses the kit yet.
+
+## Conventions
+
+- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState), `ui/kit/overlays.js` (tabs, menu, tooltip, dialog, drawer, toast), `ui/kit/records.js` (evidence, timelineEntry, timeline, logView, diffView). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
+- **Plain functions.** Each component is a function that returns a DOM element. Props are one object; children follow it (`button(props, ...children)`). `class` is added to the kit classes. Other props (for example `id`, `name`, `aria-*`, `data-*`) go to the element.
+- **No inline styles.** Kit modules never pass `style` to `h()`. A component throws if the caller passes `style`. Use a class.
+- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css`, `display.css`, `overlays.css` and `records.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
+- **Names.** Block `scf-name`, part `scf-name__part`, variant or state `scf-name--variant`.
+- **Global rules.** The global `button` rules in `ui/style.css` stay. Kit classes are written to look right on top of them.
+- **Unbound.** Controls take `value` and `onInput`/`onChange` and keep no state. They are not the bound inputs in `ui/fields.js`, which are unchanged.
+- **Errors.** A missing required prop (a label, an `href`, `options`) or an unknown variant or size throws an `Error` at once.
+- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts`, `tests/ui-kit-display.test.ts` and `tests/ui-kit-overlays.test.ts` and `tests/ui-kit-records.test.ts`, with `installFakeDom`.
+
+## Actions
+
+### button
+
+`button({ variant, size, busy, disabled, type, class, onClick, ...attrs }, ...children)`
+
+- `variant`: `default` (default) | `primary` | `danger` | `ghost`. `size`: `default` | `small`. Other values throw.
+- `busy`: shows a spinner, sets `aria-busy="true"` and `aria-disabled="true"`, and ignores clicks. The button stays focusable.
+- `disabled`: sets the native `disabled` attribute.
+- **Element:** `<button type="button">` unless `type` is given (for example `"submit"`). Classes: `scf-btn`, `scf-btn--primary|danger|ghost`, `scf-btn--small`, `scf-btn--busy`.
+- **Keyboard:** Tab to focus; Enter and Space activate. A disabled button is skipped by Tab.
+- **Accessible name:** the text of the children.
+
+### iconButton
+
+`iconButton({ icon, label, variant, class, ...attrs })`
+
+- `icon`: icon name from `ui/icons.js`. `label` is required and throws if empty. `variant` defaults to `ghost`; the other `button` props work too.
+- **Element:** a `button` with class `scf-btn--icon`.
+- **Keyboard:** as `button`.
+- **Accessible name:** `label`, set as `aria-label` and as `title`.
+
+### link
+
+`link({ href, external, class, ...attrs }, ...children)`
+
+- `href` is required and throws if empty. `external: true` adds `rel="noopener noreferrer"` and `target="_blank"`.
+- **Element:** `<a href class="scf-link">`.
+- **Keyboard:** Tab to focus; Enter activates.
+- **Accessible name:** the text of the children. For an external link, say so in the text.
+
+## Form controls
+
+### field
+
+`field({ label, hint, error, required, class }, control)`
+
+- Wraps a control built by `textInput`, `textArea` or `select`. `label` is required and throws if empty.
+- Sets an `id` on the control if it has none, and joins the label with `for`/`id`.
+- `hint` and `error` get ids and are added to the control's `aria-describedby` (an existing value is kept).
+- `error` sets `aria-invalid="true"` on the control and is drawn in an element with `role="alert"`.
+- `required` sets `required` on the control and shows an `*` that is hidden from assistive technology.
+- **Element:** `<div class="scf-field">` with a `label`, the control, a `small` hint and a `div` error.
+- **Keyboard:** a click on the label focuses the control.
+- **Accessible name:** the label text; the hint and error are the description.
+
+### textInput and textArea
+
+`textInput({ value, onInput, onChange, placeholder, mono, disabled, type, class, ...attrs })` and `textArea({ rows, ...same })`
+
+- `type` defaults to `text`; `rows` defaults to 4. `mono` uses the monospace font.
+- **Element:** `<input class="scf-input">` and `<textarea class="scf-input scf-input--area">`.
+- **Keyboard:** native text editing.
+- **Accessible name:** none by itself. Wrap it in `field`, or pass `aria-label`.
+
+### select
+
+`select({ options, value, emptyLabel, onChange, disabled, class, ...attrs })`
+
+- `options`: `[value, label]` pairs or plain strings. `options` is required and must be an array. `emptyLabel` adds an empty first option. The option equal to `value` (compared as strings) is selected.
+- **Element:** `<select class="scf-input scf-input--select">` with `<option>`s.
+- **Keyboard:** native (arrow keys, type-ahead, Enter or Space to open).
+- **Accessible name:** as `textInput`.
+
+### checkbox
+
+`checkbox({ label, checked, onChange, disabled, class, ...attrs })`
+
+- `label` is required and throws if empty.
+- **Element:** `<label class="scf-checkbox">` holding a native `<input type="checkbox">` and a `span` with the label text.
+- **Keyboard:** Tab to focus; Space toggles.
+- **Accessible name:** the label text.
+
+## Display
+
+Tones for `card`, `badge` and `banner`: `neutral` | `ok` | `fail` | `run` | `warn` | `accent`. Any other tone throws. The meaning is always in the text, never in colour only. All tones use theme tokens. The old `.card`, `.table`, `.table-box`, `.pill`, `.badge` and `.empty` classes in `ui/style.css` stay for the existing pages; the kit uses `scf-` classes. `.scf-visually-hidden` hides text on screen but keeps it for screen readers.
+
+### card
+
+`card({ title, actions, tone, level, id, class, ...attrs }, ...children)`
+
+- **Element:** `<section class="scf-card scf-card--<tone>">`. With `title` it holds a heading (`h2` by default; `level` 2–6) and the section has `aria-labelledby` pointing at it. Without a title, pass your own `aria-label`. `actions` is a node shown next to the heading.
+- **Accessible name:** the title.
+
+### table
+
+`table({ caption, columns, rows, onRowOpen, empty, hideCaption, id, class })`
+
+- `columns`: `[{ key, label, align?, cell?(row, index) }]`. `align` is `start` (default) or `end`. `cell` returns text or a node; without it the cell shows `row[key]`.
+- `caption` and at least one column are required and throw if missing. `hideCaption: true` hides the caption visually; it stays for screen readers.
+- **Element:** a real `<table>` with `<caption>` and `<th scope="col">`, inside a scroll box (`div.scf-table-box`, `role="region"`, `tabindex="0"`, named by the caption). A wide table scrolls inside the box, not the page. This answers finding F14 in `docs/ui-redesign/findings.md`.
+- **Row open:** with `onRowOpen(row, index)` the first cell holds a `<button>` named by the cell text, so a row opens by mouse and keyboard.
+- **No rows:** shows `empty` (a string or a node, default "Nothing to show.") under the headers.
+- **Keyboard:** Tab to the scroll box and use the arrow keys to scroll; Tab to a row button and press Enter or Space.
+
+### list
+
+`list({ items, ordered, class, ...attrs })`
+
+- `items` is an array of strings, nodes or arrays of them (required). **Element:** `<ul>`, or `<ol>` with `ordered: true`, with one `<li>` per item.
+
+### badge
+
+`badge({ tone, label, class, ...attrs })`
+
+- `label` is required. **Element:** `<span class="scf-badge scf-badge--<tone>">`. Use words such as "Failed" or "Running", not only a colour.
+
+### banner
+
+`banner({ tone, title, actions, onDismiss, class, ...attrs }, ...children)`
+
+- Needs a `title` or content. **Element:** `<div>` with `role="alert"` for `fail` and `role="status"` for the other tones.
+- `onDismiss` adds an `iconButton` labelled "Dismiss". The banner does not remove itself; your handler does.
+- **Keyboard:** the dismiss button and any `actions` are reached with Tab.
+
+### skeleton
+
+`skeleton({ lines, label, class, ...attrs })`
+
+- `lines`: a whole number from 1 to 20 (default 3). `label` defaults to "Loading…".
+- **Element:** a container with `aria-busy="true"` and a visually hidden label. The grey lines are `aria-hidden`. Replace the skeleton with the content when it has loaded.
+
+### emptyState
+
+`emptyState({ title, text, action, level, class, ...attrs })`
+
+- `title` is required. **Element:** a heading (`h3` by default; `level` 2–6), optional text, and an optional `action` node (for example a `button`).
+
+## Overlays and navigation
+
+All in `ui/kit/overlays.js`. Keyboard and focus rules are built in, so a page writes none. Menus and tooltips are placed with classes only (below or above the trigger, start or end aligned); there are no computed inline positions.
+
+### tabs
+
+`tabs({ label, tabs: [{ id, label, build }], selected, onSelect, class })`
+
+- `label` and at least one tab are required. Each tab needs a unique `id`, a `label` and a `build` function; `selected` must be a tab id. Otherwise it throws. The first tab is selected by default.
+- A panel is built the first time its tab is selected. `onSelect(id)` runs when the selection changes.
+- **Element:** `role="tablist"` with `role="tab"` buttons (`aria-selected`, `aria-controls`) and one `role="tabpanel"` per tab (`aria-labelledby`). Roving `tabindex`: only the selected tab is a tab stop.
+
+| Key | Action |
+|---|---|
+| Tab | Moves into the selected tab, then to the panel |
+| Right / Left | Next / previous tab; wraps at the ends |
+| Home / End | First / last tab |
+
+### menu
+
+`menu({ label, trigger, items: [{ label, onSelect, danger, disabled }], placement, align, class })`
+
+- `placement`: `below` (default) | `above`. `align`: `start` (default) | `end`. `label` is required and `items` must be an array.
+- **Element:** a trigger button with `aria-haspopup="menu"` and `aria-expanded`, and a `role="menu"` list of `role="menuitem"` buttons. A trigger that is not a string gets `aria-label` from `label`. With no items the trigger is disabled. A disabled item has `aria-disabled="true"` and is skipped by the arrow keys.
+
+| Key | Action |
+|---|---|
+| Enter, Space, Down (on the button) | Open, focus on the first enabled item |
+| Up (on the button) | Open, focus on the last enabled item |
+| Down / Up (in the menu) | Next / previous enabled item; wraps |
+| Home / End | First / last enabled item |
+| Enter, Space (on an item) | Run `onSelect`, close, focus back on the button |
+| Escape | Close, focus back on the button |
+| Tab | Close |
+
+A click outside also closes it.
+
+### tooltip
+
+`tooltip({ text, placement, align, class }, target)`
+
+- `placement`: `above` (default) | `below`. `align`: `start` | `end`. `text` and a DOM `target` are required.
+- Returns a wrapper that holds the target and the bubble (`role="tooltip"`). The target gets `aria-describedby` (an existing value is kept).
+- Shows on hover and on focus; Escape hides it.
+- **Never put the only copy of needed information in a tooltip.** Touch users may not see it.
+
+### dialog
+
+`dialog({ title, build, busy, dismissOnBackdrop })` returns a promise, like `modal` in `ui/dom.js`.
+
+- `build(close)` returns the content; `close(value)` closes the dialog and resolves the promise with `value`. A second `close` call does nothing. A dismissal (Escape, the Close button, a backdrop click) resolves with `undefined`.
+- `busy()` returns `true` while work runs. Then Escape, the Close button and the backdrop do not close it.
+- `dismissOnBackdrop` defaults to `true`.
+- **Element:** mounts into `#modal-root` (in `ui/index.html`, `ui/user/index.html` and the gallery page) with `role="dialog"`, `aria-modal="true"` and `aria-labelledby` pointing at its heading.
+- **Focus:** the first text field gets focus, or the box when there is none. Tab and Shift+Tab stay inside (the same `tabStops` and `trapTarget` as `modal`). On close, focus returns to the opener.
+- **Stacking:** a dialog or drawer can open on top of another. Only the top layer gets keys; the layers below are `inert`. Closing the top layer returns focus to the layer below.
+
+| Key | Action |
+|---|---|
+| Escape | Close (not while `busy()`) |
+| Tab / Shift+Tab | Next / previous control; wraps inside the dialog |
+
+### drawer
+
+`drawer({ title, side, build, busy, dismissOnBackdrop })`
+
+- The same contract and keys as `dialog`, drawn as a side panel. `side`: `end` (default) | `start`.
+- `dismissOnBackdrop` defaults to `false`, so a stray click does not lose what the user typed in a form.
+- On a narrow layout it takes the full width.
+
+### toast
+
+`toast(message, { tone, timeout })`
+
+- `tone`: `info` (default) | `ok` | `warn` | `fail`. `timeout` in ms, default 3500; `0` keeps it until dismissed.
+- `role="status"`, or `role="alert"` for `fail`. A `fail` toast always stays until dismissed. Several toasts stack.
+- Makes its own container on first use, so it does not need the `#toast` element. Returns a function that dismisses the toast; every toast also has a Dismiss button.
+- The old `modal` and `toast` in `ui/dom.js` are unchanged.
+
+| Key | Action |
+|---|---|
+| Tab, then Enter or Space | Focus and press Dismiss |
+
+## Records
+
+All in `ui/kit/records.js`. They show what a run did and draw without error when data is missing (an old run with no steps, time or cost). Text is always added as text nodes, never as HTML: log and diff content is untrusted step output. Colours come from tokens, so they follow the theme.
+
+### evidence
+
+`evidence({ title, source, href, open, class }, ...children)`
+
+- `title` is required. `open` starts it expanded (default `false`).
+- **Element:** a `<details>` with a `<summary>` that shows the title and names the source ("Source: …", or "Source not recorded" when `source` is missing).
+- `href` adds an "Open source" link in the body. Only `http(s)://`, site-relative (`/…`) and in-page (`#…`) links are used; anything else (for example `javascript:`) is dropped.
+- Keys: the native ones. Tab to the summary, Enter or Space toggles it.
+
+### timeline
+
+`timeline({ label, empty, class }, entries)`
+
+- `label` is required. `entries` is an array of `timelineEntry` nodes; it may be missing.
+- **Element:** an `<ol>` with `aria-label`. With no entries it shows one item with `empty` (default "Nothing recorded.").
+
+### timelineEntry
+
+`timelineEntry({ title, time, tone, actor, class }, ...children)`
+
+- `title` is required. `tone`: `neutral` (default) | `ok` | `fail` | `run` | `warn` | `accent`.
+- **Element:** an `<li>` with the title, an optional `actor` and the children as the body.
+- `time` (ISO text, a number or a `Date`) adds `<time datetime>`. A missing or invalid time adds no time element.
+
+### logView
+
+`logView({ label, lines: [{ text, tone }], follow, empty, class })`
+
+- `label` is required. `lines` may be missing or empty; a line may be a plain string. `tone`: `ok` | `fail` | `step` | `dim`.
+- **Element:** a scroll region with `role="log"`, `aria-label` and `tabindex="0"`, so it scrolls from the keyboard (Tab to it, then arrow keys, Page Up/Down). With no lines it shows the `empty` text (default "No log lines.").
+- `follow` keeps the newest line in view; it is CSS only.
+- The kit draws every line it gets. The caller or the server limits the data.
+
+### diffView
+
+`diffView({ stat, patch, truncated, none, label, class })`
+
+- Takes the `{ stat, patch }` data of `api.diff`, plus `truncated`. `none` is the text for an empty patch (default "No changes.").
+- **Element:** the `stat` in a `<pre>`, then the patch in a focusable `<pre role="region">` named by `label` (default "Diff"). Each line is a `<span>` marked by class as file, hunk, added or removed. The `+` and `-` characters are kept, so the meaning is not in colour only.
+- `truncated` shows "Diff truncated (very large)." The kit does not cut the patch itself.
+- A patch with only a header draws as file and hunk lines, with no added or removed lines.
+
+## The gallery
+
+The gallery shows every kit component with made-up data. It is a development aid and is off by default.
+
+**Open it.** Start the server with the switch, then open `/gallery/`:
+
+```bash
+scf ui --dev       # or: scf serve --dev
+# http://localhost:4777/gallery/
+```
+
+Without `--dev`, every path under `/gallery` answers 404. The files ship in the package (`ui/` is in `files`); the switch keeps the gallery out of normal installs. Static files need no sign-in, so do not leave `--dev` on a shared server. The gallery holds no data and makes no API call.
+
+**Control bar.** Theme (`light`, `dark`), density (`comfortable`, `compact`) and width (`wide`, `narrow`, a 390 px frame). The choice is kept in the address query, for example `/gallery/?theme=dark&density=compact&width=narrow`. Theme and density are the `data-theme` and `data-density` attributes on the root element.
+
+**Files.** `ui/gallery/index.html` (no inline script or style), `gallery.js` (entry), `view.js` (query, bar, drawing), `registry.js` (the sections).
+
+**Add a section.** When you add an exported function to a `ui/kit/*.js` module, add one object to `sections` in `ui/gallery/registry.js`:
+
+```js
+{ id: "button", title: "Button", component: "button",
+  examples: [{ name: "Variants", build: () => button({ variant: "primary" }, "Save") }] }
+```
+
+- `component` is the export name. `build` returns one node and uses made-up text.
+- Give an example for each variant, plus `Long content`, `Disabled` (where the component has it) and `Error` (where it has it).
+- `tests/ui-gallery.test.ts` fails when a kit export has no section, and builds every example in both themes and both densities on the fake DOM. `tests/ui-gallery-server.test.ts` checks that `/gallery/` is served with `dev` and answers 404 without it.
+- The tests check structure, not looks. Open the gallery in a browser to check variants, long content, errors, keyboard focus and the narrow frame.
+
+## Building a new screen
+
+A screen must use only kit components. Check these before it is done:
+
+- [ ] It uses **only kit components**. No one-off buttons, tables, dialogs, logs or diffs. If one is missing, add it to the kit first.
+- [ ] No inline styles, no page-specific global selectors, no colour literals. CSS uses `scf-` classes and tokens.
+- [ ] Every control has an accessible name and works from the keyboard.
+- [ ] Untrusted text (issue text, step output, task) is added as text, never as HTML.
+- [ ] It draws with missing data: no steps, no time, no cost, an empty list.
+- [ ] It looks right in light and dark, comfortable and compact, wide and narrow.
+- [ ] Any new kit component has a gallery section and an entry in this document.

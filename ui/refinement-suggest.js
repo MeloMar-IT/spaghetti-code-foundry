@@ -1,4 +1,4 @@
-import { h, modal } from "./dom.js";
+import { aiProps, h, modal } from "./dom.js";
 
 // The suggestions of the architect on the draft page: the Suggest button, its status, and Accept / Edit and accept / Reject.
 // Every text is set as text, never as HTML.
@@ -95,7 +95,7 @@ function acceptDialog(act, x) {
   let busy = false;
   return modal("Edit and accept", (close) => {
     const area = h(x.field === "title" ? "input" : "textarea", { name: "text", "aria-label": act.label, value: x.text, ...(x.field === "title" ? { autocomplete: "off" } : { rows: 4 }) });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const run = async () => {
       if (busy) return;
       const next = trim(area.value);
@@ -107,7 +107,7 @@ function acceptDialog(act, x) {
       close(ok ? true : undefined);
     };
     const save = h("button", { class: "primary", onClick: run }, "Accept");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, act.label), area),
       TEXT_FIELDS.includes(x.field) && act.hasOther(x) ? h("p", { class: "muted" }, "This replaces the text of the field.") : null,
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
@@ -127,7 +127,7 @@ function rejectDialog(act, x) {
       close(ok ? true : undefined);
     };
     const reject = h("button", { class: "primary", onClick: run }, "Reject");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, "Reason (optional)"), area), h("div", { class: "row" }, h("span", { class: "spacer" }), reject));
   }, { busy: () => busy });
 }
@@ -135,7 +135,7 @@ function rejectDialog(act, x) {
 function parts(s, x, act) {
   const tie = x.field === "criteria" ? tieOf(s, x) : null;
   return [
-    h("span", { class: "pill" }, "Suggested"), " ", h("span", { class: "said" }, textOf(s, x)),
+    h("span", aiProps(`suggestion for ${FIELD_LABELS[x.field] ?? x.field}`), h("span", { class: "pill" }, "Suggested"), " ", h("span", { class: "said" }, textOf(s, x))),
     tie ? h("small", { class: "muted" }, `From the ${tie.kind}: ${tie.text}`) : null,
     act ? [
       h("button", { class: "small", "data-focus": `sug-accept-${x.id}`, "aria-label": `Accept suggestion for ${act.label}`, onClick: (e) => {

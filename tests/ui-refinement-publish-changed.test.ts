@@ -117,7 +117,7 @@ describe("the question", () => {
   it("shows both versions side by side and the two buttons, not the usual confirm", async () => {
     await openPlan();
     const v = versions()!;
-    expect(v.style.gridTemplateColumns).toBe("1fr 1fr");
+    expect(v.attrs.class).toBe("stack cols-2");
     expect(v.textContent).toContain("GH title");
     expect(v.textContent).toContain("GH body");
     expect(v.textContent).toContain("My title");

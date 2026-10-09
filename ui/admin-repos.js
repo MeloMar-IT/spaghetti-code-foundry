@@ -1,6 +1,7 @@
 import { api } from "./api.js";
-import { h, modal, mount, toast } from "./dom.js";
-import { connectionStatus, methodLabel, plainError } from "./repos.js";
+import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
+import { connectionProblem, connectionStatus, loadFailed, methodLabel, plainError } from "./repos.js";
+import { emptyState, loadingState, staleNote } from "./states.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
 const PATTERN_HINT = '"*" matches any text, ? one character.';
@@ -26,18 +27,18 @@ export const sortRepos = (repos) =>
 const field = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 
 /** Runs `send` for a dialog: shows the error in the dialog and enables the button again, or toasts and closes. Resolves when the dialog is closed. */
-function sendFrom({ button, err, send, done, close, state }) {
+function sendFrom({ button, err, send, done, close, state, mark }) {
   if (state.busy) return;
   state.busy = true;
   button.disabled = true;
-  err.textContent = "";
+  mark("");
   state.pending = (async () => {
     try {
       await send();
     } catch (e) {
       state.busy = false;
       if (state.closed) return toast(plainError(e), "error");
-      err.textContent = plainError(e);
+      mark(plainError(e));
       button.disabled = false;
       return;
     }
@@ -60,10 +61,18 @@ export function settingsDialog(repo) {
     };
     els.docs.value = (s.docs ?? []).join("\n");
     els.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const pairs = [
+      [/^testCommand/, "testCommand"],
+      [/^docs|path inside the repository/, "docs"],
+      [/^protectedBranches|branch pattern/, "protectedBranches"],
+      [/^mainBranch/, "mainBranch"],
+      [/^developBranch/, "developBranch"],
+    ];
+    const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
     const save = h("button", { class: "primary", onClick: () =>
       sendFrom({
-        button: save, err, close, state, done: "Settings saved",
+        button: save, err, mark, close, state, done: "Settings saved",
         send: () => api.setRepoSettings(repo.id, settingsBody(Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value])))),
       }) }, "Save");
     return h("div", { class: "stack" },
@@ -105,19 +114,20 @@ export function readyDialog(repo) {
     let inputs = [];
     const list = h("div", { class: "stack tight" });
     const extra = h("div", { class: "row" });
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const mark = (m, field) => showError(err, m, { fields: inputs, field });
     const take = () => rows.forEach((r, i) => { r.text = inputs[i].value; });
     // every button: copy what was typed, change the rows, draw again
     const change = (fn) => () => {
       if (state.busy) return;
       take();
       fn();
-      err.textContent = "";
       draw();
+      mark("");
     };
     const move = (i, by) => change(() => rows.splice(i + by, 0, rows.splice(i, 1)[0]));
     const draw = () => {
-      inputs = rows.map((r, i) => h("input", { name: "item", maxlength: 200, autocomplete: "off", value: r.text }));
+      inputs = rows.map((r, i) => h("input", { name: "item", maxlength: 200, autocomplete: "off", "aria-label": `Item ${i + 1}`, value: r.text }));
       mount(list, rows.map((r, i) => h("div", { class: "row" },
         h("span", { class: "muted" }, `${i + 1}.`),
         inputs[i],
@@ -133,14 +143,15 @@ export function readyDialog(repo) {
     const back = h("button", { class: "small", onClick: () => {
       if (state.busy) return;
       rows = READY_DEFAULTS.map((d) => ({ ...d }));
-      err.textContent = "";
       draw();
+      mark("");
     } }, "Back to the default");
     const save = h("button", { class: "primary", onClick: () => {
       if (state.busy) return;
       take();
-      if (rows.some((r) => !String(r.text).trim())) return void (err.textContent = "Fill in every item, or remove it.");
-      sendFrom({ button: save, err, close, state, done: "Definition of Ready saved", send: () => api.setRepoReady(repo.id, readyBody(rows)) });
+      const empty = rows.findIndex((r) => !String(r.text).trim());
+      if (empty >= 0) return void mark("Fill in every item, or remove it.", inputs[empty]);
+      sendFrom({ button: save, err, mark, close, state, done: "Definition of Ready saved", send: () => api.setRepoReady(repo.id, readyBody(rows)) });
     } }, "Save");
     return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
@@ -157,15 +168,16 @@ export function transferDialog(repo) {
   const state = { busy: false, closed: false, pending: null };
   const shown = modal("Transfer repository", (close) => {
     const email = h("input", { name: "email", type: "text", placeholder: "name@example.com", autocomplete: "off" });
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const mark = (m) => showError(err, m, { fields: [email], field: fieldFor(m, [[/e-mail/i, "email"]]) ? email : undefined });
     const note = repo.method === "github-token" || repo.method === "https-token"
       ? "The stored token is deleted. The new owner must set the authentication again. If the new owner is an admin, the repository uses the server's own access until then."
       : repo.method !== "none" ? "The sign-in of this repository stays with it." : null;
     const go = h("button", { class: "primary", onClick: () => {
       if (state.busy) return;
       const to = email.value.trim();
-      if (!to) return void (err.textContent = "Fill in the e-mail of the new owner.");
-      sendFrom({ button: go, err, close, state, done: "Repository transferred", send: () => api.transferRepo(repo.id, to) });
+      if (!to) return void mark("Fill in the e-mail of the new owner.");
+      sendFrom({ button: go, err, mark, close, state, done: "Repository transferred", send: () => api.transferRepo(repo.id, to) });
     } }, "Transfer");
     return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
@@ -183,7 +195,7 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("/")[1] ?? "") === "all-repos";
+    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "all-repos";
   } catch {
     return false;
   }
@@ -192,14 +204,46 @@ const onPage = () => {
 /** The admin page with the repositories of all accounts. Returns a cleanup. */
 export async function renderAllRepos(main) {
   const mine = ++generation;
-  const repos = await api.allRepos();
-  if (mine !== generation || !onPage()) return () => {};
-  const reload = () => renderAllRepos(main).catch((e) => toast(plainError(e), "error"));
+  let seq = 0; // only the newest fetch of this page draws
+  const state = { repos: [], at: null, stale: false };
+  const live = () => mine === generation && onPage();
+  const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts"));
+  const fetchAll = async (n) => {
+    const repos = await api.allRepos();
+    if (n !== seq) return;
+    state.repos = repos;
+    state.at = new Date();
+    state.stale = false;
+  };
+  const load = async () => {
+    mount(main, head(), loadingState("Loading the repositories", { rows: 3, shape: "table" }));
+    const n = ++seq;
+    try {
+      await fetchAll(n);
+    } catch (e) {
+      if (n !== seq || !live()) return;
+      return mount(main, head(), loadFailed(e, {
+        what: "The repositories could not be loaded.", denied: "Only an admin can see the repositories of all accounts.",
+        back: { href: "#/repos", label: "My repositories" }, onRetry: load,
+      }));
+    }
+    if (n === seq && live()) draw();
+  };
+  // the list on screen stays when it cannot be loaded again
+  const reload = async () => {
+    const n = ++seq;
+    try {
+      await fetchAll(n);
+    } catch {
+      if (n === seq) state.stale = true;
+    }
+    if (n === seq && live()) draw();
+  };
   const row = (repo) => h("tr", {},
     h("td", { class: "mono" }, repo.url),
     h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
     h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
-    h("td", {}, h("span", { class: "pill" }, connectionStatus(repo))),
+    h("td", {}, h("span", { class: "pill" }, connectionStatus(repo)), connectionProblem(repo)),
     h("td", {},
       h("button", { class: "small", onClick: async () => {
         await settingsDialog(repo);
@@ -213,14 +257,17 @@ export async function renderAllRepos(main) {
         await transferDialog(repo);
         reload();
       } }, "Transfer")));
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts")),
-    repos.length
+  const draw = () => mount(main,
+    head(),
+    state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
+    state.repos.length
       ? h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", ""].map((t) => h("th", {}, t)))),
-        h("tbody", {}, sortRepos(repos).map(row)))
-      : h("div", { class: "empty" }, "No repositories yet."));
+        h("caption", { class: "sr-only" }, "Repositories of all accounts"),
+        h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
+        h("tbody", {}, sortRepos(state.repos).map(row)))
+      : emptyState("No repositories yet."));
+  await load();
   return () => {
-    generation++;
+    if (generation === mine) generation++;
   };
 }

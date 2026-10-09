@@ -1,5 +1,13 @@
 import { api } from "./api.js";
-import { h, modal, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, modal, showError, toast } from "./dom.js";
+
+/** Asks before the monitor is switched on over a state file that cannot be read; resolves true on "Switch on". */
+export const confirmUnreadable = () => confirmDialog({
+  title: "The state file cannot be read",
+  text: "Switching on keeps it as monitor-guard.json.broken and starts a fresh one. Go on?",
+  confirm: "Switch on",
+  danger: false,
+});
 
 /** The choices of the mute form: label → hours ("" is for good). */
 export const DURATIONS = [["For good", ""], ["1 hour", "1"], ["1 day", "24"], ["1 week", "168"], ["30 days", "720"]];
@@ -34,15 +42,17 @@ export function storyCell(story, needsYou) {
 export function muteForm(target, detectors, { notProblem = false } = {}) {
   const what = target.finding ? "this finding" : "this detector";
   return modal(notProblem ? "This is not a problem" : target.finding ? "Mute a finding" : "Mute a detector", (close) => {
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
     const detector = target.detector === undefined && target.pick
       ? h("select", {}, (detectors ?? []).map((d) => h("option", { value: d.name }, d.name)))
       : null;
     const reason = h("input", { maxlength: REASON_MAX, placeholder: notProblem ? "Why is this not a problem?" : "Why is this known noise?" });
     const hours = h("select", {}, DURATIONS.map(([label, v]) => h("option", { value: v }, label)));
     const field = (label, el) => h("label", { class: "field" }, h("span", {}, label), el);
+    const fields = [reason, hours, detector].filter(Boolean);
+    const mark = (m) => showError(err, m, { fields, field: fieldFor(m, [[/reason/i, reason], [/"hours"/, hours], [/detector/i, detector]]) ?? undefined });
     const go = async () => {
-      err.textContent = "";
+      mark("");
       try {
         const t = target.finding ? { finding: target.finding } : { detector: detector ? detector.value : target.detector };
         const body = muteBody(t, reason.value, notProblem ? "" : hours.value);
@@ -50,7 +60,7 @@ export function muteForm(target, detectors, { notProblem = false } = {}) {
         toast("Muted");
         close(true);
       } catch (e) {
-        err.textContent = e.message;
+        mark(e.message);
       }
     };
     return h("div", { class: "modal-body" },
@@ -78,8 +88,8 @@ export const mutesTable = (m, reload) => {
     }
     await reload();
   };
-  return h("table", { class: "table compact" },
-    h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", ""].map((c) => h("th", {}, c)))),
+  return h("table", { class: "table compact", "aria-label": "Mutes" },
+    h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, m.mutes.map((x) => h("tr", {},
       h("td", {}, x.kind === "finding" ? `${x.detector}: ${x.summary ?? x.finding}` : x.detector),
       h("td", {}, x.reason),
@@ -102,8 +112,8 @@ const findingsTable = (m, reload, redraw) => {
     }
     await reload();
   };
-  const table = h("table", { class: "table compact" },
-    h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted", ""].map((c) => h("th", {}, c)))),
+  const table = h("table", { class: "table compact", "aria-label": "Findings" },
+    h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, rows.map((f) => h("tr", {},
       h("td", {}, f.severity),
       h("td", {}, f.detector),

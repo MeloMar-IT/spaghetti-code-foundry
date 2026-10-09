@@ -87,6 +87,7 @@ Read from the code at commit `27479e3`, with the routes in `inventory.md`, the d
 - **Where:** `ui/admin.js` 19, `ui/editor.js` 18, `ui/models.js` 17, `ui/runs.js` 13, `ui/app.js` 11, `ui/watcher-form.js` 10 (full list in `inventory.md`).
 - **Evidence:** 157 `style:` uses in 22 files. The same values repeat: `style: { margin: 0 }` on the error line of most dialogs, `style: { display: "grid", gap: "12px" }` on dialog bodies.
 - **Proposal:** Put those values in classes in `ui/style.css`; start with the two repeated ones.
+- **Status:** Done by #252. The runs, repositories and refinement pages (#340) have no inline styles left; the editor files follow with #339. Only three lines in `ui/dashboard.js` stay inline (see `inventory.md`).
 
 ### F13 Same thing, different words
 **Structural**

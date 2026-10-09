@@ -85,7 +85,7 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
     svg("g", { class: `node${selected === i ? " sel" : ""}${s.jump_only ? " jump" : ""}`, transform: `translate(${X},${y(i)})`, onClick: () => onSelect?.(i) },
       svg("rect", { width: W, height: H, rx: 8 }),
       svg("rect", { class: `bar ${s.type}`, width: 4, height: H - 12, x: 6, y: 6, rx: 2 }),
-      svg("text", { x: 18, y: 20, "font-weight": 600, "font-size": 13 }, clip(`${ICON[s.type] ?? "?"} ${s.id ?? "?"}`, 26)),
+      svg("text", { x: 18, y: 20, "font-weight": 600, "font-size": 13 }, svg("tspan", { "aria-hidden": "true" }, `${ICON[s.type] ?? "?"} `), clip(s.id ?? "?", 24)),
       svg("text", { x: 18, y: 37, class: "sub" }, clip(subtitle(s), 28)),
       s.on_success === "stop" || s.on_failure === "stop"
         ? svg("text", { x: W - 8, y: 20, "text-anchor": "end", class: "sub stop" }, "■ stop") : null,
@@ -99,10 +99,10 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
   return h("div", {},
     svg("svg", { class: "graph", width, height, viewBox: `0 0 ${width} ${height}` }, defs, lines, arcEls, nodes, end),
     h("div", { class: "legend" },
-      h("span", {}, h("i", { style: { borderColor: "var(--muted)" } }), "next"),
-      h("span", {}, h("i", { style: { borderColor: "var(--ok)" } }), "on success"),
-      h("span", {}, h("i", { style: { borderColor: "var(--fail)", borderTopStyle: "dashed" } }), "on failure"),
-      h("span", {}, h("i", { style: { borderColor: "var(--route)" } }), "route"),
-      h("span", {}, h("i", { style: { borderColor: "var(--muted)", borderTopStyle: "dotted" } }), "parallel")),
+      h("span", {}, h("i", { class: "seq" }), "next"),
+      h("span", {}, h("i", { class: "ok" }), "on success"),
+      h("span", {}, h("i", { class: "fail" }), "on failure"),
+      h("span", {}, h("i", { class: "route" }), "route"),
+      h("span", {}, h("i", { class: "par" }), "parallel")),
     dangling.length ? h("p", { class: "status bad" }, `${dangling.length} jump(s) point to missing steps`) : null);
 }

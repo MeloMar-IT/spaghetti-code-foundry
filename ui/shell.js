@@ -1,5 +1,5 @@
 import { h, mount } from "./dom.js";
-import { subnavFor } from "./ia.js";
+import { SECTIONS, splitHash, subnavFor } from "./ia.js";
 
 // The frame around a page: which top link is on, the secondary row, the breadcrumb line and the tab title.
 
@@ -101,13 +101,10 @@ export function initShell(role, { user, store = safeStore(), media = globalThis.
     try { store.setItem("scf-side", ctl.collapsed ? "closed" : "open"); } catch { /* the choice lasts until reload */ }
     ctl.apply();
   });
-  on(el("scrim"), "click", () => ctl.closeDrawer(el("menu-btn")));
+  // The scrim is a backdrop, not a control: it takes the mouse or a tap; the keyboard uses Escape or the menu button.
+  on(el("scrim"), "mousedown", () => ctl.closeDrawer(el("menu-btn")));
   // Any link in the sidebar closes the drawer, also the one for the page that is already open (no hash change then).
-  on(el("side"), "click", (e) => {
-    const t = e?.target;
-    const link = t?.closest ? t.closest("a[href]") : t?.getAttribute?.("href") != null ? t : null;
-    if (ctl.drawer && link) ctl.closeDrawer(el("main"));
-  });
+  for (const link of links()) on(link, "click", () => { if (ctl.drawer) ctl.closeDrawer(el("main")); });
   on(el("side-close"), "click", () => ctl.closeDrawer(el("menu-btn")));
   on(document, "keydown", (e) => {
     if (!ctl.drawer) return;
@@ -149,7 +146,7 @@ export function showPage(role, to) {
     if (a.getAttribute("data-nav") === key) {
       a.classList.add("active");
       // "page" on the link for this very address; "true" on the link of the area it belongs to.
-      a.setAttribute("aria-current", a.getAttribute("href") === to.hash ? "page" : "true");
+      a.setAttribute("aria-current", a.getAttribute("href") === splitHash(to.hash).path ? "page" : "true");
     } else {
       a.classList.remove("active");
       a.removeAttribute("aria-current");
@@ -159,7 +156,10 @@ export function showPage(role, to) {
   if (subnav) {
     const links = to.dest ? subnavFor(role, to.dest) : [];
     const own = to.page.nav === "detail" ? to.page.parent : to.page.id;
-    mount(subnav, links.map((l) => h("a", { href: l.href, class: l.id === own ? "active" : null, "aria-current": l.id === own ? "page" : null }, l.label)));
+    mount(subnav, links.flatMap((l, i) => [
+      l.section && l.section !== links[i - 1]?.section ? h("span", { class: "subnav-head" }, SECTIONS.find((s) => s.id === l.section)?.label ?? l.section) : null,
+      h("a", { href: l.href, class: l.id === own ? "active" : null, "aria-current": l.id === own ? "page" : null }, l.label),
+    ]));
     hide(subnav, links);
   }
   const crumbs = document.getElementById("crumbs");

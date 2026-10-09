@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -68,6 +68,63 @@ describe("modal", () => {
     expect(box.attrs.role).toBe("dialog");
     expect(box.attrs["aria-modal"]).toBe("true");
     expect(box.attrs.tabindex).toBe("-1");
+    expect(box.attrs["aria-label"]).toBeUndefined();
+    const h2 = el("modal-root").querySelector("h2") as FakeElement;
+    expect(h2.textContent).toBe("Title");
+    expect(h2.attrs.id).toBeTruthy();
+    expect(box.attrs["aria-labelledby"]).toBe(h2.attrs.id);
+  });
+
+  it("gives each dialog its own title id", () => {
+    void dom.modal("Title", () => dom.h("p", {}, "x"));
+    const first = (el("modal-root").querySelector("div[role]") as FakeElement).attrs["aria-labelledby"];
+    keydown("Escape");
+    void dom.modal("Title", () => dom.h("p", {}, "x"));
+    const second = (el("modal-root").querySelector("div[role]") as FakeElement).attrs["aria-labelledby"];
+    expect(first).toBeTruthy();
+    expect(second).not.toBe(first);
+  });
+
+  describe("busy", () => {
+    const open = (busy: () => boolean) => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      let done = false;
+      void dom.modal("Title", () => dom.h("p", {}, "x"), { busy }).then(() => (done = true));
+      const backdrop = el("modal-root").children[0] as FakeElement;
+      const closeBtn = el("modal-root").querySelector("button") as FakeElement;
+      return { opener, backdrop, closeBtn, isDone: () => done };
+    };
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const mousedown = (b: FakeElement) => b.fire("mousedown", { target: b, currentTarget: b });
+
+    it("Escape, the close button and the backdrop do nothing while busy", async () => {
+      let busy = true;
+      const { backdrop, closeBtn, isDone } = open(() => busy);
+      keydown("Escape");
+      closeBtn.click();
+      mousedown(backdrop);
+      await flush();
+      expect(isDone()).toBe(false);
+      expect(el("modal-root").children).toHaveLength(1);
+      busy = false;
+      keydown("Escape");
+      await flush();
+      expect(isDone()).toBe(true);
+    });
+
+    it("the close button and the backdrop close it when not busy, and the focus returns to the opener", async () => {
+      const a = open(() => false);
+      a.closeBtn.click();
+      await flush();
+      expect(a.isDone()).toBe(true);
+      expect(doc().activeElement).toBe(a.opener);
+      const b = open(() => false);
+      mousedown(b.backdrop);
+      await flush();
+      expect(b.isDone()).toBe(true);
+      expect(doc().activeElement).toBe(b.opener);
+    });
   });
 
   it("focuses the box when there is no input", () => {
@@ -158,14 +215,34 @@ describe("mount", () => {
     dom.mount(target, draw("add"));
     expect(doc().activeElement).toBe(target.querySelector("button"));
   });
-  it("does nothing when the name is gone, the focus was outside, or the control has no name", () => {
+  it("moves the focus to the first heading of the target when the control is gone", () => {
     const target = dom.h("div", {});
+    dom.mount(target, dom.h("h2", {}, "Part"), draw("add"));
+    (target.querySelector("button") as FakeElement).focus();
+    dom.mount(target, dom.h("h2", {}, "Part"), draw("other"));
+    const heading = target.querySelector("h2") as FakeElement;
+    expect(doc().activeElement).toBe(heading);
+    expect(heading.attrs.tabindex).toBe("-1");
+  });
+  it("uses a heading of the parent, else the target itself, when the target has none", () => {
+    const parent = dom.h("section", {}, dom.h("h1", {}, "Page"));
+    const target = dom.h("div", {});
+    parent.append(target);
     dom.mount(target, draw("add"));
     (target.querySelector("button") as FakeElement).focus();
-    const before = doc().activeElement;
     dom.mount(target, draw("other"));
-    expect(doc().activeElement).toBe(before);
+    expect(doc().activeElement).toBe(parent.querySelector("h1"));
 
+    const alone = dom.h("div", {});
+    dom.mount(alone, draw("add"));
+    (alone.querySelector("button") as FakeElement).focus();
+    dom.mount(alone, draw("other"));
+    expect(doc().activeElement).toBe(alone);
+    expect(alone.attrs.tabindex).toBe("-1");
+  });
+  it("does nothing when the focus was outside, or the control has no name", () => {
+    const target = dom.h("div", {});
+    dom.mount(target, draw("add"));
     const outside = dom.h("button", {});
     outside.focus();
     dom.mount(target, draw("add"));
@@ -176,5 +253,242 @@ describe("mount", () => {
     const unnamed = doc().activeElement;
     dom.mount(target, draw(null));
     expect(doc().activeElement).toBe(unnamed);
+  });
+});
+
+describe("toast", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("sets the text, and role alert for an error", () => {
+    dom.toast("x", "error");
+    expect(el("toast").textContent).toBe("x");
+    expect(el("toast").attrs.role).toBe("alert");
+  });
+  it("uses role status for other kinds", () => {
+    dom.toast("x");
+    expect(el("toast").attrs.role).toBe("status");
+    dom.toast("x", "ok");
+    expect(el("toast").attrs.role).toBe("status");
+  });
+  it("an error followed by an info ends on status", () => {
+    dom.toast("bad", "error");
+    dom.toast("fine");
+    expect(el("toast").attrs.role).toBe("status");
+    expect(el("toast").textContent).toBe("fine");
+  });
+  it("an info toast shows for 3.5 s", () => {
+    dom.toast("x");
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(3499);
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(1);
+    expect((el("toast") as any).className).toBe("");
+  });
+  it("an error toast stays, has one Dismiss button without text, and the button hides it", () => {
+    dom.toast("bad", "error");
+    vi.advanceTimersByTime(60000);
+    expect((el("toast") as any).className).toBe("show error");
+    expect(el("toast").all("button")).toHaveLength(1);
+    expect(el("toast").all("button")[0].attrs["aria-label"]).toBe("Dismiss");
+    expect(el("toast").textContent).toBe("bad");
+    expect(el("toast").attrs["aria-live"]).toBe("assertive");
+    el("toast").all("button")[0].click();
+    expect((el("toast") as any).className).toBe("");
+    expect(el("toast").all("button")).toHaveLength(0);
+  });
+  it("sticky keeps an info toast but not its role", () => {
+    dom.toast("keep", "info", { sticky: true });
+    vi.advanceTimersByTime(60000);
+    expect((el("toast") as any).className).toBe("show info");
+    expect(el("toast").attrs.role).toBe("status");
+    expect(el("toast").attrs["aria-live"]).toBe("polite");
+  });
+  it("a new toast replaces the old one and resets the timer", () => {
+    dom.toast("a");
+    vi.advanceTimersByTime(3000);
+    dom.toast("b");
+    vi.advanceTimersByTime(3000);
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(500);
+    expect((el("toast") as any).className).toBe("");
+    dom.toast("bad", "error");
+    dom.toast("fine");
+    vi.advanceTimersByTime(3500);
+    expect((el("toast") as any).className).toBe("");
+  });
+  it("the same text within 5 s of its last call keeps the message node", () => {
+    const opts = { sticky: true }; // stays open, so only the 5 s window decides
+    dom.toast("x", "info", opts);
+    const first = el("toast").children[0];
+    vi.advanceTimersByTime(4000);
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).toBe(first);
+    vi.advanceTimersByTime(4000); // 8 s after the first, 4 s after the last
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).toBe(first);
+    vi.advanceTimersByTime(5000);
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).not.toBe(first);
+  });
+  it("a closed toast is empty, so nothing is left for a screen reader", () => {
+    dom.toast("x");
+    vi.advanceTimersByTime(3500);
+    expect(el("toast").children).toHaveLength(0);
+    expect(el("toast").textContent).toBe("");
+  });
+  it("the same text with other options keeps the node but updates the controls", () => {
+    dom.toast("x");
+    const first = el("toast").children[0];
+    dom.toast("x", "error");
+    expect(el("toast").children[0]).toBe(first);
+    expect(el("toast").all("button")).toHaveLength(1);
+    expect(el("toast").attrs.role).toBe("alert");
+  });
+  it("another text, or a toast cleared from outside, writes again", () => {
+    dom.toast("x");
+    const first = el("toast").children[0];
+    dom.toast("y");
+    expect(el("toast").children[0]).not.toBe(first);
+    el("toast").textContent = "";
+    dom.toast("y");
+    expect(el("toast").textContent).toBe("y");
+  });
+
+  describe("action", () => {
+    const button = () => el("toast").all("button")[0];
+    it("draws the label, runs once, closes the toast and removes the button", async () => {
+      const run = vi.fn();
+      dom.toast("done", "info", { action: { label: "Undo", run } });
+      expect(button().textContent).toBe("Undo");
+      const b = button();
+      b.click();
+      b.click();
+      await Promise.resolve();
+      expect(run).toHaveBeenCalledTimes(1);
+      expect((el("toast") as any).className).toBe("");
+      expect(el("toast").all("button")).toHaveLength(0);
+    });
+    it("a repeated toast runs the newest action", async () => {
+      const [a, b] = [vi.fn(), vi.fn()];
+      dom.toast("done", "info", { action: { label: "Undo", run: a } });
+      dom.toast("done", "info", { action: { label: "Undo", run: b } });
+      button().click();
+      await Promise.resolve();
+      expect(a).not.toHaveBeenCalled();
+      expect(b).toHaveBeenCalledTimes(1);
+    });
+    it("a failing action shows an error toast with its message", async () => {
+      dom.toast("done", "info", { action: { label: "Undo", run: async () => { throw new Error("nope"); } } });
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(el("toast").textContent).toBe("nope");
+      expect((el("toast") as any).className).toBe("show error");
+    });
+    it("gives the focus back to the opener, or to main when the action replaced it", async () => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      dom.toast("done", "info", { action: { label: "Undo", run: vi.fn() } });
+      button().focus();
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(doc().activeElement).toBe(opener);
+
+      opener.focus();
+      dom.toast("done 2", "info", { action: { label: "Undo", run: async () => { (opener as any).isConnected = false; } } });
+      button().focus();
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(doc().activeElement).toBe(document.getElementById("main"));
+    });
+  });
+});
+
+describe("confirmDialog", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const buttons = () => el("modal-root").all("button");
+  const open = (opts: any = { title: "Delete it?", text: "Sure?" }) => {
+    const opener = dom.h("button", {}, "open");
+    opener.focus();
+    return { opener, answer: dom.confirmDialog(opts) as Promise<boolean> };
+  };
+  it("starts on Cancel, with the default Delete button as danger", () => {
+    open();
+    const [, cancel, confirm] = buttons();
+    expect(doc().activeElement).toBe(cancel);
+    expect(cancel.textContent).toBe("Cancel");
+    expect(confirm.textContent).toBe("Delete");
+    expect(confirm.attrs.class).toBe("danger");
+    expect(el("modal-root").all("h2")[0].textContent).toBe("Delete it?");
+  });
+  it("the confirm button resolves true and the focus returns", async () => {
+    const { opener, answer } = open();
+    buttons()[2].click();
+    expect(await answer).toBe(true);
+    expect(doc().activeElement).toBe(opener);
+  });
+  it("Cancel, Escape, the ✕ and the backdrop resolve false", async () => {
+    let o = open();
+    buttons()[1].click();
+    expect(await o.answer).toBe(false);
+    expect(doc().activeElement).toBe(o.opener);
+    o = open();
+    keydown("Escape");
+    expect(await o.answer).toBe(false);
+    o = open();
+    buttons()[0].click();
+    expect(await o.answer).toBe(false);
+    o = open();
+    const backdrop = el("modal-root").children[0] as FakeElement;
+    backdrop.fire("mousedown", { target: backdrop, currentTarget: backdrop });
+    expect(await o.answer).toBe(false);
+    await flush();
+  });
+  it("takes the labels and a non-danger look", () => {
+    open({ title: "t", text: "x", confirm: "Stop", cancel: "Keep it", danger: false });
+    const [, cancel, confirm] = buttons();
+    expect(cancel.textContent).toBe("Keep it");
+    expect(confirm.textContent).toBe("Stop");
+    expect(confirm.attrs.class).toBe("primary");
+  });
+});
+
+describe("markInvalid, showError and fieldFor", () => {
+  const field = () => new FakeElement("input");
+  it("markInvalid marks one field and clears the others", () => {
+    const [a, b] = [field(), field()];
+    dom.markInvalid([a, b], a);
+    expect(a.attrs["aria-invalid"]).toBe("true");
+    expect(doc().activeElement).toBe(a);
+    dom.markInvalid([a, b], b);
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    expect(b.attrs["aria-invalid"]).toBe("true");
+  });
+  it("markInvalid without a field only clears, and keeps the focus", () => {
+    const [a, b] = [field(), field()];
+    dom.markInvalid([a, b], a);
+    b.focus();
+    dom.markInvalid([a, b]);
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    expect(doc().activeElement).toBe(b);
+    dom.markInvalid([a, undefined, null]);
+  });
+  it("showError writes the text and marks the field; an empty message clears both", () => {
+    const [line, a] = [new FakeElement("p"), field()];
+    dom.showError(line, "bad", { fields: [a], field: a });
+    expect(line.textContent).toBe("bad");
+    expect(a.attrs["aria-invalid"]).toBe("true");
+    dom.showError(line, "", { fields: [a], field: a });
+    expect(line.textContent).toBe("");
+    expect(a.attrs["aria-invalid"]).toBeUndefined();
+    dom.showError(line, "no field");
+    expect(line.textContent).toBe("no field");
+  });
+  it("fieldFor returns the key of the first match, or undefined", () => {
+    const pairs = [[/^a/, "first"], [/b/, "second"]];
+    expect(dom.fieldFor("abc", pairs)).toBe("first");
+    expect(dom.fieldFor("xbx", pairs)).toBe("second");
+    expect(dom.fieldFor("zzz", pairs)).toBeUndefined();
+    expect(dom.fieldFor(undefined, pairs)).toBeUndefined();
   });
 });

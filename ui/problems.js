@@ -1,6 +1,7 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
-import { mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
+import { h, mount, showError, toast } from "./dom.js";
+import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
+import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 
 const when = (iso) => new Date(iso).toLocaleString();
 const SEVERITY = { critical: "critical", major: "major", minor: "minor" };
@@ -85,7 +86,7 @@ const act = async (fn, ok, reload) => {
 function switchRow(m, reload) {
   const wantOn = m.state === "off" || m.state === "unreadable" || m.state === "breaker";
   const click = async () => {
-    if (m.state === "unreadable" && !confirm("The state file cannot be read. Switching on keeps it as monitor-guard.json.broken and starts a fresh one. Go on?")) return;
+    if (m.state === "unreadable" && !(await confirmUnreadable())) return;
     await act(() => (wantOn ? api.monitorOn() : api.monitorOff()), () => (wantOn ? "The monitor is on" : "The monitor is off"), reload);
   };
   const isOn = !wantOn && m.running !== false;
@@ -94,12 +95,12 @@ function switchRow(m, reload) {
       h("span", { class: isOn ? "status ok" : "status bad" }, monitorSentence(m)),
       h("span", { class: "spacer" }),
       h("button", { class: "small", onClick: click }, wantOn ? "Switch the monitor on" : "Switch the monitor off"),
-      h("button", { class: "small", title: "Reload", onClick: reload }, "↻")),
+      h("button", { class: "small", title: "Reload", "aria-label": "Reload", onClick: reload }, "↻")),
     h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
 }
 
-function detailRow(f, cache, cols) {
-  const cell = h("td", { colspan: cols }, h("span", { class: "muted" }, "Loading…"));
+function detailRow(f, cache, cols, redraw) {
+  const cell = h("td", { colspan: cols }, loadingState("Loading details…", { rows: 2 }));
   if (!cache.has(f.id)) cache.set(f.id, api.monitorFinding(f.id));
   cache.get(f.id).then((d) => {
     const story = (s) => {
@@ -114,7 +115,7 @@ function detailRow(f, cache, cols) {
       h("div", {}, "Runs: ", d.runs?.length
         ? d.runs.map((r) => h("span", {}, h("a", { href: `#/runs/${r.id}` }, r.id), ` (${r.status}${r.startedAt ? `, ${when(r.startedAt)}` : ""}) `))
         : h("span", { class: "muted" }, "No run yet.")));
-  }, (e) => cell.replaceChildren(h("span", { class: "status bad" }, e.message)));
+  }, (e) => cell.replaceChildren(errorState(explainError(e, { what: "The details could not be loaded." }), { onRetry: () => { cache.delete(f.id); redraw(); } })));
   return h("tr", {}, cell);
 }
 
@@ -152,12 +153,12 @@ function findingsTable(m, reload, redraw, cache) {
       h("td", {}, stateText(f)),
       h("td", {}, storyCell(f.story, f.needsYou)),
       h("td", {}, findingButtons(f, m, reload, redraw)));
-    return openIds.has(f.id) ? [row, detailRow(f, cache, 7)] : [row];
+    return openIds.has(f.id) ? [row, detailRow(f, cache, 7, redraw)] : [row];
   });
   const left = m.findings.length - rows.length;
   return h("div", {},
-    h("table", { class: "table compact" },
-      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story", ""].map((c) => h("th", {}, c)))),
+    h("table", { class: "table compact", "aria-label": "Findings" },
+      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
       h("tbody", {}, body)),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
@@ -165,16 +166,17 @@ function findingsTable(m, reload, redraw, cache) {
 function detectorsTable(m, reload) {
   const rows = (m.detectors ?? []).map((d) => {
     const mute = (m.mutes ?? []).find((x) => x.kind === "detector" && x.detector === d.name);
-    const err = h("span", { class: "status bad" });
+    const err = h("span", { class: "status bad", role: "alert" });
     const inputs = Object.entries(d.thresholds ?? {}).map(([k, v]) => ({ key: k, el: h("input", { type: "number", step: "any", value: String(v), class: "w-80", "aria-label": `${d.name} ${thresholdLabel(k)}` }), label: thresholdLabel(k) }));
+    const show = (message, input) => showError(err, message, { fields: inputs.map((i) => i.el), field: input?.el });
     const save = async () => {
-      err.textContent = "";
+      show("");
       const values = {};
       for (const i of inputs) {
         const text = String(i.el.value ?? "").trim();
         const n = Number(text);
         if (!text || !Number.isFinite(n)) {
-          err.textContent = "Give a number.";
+          show("Give a number.", i);
           return;
         }
         values[i.key] = n;
@@ -186,7 +188,7 @@ function detectorsTable(m, reload) {
         toast("Threshold saved");
         await reload();
       } catch (e) {
-        err.textContent = e.message;
+        show(e.message, inputs.find((i) => e.message.includes(`"${i.key}"`)));
       }
     };
     return h("tr", {},
@@ -199,30 +201,49 @@ function detectorsTable(m, reload) {
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return h("table", { class: "table compact" },
-    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", ""].map((c) => h("th", {}, c)))),
+  return h("table", { class: "table compact", "aria-label": "Detectors" },
+    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, rows));
 }
 
+// The newest reload wins: an older answer that arrives later is dropped.
+let reloads = 0;
+
 /** The Problems page: what the monitor found, what happens to it, and the detectors. For admins. */
-export async function renderProblems(main) {
-  const reload = () => renderProblems(main);
-  let m;
-  try {
-    m = await api.monitor();
-  } catch (e) {
-    mount(main, h("h1", {}, "Problems"), h("p", { class: "status bad" }, e.message));
-    return;
+export async function renderProblems(main, { data } = {}) {
+  let m = data;
+  if (!m) {
+    mount(main, h("h1", {}, "Problems"), loadingState("Loading problems…", { rows: 5, shape: "table" }));
+    try {
+      m = await api.monitor();
+    } catch (e) {
+      mount(main, h("h1", {}, "Problems"), errorState(explainError(e, { what: "The problems could not be loaded." }), { onRetry: () => renderProblems(main) }));
+      return;
+    }
   }
+  const at = Date.now();
+  const note = h("div");
+  const reload = async () => {
+    const my = ++reloads;
+    let fresh;
+    try {
+      fresh = await api.monitor();
+    } catch {
+      if (my === reloads) mount(note, staleNote(at, { failed: true, onRetry: reload }));
+      return;
+    }
+    if (my === reloads) await renderProblems(main, { data: fresh });
+  };
   shown = PAGE;
   const cache = new Map();
   const list = h("div", {});
   const redraw = () => list.replaceChildren(
     m.findingsUnreadable ? h("p", { class: "status bad" }, "The findings file of the monitor cannot be read, so the list is not shown. The next check keeps it as monitor-findings.json.broken and starts a new one.") : null,
-    m.findings?.length ? findingsTable(m, reload, redraw, cache) : m.findingsUnreadable ? null : h("p", { class: "muted" }, "No findings."));
+    m.findings?.length ? findingsTable(m, reload, redraw, cache) : m.findingsUnreadable ? null : emptyState("No findings."));
   redraw();
   mount(main,
     h("h1", {}, "Problems"),
+    note,
     switchRow(m, reload),
     list,
     h("details", {}, h("summary", {}, `Mutes (${(m.mutes ?? []).length})`), (m.mutes ?? []).length ? mutesTable(m, reload) : h("p", { class: "muted" }, "No mutes.")),

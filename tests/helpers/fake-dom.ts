@@ -10,7 +10,10 @@ export class FakeElement extends FakeNode {
   style: Record<string, string> = {};
   hidden = false;
   value = "";
+  checked = false;
   disabled = false;
+  scrollTop = 0;
+  scrollLeft = 0;
   classList = {
     names: new Set<string>(),
     add: (n: string) => void this.classList.names.add(n),
@@ -18,7 +21,8 @@ export class FakeElement extends FakeNode {
     contains: (n: string) => this.classList.names.has(n),
     toggle: (n: string, force?: boolean) => {
       const on = force ?? !this.classList.names.has(n);
-      if (on) this.classList.names.add(n); else this.classList.names.delete(n);
+      if (on) this.classList.names.add(n);
+      else this.classList.names.delete(n);
       return on;
     },
   };
@@ -28,6 +32,7 @@ export class FakeElement extends FakeNode {
   constructor(public tag: string) {
     super();
   }
+  get localName(): string { return this.tag; }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
   removeAttribute(k: string) { delete this.attrs[k]; }
   addEventListener(type: string, fn: Listener) { (this.listeners[type] ??= []).push(fn); }
@@ -38,7 +43,12 @@ export class FakeElement extends FakeNode {
   }
   private adopt(nodes: (FakeNode | string)[]) { for (const n of nodes) if (n instanceof FakeElement) n.parent = this; }
   append(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.children.push(...nodes); }
-  replaceChildren(...nodes: (FakeNode | string)[]) { this.adopt(nodes); this.text = undefined; this.children = [...nodes]; }
+  replaceChildren(...nodes: (FakeNode | string)[]) {
+    for (const c of this.children) if (c instanceof FakeElement && c.parent === this) c.parent = undefined;
+    this.adopt(nodes);
+    this.text = undefined;
+    this.children = [...nodes];
+  }
   get parentNode(): FakeElement | null { return this.parent ?? null; }
   /** Takes the element out of its parent, as the DOM does. */
   remove(): void {

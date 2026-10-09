@@ -51,24 +51,27 @@ const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 /** The strip for one answer of GET /api/since. */
 export function sinceView(data, { onDismiss }) {
-  const entry = (e) => {
+  // Named by what the entry is (its issue, or its title), never by its place: a new entry at the top moves the others down.
+  const entry = (g) => (e) => {
     const issueOk = e.issue && /^[\w.-]+\/[\w.-]+$/.test(e.repo ?? "");
+    const who = e.issue ? `${e.repo}#${e.issue}` : [e.repo, e.where?.url, e.runId, e.at ?? e.time, e.title].filter(Boolean).join("|");
+    const id = `since-${g.id}-${who}`;
     return h("li", {},
-      issueOk ? h("a", { href: `https://github.com/${e.repo}/issues/${e.issue}`, target: "_blank", rel: "noopener", class: "mono" }, `#${e.issue}`) : null,
+      issueOk ? h("a", { href: `https://github.com/${e.repo}/issues/${e.issue}`, target: "_blank", rel: "noopener", class: "mono", "data-focus": `${id}-issue` }, `#${e.issue}`) : null,
       h("span", { class: "hold-title" }, e.title),
-      whereLink(e.where));
+      whereLink(e.where, `${id}-where`));
   };
   const group = (g) => h("div", { class: "since-group" },
     h("b", {}, g.label),
-    g.id === "waiting" ? h("a", { href: "#/home", class: "hold-link" }, "Needs you") : null,
+    g.id === "waiting" ? h("a", { href: "#/home", class: "hold-link", "data-focus": "since-needs-you" }, "Needs you") : null,
     h("ul", { class: "holds" },
-      ...g.items.map(entry),
+      ...g.items.map(entry(g)),
       g.count > g.items.length ? h("li", { class: "muted" }, `+${g.count - g.items.length} more`) : null));
   return h("div", { class: "since-body" },
     h("div", {}, h("b", {}, "Since you last looked"), " ", h("span", { class: "muted" }, timeText(data.since))),
     ...(data.groups ?? []).map(group),
     ...(data.notes ?? []).map((n) => h("div", { class: "since-note muted" }, n)),
-    h("button", { class: "ghost small", onClick: () => onDismiss() }, "Dismiss"));
+    h("button", { class: "ghost small", "data-focus": "since-dismiss", onClick: () => onDismiss() }, "Dismiss"));
 }
 
 /** Checks now, on a heartbeat and whenever the tab becomes visible; returns a stop function. */
@@ -77,7 +80,16 @@ export function startSince(el, { store = defaultStore(), now = () => new Date() 
   let answered = null; // the `from` of the last answer
   let pending = null; // the `from` of the request in flight
   let retryAt = 0; // an incomplete or failed answer is asked again after this time
-  const hide = () => { el.hidden = true; };
+  // The strip goes away with the focus inside it (a timed empty answer, another tab, Dismiss): the heading of the page takes it.
+  const hide = () => {
+    const lost = el.contains(document.activeElement);
+    el.hidden = true;
+    if (!lost) return;
+    const main = document.getElementById("main");
+    const heading = main?.querySelector("h1, h2") ?? main;
+    heading?.setAttribute("tabindex", "-1");
+    heading?.focus();
+  };
 
   const forget = () => {
     gen++;

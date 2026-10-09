@@ -1,6 +1,7 @@
 import { api, setCsrf } from "./api.js";
-import { h, modal, mount, toast } from "./dom.js";
+import { h, modal, mount, showError, toast } from "./dom.js";
 import { appearanceButton, initPrefs } from "./prefs.js";
+import { splitHash } from "./ia.js";
 
 const PASSWORD_MIN = 12;
 
@@ -49,6 +50,20 @@ export function formProblem(kind, v) {
   return "";
 }
 
+/** Which field a form problem is about: "name", "email", "password", "repeat", "current", or "" when none. */
+export function errorField(kind, v, message) {
+  const m = String(message ?? "");
+  if (/current password/i.test(m)) return "current";
+  if (/not the same/.test(m)) return "repeat";
+  if (m === "Fill in your name and e-mail.") return String(v?.name ?? "").trim() ? "email" : "name";
+  if (m === "Fill in your e-mail and password.") return String(v?.email ?? "").trim() ? "password" : "email";
+  if (/wrong e-mail or password/.test(m)) return "";
+  if (/e-mail/i.test(m)) return "email";
+  if (/\bname\b/i.test(m)) return "name";
+  if (/password/i.test(m)) return "password";
+  return "";
+}
+
 /** The text to show for a failed call. */
 export function errorText(e) {
   return e instanceof TypeError ? "Could not reach the server." : e?.message || "Something went wrong.";
@@ -77,14 +92,15 @@ export function changePasswordDialog(a = api) {
   return modal("Change password", (close) => {
     const input = (name, label, autocomplete) => ({ name, el: h("input", { name, type: "password", autocomplete }), label });
     const fields = [input("current", "Current password", "current-password"), input("password", "New password", "new-password"), input("repeat", "Repeat new password", "new-password")];
-    const error = h("p", { class: "status bad" });
+    const error = h("p", { class: "status bad", role: "alert" });
     const button = h("button", { type: "submit", class: "primary" }, "Change password");
     const onSubmit = async (e) => {
       e.preventDefault();
       button.disabled = true;
-      const problem = await submitForm(a, "change", Object.fromEntries(fields.map((f) => [f.name, f.el.value])));
+      const values = Object.fromEntries(fields.map((f) => [f.name, f.el.value]));
+      const problem = await submitForm(a, "change", values);
       if (problem) {
-        error.textContent = problem;
+        showError(error, problem, { fields: fields.map((f) => f.el), field: fields.find((f) => f.name === errorField("change", values, problem))?.el });
         button.disabled = false;
         return;
       }
@@ -93,7 +109,7 @@ export function changePasswordDialog(a = api) {
     };
     return h("form", { onSubmit },
       h("p", { class: "muted" }, `At least ${PASSWORD_MIN} characters. Your other sessions are signed out.`),
-      fields.map((f) => h("div", {}, h("label", {}, f.label), f.el)),
+      fields.map((f) => h("label", {}, f.label, f.el)),
       error,
       button);
   }).then((v) => v === true);
@@ -124,7 +140,7 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
   const input = (name, label, type, autocomplete) => ({
     name,
     el: h("input", { name, type, autocomplete, required: true }),
-    label: h("label", {}, label),
+    label,
   });
   const fields = choose
     ? [input("password", "New password", "password", "new-password"), input("repeat", "Repeat password", "password", "new-password")]
@@ -134,7 +150,7 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
         input("password", "Password", "password", setup ? "new-password" : "current-password"),
         ...(setup ? [input("repeat", "Repeat password", "password", "new-password")] : []),
       ];
-  const error = h("p", { class: "status bad" });
+  const error = h("p", { class: "status bad", role: "alert" });
   const button = h("button", { type: "submit", class: "primary" }, choose ? "Set password" : setup ? "Create account" : "Sign in");
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -147,7 +163,7 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
       return renderForm(a, "signin", reload, { state, page, note: "Your password is set. Sign in with it." });
     }
     if (!problem) return reload();
-    error.textContent = problem;
+    showError(error, problem, { fields: fields.map((f) => f.el), field: fields.find((f) => f.name === errorField(kind, values, problem))?.el });
     button.disabled = false;
   };
   const form = h(
@@ -157,7 +173,7 @@ function renderForm(a, kind, reload, { state, page, token, note } = {}) {
     setup ? h("p", { class: "muted" }, "There is no account yet. This one will be the admin.") : null,
     choose ? h("p", { class: "muted" }, "Type the password you want to use, twice.") : null,
     note ? h("p", { class: "muted" }, note) : null,
-    fields.map((f) => h("div", {}, f.label, f.el)),
+    fields.map((f) => h("label", {}, f.label, f.el)),
     error,
     button,
     kind === "signin" ? h("p", { class: "muted" }, FORGOT_TEXT) : null,
@@ -186,7 +202,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
     session = await a.session();
   } catch (e) {
     document.body.classList.add("signed-out");
-    mount(document.getElementById("main"), h("div", { class: "errors" }, errorText(e)));
+    mount(document.getElementById("main"), h("div", { class: "errors", role: "alert" }, errorText(e)));
     return new Promise(() => {});
   }
   const kind = formKind(session);
@@ -223,12 +239,18 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 export const isAdmin = (user) => user?.role === "admin";
 
 const USER_HASH = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
+// Only these pages take a query (filters) in their address.
+const USER_QUERY = /^#\/(runs|refinement|repos)$/;
 
 /** True when the address names no page at all: no hash, "#" or "#/". */
 export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
 
 /** True for a hash the user display has a page for: Home, Start work, Runs, one run, My repositories, Refinement, one session. */
-export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
+export const isUserHash = (hash) => {
+  const text = typeof hash === "string" ? hash : "";
+  const { path } = splitHash(text);
+  return USER_HASH.test(path) && (path === text || USER_QUERY.test(path));
+};
 
 /** The hash the user display draws: the given one when it has that page, else the Runs list. */
 export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
@@ -236,7 +258,7 @@ export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
 /** The page of the user display for a hash: { hash, section, id }. `id` is undefined for a list. */
 export function userPage(hash) {
   const to = userHash(hash);
-  const [, section, id] = to.split("/");
+  const [, section, id] = splitHash(to).path.split("/");
   return { hash: to, section, id };
 }
 

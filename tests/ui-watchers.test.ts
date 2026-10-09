@@ -175,12 +175,14 @@ describe("the page", () => {
   it("Delete asks first, then sends the DELETE", async () => {
     watchers = [stored()];
     const main = await draw();
-    (globalThis as any).confirm = () => false;
     press(button(cardOf(main, "w"), "Delete"));
     await flush();
+    press(button(root(), "Cancel"));
+    await flush();
     expect(sent).toEqual([]);
-    (globalThis as any).confirm = () => true;
     press(button(cardOf(main, "w"), "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
     await flush();
     expect(sent).toEqual([{ method: "DELETE", url: "/api/admin/repos/r1/watchers/w", body: undefined }]);
   });
@@ -193,8 +195,9 @@ describe("the page", () => {
     await flush();
     expect(toastText()).toBe("the sentence of the server");
     answers = [{ status: 404, error: "no such watcher" }];
-    (globalThis as any).confirm = () => true;
     press(button(cardOf(await draw(), "w"), "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
     await flush();
     expect(toastText()).toBe("no such watcher");
     expect(sent.some((s) => s.url === "/api/config")).toBe(false);
@@ -286,6 +289,30 @@ describe("the dialog", () => {
     save.click();
     await flush();
     expect(sent).toEqual([]);
+  });
+
+  it("with no repository at all it links to My repositories", async () => {
+    repos = [];
+    void open();
+    expect(root().textContent).toContain("No repositories yet.");
+    expect(root().textContent).not.toContain("No connected repository");
+    expect(walk(root()).find((e) => e.tag === "a")!.attrs.href).toBe("#/repos");
+    expect(button(root(), "Save watcher")!.attrs.disabled).toBeDefined();
+  });
+
+  it("a network failure says the server could not be reached and enables Save again", async () => {
+    const fetchBefore = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string, init: { method: string }) => {
+      if (init.method === "POST") throw new TypeError("fetch failed");
+      return (fetchBefore as any)(url, init);
+    };
+    void open();
+    inputOf(root(), "Id").value = "w";
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(root().textContent).toContain("Could not reach the server.");
+    expect(root().textContent).not.toContain("fetch failed");
+    expect(button(root(), "Save watcher")!.disabled).toBe(false);
   });
 
   it("an answer of the API stays in the dialog, as it is", async () => {
@@ -416,7 +443,7 @@ describe("the user side", () => {
   it("the admin page has the Watchers link", async () => {
     // The link moved from the top bar to the Administration secondary row (ui/ia.js).
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers", section: "operations" });
     expect(ia.subnavFor("user", "administration")).toEqual([]);
   });
 });

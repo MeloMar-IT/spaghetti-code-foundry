@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
@@ -101,11 +101,17 @@ describe("deliver pipeline", () => {
 
   it("lists a requested skill in the plan comment and reads it back", async () => {
     process.env.FAKE_SKILL_REQUEST = JSON.stringify(TS_REQUEST);
+    // "typescript" is not installed in the test: warn and go on instead of stopping
+    config.skills.unresolved.unknown = "warn";
+    onTestFinished(() => {
+      config.skills.unresolved.unknown = "stop";
+    });
     issues([5, ["Factory_go"]]);
     await watcher().tick();
     await settle();
     const run = runOf("issue-deliver", "5")!;
     expect(run.status).toBe("succeeded");
+    expect(run.skillPlan?.warnings).toHaveLength(1);
     const comment = gh.comments().find((c) => c.body.includes("Coding starts now"))!.body;
     expect(comment).toContain("- `typescript` — The change is in src/*.ts. Evidence: `path:src/skills/request.ts`");
     expect(comment).not.toMatch(REQUEST_LINE);
@@ -130,6 +136,11 @@ describe("deliver pipeline", () => {
     const request = JSON.stringify({ version: 1, skills });
     expect(Buffer.byteLength(`SKILL_REQUEST: ${request}`)).toBeLessThanOrEqual(8000);
     process.env.FAKE_SKILL_REQUEST = request;
+    // none of the 20 skills is installed: warn and go on instead of stopping
+    config.skills.unresolved.unknown = "warn";
+    onTestFinished(() => {
+      config.skills.unresolved.unknown = "stop";
+    });
     process.env.FAKE_ISSUE_PLAN = `## Goal\nSTART-OF-THE-PLAN\n${"A long line of the plan.\n".repeat(1100)}PLAN_STATUS: READY`;
     issues([5, ["Factory_go"]]);
     await watcher().tick();

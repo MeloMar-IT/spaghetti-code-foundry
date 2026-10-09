@@ -1,11 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ClaudeStep } from "../flow/schema.js";
+import { readOnlyStep, reviewerStepProblem, type ClaudeStep } from "../flow/schema.js";
 import { resolveClaudeBin, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
-import { ensureSkillLock } from "../engine/skill-lock.js";
+import { skillSession } from "../engine/skill-lock.js";
+import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
@@ -13,14 +14,11 @@ import { render } from "../engine/template.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
 
-const WRITE_TOOL = /^(Edit|Write|MultiEdit|NotebookEdit|Bash)\b/;
-
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
   const d = scope.flow.defaults;
   const mode = step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE;
-  const tools = step.allowed_tools ?? d.allowed_tools ?? [];
-  if (mode === "plan" || (mode === "dontAsk" && !tools.some((t) => WRITE_TOOL.test(t)))) return "read-only";
+  if (readOnlyStep(step, d)) return "read-only";
   if (mode === "bypassPermissions" && !sandboxed) return "danger-full-access";
   return "workspace-write";
 }
@@ -30,7 +28,7 @@ type Iso = { who: CommitIdentity };
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
@@ -76,7 +74,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
@@ -95,6 +93,35 @@ interface WithOptions {
   profile?: string;
   /** The program a boxed step starts (the one the profile opens). */
   bin?: string;
+  /** The skills of the run's lock for a Claude session. */
+  skills?: SkillPayload;
+  /** Not the first session of this step: a retry or a fallback. */
+  again?: boolean;
+}
+
+/** Which session a step with `resume:` asks to continue, and the digest of the skill block that session received. */
+export function sessionToResume(
+  step: Pick<ClaudeStep, "resume">,
+  steps: Record<string, Record<string, unknown>>,
+  agent: "claude" | "codex",
+): { asked: boolean; id?: string; prevAgent?: string; holds?: string } {
+  const prev = step.resume ? steps[step.resume] : undefined;
+  if (!prev) return { asked: false };
+  const prevAgent = String(prev.agent || "claude").split(":")[0]!;
+  const id = prevAgent === agent && typeof prev.session_id === "string" && prev.session_id ? prev.session_id : undefined;
+  // --resume replays the transcript on any provider or model, so the resumed session still holds its block.
+  const holds = id && typeof prev.skills_digest === "string" && prev.skills_digest ? prev.skills_digest : undefined;
+  return { asked: true, id, prevAgent, ...(holds ? { holds } : {}) };
+}
+
+/** A Claude session runs without the personal setup when the server says so, on a user's run, and always when the run's lock holds skills. */
+export function claudeIsolated(isolateAgents: boolean, userRun: boolean, skills?: Pick<SkillPayload, "loaded" | "omitted">, reviewer = false): boolean {
+  return isolateAgents || userRun || reviewer || Boolean(skills && (skills.loaded.length || skills.omitted.length));
+}
+
+/** The record of a skill block on a step result. */
+function skillsRecord(s?: SkillPayload, attach?: ReturnType<typeof attachSkillPayload>): Pick<StepResult, "skills"> {
+  return s ? { skills: { loaded: s.loaded, ...(s.omitted.length ? { omitted: s.omitted } : {}), bytes: s.bytes, estimatedTokens: s.estimatedTokens, ...(s.role ? { role: s.role } : {}), ...(attach ? { state: attach.state, digest: attach.digest, attachedBytes: attach.attachedBytes, attachedEstimatedTokens: attach.attachedEstimatedTokens } : {}) } } : {};
 }
 
 async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<StepResult> {
@@ -107,10 +134,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const sandboxed = boxed ? false : asked;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
   const effort = step.effort ?? d.effort;
-  const prev = step.resume ? ctx.steps[step.resume] : undefined;
-  const prevAgent = String(prev?.agent || "claude").split(":")[0];
-  const resumeId = prev && prevAgent === t.agent && typeof prev.session_id === "string" && prev.session_id ? prev.session_id : undefined;
-  if (prev && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
+  const { asked: resumeAsked, id: resumeId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
+  if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
   const common = {
     prompt: render(step.prompt, ctx),
     systemPrompt: step.system_prompt ? render(step.system_prompt, ctx) : undefined,
@@ -127,6 +152,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
     const r = await runCodex({
       ...common,
+      prompt: withSkillPayload(common.prompt, o.skills?.role === "reviewer" ? o.skills.text : ""),
       env,
       cleanEnv: short,
       codexBin: bin ?? engine.codexBin,
@@ -135,17 +161,27 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       localBaseUrl: local && t.provider.base_url !== builtinUrl ? t.provider.base_url : undefined,
       sandboxProfile: profile,
       sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
+      reviewer: step.skill_role === "reviewer",
       effort,
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens } };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
   const caps = t.free || !engine.config.cost_limits ? [] : [step.max_budget_usd ?? d.max_budget_usd, engine.remainingBudget()].filter((n): n is number => n !== undefined);
+  const isolatedSession = claudeIsolated(engine.config.isolate_agents, isolated, o.skills, step.skill_role === "reviewer");
+  if (isolatedSession && !engine.config.isolate_agents && !isolated) engine.log("    · skills: this session runs without the personal Claude setup");
+  const attach = o.skills ? attachSkillPayload(o.skills, { continues: Boolean(resumeId), holds, again: resumeAsked || Boolean(o.again) }) : undefined;
+  if (o.skills && attach) {
+    const keys = o.skills.loaded.join(", ");
+    if (attach.state === "reused") engine.log(`    · skill context: reused ${keys} from the session of ${step.resume}; nothing added`);
+    else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? ": new session" : ""}`);
+  }
   const r = await runClaude({
     ...common,
+    prompt: withSkillPayload(common.prompt, attach?.text ?? ""),
     env,
     cleanEnv: short,
     sandboxProfile: profile,
@@ -156,7 +192,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
     noMcp: local,
-    isolated: engine.config.isolate_agents || isolated,
+    isolated: isolatedSession,
     effort,
   });
   for (const d of r.denied ?? []) engine.log(`    ⚠ blocked: ${d}`);
@@ -170,6 +206,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     costUsd: local ? 0 : r.costUsd,
     agent: t.label,
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
+    ...skillsRecord(o.skills, attach),
   };
 }
 
@@ -180,6 +217,11 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
  */
 export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs?: number): Promise<StepResult> {
   const { config } = engine;
+  // A stored run can hold a flow that was not checked by this version: a reviewer must not be able to write.
+  if (step.skill_role === "reviewer") {
+    const msg = reviewerStepProblem(step, scope.flow.defaults) ? "a reviewer step must be read-only" : undefined;
+    if (msg) return { ok: false, output: msg, error: msg };
+  }
   const iso = stepIsolation(engine, scope.ctx.vars);
   if (iso && "refused" in iso) {
     engine.accessFailed = true;
@@ -205,13 +247,14 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
-    const refused = ensureSkillLock(engine);
-    if (refused) {
+    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder");
+    if ("refused" in session) {
+      engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
-      return { ok: false, output: refused, error: refused, ...tries() };
+      return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
     tried.add(target.label);
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed);
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

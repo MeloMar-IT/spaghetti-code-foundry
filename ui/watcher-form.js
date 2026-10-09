@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, modal } from "./dom.js";
+import { fieldFor, h, modal, showError } from "./dom.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
@@ -74,19 +74,22 @@ export function repoWatcherBody(v, editing) {
   return body;
 }
 
-/** Runs `send` once at a time: the button and the dialog's close stay off while it runs. */
-function guarded(state, button, err, send, close) {
+// Sentences about the watcher id: the dialog's own, a config path ending in "id", and the duplicate messages.
+const ID_PAIRS = [[/the id "/, "id"], [/^id:/, "id"], [/"watchers"[\s\S]*"id"/, "id"], [/the watcher id/, "id"], [/a watcher .* already exists/, "id"]];
+
+/** Runs `send` once at a time: the button and the dialog's close stay off while it runs. `mark(message)` shows an error ("" clears it). */
+function guarded(state, button, send, close, mark) {
   return async () => {
     if (state.busy) return;
     state.busy = true;
     button.disabled = true;
-    err.textContent = "";
+    mark("");
     try {
       await send();
     } catch (e) {
       state.busy = false;
       button.disabled = false;
-      err.textContent = e.message;
+      mark(e instanceof TypeError ? "Could not reach the server." : e.message);
       return;
     }
     state.busy = false;
@@ -121,18 +124,22 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const max = input(String(w.max_per_tick), { type: "number", min: 1 });
     const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes", value: Object.entries(w.vars ?? {}).map(([k, v]) => `${k}=${v}`).join("\n") });
     const enabled = check(w.enabled, "Enabled");
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const fields = { id, flow, label, exclude, every, max, task, branch, at, timezone: tz, vars };
+    const PAIRS = [[/^vars:/, "vars"], ...ID_PAIRS, [/^flow:/, "flow"], [/^label:/, "label"], [/^exclude_labels:/, "exclude"],
+      [/^every:/, "every"], [/^max_per_tick:/, "max"], [/^task:/, "task"], [/^branch:/, "branch"], [/^at:/, "at"], [/^timezone:/, "timezone"]];
+    const mark = (m) => showError(err, m, { fields: Object.values(fields), field: fields[fieldFor(m, PAIRS)] });
     const noRepo = !existing && !available.length;
     const save = h("button", { class: "primary", disabled: noRepo, onClick: () => {
       if (state.busy || noRepo) return;
       const parsed = parseVars(vars.value);
-      if (parsed.error) return void (err.textContent = parsed.error);
+      if (parsed.error) return void mark(parsed.error);
       const body = repoWatcherBody({
         id: id.value, source: source.value, flow: flow.value, label: label.value, exclude: exclude.value, every: every.value, max: max.value,
         enabled: enabled.el.checked, vars: parsed.vars, task: task.value, branch: branch.value, at: at.value, timezone: tz.value,
       }, !!existing);
       const send = () => (existing ? api.saveRepoWatcher(existing.repoId, existing.id, body) : api.addRepoWatcher(repo.value, body));
-      return guarded(state, save, err, send, close)();
+      return guarded(state, save, send, close, mark)();
     } }, "Save watcher");
     const labelField = h("div", { class: "grid" }, f("Trigger label", label), f("Skip issues with these labels", exclude));
     const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
@@ -148,7 +155,10 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     showFor();
     const repoField = existing
       ? f("Repository", h("span", { class: "mono" }, existing.github_repo || existing.repoId))
-      : available.length ? f("Repository", repo) : h("p", { class: "status bad flush" }, "No connected repository can have a watcher.");
+      : available.length ? f("Repository", repo)
+        : !(repos ?? []).length
+          ? h("p", { class: "status bad flush", role: "alert" }, "No repositories yet. ", h("a", { href: "#/repos" }, "Add one under My repositories."))
+          : h("p", { class: "status bad flush", role: "alert" }, "No connected repository can have a watcher.");
     return h("div", { class: "stack" },
       h("datalist", { id: "watcher-flows" }, (flows ?? []).map((x) => h("option", { value: x.name }))),
       repoField,
@@ -175,9 +185,11 @@ export function monitorDialog(existing, save) {
     const id = input(w.id, { class: "mono", disabled: !!existing });
     const every = input(w.every, { class: "mono", placeholder: "1h" });
     const enabled = check(w.enabled, "Enabled");
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const fields = { id, every };
+    const mark = (m) => showError(err, m, { fields: Object.values(fields), field: fields[fieldFor(m, [...ID_PAIRS, [/"watchers"[\s\S]*"every"/, "every"], [/^every:/, "every"]])] });
     const go = h("button", { class: "primary", onClick: () =>
-      guarded(state, go, err, () => save({ id: id.value.trim(), every: every.value.trim(), enabled: enabled.el.checked }), close)() }, "Save watcher");
+      guarded(state, go, () => save({ id: id.value.trim(), every: every.value.trim(), enabled: enabled.el.checked }), close, mark)() }, "Save watcher");
     return h("div", { class: "stack" },
       h("p", { class: "muted flush" }, "The monitor checks the Foundry itself for problems. It is saved in config.yaml."),
       f("Id", id), f("Check every", every, "e.g. 5m, 1h"), enabled.row, err, h("div", { class: "row" }, h("span", { class: "spacer" }), go));

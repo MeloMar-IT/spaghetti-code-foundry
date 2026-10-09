@@ -5,7 +5,7 @@ import { readUiCss } from "./helpers/ui-css.js";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
-const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "admin-credentials"];
+const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "admin-credentials", "maintenance"];
 
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
@@ -62,7 +62,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -97,7 +97,8 @@ describe("ui/user/app.js", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
     expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
-    expect(app).toContain("await renderMyRuns(box, { readOnly })");
+    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query })");
+    expect(app.indexOf('resolve("user", page.hash)')).toBeLessThan(app.indexOf('showPage("user", to)'));
     for (const c of calls) expect(c, c).toContain("readOnly");
     expect(app).not.toContain('"/runs.js"');
     for (const c of calls) expect(c, c).toContain("{ admin: false");
@@ -117,5 +118,10 @@ describe("ui/style.css", () => {
     expect(shellCss).toContain(".signed-out .side");
     expect(shellCss).toMatch(/@media \(max-width: 760px\) \{[^@]*\.side \{ display: none; position: fixed;/);
     expect(shellCss).toContain("body.drawer-open .side");
+  });
+  it("has the shared state styles", () => {
+    for (const c of [".sr-only {", ".skeleton {", ".state-error:not(.pill) {", ".stale-note {"]) expect(css).toContain(c);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.skeleton-row \{ animation: none/);
+    expect(css).toContain(".pill.fail, .pill.state-error");
   });
 });

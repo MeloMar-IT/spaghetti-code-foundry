@@ -7,7 +7,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
-import { SkillIdSchema } from "./skills/schema.js";
+import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -295,6 +295,8 @@ export const ConfigSchema = z
     isolate_agents: z.boolean().default(true),
     /** Block pushes whose new commits add secrets (API keys, private keys, .env files). */
     secret_scan: z.boolean().default(true),
+    /** The redesigned pages (still being built); off by default. */
+    ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),
@@ -429,6 +431,16 @@ export const ConfigSchema = z
             });
           })
           .prefault({}),
+        /** The review checks (REVIEW.md) a reviewer session gets. Applied below selection.max_tokens and below the coding block of the same run. */
+        review: z
+          .object({
+            max_tokens: z.number().int().min(REVIEW_RANGE.maxTokens[0]).max(REVIEW_RANGE.maxTokens[1]).default(REVIEW_DEFAULTS.maxTokens),
+            max_skill_tokens: z.number().int().min(REVIEW_RANGE.maxSkillTokens[0]).max(REVIEW_RANGE.maxSkillTokens[1]).default(REVIEW_DEFAULTS.maxSkillTokens),
+          })
+          .strict()
+          .prefault({}),
+        /** What to do with a requested skill that cannot be used. */
+        unresolved: UnresolvedPolicySchema,
       })
       .strict()
       .superRefine((s, ctx) => {

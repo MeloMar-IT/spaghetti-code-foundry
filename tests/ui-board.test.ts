@@ -28,6 +28,7 @@ afterEach(() => {
   vi.useRealTimers();
   globalThis.fetch = realFetch;
   delete (globalThis as any).location;
+  (document as any).visibilityState = "visible";
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
@@ -175,11 +176,14 @@ describe("highlight", () => {
 describe("renderBoard", () => {
   const main = () => new FakeElement("main");
 
-  it("returns a function at once and shows Loading…", () => {
+  it("returns a function at once and shows a skeleton under the heading", () => {
     const m = main();
     const cleanup = ui.renderBoard(m, undefined);
     expect(typeof cleanup).toBe("function");
-    expect(m.textContent).toContain("Loading…");
+    expect(m.children).toHaveLength(3);
+    expect(m.all("h1")[0]!.textContent).toBe("Board");
+    expect(m.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(true);
+    expect(m.textContent).toContain("Loading the board");
     cleanup();
   });
 
@@ -189,11 +193,12 @@ describe("renderBoard", () => {
     calls.shift()!.answer(board());
     await flush();
     expect(m.textContent).toContain("Eighty-nine");
-    const first = m.children;
+    const bodyBox = m.children[1]!;
+    const first = bodyBox.children;
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(board());
     await flush();
-    expect(m.children).toBe(first); // unchanged: not drawn again
+    expect(bodyBox.children).toBe(first); // unchanged: not drawn again
     cleanup();
   });
 
@@ -216,7 +221,8 @@ describe("renderBoard", () => {
     cleanup();
     calls.shift()!.answer(board());
     await flush();
-    expect(m.textContent).toContain("Loading…");
+    expect(m.textContent).toContain("Loading the board");
+    expect(m.textContent).not.toContain("Eighty-nine");
     await vi.advanceTimersByTimeAsync(10_000);
     expect(calls).toHaveLength(0);
   });
@@ -226,7 +232,11 @@ describe("renderBoard", () => {
     const cleanup = ui.renderBoard(m, undefined);
     calls.shift()!.answer({ error: "boom" }, false);
     await flush();
-    expect(find(m, "div", "errors")[0]!.textContent).toBe("boom");
+    const err = find(m, "div", "state-error")[0]!;
+    expect(err.attrs.role).toBe("alert");
+    expect(err.textContent).toContain("Could not load the board.");
+    expect(err.textContent).toContain("boom");
+    expect(m.all("button").some((b) => b.attrs["data-focus"] === "board-retry")).toBe(true);
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(board());
     await flush();
@@ -235,6 +245,7 @@ describe("renderBoard", () => {
     calls.shift()!.answer({ error: "later" }, false);
     await flush();
     expect(m.textContent).toContain("Eighty-nine");
+    expect(m.textContent).toContain("Could not refresh");
     cleanup();
   });
 
@@ -257,10 +268,13 @@ describe("renderBoard", () => {
     const cleanup = ui.renderBoard(m, undefined);
     calls.shift()!.answer(board());
     await flush();
-    const vis = () => (document as any).listeners.visibilitychange![0]();
-    vis(); // nothing remembered yet
+    const vis = () => { for (const f of [...(document as any).listeners.visibilitychange]) f(); };
+    vis(); // nothing remembered yet: one GET, no POST
     await flush();
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "GET", url: "/api/board" });
+    calls.shift()!.answer(board());
+    await flush();
     m.all("a").find((a) => a.attrs.href === "https://github.com/acme/app/issues/89")!.listeners.click![0]!();
     (document as any).visibilityState = "visible";
     vis();
@@ -278,9 +292,10 @@ describe("renderBoard", () => {
     calls.shift()!.answer(board([card({ watcher: undefined })]));
     await flush();
     m.all("a").find((a) => a.attrs.href === "https://github.com/acme/app/issues/89")!.listeners.click![0]!();
-    (document as any).listeners.visibilitychange![0]();
+    for (const f of [...(document as any).listeners.visibilitychange]) f();
     await flush();
-    expect(calls).toHaveLength(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ method: "GET", url: "/api/board" });
     cleanup();
   });
 
@@ -328,9 +343,9 @@ describe("owners on the board", () => {
     expect(codingHead(view(d))).toBe("Coding 3");
   });
 
-  it("redraws on a change of the select without a new request, and resets when the owner's cards are gone", async () => {
+  it("redraws on a change of the select without a new request, and shows the empty state when the owner's cards are gone", async () => {
     const m = main();
-    const cleanup = ui.renderBoard(m, undefined);
+    const cleanup = ui.renderBoard(m, undefined, { go: vi.fn() });
     calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]));
     await flush();
     expect(cardEl(m)).toHaveLength(2);
@@ -340,8 +355,85 @@ describe("owners on the board", () => {
     await vi.advanceTimersByTimeAsync(5000);
     calls.shift()!.answer(board([mine(2, "u2", "Bob")]));
     await flush();
+    expect(cardEl(m)).toHaveLength(0);
+    expect(m.textContent).toContain("No cards match Owner: u1.");
+    m.all("button").find((b) => b.textContent === "Clear filters")!.listeners.click![0]!();
     expect(cardEl(m)).toHaveLength(1);
     expect(cardEl(m)[0]!.textContent).toContain("T2");
     cleanup();
+  });
+
+  const two = () => ({ repos: [board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]).repos[0]!, board([mine(3, "u1", "Ann")], "acme/web").repos[0]!] });
+  const bar = (root: FakeElement) => find(root, "div", "filter-bar")[0];
+
+  it("keeps the owner in the repository buttons and shows a filter bar", () => {
+    const onOwner = vi.fn();
+    const root = view(two(), "acme/app", { ...handlers(), owner: "u1", onOwner } as any);
+    expect(root.all("a").filter((a) => a.attrs.class?.includes("btn")).map((a) => a.attrs.href)).toEqual(["#/board/acme%2Fapp?owner=u1", "#/board/acme%2Fweb?owner=u1"]);
+    expect(bar(root)!.textContent).toContain("Owner: Ann");
+    bar(root)!.all("button")[0]!.listeners.click![0]!();
+    bar(root)!.all("button")[1]!.listeners.click![0]!();
+    expect(onOwner.mock.calls).toEqual([[""], [""]]);
+    const plain = view(two(), "acme/app");
+    expect(plain.all("a").filter((a) => a.attrs.class?.includes("btn")).map((a) => a.attrs.href)).toEqual(["#/board/acme%2Fapp", "#/board/acme%2Fweb"]);
+    expect(bar(plain)).toBeUndefined();
+  });
+
+  it("names an owner with no cards and offers Clear filters", () => {
+    const onOwner = vi.fn();
+    const root = view(board([mine(1, "u1", "Ann")]), undefined, { ...handlers(), owner: "u9", onOwner } as any);
+    expect(root.textContent).toContain("No cards match Owner: u9.");
+    expect(find(root, "div", "board")).toHaveLength(0);
+    root.all("button").filter((b) => b.textContent === "Clear filters").at(-1)!.listeners.click![0]!();
+    expect(onOwner).toHaveBeenCalledWith("");
+  });
+
+  it("names the owner on an entirely empty board", () => {
+    const root = view({ repos: [], empty: "Nothing here." }, undefined, { ...handlers(), owner: "u1" } as any);
+    expect(root.textContent).toContain("No cards match Owner: u1.");
+    expect(root.textContent).not.toContain("Nothing here.");
+    expect(view({ repos: [], empty: "Nothing here." }).textContent).toContain("Nothing here.");
+  });
+
+  it("renderBoard filters from the first draw, writes the address on a change and keeps the filter on refresh", async () => {
+    const m = main();
+    const go = vi.fn();
+    const cleanup = ui.renderBoard(m, "acme/app", { query: { owner: "u1" }, go });
+    calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(m)).toHaveLength(1);
+    expect(go).not.toHaveBeenCalled();
+    select(m).listeners.change![0]!({ target: { value: "u2" } });
+    expect(go).toHaveBeenLastCalledWith("#/board/acme%2Fapp?owner=u2");
+    select(m).listeners.change![0]!({ target: { value: "" } });
+    expect(go).toHaveBeenLastCalledWith("#/board/acme%2Fapp");
+    expect(calls).toHaveLength(0);
+    select(m).listeners.change![0]!({ target: { value: "u1" } });
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob"), mine(4, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(m)).toHaveLength(1);
+    cleanup();
+  });
+
+  it("writes #/board for no repository, ignores a repo filter, and the address round-trips", async () => {
+    const m = main();
+    const go = vi.fn();
+    const cleanup = ui.renderBoard(m, undefined, { query: { repo: "x/y" }, go });
+    calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(m)).toHaveLength(2);
+    expect(bar(m)).toBeUndefined();
+    select(m).listeners.change![0]!({ target: { value: "u2" } });
+    expect(go).toHaveBeenLastCalledWith("#/board?owner=u2");
+    const ia = (await import("../ui/ia.js" as string)) as any;
+    const again = main();
+    const stop = ui.renderBoard(again, undefined, { query: ia.resolve("admin", go.mock.calls.at(-1)![0]).query, go });
+    calls.shift()!.answer(board([mine(1, "u1", "Ann"), mine(2, "u2", "Bob")]));
+    await flush();
+    expect(cardEl(again).map((c) => c.textContent)).toEqual(cardEl(m).map((c) => c.textContent));
+    expect(bar(again)!.textContent).toContain("Owner: Bob");
+    cleanup();
+    stop();
   });
 });

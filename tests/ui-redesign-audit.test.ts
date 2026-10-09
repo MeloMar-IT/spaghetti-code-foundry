@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installFakeDom } from "./helpers/fake-dom.js";
+import { code, tableRows } from "./helpers/md-table.js";
 import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } from "./browser/journeys-baseline.js";
 
 // docs/ui-redesign/ is a research audit of every screen. This test keeps its tables in step with the code:
@@ -10,30 +11,6 @@ import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } 
 const DIR = "docs/ui-redesign";
 const read = (p: string) => readFileSync(p, "utf8");
 const doc = (name: string) => read(`${DIR}/${name}`);
-
-/** Rows of the first markdown table under a heading; cells trimmed; header and separator dropped. */
-function tableRows(text: string, heading: string): string[][] {
-  const lines = text.split("\n");
-  const at = lines.findIndex((l) => l.trim() === heading);
-  if (at < 0) return [];
-  const rows: string[][] = [];
-  let started = false;
-  for (const line of lines.slice(at + 1)) {
-    if (/^#{1,6} /.test(line)) break;
-    if (!line.trim().startsWith("|")) {
-      if (started) break;
-      continue;
-    }
-    started = true;
-    rows.push(line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")));
-  }
-  return rows.slice(2); // header and separator
-}
-
-/** The text inside the first pair of backticks of a cell. */
-function code(cell: string): string {
-  return /`([^`]*)`/.exec(cell)?.[1] ?? "";
-}
 
 /** Both directions of a set comparison. */
 function diff(docItems: string[], source: string[]): { missing: string[]; extra: string[] } {
@@ -219,6 +196,10 @@ describe("the dialogs match the code", () => {
     const keys = dialogs.map((r) => `${code(r[0]!)}|${r[1]}`);
     expect(new Set(keys).size).toBe(keys.length);
     for (const r of dialogs) expect(files, `unknown file in dialogs: ${r[0]}`).toContain(code(r[0]!));
+  });
+
+  it("has no native confirm left in the administration pages that use the shared dialog", () => {
+    for (const f of ["ui/admin.js", "ui/problems.js"]) expect(count(read(f), /\bconfirm\(/g), f).toBe(0);
   });
 
   it("has a row for every native confirm or prompt", () => {

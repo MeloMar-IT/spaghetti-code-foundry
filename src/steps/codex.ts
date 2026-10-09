@@ -47,6 +47,8 @@ export interface CodexRunOptions {
   /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
   onProgress?: (msg: string) => void;
+  /** Read-only reviewer: ignore the personal Codex config and switch off MCP servers and hooks (the login is kept). */
+  reviewer?: boolean;
 }
 
 export interface CodexRunResult {
@@ -84,6 +86,7 @@ export function buildCodexArgs(o: CodexRunOptions): string[] {
   const args = ["exec"];
   if (o.resumeSessionId) args.push("resume");
   args.push("--json", "--skip-git-repo-check", "-c", `sandbox_mode=${toml(o.sandbox)}`, "-c", `approval_policy=${toml("never")}`);
+  if (o.reviewer) args.push("--ignore-user-config", "-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
   if (o.model) args.push("-m", o.model);
   if (o.effort) args.push("-c", `model_reasoning_effort=${toml(o.effort === "max" ? "xhigh" : o.effort)}`);
   if (o.localProvider) args.push("-c", `model_provider=${toml(o.localProvider)}`);

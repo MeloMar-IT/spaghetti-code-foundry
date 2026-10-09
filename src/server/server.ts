@@ -18,11 +18,12 @@ import { credentialRoutes } from "./api-credentials.js";
 import { monitorRoutes } from "./api-monitor.js";
 import { flowRoutes } from "./api-flows.js";
 import { runRoutes } from "./api-runs.js";
-import { HttpError, send, serveStatic } from "./http.js";
+import { HttpError, isGalleryPath, send, serveStatic } from "./http.js";
 import { areaWait, forgetHistory, nextRoutes, type RestartState } from "./next.js";
 import { healthRoutes } from "./health.js";
 import type { UpdateView } from "../self-update.js";
 import { boardRoutes } from "./board.js";
+import { searchRoutes } from "./search.js";
 import { TurnNotifier } from "./notifier.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
@@ -62,6 +63,8 @@ export interface ServerOptions {
   claudeBin?: string;
   /** Run the watchers (default true). */
   watchers?: boolean;
+  /** Development aids (default false): serve the component gallery at /gallery/. */
+  dev?: boolean;
   log?: (msg: string) => void;
   /** How often an open response re-checks its session, in ms (default 4000). */
   sessionRecheckMs?: number;
@@ -81,6 +84,8 @@ export interface ServerOptions {
   watcherRetryMs?: number;
   /** How long the publish plan waits for GitHub, in ms (default 15000). A test makes it short. */
   ghTimeoutMs?: number;
+  /** How many pages of 100 open issues are read to find dependants (default 10). A test makes it small. */
+  openIssuePages?: number;
 }
 
 export interface ApiContext {
@@ -110,7 +115,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -311,7 +316,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       return;
     }
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
-    serveStatic(res, UI_DIR, path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
+    // The gallery is a development aid: without `dev` every path under /gallery answers 404.
+    if (opts.dev !== true && isGalleryPath(path)) return void res.writeHead(404).end("not found");
+    serveStatic(res, UI_DIR, path === "/gallery" || path === "/gallery/" ? "gallery/index.html" : path === "/" ? "index.html" : path === "/user" || path === "/user/" ? "user/index.html" : path.slice(1));
   });
 
   await new Promise<void>((ok, fail) => {

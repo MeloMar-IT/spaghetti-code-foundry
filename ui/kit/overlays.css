@@ -1,0 +1,158 @@
+/* ui/kit/overlays.css — tabs, menus, tooltips, dialogs, drawers and toasts of the component kit.
+   Belongs here: .scf-tabs, .scf-menu, .scf-tooltip, .scf-overlay, .scf-dialog, .scf-drawer and .scf-toast rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. Placement is by class only. */
+
+/* Tabs */
+.scf-tabs { display: grid; gap: var(--space-md); min-width: 0; }
+.scf-tabs__list { display: flex; flex-wrap: wrap; gap: var(--space-xs); border-bottom: var(--border-width) solid var(--color-border); }
+.scf-tabs__tab {
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--color-text-muted);
+  background: transparent;
+  border: var(--border-width) solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: var(--control-pad-y) var(--control-pad-x);
+  cursor: pointer;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.scf-tabs__tab:hover { color: var(--color-text); background: var(--color-surface-2); }
+.scf-tabs__tab[aria-selected="true"] { color: var(--color-text); border-bottom-color: var(--color-accent); font-weight: var(--weight-medium); }
+.scf-tabs__tab:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.scf-tabs__panel { min-width: 0; overflow-wrap: anywhere; }
+.scf-tabs__panel:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-tabs__panel[hidden] { display: none; }
+
+/* Menu */
+.scf-menu { position: relative; display: inline-flex; }
+.scf-menu__list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: var(--layer-menu);
+  display: grid;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(var(--size-sidebar), 90vw);
+  padding: var(--space-xs);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.scf-menu--above .scf-menu__list { top: auto; bottom: 100%; }
+.scf-menu--end .scf-menu__list { left: auto; right: 0; }
+.scf-menu__list[hidden] { display: none; }
+.scf-menu__list:focus-visible { outline: none; }
+.scf-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.scf-menu__item:hover, .scf-menu__item:focus-visible { background: var(--color-surface-2); }
+.scf-menu__item:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.scf-menu__item--danger { color: var(--color-danger); }
+.scf-menu__item--disabled, .scf-menu__item--disabled:hover { color: var(--color-disabled); background: transparent; cursor: default; }
+
+/* Tooltip */
+.scf-tooltip { position: relative; display: inline-flex; }
+.scf-tooltip__bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  z-index: var(--layer-menu);
+  width: max-content;
+  max-width: min(var(--size-sidebar), 90vw);
+  padding: var(--space-xs) var(--space-md);
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.scf-tooltip__bubble--below { bottom: auto; top: 100%; }
+.scf-tooltip__bubble--end { left: auto; right: 0; }
+.scf-tooltip__bubble[hidden] { display: none; }
+
+/* Dialog and drawer */
+.scf-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-xl);
+  background: var(--color-overlay);
+  z-index: var(--layer-overlay);
+}
+.scf-overlay--drawer { place-items: stretch end; padding: 0; }
+.scf-overlay--start { justify-items: start; }
+.scf-dialog, .scf-drawer {
+  display: grid;
+  align-content: start;
+  gap: var(--space-xl);
+  width: min(var(--size-form), 100%);
+  min-width: 0;
+  padding: var(--space-3xl);
+  overflow: auto;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+}
+.scf-dialog { max-height: 90vh; border-radius: var(--radius-xl); }
+.scf-drawer { height: 100%; border-radius: var(--radius-none); }
+.scf-dialog:focus-visible, .scf-drawer:focus-visible { outline: none; }
+.scf-overlay__head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-md); }
+.scf-overlay__title { margin: 0; font-size: var(--text-section); overflow-wrap: anywhere; min-width: 0; }
+.scf-overlay__body { min-width: 0; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .scf-drawer { width: 100%; }
+  .scf-overlay { padding: var(--space-md); }
+  .scf-overlay--drawer { padding: 0; }
+}
+
+/* Toast */
+.scf-toasts {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--space-2xl);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-md);
+  padding: 0 var(--space-xl);
+  z-index: var(--layer-toast);
+  pointer-events: none;
+}
+.scf-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: min(var(--size-form), 100%);
+  padding: var(--space-md) var(--space-lg);
+  color: var(--color-bg);
+  background: var(--color-text);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+.scf-toast__text { min-width: 0; }
+.scf-toast__dismiss, .scf-toast__dismiss:hover { color: inherit; background: transparent; }
+.scf-toast__dismiss:hover { border-color: currentcolor; }
+.scf-toast__dismiss:focus-visible { outline-color: currentcolor; }
+.scf-toast--ok { border-left: 4px solid var(--color-success); }
+.scf-toast--warn { border-left: 4px solid var(--color-warning); }
+.scf-toast--fail { border-left: 4px solid var(--color-danger); color: var(--color-on-danger); background: var(--color-danger); }

@@ -156,7 +156,7 @@ function briefSection(s, onAsk) {
       b.cut ? h("p", { class: "muted" }, "The brief was too long to keep whole; the end is missing.") : null,
       briefParts(b.text).map((p) => [
         p.title ? h("h3", {}, p.title) : null,
-        h("p", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 } }, p.body),
+        h("p", { class: "flush pre-wrap wrap-anywhere" }, p.body),
       ])) : null,
   ];
 }
@@ -179,10 +179,12 @@ async function whileBusy(btn, fn) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The page drawn last (`id` is undefined for the list), so an Undo knows what to draw again.
+let openPage = { id: undefined, reload: async () => {} };
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent((location.hash ?? "").split("/")[1] ?? "") === "refinement";
+    return decodeURIComponent((location.hash ?? "").split("?")[0].split("/")[1] ?? "") === "refinement";
   } catch {
     return false;
   }
@@ -199,7 +201,7 @@ let showDropped = false;
 function newSessionDialog(repos, onMade) {
   return modal("New refinement session", (close) => {
     if (!repos.length) {
-      return h("div", { style: { display: "grid", gap: "12px" } },
+      return h("div", { class: "stack" },
         h("p", { class: "muted" }, "You need a GitHub repository first. Add one under My repositories."),
         h("a", { href: "#/repos", onClick: () => close(undefined) }, "Go to My repositories"));
     }
@@ -207,7 +209,7 @@ function newSessionDialog(repos, onMade) {
     select.value = repos[0];
     const title = h("input", { name: "title", placeholder: "Optional. The first line of the idea is used when empty.", autocomplete: "off" });
     const idea = h("textarea", { name: "idea", rows: 8, placeholder: "Describe your idea in your own words" });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     let busy = false;
     const run = async () => {
       if (busy) return;
@@ -228,7 +230,7 @@ function newSessionDialog(repos, onMade) {
       }
     };
     const start = h("button", { class: "primary", onClick: run }, "Start session");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, "Repository"), select),
       h("label", { class: "field" }, h("span", {}, "Title"), title),
       h("label", { class: "field" }, h("span", {}, "Your idea"), idea),
@@ -240,7 +242,7 @@ function newSessionDialog(repos, onMade) {
 function renameDialog(session, onRenamed) {
   return modal("Rename session", (close) => {
     const input = h("input", { name: "title", value: session.title, autocomplete: "off" });
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     let busy = false;
     const run = async () => {
       if (busy) return;
@@ -262,7 +264,7 @@ function renameDialog(session, onRenamed) {
       close(true);
     };
     const save = h("button", { class: "primary", onClick: run }, "Save");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, "Title"), input), err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
 }
@@ -279,16 +281,25 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const reload = () => renderRefinement(main, { admin, id, readOnly }).then((c) => {
     reloaded = c;
   }, (e) => toast(errorText(e), "error"));
+  openPage = { id, reload };
+  const restoreNow = async (sid) => {
+    try {
+      await api.restoreRefinement(sid);
+      toast("Session restored");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const restore = (btn, sid) =>
     whileBusy(btn, async () => {
-      try {
-        await api.restoreRefinement(sid);
-        toast("Session restored");
-      } catch (e) {
-        toast(errorText(e), "error");
-      }
+      await restoreNow(sid);
       await reload();
     });
+  // Undo after Drop runs when the person may be elsewhere: draw only the page they are on, never the dropped session over it.
+  const undoDrop = async (sid) => {
+    await restoreNow(sid);
+    if (onPage() && (openPage.id === undefined || openPage.id === sid)) await openPage.reload();
+  };
   let leaveDrafts = () => {};
   const cleanup = () => {
     if (reloaded) return reloaded();
@@ -412,7 +423,8 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
           return whileBusy(btn, async () => {
             try {
               await api.dropRefinement(s.id);
-              toast("Session dropped");
+              // Only the owner can restore; Undo stays until used or replaced, so the keyboard can reach it.
+              toast("Session dropped", "info", s.mine ? { sticky: true, action: { label: "Undo", run: () => undoDrop(s.id) } } : {});
             } catch (err) {
               toast(errorText(err), "error");
             }
@@ -435,7 +447,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
         h("h2", {}, "Idea"),
-        h("p", { style: { whiteSpace: "pre-wrap" } }, s.idea),
+        h("p", { class: "pre-wrap" }, s.idea),
         ...briefSection(s, ask),
         ...talkSection(s, { send, errorText, line: ["round", "question"].includes(kindOf(s.architect)) ? statusLine(architectStatus(s.architect)) : null }),
         );

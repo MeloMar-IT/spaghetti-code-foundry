@@ -18,6 +18,21 @@ function scopeOf(body: Record<string, unknown>): FlowScope {
   return scope;
 }
 
+/** The published flows a user can start, as a user sees them. A flow that no longer parses is left out. */
+export function userFlowList(repo: string): UserFlow[] {
+  const out: UserFlow[] = [];
+  for (const f of publishedFlows(repo)) {
+    try {
+      const flow = parseFlow(readFileSync(f.path, "utf8"), f.path);
+      if (flow.workspace !== "empty") continue; // users cannot start a flow that works in the server's folder or a branch of it
+      out.push(userFlow(f.name, flow, effectiveVars(flow, resolve(repo))));
+    } catch {
+      // A flow that no longer parses is left out.
+    }
+  }
+  return out;
+}
+
 export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg, method, user) => {
   if (seg[0] === "flows") {
     const name = seg[1];
@@ -25,17 +40,7 @@ export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg
     if (!name && method === "GET") {
       const published = new URL(req.url ?? "/", "http://x").searchParams.get("published") === "1";
       if (user.role !== "admin" || published) {
-        const out: UserFlow[] = [];
-        for (const f of publishedFlows(opts.repo)) {
-          try {
-            const flow = parseFlow(readFileSync(f.path, "utf8"), f.path);
-            if (flow.workspace !== "empty") continue; // users cannot start a flow that works in the server's folder or a branch of it
-            out.push(userFlow(f.name, flow, effectiveVars(flow, resolve(opts.repo))));
-          } catch {
-            // A flow that no longer parses is left out.
-          }
-        }
-        return send(res, 200, out), true;
+        return send(res, 200, userFlowList(opts.repo)), true;
       }
       return send(res, 200, listFlows(opts.repo)), true;
     }

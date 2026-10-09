@@ -12,6 +12,7 @@ import { HttpError, readJson, send } from "./http.js";
 import { architectDeps, guardedAsync, limitsOf } from "./api-refinement.js";
 import { GH_TIMEOUT_MS, labelsOf as labelNamesOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { sessionUser } from "./api-auth.js";
+import { replacePlan } from "./api-refinement-replace.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
 import type { ApiContext, Route } from "./server.js";
 
@@ -56,9 +57,11 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
     const reviewLabel = limitsOf(ctx, s).reviewLabel;
     const onGithub = new Map(s.drafts.flatMap((d) => (d.published !== undefined ? [[d.id, d.published.issue] as const] : [])));
     const draft = markOf(s);
-    const { items, willCreate, willUpdate, notChanged, leftBehind } = planOf(s, {
+    const timeout = ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS;
+    const { items, willCreate, willUpdate, notChanged, replaces, leftBehind } = planOf(s, {
       list: labels.list,
       onGithub,
+      replaced: !!s.source?.replacedBy,
       by,
       date: new Date().toISOString().slice(0, 10),
       ...(s.source ? { source: { issue: s.source.issue, ...(draft !== undefined ? { draft } : {}) } } : {}),
@@ -71,7 +74,6 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
     let changedOnGithub: ChangedOnGithub | undefined;
     if (did !== undefined && s.source) {
       const n = s.source.issue;
-      const timeout = ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS;
       const now = await asOwnedRepo(ctx, s.owner, s.repo, async () => {
         try {
           return await restIssue(s.repo, n, timeout);
@@ -82,6 +84,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       // A missing issue or a pull request adds nothing: publish refuses those itself.
       if (now && !now.pull_request) changedOnGithub = changeOf(s, did, now, mineOf(s, items, did));
     }
+    const replacing = replaces ? { ...replaces, ...(await asOwnedRepo(ctx, s.owner, s.repo, () => replacePlan(ctx, s, replaces, timeout))) } : undefined;
     return {
       repo: s.repo,
       items,
@@ -89,6 +92,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       willUpdate,
       ...(changedOnGithub ? { changedOnGithub } : {}),
       ...(notChanged !== undefined ? { notChanged } : {}),
+      ...(replacing ? { replaces: replacing } : {}),
       ...(leftBehind.length ? { leftBehind } : {}),
       repoLabels: labels.names,
       ...(buildLabel ? { buildLabel } : { noBuildLabel: "this repository has no enabled watcher for issues, so no label starts a build" }),

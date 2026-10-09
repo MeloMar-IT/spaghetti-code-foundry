@@ -320,6 +320,24 @@ async function listPage(repo: string, query: string, timeoutMs?: number): Promis
   return { issues: list.filter((i) => !i.pull_request), full: list.length >= 100 };
 }
 
+/** The open issues (not pull requests), oldest number first, 100 per call, at most `pages` pages. `cut`: there are more. */
+export async function listOpenIssues(repo: string, o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }> {
+  if (!Number.isInteger(o.pages) || o.pages < 1) throw new Error("pages must be a whole number of 1 or more");
+  const openPage = async (page: number) => {
+    const out = (await gh(["api", `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc&page=${page}`], undefined, o.timeoutMs)).trim();
+    const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
+    if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
+    return list;
+  };
+  const issues: RestIssue[] = [];
+  for (let p = 1; p <= o.pages; p++) {
+    const list = await openPage(p);
+    issues.push(...list.filter((i) => !i.pull_request));
+    if (list.length < 100) return { issues, cut: false };
+  }
+  return { issues, cut: (await openPage(o.pages + 1)).length > 0 };
+}
+
 /** Like listNewestIssues, and whether GitHub's page was full (100 issues and pull requests), so that older ones may be missing. */
 export async function listNewestIssuesCut(repo: string, timeoutMs?: number): Promise<{ issues: RestIssue[]; cut: boolean }> {
   const { issues, full } = await listPage(repo, "", timeoutMs);
@@ -371,11 +389,20 @@ export async function createIssue(repo: string, o: { title: string; body: string
 }
 
 /** Replaces the title and text of an issue. Title and text go through stdin as JSON, never into the command line. */
-export async function updateIssue(repo: string, issue: number, o: { title: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
-  const out = await gh(["api", `repos/${repo}/issues/${issue}`, "-X", "PATCH", "--input", "-"], undefined, timeoutMs, JSON.stringify({ title: o.title, body: o.body }));
+export async function updateIssue(repo: string, issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
+  const input = JSON.stringify(o.title === undefined ? { body: o.body } : { title: o.title, body: o.body });
+  const out = await gh(["api", `repos/${repo}/issues/${issue}`, "-X", "PATCH", "--input", "-"], undefined, timeoutMs, input);
   const changed = JSON.parse(out.trim()) as RestIssue;
   if (!changed || changed.number !== issue) throw new Error("GitHub did not report the changed issue");
   return changed;
+}
+
+/** Closes an issue with a reason. The JSON goes through stdin. Rejects when GitHub does not report it closed with that reason. */
+export async function closeIssue(repo: string, issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue> {
+  const out = await gh(["api", `repos/${repo}/issues/${issue}`, "-X", "PATCH", "--input", "-"], undefined, timeoutMs, JSON.stringify({ state: "closed", state_reason: reason }));
+  const closed = JSON.parse(out.trim()) as RestIssue & { state_reason?: unknown };
+  if (!closed || closed.number !== issue || closed.state !== "closed" || closed.state_reason !== reason) throw new Error("GitHub did not report the issue as closed");
+  return closed;
 }
 
 /** Makes a label when it is missing; an existing one is left as it is (no --force). Rejects on any other error. */

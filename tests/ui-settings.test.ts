@@ -88,6 +88,46 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → Redesign", () => {
+  const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
+
+  it("has the checkbox, off by default and on when the config says so", async () => {
+    expect(!!box((await render({})).main).checked).toBe(false);
+    expect(box((await render({}, "127.0.0.1", 200, { ui: { redesign: true } })).main).checked).toBe(true);
+  });
+
+  it("saves the choice and keeps the other settings", async () => {
+    const { main, puts } = await render({});
+    box(main).checked = true;
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].ui).toEqual({ redesign: true });
+    expect(puts[0].concurrency).toBe(2);
+  });
+});
+
+describe("Settings → no Disk section", () => {
+  it("has no Disk card, Clean up or Preview button", async () => {
+    const { main } = await render({});
+    expect(main.all("h3").some((x) => x.textContent === "Disk")).toBe(false);
+    expect(main.all("button").some((b) => ["Clean up", "Preview"].includes(b.textContent))).toBe(false);
+  });
+
+  it("saves with one PUT and never calls /api/clean", async () => {
+    const { main, puts } = await render({});
+    const calls: string[] = [];
+    const inner = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => {
+      calls.push(url);
+      return inner(url, init);
+    };
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(calls.some((u) => u.includes("/api/clean"))).toBe(false);
+  });
+});
+
 describe("Settings → GitHub App", () => {
   const appCard = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "GitHub App")!;
   const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;

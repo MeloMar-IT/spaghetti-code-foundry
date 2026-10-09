@@ -386,6 +386,11 @@ describe("scf resume, approve and reject of a closed issue", { timeout: 120_000 
     });
   });
 
+  it("shows --dev on both server commands", () => {
+    const lines = run(cli, ["--help"]).stdout.split("\n");
+    for (const c of ["scf ui", "scf serve"]) expect(lines.find((l) => l.includes(`${c} [`))).toContain("[--dev]");
+  });
+
   it("shows --force in the usage", () => {
     const out = run(cli, ["--help"]).stdout;
     for (const c of ["resume <run-id> [--from <step>] [--force]", 'approve <run-id> [--note "..."] [--force]', 'reject <run-id> [--note "..."] [--force]']) expect(out).toContain(c);

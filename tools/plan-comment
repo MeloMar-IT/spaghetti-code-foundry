@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+// Hashes a comment body, and lists the plan comments of an issue as IDs and hashes, never as text.
+// "hash": reads a comment body on stdin and prints "sha256:<hex>" of the body (line ends and white space around it do not count).
+// No argument: reads {"comments":[{body,url,viewerDidAuthor,…}]} on stdin and prints one line,
+// "PLAN_COMMENTS: {"version":1,"comments":[{id,sha256,mine,later}]}" (the newest 30, oldest first), exit 0;
+// or "plan check: the comments could not be read" (exit 1). "later" counts the later comments that are not Foundry comments of ours.
+// No arguments beyond "hash", no environment, no network. Nothing from the input is printed except IDs, hashes, booleans and counts.
+// The rules mirror src/skills/plan-record.ts — keep the two the same (tests/skill-plan-record.test.ts checks it).
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const PLAN_MARKER = /^<!-- (claude-factory|spaghetti-code-foundry) run=[\w-]+ plan -->$/;
+// any Foundry marker: run=…, run=… approval/questions/daily/release/…, status, monitor=…, auto-defaults
+const ANY_MARKER = /^<!-- (claude-factory|spaghetti-code-foundry) [\w=.-]+(?: [\w=.-]+)* -->$/;
+const KEEP = 30;
+
+// the normalisation of sameBody (src/github.ts)
+const normal = (t) => t.replace(/\r\n/g, "\n").trim();
+const hashOf = (body) => "sha256:" + createHash("sha256").update(normal(body)).digest("hex");
+const lastLine = (body) => body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+// as commentId (src/github.ts)
+const idOf = (url) => (typeof url === "string" ? /#issuecomment-(\d+)\s*$/.exec(url.trim())?.[1] : undefined);
+
+function fail(message) {
+  console.log(message);
+  process.exit(1);
+}
+
+const arg = process.argv[2];
+if (arg !== undefined && arg !== "hash") fail("plan check: unknown argument");
+const input = readFileSync(0, "utf8");
+
+if (arg === "hash") {
+  if (normal(input) === "") fail("plan comment: the body is empty");
+  console.log(hashOf(input));
+} else {
+  let data;
+  try {
+    data = JSON.parse(input);
+  } catch {
+    fail("plan check: the comments could not be read");
+  }
+  if (typeof data !== "object" || data === null || !Array.isArray(data.comments)) fail("plan check: the comments could not be read");
+  const comments = data.comments.map((c) => (typeof c === "object" && c !== null ? c : {}));
+  // a Foundry comment of ours: written by this account and ending with one of the Foundry markers
+  const ours = (c) => c.viewerDidAuthor === true && typeof c.body === "string" && ANY_MARKER.test(lastLine(c.body) ?? "");
+  const entries = [];
+  let later = 0;
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i];
+    const id = typeof c.body === "string" && PLAN_MARKER.test(lastLine(c.body) ?? "") ? idOf(c.url) : undefined;
+    if (id !== undefined) entries.unshift({ id, sha256: hashOf(c.body), mine: c.viewerDidAuthor === true, later });
+    if (!ours(c)) later++;
+  }
+  console.log("PLAN_COMMENTS: " + JSON.stringify({ version: 1, comments: entries.slice(-KEEP) }));
+}

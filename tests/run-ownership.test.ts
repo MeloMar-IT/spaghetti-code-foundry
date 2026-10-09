@@ -205,7 +205,9 @@ describe("runs of other accounts", () => {
     for (const rule of own.filter((r) => !r.path.endsWith("/answer"))) {
       const mine = await waitingRun(ann);
       const r = await ask(ann, rule, mine);
-      expect(r.status, ruleKey(rule)).toBeLessThan(300);
+      // A waiting run cannot be archived (409); tests/run-archive.test.ts covers finished runs.
+      if (/\/(un)?archive$/.test(rule.path)) expect(r.status, ruleKey(rule)).toBe(409);
+      else expect(r.status, ruleKey(rule)).toBeLessThan(300);
       await s.ctx.scheduler.idle();
     }
     const id = await waitingRun(ann);
@@ -538,7 +540,7 @@ describe("runs of older versions", () => {
   it("are given to the admin after a run that was live has ended", async () => {
     const p = prepare();
     mkdirSync(p.home, { recursive: true });
-    const flow = parseFlow("name: sleepy\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: 'sleep 1'}\n");
+    const flow = parseFlow("name: sleepy\nworkspace: empty\nsteps:\n  - {id: a, type: shell, run: 'sleep 4'}\n");
     writeFileSync(join(p.home, "queue.json"), JSON.stringify([{ runId: "20260101-000000-live", job: { kind: "run", flow, task: "", repo: p.repo, vars: {} }, enqueuedAt: new Date().toISOString() }]));
     const s = await boot(p, { adoptEveryMs: 50 });
     expect(await until(() => existsSync(join(p.runsDir, "20260101-000000-live", "run.json")))).toBe(true);

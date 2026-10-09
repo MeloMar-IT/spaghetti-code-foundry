@@ -132,7 +132,7 @@ describe("wiring", () => {
 
   it("links the page and imports it", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string }[] };
-    const repos = ia.subnavFor("admin", "repos").map((l) => l.href);
+    const repos = ia.subnavFor("admin", "administration").map((l) => l.href);
     expect(repos.indexOf("#/credentials")).toBe(repos.indexOf("#/all-repos") + 1);
     const app = read("app.js");
     expect(app).toContain('from "./admin-credentials.js"');
@@ -155,6 +155,85 @@ describe("wiring", () => {
     };
     await api.allCredentials();
     expect(seen).toEqual(["GET /api/admin/credentials"]);
+  });
+
+  describe("states", () => {
+    const byClass = (cls: string) => walk(main()).filter((e) => (e.attrs.class ?? "").split(" ").includes(cls));
+    const failWith = (status: number | "throw", error = "x") => {
+      (globalThis as any).fetch = async () => {
+        if (status === "throw") throw new TypeError("fetch failed");
+        return { ok: false, status, statusText: "x", json: async () => ({ error }) };
+      };
+    };
+
+    it("draws a skeleton while loading, without buttons", async () => {
+      const gate: (() => void)[] = [];
+      heldGets.push(gate);
+      const loading = show();
+      await flush();
+      expect(byClass("skeleton")).toHaveLength(1);
+      expect(walk(main()).some((e) => e.tag === "button")).toBe(false);
+      gate.forEach((r) => r());
+      await loading;
+      expect(byClass("skeleton")).toHaveLength(0);
+    });
+
+    it("shows a 500 with Retry, and Retry loads again", async () => {
+      failWith(500, "the store is broken");
+      await show();
+      expect(byClass("state-error")[0]!.attrs["data-kind"]).toBe("server");
+      expect(main().textContent).toContain("The credentials could not be loaded. the store is broken");
+      (globalThis as any).fetch = async () => ({ ok: true, status: 200, statusText: "x", json: async () => [rec({ name: "after-retry" })] });
+      walk(main()).find((e) => e.tag === "button" && e.textContent === "Retry")!.click();
+      await flush();
+      expect(main().textContent).toContain("after-retry");
+      expect(byClass("state-error")).toHaveLength(0);
+    });
+
+    it("shows a 403 as a permission state", async () => {
+      failWith(403, "admin only");
+      await show();
+      expect(byClass("state-permission")[0]!.textContent).toContain("Only an admin can see the stored credentials.");
+      expect(walk(main()).some((e) => e.tag === "button")).toBe(false);
+    });
+
+    it("shows a network failure as offline", async () => {
+      failWith("throw");
+      await show();
+      expect(byClass("state-error")[0]!.attrs["data-kind"]).toBe("offline");
+    });
+
+    it("disposing an older render does not stop a newer one that is still loading", async () => {
+      (globalThis as any).location = { hash: "#/credentials" };
+      list = [rec({ name: "kept" })];
+      const a: (() => void)[] = [];
+      const b: (() => void)[] = [];
+      heldGets.push(a, b);
+      const first = show();
+      await flush();
+      const second = show();
+      await flush();
+      a.forEach((r) => r());
+      (await first)();
+      b.forEach((r) => r());
+      await second;
+      expect(main().textContent).toContain("kept");
+      expect(byClass("skeleton")).toHaveLength(0);
+    });
+
+    it("draws an empty list through the empty box", async () => {
+      await show();
+      expect(byClass("empty")[0]!.textContent).toContain("No stored credentials yet.");
+    });
+
+    it("shows only the fingerprint as key text, with a failure too", async () => {
+      list = [rec({ fingerprint: "ffeeddccbbaa9988" })];
+      await show();
+      expect(main().textContent).toContain("ffeeddccbbaa9988");
+      failWith(500, "boom");
+      await show();
+      expect(main().textContent).not.toContain("ffeeddccbbaa9988");
+    });
   });
 
   it("never gives the page to a user", () => {

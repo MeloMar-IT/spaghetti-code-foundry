@@ -1,0 +1,124 @@
+/* ui/kit/display.css — cards, tables, lists, badges, banners, skeletons and empty states of the component kit.
+   Belongs here: .scf-card, .scf-table, .scf-list, .scf-badge, .scf-banner, .scf-skeleton, .scf-empty and .scf-visually-hidden rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
+
+.scf-visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+.scf-card {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--card-pad);
+  display: grid;
+  gap: var(--stack-gap);
+  min-width: 0;
+}
+.scf-card__head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: center; justify-content: space-between; }
+.scf-card__title {
+  margin: 0; min-width: 0; overflow-wrap: anywhere;
+  font-size: var(--text-section); font-weight: var(--weight-bold);
+  text-transform: none; letter-spacing: normal; color: var(--color-text);
+}
+.scf-card__actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+.scf-card__body { display: grid; gap: var(--stack-gap); min-width: 0; overflow-wrap: anywhere; }
+.scf-card--ok { border-color: var(--color-success); }
+.scf-card--fail { border-color: var(--color-danger); }
+.scf-card--run { border-color: var(--color-running); }
+.scf-card--warn { border-color: var(--color-warning); }
+.scf-card--accent { border-color: var(--color-accent); }
+
+.scf-table-box {
+  overflow-x: auto;
+  max-width: 100%;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.scf-table-box:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-table);
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+.scf-table__caption { caption-side: top; text-align: start; padding: var(--cell-pad-y) var(--cell-pad-x); font-weight: var(--weight-medium); }
+.scf-table__th {
+  text-align: start; white-space: nowrap;
+  font-size: var(--text-table-head); color: var(--color-text-muted); font-weight: var(--weight-medium);
+  text-transform: none; letter-spacing: normal;
+  padding: var(--cell-pad-y) var(--cell-pad-x);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.scf-table__td {
+  text-align: start; vertical-align: top;
+  padding: var(--cell-pad-y) var(--cell-pad-x);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.scf-table__th--end, .scf-table__td--end { text-align: end; }
+.scf-table__row--open:hover { background: var(--color-surface-2); }
+.scf-table__open, .scf-table__open:hover {
+  background: transparent; border-color: transparent; padding: 0; font: inherit;
+  color: var(--color-accent); text-decoration: underline; text-align: start; cursor: pointer;
+}
+.scf-table__open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-table__empty { margin: 0; padding: var(--space-xl); color: var(--color-text-muted); }
+
+.scf-list { margin: 0; padding-left: var(--space-2xl); display: grid; gap: var(--space-xs); }
+.scf-list__item { overflow-wrap: anywhere; min-width: 0; }
+
+.scf-badge {
+  display: inline-flex; align-items: center; max-width: 100%;
+  font-size: var(--text-meta); font-weight: var(--weight-medium);
+  padding: var(--space-2xs) var(--space-md);
+  border-radius: var(--radius-pill);
+  overflow-wrap: anywhere;
+}
+.scf-badge--neutral { background: var(--color-surface-2); color: var(--color-text-muted); }
+.scf-badge--ok { background: var(--color-success-soft); color: var(--color-success); }
+.scf-badge--fail { background: var(--color-danger-soft); color: var(--color-danger); }
+.scf-badge--run { background: var(--color-running-soft); color: var(--color-running); }
+.scf-badge--warn { background: var(--color-warning-soft); color: var(--color-warning); }
+.scf-badge--accent { background: var(--color-accent-soft); color: var(--color-accent); }
+
+.scf-banner {
+  display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: flex-start;
+  padding: var(--space-lg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+}
+.scf-banner__text { flex: 1; min-width: 0; display: grid; gap: var(--space-xs); overflow-wrap: anywhere; }
+.scf-banner__title { font-weight: var(--weight-bold); }
+.scf-banner__actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+.scf-banner--neutral { background: var(--color-surface-2); border-color: var(--color-border); }
+.scf-banner--ok { background: var(--color-success-soft); border-color: var(--color-success); }
+.scf-banner--fail { background: var(--color-danger-soft); border-color: var(--color-danger); }
+.scf-banner--run { background: var(--color-running-soft); border-color: var(--color-running); }
+.scf-banner--warn { background: var(--color-warning-soft); border-color: var(--color-warning); }
+.scf-banner--accent { background: var(--color-accent-soft); border-color: var(--color-accent); }
+
+.scf-skeleton { display: block; }
+.scf-skeleton__lines { display: grid; gap: var(--space-md); }
+.scf-skeleton__line {
+  height: var(--text-body);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  animation: scf-skeleton-pulse calc(var(--motion-slow) * 5) ease-in-out infinite alternate;
+}
+.scf-skeleton__line:last-child { width: 60%; }
+@keyframes scf-skeleton-pulse { from { opacity: 1; } to { opacity: .45; } }
+
+.scf-empty {
+  display: grid; gap: var(--space-md); justify-items: center; text-align: center;
+  padding: var(--space-4xl) var(--space-xl);
+  color: var(--color-text-muted);
+}
+.scf-empty__title {
+  margin: 0; overflow-wrap: anywhere;
+  font-size: var(--text-section); color: var(--color-text);
+  text-transform: none; letter-spacing: normal;
+}
+.scf-empty__text { margin: 0; overflow-wrap: anywhere; }

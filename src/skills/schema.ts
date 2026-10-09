@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UNRESOLVED_ACTIONS, UNRESOLVED_HIGH_RISK_DEFAULT, UNRESOLVED_LIMITS } from "./resolve-rules.js";
 
 /** Skill id: lower-case slug, 1–64 chars, letters/digits with single hyphens between. Stable format. */
 export const SKILL_ID_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -12,10 +13,17 @@ export const SKILL_VERSION_RE = new RegExp(`^(?=.{1,64}$)${NUM}\\.${NUM}\\.${NUM
 export const SKILL_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 export const SKILL_ROLES =["planner", "coder", "reviewer", "tester"] as const;
+/** Limits of the review context a reviewer session gets (config skills.review). */
+export const REVIEW_DEFAULTS = { maxTokens: 3000, maxSkillTokens: 1000 } as const;
+export const REVIEW_RANGE = { maxTokens: [100, 20000], maxSkillTokens: [50, 5000] } as const;
+/** What a claude step may declare as `skill_role`: the coder is the default and needs no field. */
+export const STEP_SKILL_ROLES = ["coder", "reviewer"] as const;
+export type StepSkillRole = (typeof STEP_SKILL_ROLES)[number];
 export const SKILL_RISKS = ["low", "medium", "high"] as const;
 export const SKILL_FOLDERS = ["references", "scripts", "assets", "evals"] as const;
 export const SKILL_LIMITS = {
   skillMdBytes: 65536,
+  reviewMdBytes: 8192,
   manifestBytes: 16384,
   fileBytes: 262144,
   totalBytes: 2097152,
@@ -110,6 +118,21 @@ export const SkillManifestSchema = z
     });
   });
 
+/** What to do with a requested skill that cannot be used (config key skills.unresolved). High-risk skills always stop. */
+export const UnresolvedPolicySchema = z
+  .object({
+    unknown: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    missing: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    untrusted: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    conflict: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    oversized: z.enum(UNRESOLVED_ACTIONS).default("stop"),
+    /** Ids, categories and capabilities that count as high risk. */
+    high_risk: z.array(SkillIdSchema).max(UNRESOLVED_LIMITS.terms).default([...UNRESOLVED_HIGH_RISK_DEFAULT]),
+  })
+  .strict()
+  .prefault({});
+export type UnresolvedPolicy = z.infer<typeof UnresolvedPolicySchema>;
+
 export type SkillRole = (typeof SKILL_ROLES)[number];
 export type SkillRisk = (typeof SKILL_RISKS)[number];
 export type SkillFolder = (typeof SKILL_FOLDERS)[number];
@@ -129,6 +152,8 @@ export interface SkillPackage extends SkillManifest {
   allowedTools?: string;
   /** SKILL.md without the frontmatter, trimmed. */
   instructions: string;
+  /** REVIEW.md, trimmed. Absent without the file. */
+  review?: string;
   /** Digest of every file in the package (raw bytes, paths included). */
   digest: string;
   files: Record<SkillFolder, SkillFile[]>;

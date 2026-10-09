@@ -21,9 +21,34 @@ import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, u
 import type { NextStep } from "../next-step.js";
 import type { JobMeta, RunEvent } from "../queue/scheduler.js";
 import { gateRun } from "../run-gate.js";
-import type { Route } from "./server.js";
+import { matchesRun, parseRunFilter, runFilterValues } from "./run-filter.js";
+import type { ApiContext, Route } from "./server.js";
 
 const NEXT_RECHECK_MS = 2_000;
+
+/** A run loaded by folder name. With an owner, the runId and owner inside the file must agree with it. A run.json that cannot be read gives undefined. */
+export function readRun(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
+  try {
+    const s = scheduler.get(dirName);
+    return s && (!owner || (s.runId === dirName && s.owner === owner)) ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Like readRun, but the runId inside the file must always agree with the folder name. */
+export function checkedRun(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): RunSummary | undefined {
+  const s = readRun(scheduler, dirName, owner);
+  return s && s.runId === dirName ? s : undefined;
+}
+
+/** The newest 200 runs of one archive state (of one account when `owner` is given), the list the records are built from. */
+export function runsListFor(ctx: ApiContext, owner?: string, archived = false): RunSummary[] {
+  return ctx.scheduler.briefs()
+    .filter((b) => (owner === undefined || b.owner === owner) && !!b.archived === archived)
+    .slice(0, 200)
+    .flatMap((b) => checkedRun(ctx.scheduler, b.dirName, owner) ?? []);
+}
 
 
 export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
@@ -58,23 +83,23 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const owners = [...counts].map(([oid, runs]) => ({ id: oid, name: names.get(oid) ?? DELETED_OWNER, runs }));
     return send(res, 200, owners.sort((a, b) => a.name.localeCompare(b.name))), true;
   }
+  if (seg[0] === "run-filters" && !seg[1] && method === "GET") {
+    // A user gets the values of their own runs only.
+    return send(res, 200, runFilterValues(scheduler.briefs().filter((b) => admin || b.owner === user.id))), true;
+  }
   if (seg[0] !== "runs") return false;
   const id = seg[1];
 
   if (!id && method === "GET") {
-    let ownerParam: string | undefined;
-    if (admin) {
-      const o = new URL(req.url ?? "/", "http://x").searchParams.get("owner");
-      if (o !== null) {
-        if (!NAME_RE.test(o) || o.length > 64) throw new HttpError(400, "invalid owner");
-        ownerParam = o;
-      }
-    }
-    const want = admin ? ownerParam : user.id;
-    const runs = want
-      // Loaded by folder name; the runId and owner inside the file must agree, else the run is left out.
-      ? scheduler.briefs().filter((b) => b.owner === want).slice(0, 200).map((b) => ({ dir: b.dirName, s: scheduler.get(b.dirName) })).filter((x): x is { dir: string; s: RunSummary } => !!x.s && x.s.runId === x.dir && x.s.owner === want).map((x) => x.s)
-      : scheduler.list(200);
+    const parsed = parseRunFilter(new URL(req.url ?? "/", "http://x").searchParams, admin);
+    const want = admin ? parsed.owner : user.id;
+    const filter = { ...parsed, owner: want };
+    // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
+    // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
+    const runs = scheduler.briefs()
+      .filter((b) => matchesRun(b, filter))
+      .slice(0, 200)
+      .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
     const next = nextFor(ctx, runs, !admin);
     const names = admin ? ownerNames() : undefined;
@@ -159,6 +184,14 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (!id || !/^[\w-]+$/.test(id)) throw new HttpError(400, "invalid run id");
   const action = seg[2];
 
+  if ((action === "archive" || action === "unarchive") && method === "POST") {
+    const archived = action === "archive";
+    const result = scheduler.setArchived(id, archived, user.id);
+    if (result === "missing") throw new HttpError(404, "run not found");
+    if (result === "busy") throw new HttpError(409, "only a finished run can be archived; this run is running, waiting or queued");
+    auditAction(ctx.diagLog, user.id, archived ? "run-archive" : "run-unarchive", id);
+    return send(res, 200, { runId: id, archived }), true;
+  }
   if (action === "cancel" && method === "POST") {
     const cancelled = scheduler.cancel(id);
     if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);

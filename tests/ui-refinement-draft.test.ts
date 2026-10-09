@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RefinementError } from "../src/refinement/errors.js";
 import { changeEpic, dropDraft, newDraft, preview, saveTyped } from "../src/refinement/draft.js";
+import { mergeDrafts, moveCriterion } from "../src/refinement/draft-parts.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -70,7 +71,11 @@ beforeEach(() => {
     if (typeof mode === "number") return reply({ error: mode === 401 ? "sign in first" : "The title can have at most 120 characters" }, mode);
     try {
       const m = /\/drafts(?:\/([^/]+))?$/.exec(url);
-      if (url.endsWith("/epic")) apply(changeEpic(state, JSON.parse(init.body!)));
+      const mv = /\/drafts\/([^/]+)\/criteria\/([^/]+)\/move$/.exec(url);
+      const mg = /\/drafts\/([^/]+)\/merge$/.exec(url);
+      if (mv) apply(moveCriterion(state, mv[1]!, mv[2]!, JSON.parse(init.body!)));
+      else if (mg) apply(mergeDrafts(state, mg[1]!, JSON.parse(init.body!)));
+      else if (url.endsWith("/epic")) apply(changeEpic(state, JSON.parse(init.body!)));
       else if (init.method === "POST") apply(newDraft(state));
       else if (init.method === "PUT") apply(saveTyped(state, m![1]!, JSON.parse(init.body!)));
       else apply(dropDraft(state, m![1]!));
@@ -639,11 +644,12 @@ describe("depends on and the Epic", () => {
       { id: D2, criteria: [], dependsOn: [], title: { text: "Other", from: "typed" } }];
     await show();
     await press(button("Open"));
-    expect(walk(section()).filter((e) => e.tag === "option").map((o) => o.textContent)).toEqual(["Other"]);
+    const another = () => walk(section()).find((e) => e.attrs["aria-label"] === "Another draft");
+    expect(another()!.children.map((o: any) => o.textContent)).toEqual(["Other"]);
     await press(button("Add draft"));
     expect(sent[0]!.body).toEqual({ dependsOn: [{ id: "d0000000-0000-4000-8000-000000000000", issue: 12 }, { draft: D2 }] });
     expect(section().textContent).toContain("Other (draft)");
-    expect(walk(section()).some((e) => e.tag === "select")).toBe(false);
+    expect(another()).toBeUndefined();
   });
   it("has no select with one draft", async () => {
     await withDraft();
@@ -786,5 +792,198 @@ describe("text and wiring", () => {
     expect(section().textContent).toContain(evil);
     expect(walk(section()).some((e) => e.tag === "h3")).toBe(false);
     expect(section().attrs.tabindex).toBeUndefined();
+  });
+});
+
+// ---- parts of a split: moving a criterion, merging, depends on ----
+describe("parts of a split", () => {
+  const D3 = "33333333-3333-4333-8333-333333333333";
+  const D4 = "44444444-4444-4444-8444-444444444444";
+  const tt = (text: string) => ({ text, from: "typed" });
+  const family = () => {
+    state.drafts = [
+      { id: D1, title: tt("Export rows"), criteria: [crit(3, "Old formats work")], dependsOn: [], splitInto: [D2, D3] },
+      { id: D2, title: tt("Export a file"), criteria: [crit(1, "Rows are exported")], dependsOn: [], part: { of: D1 } },
+      { id: D3, title: tt("Choose columns"), criteria: [crit(2, "Columns can be chosen")], dependsOn: [], part: { of: D1 } },
+      { id: D4, title: tt("Other story"), criteria: [crit(4, "Other works")], dependsOn: [] },
+    ];
+  };
+  const openId = (id: string) => press(buttons().find((b) => b.attrs["data-focus"] === `open-${id}`));
+  const selectIn = (el: FakeElement) => walk(el).find((e) => e.tag === "select");
+  const labels = (sel: FakeElement | undefined) => (sel?.children ?? []).map((o: any) => o.textContent as string);
+  const choose = async (sel: FakeElement, v: string) => {
+    sel.value = v;
+    sel.fire("change");
+    await flush();
+  };
+  const mergeSel = () => walk(section()).find((e) => e.attrs["aria-label"] === "Merge with");
+  const areas = () => walk(section()).filter((e) => e.tag === "textarea").map((e) => e.value);
+  const post = (suffix: string) => sent.filter((x) => x.method === "POST" && x.url.endsWith(suffix));
+
+  describe("moving a criterion", () => {
+    it("a row of a part has the select; the empty row and a normal draft have none", async () => {
+      family();
+      await show();
+      await openId(D2);
+      const rs = rows();
+      expect(labels(selectIn(rs[0]!))).toEqual(["Move to…", "Part 2: Choose columns", "Fits nowhere (the original)"]);
+      expect(selectIn(rs[rs.length - 1]!)).toBeUndefined();
+      await openId(D2);
+      await openId(D4);
+      expect(walk(section()).filter((e) => e.attrs["aria-label"]?.startsWith("Move to"))).toEqual([]);
+    });
+    it("typed text is saved first, then the criterion moves", async () => {
+      family();
+      await show();
+      await openId(D2);
+      type(field("title"), "Export a file now");
+      await choose(selectIn(rows()[0]!)!, D3);
+      expect(sent.map((x) => x.method)).toEqual(["PUT", "POST"]);
+      expect(sent[0]!.body).toEqual({ title: "Export a file now" });
+      expect(sent[1]!.body).toEqual({ to: D3 });
+      expect(areas()).not.toContain("Rows are exported");
+    });
+    it("an edited criterion moves with its new text", async () => {
+      family();
+      await show();
+      await openId(D2);
+      type(rows()[0]!.children[0] as FakeElement, "Rows are exported fast");
+      await choose(selectIn(rows()[0]!)!, D3);
+      expect(sent.map((x) => x.method)).toEqual(["PUT", "POST"]);
+      expect(JSON.stringify(sent[0]!.body)).toContain("Rows are exported fast");
+      await openId(D2);
+      await openId(D3);
+      expect(areas()).toContain("Rows are exported fast");
+      expect(section().textContent).not.toContain("Not saved");
+    });
+    it("a failing save sends no move", async () => {
+      family();
+      await show();
+      await openId(D2);
+      type(field("title"), "Export a file now");
+      mode = 400;
+      const sel = selectIn(rows()[0]!)!;
+      await choose(sel, D3);
+      expect(post("/move").length).toBe(0);
+      expect(toastText()).toContain("Your text could not be saved, so nothing was moved. Try again.");
+      expect(sel.value).toBe("");
+    });
+    it("a criterion can go back to the original", async () => {
+      family();
+      await show();
+      await openId(D2);
+      await choose(selectIn(rows()[0]!)!, D1);
+      expect(post("/move")[0]!.body).toEqual({ to: D1 });
+    });
+  });
+
+  describe("merging", () => {
+    it("lists the other drafts, not itself, the original or a published draft", async () => {
+      family();
+      state.drafts.push({ id: "55555555-5555-4555-8555-555555555555", title: tt("On GitHub"), criteria: [], dependsOn: [], published: { issue: 7, url: "https://github.com/a/b/issues/7" } });
+      await show();
+      await openId(D4);
+      expect(labels(mergeSel())).toEqual(["Export a file", "Choose columns"]);
+    });
+    it("a session with one draft has no merge control", async () => {
+      await withDraft();
+      expect(mergeSel()).toBeUndefined();
+    });
+    it("no confirmation, no call", async () => {
+      family();
+      await show();
+      await openId(D4);
+      confirmAnswer = false;
+      await press(button("Merge"));
+      expect(sent).toEqual([]);
+    });
+    it("a confirmed merge: the question, the call and the page after it", async () => {
+      family();
+      await show();
+      await openId(D4);
+      let question = "";
+      (globalThis as any).confirm = (q: string) => {
+        question = q;
+        return true;
+      };
+      mergeSel()!.value = D2;
+      await press(button("Merge"));
+      expect(question).toContain("Export a file");
+      expect(question).toContain("Other story");
+      expect(question).toContain("keeps its title, who, what and why");
+      expect(question).toContain("is removed");
+      expect(post("/merge").map((x) => [x.url.endsWith(`/drafts/${D4}/merge`), x.body])).toEqual([[true, { with: D2 }]]);
+      expect(areas()).toContain("Rows are exported");
+      expect(areas()).toContain("Other works");
+      expect(labels(mergeSel())).toEqual(["Choose columns"]);
+      expect(main().textContent).toContain('Ann merged two story drafts: "Other story" and "Export a file"');
+    });
+    it("typed text is saved first", async () => {
+      family();
+      await show();
+      await openId(D4);
+      type(field("notes"), "some notes");
+      await press(button("Merge"));
+      expect(sent.map((x) => x.method)).toEqual(["PUT", "POST"]);
+    });
+    it("a failing save sends no merge", async () => {
+      family();
+      await show();
+      await openId(D4);
+      type(field("notes"), "other notes");
+      mode = 400;
+      await press(button("Merge"));
+      expect(post("/merge").length).toBe(0);
+      expect(toastText()).toContain("so nothing was merged. Try again.");
+    });
+    it("unsaved text of the other draft blocks the merge and is kept", async () => {
+      family();
+      await show();
+      await openId(D2);
+      type(field("notes"), "precious notes");
+      mode = 400;
+      await wait(dr.SAVE_MS + 10);
+      await openId(D2);
+      await openId(D4);
+      mode = "ok";
+      sent.length = 0;
+      mergeSel()!.value = D2;
+      await press(button("Merge"));
+      expect(post("/merge").length).toBe(0);
+      expect(toastText()).toContain("not saved");
+      expect([...dr.unsaved.values()]).toContain("precious notes");
+    });
+    it("a refusal is shown and both drafts stay", async () => {
+      family();
+      await show();
+      await openId(D4);
+      mode = 409;
+      await press(button("Merge"));
+      expect(toastText()).not.toBe("");
+      expect(section().textContent).toContain("Export a file");
+      expect(section().textContent).toContain("Other story");
+    });
+  });
+
+  describe("depends on of a part", () => {
+    const offered = () => labels(walk(section()).find((e) => e.attrs["aria-label"] === "Another draft"));
+    it("part 1 is not offered part 2 or the original, but an unrelated draft", async () => {
+      family();
+      await show();
+      await openId(D2);
+      expect(offered()).toEqual(["Other story"]);
+    });
+    it("part 2 is offered part 1", async () => {
+      family();
+      await show();
+      await openId(D3);
+      expect(offered()).toEqual(["Export a file", "Other story"]);
+    });
+    it("a normal draft is offered every other draft", async () => {
+      family();
+      await show();
+      await openId(D4);
+      expect(offered()).toEqual(["Export rows", "Export a file", "Choose columns"]);
+    });
   });
 });

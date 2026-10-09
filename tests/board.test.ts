@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildBoard, columnOf, COLUMNS, EMPTY_BOARD, phasesOf, stepProgress, stepText, ticketTitle, type BoardCard, type BoardRun, type BoardSource, type Phase } from "../src/board.js";
+import { ticketTitleOf } from "../src/engine/state.js";
 import { ConfigSchema } from "../src/config.js";
 import { evalsDir } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -110,6 +111,11 @@ describe("ticketTitle", () => {
     expect(ticketTitle(withOut(5))).toBe("");
     expect(ticketTitle(undefined)).toBe("");
   });
+  it("ticketTitleOf gives an empty title for output that is not text", () => {
+    expect(ticketTitleOf(5)).toBe("");
+    expect(ticketTitleOf(undefined)).toBe("");
+    expect(ticketTitleOf("# #3: Hi")).toBe("Hi");
+  });
 });
 
 // ---- columnOf ----
@@ -158,14 +164,20 @@ const cardsOf = (b: ReturnType<typeof buildBoard>, col: string, repo = "acme/app
   b.repos.find((r) => r.repo === repo)!.columns.find((c) => c.id === col)!.cards;
 
 describe("buildBoard", () => {
-  it("has the nine columns in order for a repository without cards, and says so only without repositories", () => {
+  it("has the nine columns in order for a repository without cards, and says so when no story exists", () => {
     const b = buildBoard([], { now: NOW, repos: ["acme/app"] });
     expect(b.repos[0]!.columns.map((c) => c.title)).toEqual(COLUMNS.map((c) => c.title));
     expect(b.repos[0]!.columns.map((c) => c.title)).toEqual([
       "Your turn", "Waiting for another story", "Queued", "Planning", "Coding", "Reviewing", "Merging", "Done", "Failed",
     ]);
-    expect(b.empty).toBeUndefined();
+    expect(b.empty).toBe(EMPTY_BOARD);
     expect(buildBoard([], { now: NOW })).toEqual({ repos: [], empty: EMPTY_BOARD });
+  });
+
+  it("has no empty text once a story exists, and keeps a repository without cards", () => {
+    const b = buildBoard([src(rec("queued", {}, 1))], { now: NOW, repos: ["acme/app", "acme/other"] });
+    expect(b.empty).toBeUndefined();
+    expect(b.repos.map((r) => r.repo)).toEqual(["acme/app", "acme/other"]);
   });
 
   it("has no card for a run of a closed issue", () => {

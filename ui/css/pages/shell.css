@@ -21,6 +21,8 @@
 .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
 .subnav a { text-decoration: none; padding: 4px 10px; border-radius: var(--radius-md); color: var(--muted); }
 .subnav a.active { background: var(--panel-2); color: var(--text); }
+.subnav-head { align-self: center; margin-left: 12px; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.subnav-head:first-child { margin-left: 0; }
 .crumbs { padding: 6px 24px 0; font-size: var(--text-small); color: var(--muted); }
 .crumbs a { color: var(--muted); }
 .subnav[hidden], .crumbs[hidden] { display: none; }
@@ -126,4 +128,11 @@ body.side-closed .side { display: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .scrim { transition: opacity var(--motion-base); }
+}
+
+/* ── narrow screens: the page itself never scrolls sideways (320 px) ── */
+@media (max-width: 760px) {
+  .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
+  main { overflow-wrap: break-word; }
+  main pre { max-width: 100%; overflow-x: auto; }
 }

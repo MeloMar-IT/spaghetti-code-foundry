@@ -1,4 +1,4 @@
-import type { RunSummary } from "./engine/state.js";
+import { ticketTitleOf, type RunSummary } from "./engine/state.js";
 import type { NextStep } from "./next-step.js";
 import { needsUser } from "./your-turn.js";
 
@@ -101,8 +101,7 @@ export const stepText = (p: StepProgress): string => `${p.phase} — step ${p.in
 
 /** The issue title as the pull_ticket step printed it ("# #37: Title"). */
 export function ticketTitle(run: BoardRun | undefined): string {
-  const out = run?.state?.steps?.pull_ticket?.output;
-  return typeof out === "string" ? /^# #\d+: (.+)$/m.exec(out)?.[1]?.trim() ?? "" : "";
+  return ticketTitleOf(run?.state?.steps?.pull_ticket?.output);
 }
 
 /** The column of a record; `phase` is where running work is. No column: the card is not shown. */
@@ -192,6 +191,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
         }),
       };
     }),
-    ...(repos.length ? {} : { empty: EMPTY_BOARD }),
+    // No story at all: say so, even when repositories are configured (they stay in the answer).
+    ...(cards.size ? {} : { empty: EMPTY_BOARD }),
   };
 }

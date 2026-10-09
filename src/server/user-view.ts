@@ -17,6 +17,8 @@ export interface UserStep { id: string; type: string; visit: number; ok: boolean
 export interface UserRun {
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
   branch?: string; resumes?: number; owner?: string; superseded?: boolean;
+  /** When the run was archived; absent when it is not. */
+  archivedAt?: string;
   /** The id of the refinement session the run reads for (an architect run). */
   refinement?: string;
   vars: Record<string, string>;
@@ -29,6 +31,20 @@ export interface UserRun {
   answers?: { at: string; text: string }[];
   /** Present (true) only when an answer sent now would be accepted. */
   canAnswer?: true;
+  /** What was decided about the skills of the plan, when some could not be used: the sentences the run itself wrote, no paths. */
+  skills?: { action: "warn" | "stop"; reason?: string; warnings: string[]; unresolved: { id: string; code: string; message: string }[] };
+}
+
+/** The skill decision of a run for a user; undefined when every skill resolved or none was asked for. */
+export function userSkills(s: Pick<RunSummary, "skillPlan">): UserRun["skills"] {
+  const p = s.skillPlan;
+  if (!p || (p.action !== "warn" && p.action !== "stop")) return undefined;
+  return {
+    action: p.action,
+    ...(typeof p.reason === "string" ? { reason: p.reason } : {}),
+    warnings: (Array.isArray(p.warnings) ? p.warnings : []).filter((w) => typeof w === "string"),
+    unresolved: (Array.isArray(p.unresolved) ? p.unresolved : []).map((u) => ({ id: u.id, code: u.code, message: u.message })),
+  };
 }
 
 const QUESTION_STEPS = ["send_back", "ask_for_info"];
@@ -119,6 +135,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(s.resumes !== undefined ? { resumes: s.resumes } : {}),
     ...(s.owner !== undefined ? { owner: s.owner } : {}),
     ...(s.superseded ? { superseded: true } : {}),
+    ...(typeof s.archivedAt === "string" ? { archivedAt: s.archivedAt } : {}),
     ...(refinementSessionOf(s.source) ? { refinement: refinementSessionOf(s.source) } : {}),
     vars,
     flowDef: {
@@ -138,6 +155,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(questionsOf(s) ? { questions: questionsOf(s) } : {}),
     ...(Array.isArray(s.answers) && s.answers.length ? { answers: s.answers.map((a) => ({ at: a.at, text: a.text })) } : {}),
     ...(s.canAnswer ? { canAnswer: true as const } : {}),
+    ...(userSkills(s) ? { skills: userSkills(s) } : {}),
   };
   return hidePaths(out, s);
 }
@@ -167,6 +185,9 @@ const LOG_SHAPES: [RegExp, (m: RegExpExecArray) => string | undefined][] = [
   [/^⏸ waiting for approval: (.*)$/, (m) => `⏸ waiting for approval: ${m[1]}`],
   [/^✘ could not start: (.*)$/, (m) => `✘ could not start: ${START_FAILURES.some((re) => re.test(m[1]!)) ? m[1] : USER_ERROR}`],
   // Which agent and model works, and why it does not resume, are the setup.
+  // The skill decision of the run: ids and codes are validated and the sentences are the run's own.
+  [/^⚠ (skill [a-z0-9-]+ \[[a-z-]+\]: .*)$/, (m) => `⚠ ${m[1]}`],
+  [/^■ (skills not resolved: .*)$/, (m) => `■ ${m[1]}`],
   [/^    · agent /, () => undefined],
   [/^    · not resuming /, () => undefined],
   [/^    · ([^\s:]+)(?::.*)?$/, (m) => `    · ${toolName(m[1]!)}`],

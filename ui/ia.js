@@ -17,6 +17,8 @@ const A = ["admin"];
 const AU = ["admin", "user"];
 
 // nav: "primary" | "secondary" | "action" | "detail". dest: destination id, null for the Start work action.
+// section: id from SECTIONS, optional (administration pages only).
+const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "administration", dest: "administration", parent: null, nav: "secondary", label: { admin: title }, roles: A, section });
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
@@ -28,16 +30,20 @@ export const PAGES = [
   { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU },
   { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
   { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU },
-  { id: "all-repos", path: "#/all-repos", title: "All repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "All repositories" }, roles: A },
-  { id: "credentials", path: "#/credentials", title: "Credentials", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "Credentials" }, roles: A },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "library", path: "#/library", title: "Library", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Library" }, roles: A },
-  ...["users", "watchers", "models", "problems", "dashboard", "audit", "settings"].map((id) => ({
-    id, path: `#/${id}`, title: id[0].toUpperCase() + id.slice(1), area: "administration", dest: "administration", parent: null, nav: "secondary",
-    label: { admin: id[0].toUpperCase() + id.slice(1) }, roles: A,
-  })),
+  adminPage("problems", "Problems", "operations"),
+  adminPage("watchers", "Watchers", "operations"),
+  adminPage("models", "Models", "operations"),
+  adminPage("dashboard", "Dashboard", "operations"),
+  adminPage("users", "Users", "access"),
+  adminPage("all-repos", "All repositories", "access"),
+  adminPage("credentials", "Credentials", "access"),
+  adminPage("audit", "Audit", "access"),
+  adminPage("settings", "Settings", "system"),
+  adminPage("maintenance", "Maintenance", "system"),
 ];
 
 // group "work" = daily work; "setup" = configuration, drawn smaller and apart.
@@ -53,6 +59,9 @@ export const DESTINATIONS = [
 
 /** The groups of the sidebar, in order. */
 export const GROUPS = [{ id: "work", label: "Work" }, { id: "setup", label: "Setup" }];
+
+/** The labelled sections of the Administration secondary row, in order. */
+export const SECTIONS = [{ id: "operations", label: "Operations" }, { id: "access", label: "People and access" }, { id: "system", label: "System" }];
 
 export const ALIASES = [{ from: "#/your-turn", to: "#/home", roles: A }];
 
@@ -76,7 +85,7 @@ export function actionsFor(role) {
 /** The secondary pages of a destination; [] when there are fewer than two. */
 export function subnavFor(role, destId) {
   const list = PAGES.filter((p) => p.nav === "secondary" && p.dest === destId && forRole(role)(p));
-  return list.length < 2 ? [] : list.map((p) => ({ id: p.id, label: labelOf(p, role), href: p.path }));
+  return list.length < 2 ? [] : list.map((p) => ({ id: p.id, label: labelOf(p, role), href: p.path, ...(p.section ? { section: p.section } : {}) }));
 }
 
 function match(role, parts) {
@@ -113,6 +122,37 @@ function describe(role, page, arg, hash, reason) {
   };
 }
 
+const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
+const OWNER_OK = /^[\w-]+$/;
+const VALID = { repo: (v) => v.length <= 200 && REPO_OK.test(v), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
+
+/** Splits an address into its path and the text after the first "?" ("" when there is none). */
+export function splitHash(hash) {
+  const text = typeof hash === "string" ? hash : "";
+  const i = text.indexOf("?");
+  return i < 0 ? { path: text, query: "" } : { path: text.slice(0, i), query: text.slice(i + 1) };
+}
+
+/** The known filters of a query text ("?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
+export function parseQuery(text) {
+  const out = {};
+  const raw = typeof text === "string" ? text.replace(/^\?/, "") : "";
+  for (const part of raw.split("&")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const key = part.slice(0, i);
+    if (!Object.hasOwn(VALID, key) || Object.hasOwn(out, key)) continue;
+    let value;
+    try {
+      value = decodeURIComponent(part.slice(i + 1));
+    } catch {
+      continue;
+    }
+    if (VALID[key](value)) out[key] = value;
+  }
+  return out;
+}
+
 /** Resolves an address for a role to the page to draw. The data above is the source of truth; the document that describes it is still to be written. */
 export function resolve(role, hash) {
   const fallback = (reason) => {
@@ -120,17 +160,19 @@ export function resolve(role, hash) {
     const r = resolve(role, to);
     return { ...r, hash: to, redirected: true, reason };
   };
-  if (typeof hash !== "string" || hash === "" || hash === "#" || hash === "#/") return fallback("none");
+  if (typeof hash !== "string") return fallback("none");
+  const { path, query } = splitHash(hash);
+  if (path === "" || path === "#" || path === "#/") return fallback("none");
   let parts;
   try {
-    parts = hash.split("/").map(decodeURIComponent);
+    parts = path.split("/").map(decodeURIComponent);
   } catch {
     return fallback("unknown");
   }
   if (parts.length > 3 || (parts.length === 3 && parts[2] === "")) return fallback("unknown");
-  const alias = ALIASES.find((a) => a.from === hash && a.roles.includes(role));
+  const alias = ALIASES.find((a) => a.from === path && a.roles.includes(role));
   if (alias) return { ...resolve(role, alias.to), hash: alias.to, redirected: true, reason: "alias" };
   const m = match(role, parts);
   if (!m) return fallback("unknown");
-  return describe(role, m.page, m.arg, hash, null);
+  return { ...describe(role, m.page, m.arg, hash, null), query: parseQuery(query) };
 }

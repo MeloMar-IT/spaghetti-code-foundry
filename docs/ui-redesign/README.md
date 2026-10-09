@@ -18,8 +18,9 @@ An audit of the web UI, as a base for #248–#250. Taken on 2026-10-07 from comm
 | `prototypes.md` | The seven patterns, pages and alternatives, state matrix, route table, health and since mapping, the old run |
 | `walkthroughs.md` | Walkthroughs of the five tasks for both roles and every alternative; locate and primary-action tables; usability and visual check sheets |
 | `decisions.md` | Accepted and rejected decisions with reasons and evidence; owner approval record |
+| [rollout.md](rollout.md) | State of the rollout: what is built and what is not, what moved where by address, old addresses |
 | `visual-system-demo.html` | Foundation 2 (#322): a runs table and a refinement talk with the real `ui/tokens.css` and `ui/style.css`; switches for theme and density. Open from disk. Not checked in a browser |
-
+| `states.md` | UI states (#342): the shared loading, empty, error, permission and stale components in `ui/states.js`, the six patterns and the workspace × state matrix |
 ## What the test checks
 
 `tests/ui-redesign-audit.test.ts` compares the tables with the code, in both directions: the admin routes in `route()` (`ui/app.js`), the user routes in `USER_HASH` (`ui/auth.js`), the nav links of both displays, the call sites of `modal(`, the native `confirm(` and `prompt(` calls and the files with 10 or more inline styles. It also checks that the findings are typed, that the results table has five empty rows, and that every image in `docs/images/` is named.
@@ -35,7 +36,7 @@ What is not checked: how the pages look, and the wiring in a real browser. The r
 ## What is open
 
 - Measured time, errors and confidence for the five tasks. The owner runs the sessions with people (protocol in `measurement.md`).
-- Screenshots at 1440, 1280, 768 and 390. The 19 images in `docs/images/` are desktop only and are not a baseline.
+- Screenshots at 1280, 768 and 390. The 19 images in `docs/images/` are captured from the redesign at 1440 px (`npm run test:ui -- --grep @guide`); they are desktop only.
 - Overflow and layout-shift observations. The responsive and layout-shift notes are guesses from code, each with the observation that would confirm it.
 
 Two follow-up issues are for the owner to open: (1) the sessions for measured time, errors and confidence; (2) a capture runner for the four widths, which is a new dependency and needs its own decision. They are not opened here, and neither carries `Factory_go`.

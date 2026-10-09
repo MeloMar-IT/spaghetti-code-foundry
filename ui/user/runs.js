@@ -2,9 +2,11 @@
 // answers and show its sentences when it refuses. Relative imports, so a test can load them.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
-import { h, modal, mount, timeAgo, toast } from "../dom.js";
+import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
-import { aheadText, diffView, failedStepIndex, failureCard, logLine, refinementMark, retiredLine, stepEntry, stepRow, versionRow } from "../runs.js";
+import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
+import { createLog } from "../run-output.js";
+import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -63,9 +65,9 @@ export function runCard({ run, job }, onRemove) {
   const when = r ? ["Started", r.startedAt] : ["Queued", job?.enqueuedAt];
   return h("li", { class: `run-card${n?.who === "You" ? ` ${whoClass(n)}` : ""}` },
     h("div", { class: "row" },
-      n ? nextStatus(n) : null,
+      n ? nextStatus(n, `help-${id}`) : null,
       h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, r?.flow ?? job?.flow ?? "Queued run")),
-      r?.refinement ? refinementMark(r.refinement) : null),
+      r?.refinement ? refinementMark(r.refinement, `ref-${id}`) : null),
     task ? h("div", {}, task) : null,
     work ? h("div", { class: "muted mono" }, work) : null,
     n ? h("p", { class: "run-next muted" }, n.text) : null,
@@ -80,7 +82,7 @@ export function runCard({ run, job }, onRemove) {
 /** A yes/no dialog. Resolves true for the yes button, false for the other, Close, Escape or the backdrop. */
 export async function confirmDialog(title, text, yes = "Yes", no = "No") {
   const answer = await modal(title, (close) => h("div", { class: "run-dialog" },
-    h("p", { style: { margin: 0 } }, text),
+    h("p", { class: "flush" }, text),
     h("div", { class: "row" },
       h("button", { type: "button", class: "danger", onClick: () => close(true) }, yes),
       h("button", { type: "button", onClick: () => close(false) }, no))));
@@ -96,7 +98,7 @@ export async function decisionDialog(kind, send) {
   let busy = false;
   const answer = await modal(approve ? "Approve" : "Reject", (close) => {
     const note = h("textarea", { name: "note", rows: 4, "aria-label": approve ? "Note (optional)" : "Why reject? (optional)" });
-    const err = h("p", { class: "status bad", role: "alert", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush", role: "alert" });
     const submitBtn = h("button", { type: "submit", class: approve ? "primary" : "danger" }, approve ? "Approve" : "Reject");
     const closeBtn = h("button", { type: "button", onClick: () => { if (!busy) close(false); } }, "Not now");
     const submit = async (e) => {
@@ -132,35 +134,60 @@ export async function decisionDialog(kind, send) {
 // ── My runs ──
 
 /** The My runs page; refreshes every 30 seconds. Returns a cleanup. */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false } = {}) {
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo } = {}) {
   let gone = false;
   let entries = [];
+  let capped = false;
   let seq = 0;
+  // Only the repository filter counts here: a user never filters by owner.
+  let filters = query.repo ? { repo: query.repo } : {};
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
+  let dialogOpen = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
 
+  const setFilters = (next) => {
+    filters = next;
+    go(withQuery("#/runs", filters));
+    draw();
+  };
+  const clear = () => setFilters({});
   const draw = () => {
-    mount(list, entries.length
-      ? h("ul", { class: "run-cards" }, entries.map((e) => runCard(e, readOnly ? null : remove)))
-      : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", href: "#/start" }, "Start work")));
+    if (dialogOpen) return;
+    const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
+    const note = filters.repo && capped ? CAP_NOTE : null;
+    mount(list,
+      filterBar(filters, { onRemove: () => setFilters({}), onClear: clear }),
+      shown.length
+        ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
+        : filters.repo
+          ? filterEmpty("runs", filters, { note, onClear: clear })
+          : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work")));
   };
   async function load() {
     const mine = ++seq;
     const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
     if (gone || mine !== seq) return;
     entries = myRunsEntries(runs, queue?.pending);
+    capped = Array.isArray(runs) && runs.length >= RUNS_CAP;
     draw();
   }
   async function remove(job) {
     alertEl.textContent = "";
-    if (!(await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it"))) return;
+    dialogOpen = true;
+    let yes;
+    try {
+      yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it");
+    } finally {
+      dialogOpen = false;
+    }
+    if (!yes) return draw(); // the newest answer that came while the dialog was open
     try {
       const r = await a.cancelRun(job.runId);
       if (r?.cancelled === false) alertEl.textContent = NOT_CANCELLED;
       else toast("Removed");
     } catch (e) {
       alertEl.textContent = errorText(e);
-      return;
+      return draw();
     }
     await load().catch((e) => { alertEl.textContent = errorText(e); });
   }
@@ -197,20 +224,17 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let acting = false;
   let dialogOpen = false;
   let tab = "log";
-  let follow = true;
   let runSeq = 0;
   let queueSeq = 0;
   let tabSeq = 0;
 
   const head = h("div");
   const alertEl = h("p", { class: "status bad", role: "alert" });
-  const logEl = h("pre", { class: "log" });
+  const log = createLog();
+  const status = statusAnnouncer();
   const tabBody = h("div");
   const tabButtons = [];
   const tabsBox = h("div");
-  logEl.addEventListener("scroll", () => {
-    follow = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
-  });
 
   const setAlert = (text) => { alertEl.textContent = text; };
 
@@ -218,7 +242,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     tab = t;
     const mine = ++tabSeq;
     for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, logEl);
+    if (t === "log") return mount(tabBody, log.el);
     if (t === "steps") {
       const steps = summary?.history ?? [];
       return mount(tabBody, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, NO_STEPS));
@@ -238,14 +262,14 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const b = h("button", { type: "button", "data-tab": k, class: k === tab ? "on" : null, onClick: () => showTab(k) }, label);
     tabButtons.push([k, b]);
   }
-  mount(tabsBox, h("div", { class: "seg tabs", style: { marginBottom: "12px" } }, tabButtons.map(([, b]) => b)), tabBody);
-  mount(tabBody, logEl);
+  mount(tabsBox, h("div", { class: "seg tabs mb-12" }, tabButtons.map(([, b]) => b)), tabBody);
+  mount(tabBody, log.el);
 
   // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
   let sending = false;
   let expectAnswers = 0;
   const answerInput = h("textarea", { name: "answer", rows: 4, "data-focus": "answer-text" });
-  const answerErr = h("p", { class: "status bad", role: "alert", style: { margin: 0 } });
+  const answerErr = h("p", { class: "status bad flush", role: "alert" });
   const answerBtn = h("button", { type: "submit", class: "primary" }, "Send answer");
   const answerForm = h("form", { class: "run-answer", onSubmit: sendAnswer },
     h("label", { class: "field" }, h("span", {}, "Your answer"), answerInput),
@@ -260,13 +284,13 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
-  mount(main, head, alertEl, answerBox, tabsBox);
+  mount(main, head, alertEl, status.el, answerBox, tabsBox);
 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
 
   const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
-  const back = () => h("a", { class: "btn ghost", href: "#/runs", "aria-label": "Back to My runs" }, "←");
+  const back = () => h("a", { class: "btn ghost", href: "#/runs", "data-focus": "back", "aria-label": "Back to My runs" }, "←");
 
   function actionButtons(kinds) {
     if (readOnly) return null;
@@ -281,6 +305,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   function draw() {
     if (dialogOpen) return;
+    status.say(summary ?? (job ? { next: job.next } : null));
     drawHead();
     drawAnswer();
   }
@@ -334,18 +359,18 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       const missing = runError?.status === 404 && !queueError;
       const err = !missing && (queueError || runError);
       return mount(head, missing
-        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs" }, "My runs"))
+        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
         : err
-          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs" }, "My runs"))
+          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
           : h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
     }
     if (!summary) {
       return mount(head,
-        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next)),
+        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next, "status-help")),
         actionButtons(runActions({ status: "queued" }, true)),
         h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), nextBlock(job.next), job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null),
-        h("div", { class: "card", style: { marginBottom: "16px" } },
-          job.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, job.task) : null,
+        h("div", { class: "card mb-16" },
+          job.task ? h("p", { class: "flush pre-wrap" }, job.task) : null,
           h("dl", { class: "meta" }, job.flow ? row("Flow", job.flow) : null, workText(job.githubRepo, job.issue) ? row("Repository", workText(job.githubRepo, job.issue)) : null)));
     }
     const s = summary;
@@ -354,7 +379,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const steprow = stepRow(s);
     const work = workText(s.vars?.github_repo, s.vars?.issue);
     mount(head,
-      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next) : null, s.refinement ? refinementMark(s.refinement) : null),
+      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next, "status-help") : null, s.refinement ? refinementMark(s.refinement, "refinement") : null),
       actionButtons(runActions(s, job !== null)),
       h("section", { class: "run-now", "aria-label": "Now" },
         h("h2", {}, "Now"),
@@ -362,9 +387,9 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         retiredLine(s),
         queued && job && job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null,
         steprow ? h("dl", { class: "meta" }, steprow) : null),
-      h("div", { class: "card", style: { marginBottom: "16px" } },
-        s.task ? h("p", { style: { margin: 0, whiteSpace: "pre-wrap" } }, s.task) : null,
-        s.questions ? h("pre", { class: "mono", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, h("b", {}, "Questions"), "\n", s.questions) : null,
+      h("div", { class: "card mb-16" },
+        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
+        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", s.questions) : null,
         h("dl", { class: "meta" },
           work ? row("Repository", work) : null,
           s.branch ? row("Branch", s.branch) : null,
@@ -473,8 +498,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     } catch {
       return;
     }
-    logEl.append(logLine(String(line ?? "")));
-    if (follow) logEl.scrollTop = logEl.scrollHeight;
+    log.add(String(line ?? ""));
   });
   es.onerror = () => {
     // A stream is not a fetch: in a preview a closed stream is checked with a GET, which shows a 403 when the view has ended.

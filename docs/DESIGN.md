@@ -34,7 +34,7 @@ headlessly against git repositories — from a task someone types, or automatica
 Its main use: put one label on a GitHub issue, and the Foundry asks the open questions, plans,
 codes, tests, reviews and merges the story, asking a person only when it has to.
 
-![Your turn: the page that shows only what waits for you](images/your-turn.png)
+![Home: the page that shows what needs you, what is running and what finished](images/home.png)
 
 Node.js and TypeScript (ESM), no web framework, no database. About 15,000 lines of source and
 2,100 tests.
@@ -153,7 +153,7 @@ is how untrusted text travels: as environment variables, never pasted into a com
 pieces (plan phase, test-and-fix loop, review loop, merge). The YAML files are never edited by
 hand.
 
-![The flow editor with the gitflow flow](images/flows.png)
+![The flow editor with a built-in flow](images/flows.png)
 
 ---
 
@@ -466,25 +466,29 @@ state (`failed.backOk = false`) that a person must repair. The monitor reads the
 
 ## 15. The web interface
 
-Plain JavaScript modules, no build step, no framework. One page per concern:
+Plain JavaScript modules, no build step, no framework. The places of the admin display:
 
-| Page | Purpose |
-|---|---|
-| Your turn | What waits for you |
-| Board | Where every story is |
-| Flows, Library | Edit and create flows; reusable blocks |
-| Runs | Every run, live log, steps and transcripts, changes |
-| My repositories | Your repositories and how the Foundry signs in |
-| Watchers | Automation from GitHub |
-| Models | Agents, providers, routing |
-| Dashboard | Cost, success rate, where runs fail |
-| Settings | Budget, network, safety, notifications |
+| Place | Pages | Purpose |
+|---|---|---|
+| **Home** | — | What waits for you, what is running, what finished |
+| **Board** | — | Where every story is |
+| **Refinement** | — | From a rough idea to a story |
+| **Runs** | — | Every run, live log, steps and transcripts, changes |
+| **Repositories** | — | Repositories and how the Foundry signs in |
+| **Flows** | Flows, Library | Edit and create flows; reusable blocks |
+| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
+
+**User display:** **Home**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
 **Two displays.** The admin page is `ui/index.html` with `ui/app.js`; the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
+
+### Development gallery
+
+`scf ui --dev` and `scf serve --dev` set `ServerOptions.dev`. With it, the static branch in `src/server/server.ts` serves `ui/gallery/` (`/gallery` and `/gallery/` map to `gallery/index.html`, like `/user`). Without it, `isGalleryPath` (`src/server/http.ts`) catches every spelling of a path under `/gallery` (`..`, `\`, case) and the server answers 404 before `serveStatic`. The switch is on the command line only. The gallery is plain static files under the existing CSP, adds no API route and so needs no rule in `permissions.ts`. See `docs/UI_COMPONENTS.md`.
 
 ### UI styles
 
@@ -587,6 +591,7 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
     - **Update baselines** with `npm run test:ui -- --update-snapshots`, check every changed image,
       and commit them. A story that changes the look on purpose does this and lists the changed
       images in its pull request.
+  - **Guide images.** `tests/browser/guide-shots.spec.ts` writes `docs/images/<name>.png` for every entry of the manifest `SHOTS` (`scripts/screenshots/shots.ts`). Run it with `npm run test:ui -- --grep @guide`. `tests/guide-docs.test.ts` checks that the guides, the folder and the manifest agree.
 
 ---
 

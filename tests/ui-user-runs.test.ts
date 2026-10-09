@@ -683,7 +683,7 @@ describe("renderMyRun", () => {
       { id: "b", type: "shell", visit: 1, ok: false, durationMs: 50, error: "exit 1" },
     ] });
     await open();
-    const tabs = find(one(main, "div", { class: "seg tabs" }), "button");
+    const tabs = find(one(main, "div", { class: "seg tabs mb-12" }), "button");
     expect(tabs.map((b) => b.textContent)).toEqual(["Log", "Steps", "Changes"]);
     emit("log", { line: "▶ a (shell)" });
     emit("log", "not json");
@@ -716,7 +716,7 @@ describe("renderMyRun", () => {
     state.summary.flowDef.steps = [{ id: "step2", type: "agent" }];
     await open();
     const texts: string[] = [main.textContent];
-    for (const b of find(one(main, "div", { class: "seg tabs" }), "button")) {
+    for (const b of find(one(main, "div", { class: "seg tabs mb-12" }), "button")) {
       b.click();
       await flush();
       texts.push(main.textContent);

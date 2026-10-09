@@ -18,6 +18,13 @@ export function h(tag, props = {}, ...children) {
   return el;
 }
 
+/** A glyph for the eye only: hidden from screen readers. The control around it needs its own name. */
+export const glyph = (g) => h("span", { "aria-hidden": "true" }, g);
+
+export const AI_LABEL = "Written by AI";
+/** Props that make an element a named region of AI-written content: "Written by AI: <what>". */
+export const aiProps = (what) => ({ role: "region", "aria-label": `${AI_LABEL}: ${what}` });
+
 export const svg = (tag, props = {}, ...children) => h(tag, { ...props, svg: true }, ...children);
 
 const TAB_STOPS = "a[href], button, input, select, textarea, summary, [tabindex]";
@@ -44,7 +51,13 @@ export function mount(target, ...nodes) {
   const active = document.activeElement;
   const name = active && target.contains(active) ? active.getAttribute("data-focus") : null;
   target.replaceChildren(...nodes.flat().filter(Boolean));
-  if (name) [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name)?.focus();
+  if (!name) return;
+  const same = [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name);
+  if (same) return same.focus();
+  // The control is gone: the heading of this part takes the focus, so it never drops to `<body>`.
+  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3") ?? target;
+  heading.setAttribute("tabindex", "-1");
+  heading.focus();
 }
 
 export function debounce(fn, ms) {
@@ -55,20 +68,101 @@ export function debounce(fn, ms) {
   };
 }
 
+const TOAST_MS = 3500;
+const TOAST_SAME_MS = 5000;
 let toastTimer;
-export function toast(msg, kind = "info") {
+let toastText; // the text shown last; the same text again within 5 s of its last call is announced once
+let toastAt = 0;
+let toastMsg; // the message node; kept while the same text repeats, so the live region does not announce it again
+let toastRun; // the action of the newest toast
+let toastOpener; // what had the focus when the toast was shown
+
+/** Where the focus goes after the toast: the opener while it is on the page, else the main area. */
+function toastFocusBack() {
+  const back = toastOpener && toastOpener.isConnected !== false ? toastOpener : document.getElementById("main");
+  if (!back) return;
+  if (back.id === "main") back.setAttribute("tabindex", "-1");
+  back.focus?.();
+}
+
+/**
+ * Hides the toast and empties it (a hidden toast has no Tab stops and nothing for a screen reader to find).
+ * `back: false`: the caller puts the focus back itself, after its work.
+ */
+function closeToast(back = true) {
   const el = document.getElementById("toast");
-  el.textContent = msg;
+  clearTimeout(toastTimer);
+  const inside = !!el.contains?.(document.activeElement) && document.activeElement !== el;
+  el.className = "";
+  toastRun = undefined;
+  // The message goes too: a hidden toast must not stay in the accessibility tree, and removing text is not announced.
+  el.replaceChildren();
+  if (inside && back) toastFocusBack();
+}
+
+/**
+ * Feedback after an action. `kind` "error" (or `sticky`) stays until the ✕ is pressed; the others go after 3.5 s.
+ * `action: { label, run }` draws one button (Undo); it runs once and closes the toast.
+ */
+export function toast(msg, kind = "info", { action, sticky = false } = {}) {
+  const el = document.getElementById("toast");
+  const stays = kind === "error" || sticky;
+  const text = String(msg ?? "");
+  const now = Date.now();
+  const same = text === toastText && now - toastAt < TOAST_SAME_MS && !!toastMsg && el.children[0] === toastMsg;
+  toastAt = now;
+  if (!same) {
+    toastText = text;
+    toastMsg = h("span", { class: "toast-msg" }, text);
+  }
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
+  el.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+  toastRun = action?.run;
+  toastOpener = document.activeElement;
+  const buttons = [];
+  if (action) {
+    buttons.push(h("button", { type: "button", class: "toast-action", onClick: async () => {
+      const run = toastRun;
+      if (!run) return;
+      const inside = !!el.contains?.(document.activeElement);
+      closeToast(false);
+      try {
+        await run();
+      } catch (e) {
+        toast(e?.message || "Something went wrong.", "error");
+      }
+      // After the work: a redraw may have replaced the opener.
+      if (inside) toastFocusBack();
+    } }, action.label));
+  }
+  if (stays) buttons.push(h("button", { type: "button", class: "toast-close", "aria-label": "Dismiss", onClick: () => closeToast() }));
+  el.replaceChildren(toastMsg, ...buttons);
   el.className = `show ${kind}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = ""), 3500);
+  if (!stays) toastTimer = setTimeout(() => closeToast(), TOAST_MS);
 }
+
+/** The one confirmation dialog. Resolves true only on the confirm button; Escape, ✕, the backdrop and Cancel give false. */
+export function confirmDialog({ title, text, confirm = "Delete", cancel = "Cancel", danger = true } = {}) {
+  let cancelBtn;
+  const done = modal(title, (close) => {
+    cancelBtn = h("button", { type: "button", onClick: () => close(false) }, cancel);
+    return h("div", { class: "stack" }, h("p", {}, text),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn,
+        h("button", { type: "button", class: danger ? "danger" : "primary", onClick: () => close(true) }, confirm)));
+  });
+  cancelBtn.focus();
+  return done.then((answer) => answer === true);
+}
+
+let modalSeq = 0;
 
 /** Show a modal; `build(close)` returns its content. Resolves with the value passed to close(). */
 export function modal(title, build, { busy = () => false } = {}) {
   return new Promise((resolve) => {
     const root = document.getElementById("modal-root");
     const opener = document.activeElement;
+    const titleId = `modal-title-${++modalSeq}`;
     let closed = false;
     const close = (v) => {
       // A dialog can finish its work after Escape closed it: a second call must not touch a newer dialog.
@@ -91,13 +185,30 @@ export function modal(title, build, { busy = () => false } = {}) {
       }
     };
     document.addEventListener("keydown", onKey);
-    const box = h("div", { class: "modal", role: "dialog", "aria-label": title, "aria-modal": "true", tabindex: "-1" },
-      h("div", { class: "modal-head" }, h("h2", {}, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, "✕")),
+    const box = h("div", { class: "modal", role: "dialog", "aria-labelledby": titleId, "aria-modal": "true", tabindex: "-1" },
+      h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, glyph("✕"))),
       build(close));
     mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
     (box.querySelector("textarea, input") ?? box).focus();
   });
 }
+
+/** Marks `field` (may be undefined) as the one at fault and focuses it; every control in `fields` loses the mark first. */
+export function markInvalid(fields, field) {
+  for (const f of fields) f?.removeAttribute("aria-invalid");
+  if (!field) return;
+  field.setAttribute("aria-invalid", "true");
+  field.focus();
+}
+
+/** Shows `message` in the alert line `line` ("" clears it) and marks `field`. */
+export function showError(line, message, { fields = [], field } = {}) {
+  line.textContent = message || "";
+  markInvalid(fields, message ? field : undefined);
+}
+
+/** The key of the first [RegExp, key] pair that matches the message; undefined when none does. */
+export const fieldFor = (message, pairs) => pairs.find(([re]) => re.test(String(message ?? "")))?.[1];
 
 export function timeAgo(iso) {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;

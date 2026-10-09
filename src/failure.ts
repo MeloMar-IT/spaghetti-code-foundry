@@ -50,6 +50,7 @@ const SETUP_ERRORS: { re: RegExp; what: string; fix: string }[] = [
   { re: /^claude CLI not found/, what: "the Claude Code tool is not installed", fix: "install Claude Code on the computer that runs the Foundry" },
   { re: /^codex CLI not found/, what: "the Codex tool is not installed", fix: "install Codex on the computer that runs the Foundry" },
   { re: /^skill integrity: /, what: "a skill this run locked is missing or changed", fix: "restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills" },
+  { re: /^skill selection is blocked: \S+ does not fit the skill context budget/, what: "a mandatory skill does not fit the skill context budget", fix: "raise skills.selection.max_tokens, then resume the run" },
   { re: /^skill selection is blocked: /, what: "a mandatory skill cannot be used", fix: "pin the skill or change skills.selection.include, then resume the run" },
   { re: SIGN_IN_USED, what: "the repository's sign-in could not be used", fix: "reconnect the repository under My repositories, or ask an admin" },
   { re: SIGN_IN_LATER, what: "the repository's sign-in was not available for the step", fix: "resume the run" },

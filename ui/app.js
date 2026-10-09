@@ -4,11 +4,13 @@ import { flowNameMark } from "./icons.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, renderEditor } from "./editor.js";
-import { resolve } from "./ia.js";
+import { resolve, splitHash } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
+import { errorState, explainError } from "./states.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
+import { renderMaintenance } from "./maintenance.js";
 import { refreshModelLists, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderProblems } from "./problems.js";
@@ -21,6 +23,7 @@ import { renderUsers } from "./users.js";
 import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
+import { renderWork } from "./work.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
 import { renderAdminHome } from "./home-admin.js";
@@ -75,7 +78,7 @@ async function refreshFlows() {
 }
 
 function renderSidebar() {
-  const inFlows = location.hash.startsWith("#/flows/") || location.hash === "#/new";
+  const inFlows = splitHash(location.hash).path.startsWith("#/flows/") || splitHash(location.hash).path === "#/new";
   const current = inFlows ? S.cur : null;
   mount(sidebar,
     h("div", { class: "side-actions" },
@@ -123,14 +126,14 @@ function renderFlowView() {
   renderSidebar();
   ui = {
     title: h("h1", {}, c.obj?.name ?? c.name ?? "flow"),
-    dirty: h("span", { class: "dirty-dot", title: "Unsaved changes", style: { visibility: c.dirty ? "visible" : "hidden" } }),
+    dirty: h("span", { class: c.dirty ? "dirty-dot" : "dirty-dot clean", title: "Unsaved changes" }),
     status: h("span", { class: "status" }),
     errors: h("div"),
     body: h("div"),
     graph: h("div"),
   };
   const seg = (mode, label) => h("button", { class: c.mode === mode ? "on" : null, onClick: () => setMode(mode) }, label);
-  const scopeSel = h("select", { style: { width: "auto" }, title: "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
+  const scopeSel = h("select", { class: "fit", title: "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
     h("option", { value: "repo", selected: c.saveScope === "repo" }, "this repo"),
     h("option", { value: "global", selected: c.saveScope === "global" }, "global"));
 
@@ -142,13 +145,13 @@ function renderFlowView() {
       ui.status,
       h("span", { class: "spacer" }),
       h("button", { onClick: () => generateDialog(true), title: "Describe a change and let Claude edit this flow" }, "✨ Ask Claude"),
-      h("span", { class: "muted", style: { fontSize: "12px" } }, "save to"), scopeSel,
+      h("span", { class: "muted text-xs" }, "save to"), scopeSel,
       h("button", { onClick: save, title: "⌘S" }, "Save"),
       h("button", { class: "primary", onClick: runDialog }, "▶ Run"),
       c.name && c.scope !== "builtin" ? h("button", { class: "icon", title: "Delete flow", onClick: remove }, "🗑") : null),
-    c.scope === "builtin" ? h("p", { class: "muted", style: { marginTop: "-6px" } }, "Built-in flow — saving creates your own copy that overrides it.") : null,
+    c.scope === "builtin" ? h("p", { class: "muted mt-neg-6" }, "Built-in flow — saving creates your own copy that overrides it.") : null,
     ui.errors,
-    h("div", { class: "editor" }, ui.body, h("div", { class: "graph-pane" }, h("h3", { style: { marginBottom: "8px" } }, "Flow"), ui.graph)));
+    h("div", { class: "editor" }, ui.body, h("div", { class: "graph-pane" }, h("h3", { class: "mb-8" }, "Flow"), ui.graph)));
   drawBody();
   drawGraph();
   validate();
@@ -175,7 +178,7 @@ function drawBody() {
   }
   const lostComments = /^\s*#/m.test(c.yaml);
   mount(ui.body,
-    lostComments ? h("p", { class: "muted", style: { marginTop: 0 } }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
+    lostComments ? h("p", { class: "muted mt-0" }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
     renderEditor(c.obj, {
       selected: c.selected,
       onChange: () => {
@@ -228,7 +231,7 @@ function setMode(mode) {
 
 function changed() {
   S.cur.dirty = true;
-  ui.dirty.style.visibility = "visible";
+  ui.dirty.classList.toggle("clean", !S.cur.dirty);
   ui.title.textContent = S.cur.obj?.name ?? "flow";
   drawGraph();
   validateSoon();
@@ -241,7 +244,7 @@ async function validate() {
   if (c !== S.cur || yaml !== c.yaml) return; // stale
   c.validation = r;
   ui.status.className = `status ${r.ok ? "ok" : "bad"}`;
-  ui.status.textContent = r.ok ? "✓ valid" : "✕ invalid";
+  ui.status.textContent = r.ok ? "valid" : "invalid";
   mount(ui.errors, r.ok ? null : h("div", { class: "errors" }, r.error.replace(/^<flow>: /, "")));
 }
 const validateSoon = debounce(validate, 300);
@@ -294,7 +297,7 @@ async function runDialog() {
     const task = h("textarea", { rows: 5, placeholder: "Describe the task, e.g. “Add a --json flag to the export command”" });
     const repo = h("input", { class: "mono", value: S.info.repo });
     const vars = Object.entries(flow.vars).map(([k, v]) => [k, h("input", { class: "mono", value: v })]);
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const start = h("button", { class: "primary", onClick: async () => {
       if (!task.value.trim() && flow.workspace !== "empty" && !confirm("Run without a task description?")) return;
       start.disabled = true;
@@ -311,7 +314,7 @@ async function runDialog() {
       }
     } }, "▶ Start run");
     task.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && start.click());
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("label", { class: "field" }, h("span", {}, flow.workspace === "empty" ? "Extra instructions (optional)" : "Task"), task,
         !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null),
       flow.workspace === "empty"
@@ -348,7 +351,7 @@ async function generateDialog(modify) {
       }
     } }, modify ? "✨ Apply" : "✨ Draft");
     ta.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && go.click());
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       ta,
       h("small", { class: "muted" }, "Uses your local claude CLI (sonnet). You review the result before saving."),
       h("div", { class: "row" }, status, h("span", { class: "spacer" }), go));
@@ -367,9 +370,9 @@ async function generateDialog(modify) {
 
 function welcome() {
   mount(main, h("div", { class: "empty" },
-    h("h1", { style: { marginBottom: "8px" } }, "Welcome to Spaghetti Code Foundry"),
+    h("h1", { class: "mb-8" }, "Welcome to Spaghetti Code Foundry"),
     h("p", {}, "Build your own coding flows: pick a flow on the left, start from a blank one, or describe what you want and let Claude draft it."),
-    h("div", { class: "row", style: { justifyContent: "center", marginTop: "16px" } },
+    h("div", { class: "row center mt-16" },
       h("button", { class: "primary", onClick: () => generateDialog(false) }, "✨ Draft flow with Claude"),
       h("button", { onClick: () => openNew() }, "+ Blank flow"))));
 }
@@ -379,6 +382,13 @@ let routeGen = 0;
 const sinceEl = h("div", { class: "since" });
 sinceEl.hidden = true;
 
+/** Draws a page into a box of its own: once the person leaves, a late answer lands in a box that is no longer on the page. */
+async function renderInBox(render) {
+  const box = h("div", {});
+  mount(main, box);
+  await render(box);
+}
+
 async function route() {
   const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
@@ -386,8 +396,11 @@ async function route() {
   const to = resolve("admin", location.hash);
   if (to.hash !== location.hash) history.replaceState(null, "", to.hash);
   const hash = to.hash;
-  const [, section, arg] = hash.split("/").map(decodeURIComponent);
-  const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && hash !== "#/new";
+  const { path } = splitHash(hash);
+  const [, section, arg] = path.split("/").map(decodeURIComponent);
+  const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && path !== "#/new";
+  // Filters change the address without a navigation; the page keeps the address in step.
+  const go = (next) => { history.replaceState(null, "", next); S.lastHash = next; };
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
   if (leavingDraft && section === "flows" && arg && !confirmDiscard()) {
     history.replaceState(null, "", S.lastHash);
@@ -407,21 +420,31 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "board") S.cleanup = renderBoard(main, arg);
+    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
-    else if (section === "dashboard") await renderDashboard(main);
-    else if (section === "watchers") await renderWatchers(main);
-    else if (section === "problems") await renderProblems(main);
-    else if (section === "settings") await renderSettings(main);
+    // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
+    else if (section === "dashboard") await renderInBox(renderDashboard);
+    else if (section === "watchers") await renderInBox(renderWatchers);
+    else if (section === "problems") await renderInBox(renderProblems);
+    else if (section === "settings") await renderInBox(renderSettings);
+    else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await renderModels(main);
-    else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
+    else if (section === "all-repos") {
+      const off = await renderAllRepos(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "credentials") {
       const off = await renderCredentials(main);
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
-    else if (section === "repos") S.cleanup = await renderRepos(main, { admin: true });
+    else if (section === "repos") {
+      const off = await renderRepos(main, { admin: true });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "start") {
@@ -433,20 +456,27 @@ async function route() {
       else S.cleanup = done;
     }
     else if (section === "runs" && arg) S.cleanup = renderRunDetail(main, arg, { admin: true });
-    else if (section === "runs") S.cleanup = await renderRunsList(main, { admin: true });
+    else if (section === "runs") {
+      // The list draws into its own box, so a slow answer that comes after a hash change cannot touch the next page.
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderRunsList(box, { admin: true, query: to.query, go });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
     else if (section === "new") S.cur && !S.cur.name ? renderFlowView() : openNew();
     else if (section === "flows" && arg) await openFlow(arg);
     else welcome();
   } catch (e) {
     if (mine !== routeGen) return; // a late error must not replace the page that is shown now
-    mount(main, h("div", { class: "errors" }, e.message));
+    mount(main, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
   }
   renderSidebar();
 }
 
 window.addEventListener("beforeunload", (e) => S.cur?.dirty && e.preventDefault());
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "s" && S.cur && (location.hash.startsWith("#/flows/") || location.hash === "#/new")) {
+  if ((e.metaKey || e.ctrlKey) && e.key === "s" && S.cur && (splitHash(location.hash).path.startsWith("#/flows/") || splitHash(location.hash).path === "#/new")) {
     e.preventDefault();
     save();
   }

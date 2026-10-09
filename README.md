@@ -6,7 +6,7 @@ you only when it has to.
 
 Formerly **claude-factory**. The command is now `scf` (`factory` still works), the repository is [MeloMar-IT/spaghetti-code-foundry](https://github.com/MeloMar-IT/spaghetti-code-foundry) and the data folder is `~/.spaghetti-code-foundry`. The `<repo>/.claude-factory` folder, the labels (`claude-factory`, `factory:*`) and `factory/…` branches keep the old name.
 
-![Your turn: only what waits for you](docs/images/your-turn.png)
+![Home: what needs you, what is running, what finished](docs/images/home.png)
 
 Work is described as **flows**: YAML pipelines of agent steps (Claude Code or OpenAI's Codex
 CLI), shell steps, approvals and branches. The Foundry runs them headlessly — from a GitHub
@@ -19,7 +19,7 @@ issue that gets a label, a task you type, a red CI build, or a schedule.
   plan, review of the plan, code, tests, code review, docs, merge.
 - **A person only where a person is needed.** Every plan gets a risk score from 0 to 100; above
   75 you approve it first. Stories that are too big are split into smaller ones.
-- **Always clear what happens next.** *Your turn* lists only what waits for you, one button
+- **Always clear what happens next.** *Home* shows first what waits for you, one button
   each. The *Board* shows where every story is and why. A health line says when something is
   wrong with the Foundry itself.
 - **Several stories at once.** Runs lock the parts of the code they change, so stories in
@@ -87,11 +87,11 @@ scf ui      # web UI at http://localhost:4777
 
 The first visit asks you to create the admin account. After that you sign in.
 
-**2. Let it build your GitHub issues.** In the UI, open **Watchers** → **Add watcher**: your
+**2. Let it build your GitHub issues.** In the UI, open **Administration** → **Watchers** → **Add watcher**: your
 repository (`owner/repo`), the flow `issue-gitflow` and the label `Factory_go`. Your repository
 needs a `develop` branch; the Foundry creates it from `main` when it is missing.
 
-**3. Put the label `Factory_go` on an issue.** Then watch **Your turn**: questions and risky
+**3. Put the label `Factory_go` on an issue.** Then watch **Home**: questions and risky
 plans show up there. Everything else continues by itself, and once a day you get one pull
 request from `develop` to `main`.
 
@@ -126,7 +126,7 @@ Write your own flows in the editor or with any AI assistant ([FLOW_AUTHORING.md]
 
 | Document | What it is |
 |---|---|
-| **[User guide](docs/USER_GUIDE.md)** | Everything, with screenshots: Your turn and the board, running and resuming flows, writing flows, watchers and labels, models and routing, accounts, safety, costs, the command line, troubleshooting |
+| **[User guide](docs/USER_GUIDE.md)** | Everything, with screenshots: Home and the board, running and resuming flows, writing flows, watchers and labels, models and routing, accounts, safety, costs, the command line, troubleshooting |
 | **[Design](docs/DESIGN.md)** | How the Foundry is built and why, with diagrams |
 | **[Lessons learned](docs/LESSONS_LEARNED.md)** | What building and running it taught us, including the incidents |
 | **[Flow authoring](docs/FLOW_AUTHORING.md)** | The complete flow format. Give it to any AI assistant (or use `scf flow-guide`), describe the flow you want, and check the result with `scf validate` |

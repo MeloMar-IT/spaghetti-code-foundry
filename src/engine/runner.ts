@@ -32,6 +32,7 @@ import { removeSignInDir } from "./repo-access.js";
 import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
 import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, spentTodayBy, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
+import { planRunSkills, recheckRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -169,7 +170,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   if (!summary.flowDef.steps.some((s) => s.id === from)) throw new Error(`unknown step "${from}"`);
 
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
-  Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
+  Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
   claimRunStart(opts.runsDir, () => saveRun(summary));
@@ -290,6 +291,8 @@ async function drive(
   save();
 
   // a marker for tools/area-lock: this run is running (a step may not read other runs' folders)
+  const skillStop = resume ? recheckRunSkills(summary, config, resume.startAt, log) : undefined;
+  if (skillStop) return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next: resume!.startAt, lastOutput: "" });
   sweepRunning(opts.runsDir);
   const marker = markRunning(summary.runId);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
@@ -478,7 +481,13 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: `cancelled during step "${step.id}"`, ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
+    const skillStop = top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined;
     const target = res.ok ? (routed ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
+    if (skillStop && target === "end") {
+      // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
+      setNext(step.id);
+      return { outcome: "stopped", reason: skillStop, ...here() };
+    }
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
       return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here() };
@@ -489,6 +498,10 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     idx = target === "next" ? sequential(idx + 1) : indexOf.get(target)!;
     setNext(steps[idx]?.id ?? null);
+    if (skillStop) {
+      if (!steps[idx]) setNext(step.id); // the gate was the last step: resume at the gate
+      return { outcome: "stopped", reason: skillStop, ...here() };
+    }
     engine.save();
   }
   return { outcome: "succeeded", next: null, lastOutput };

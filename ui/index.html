@@ -7,18 +7,19 @@
   <script src="/prefs-boot.js"></script>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/kit/kit.css">
 </head>
 <body class="signed-out">
   <button type="button" id="skip" class="skip">Skip to content</button>
   <header class="top" id="top">
     <button type="button" id="menu-btn" class="menu-btn" aria-controls="side" aria-expanded="true" aria-label="Menu"><span aria-hidden="true">☰</span><span id="menu-count" class="badge" hidden></span></button>
-    <a class="brand" href="#/home"><span class="logo">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
+    <a class="brand" href="#/home"><span class="logo" aria-hidden="true">◆</span> <span class="brand-full">Spaghetti Code Foundry</span><span class="brand-short">Foundry</span></a>
     <span id="page-title" class="page-title"></span>
     <span class="spacer"></span>
     <span id="top-actions" class="top-actions">
       <a href="#/start" data-nav="start">Start work</a>
       <span id="ask-scf" class="ask-scf" hidden></span>
-      <button type="button" id="health-btn" class="health-chip" aria-controls="health" aria-expanded="false" hidden></button>
+      <button type="button" id="health-btn" class="health-chip" aria-controls="health" aria-expanded="false" hidden>Health</button>
     </span>
     <details id="account" class="account">
       <summary id="account-summary" aria-label="Account"><span id="account-name" class="account-name">Account</span></summary>
@@ -52,7 +53,7 @@
   </div>
   <div id="route-status" class="sr-only" role="status" aria-live="polite"></div>
   <div id="modal-root"></div>
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

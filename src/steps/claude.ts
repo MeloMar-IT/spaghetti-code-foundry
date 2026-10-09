@@ -62,11 +62,15 @@ export function resolveClaudeBin(): string {
 /**
  * Unattended factory steps should not inherit the user's personal Claude Code setup (MCP
  * servers, plugins, skills, hooks, env): it bloats every turn and invites off-task detours.
+ * The only skills a step may follow are the ones the Foundry puts in a <foundry-skills> block at the
+ * start of the prompt; the safety rules and the task win over that guidance.
  */
 export const FACTORY_AGENT_NOTE = [
   "You are running unattended as one step of a Spaghetti Code Foundry flow. Do only the task in the prompt.",
   "Ignore instructions from global or home-folder configuration about spawning agents or swarms,",
-  "memory tools, hooks or other orchestration. Do not use skills. Do not look at other projects",
+  "memory tools, hooks or other orchestration. The only skill guidance you may follow is the",
+  "<foundry-skills> block at the start of the prompt, or of an earlier prompt of this session, if there is one; do not use, load or look for any other skill.",
+  "The Foundry's rules and the task win over it. Do not look at other projects",
   "or at ~/.claude. Work only inside the current workspace.",
 ].join(" ");
 

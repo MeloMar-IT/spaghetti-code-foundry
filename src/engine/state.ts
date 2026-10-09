@@ -3,6 +3,7 @@ import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renam
 import { join } from "node:path";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
+import type { RunSkillPlan } from "../skills/run-plan.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -27,6 +28,8 @@ export interface StepRecord {
   retried?: { blips: number; models: number };
   /** Tool calls Claude Code refused (at most 5), e.g. "Bash: mkdir out". */
   denied?: string[];
+  /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. */
+  skills?: { loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
   startedAt: string;
   durationMs: number;
   logFile: string;
@@ -90,6 +93,12 @@ export interface RunSummary {
   answers?: RunAnswer[];
   /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */
   skillLock?: RunSkillLockSummary;
+  /** The skill resolution of the plan and what was decided about skills that could not be used. Absent on older runs and when no skill was asked for. */
+  skillPlan?: RunSkillPlan;
+  /** When the run was archived (taken out of the default list). Absent: not archived. */
+  archivedAt?: string;
+  /** The id of the account that archived it. Never shown to a user. */
+  archivedBy?: string;
 }
 
 /** An answer a person gave on the run page to the questions a run stopped with. */
@@ -128,12 +137,36 @@ export interface RunBrief {
   updatedAt: string;
   /** `vars.github_repo` and `vars.issue` of the run, when it has them. */
   githubRepo?: string;
+  /** True when run.json has archivedAt. */
+  archived?: boolean;
   issue?: string;
   /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
   pr?: string;
   ciRun?: string;
   /** A "running" run.json with no live process (set by the scheduler). */
   interrupted?: boolean;
+  /** The first line of the task, at most 200 characters. Absent when the task is empty. */
+  taskLine?: string;
+  /** The title the pull_ticket step printed ("# #37: Title"), at most 200 characters. Memory only; absent when there is none. */
+  issueTitle?: string;
+}
+
+export const TASK_LINE_MAX = 200;
+/** The first line of a task, trimmed, at most TASK_LINE_MAX characters; undefined when there is none. */
+export function taskLineOf(task: unknown): string | undefined {
+  if (typeof task !== "string") return undefined;
+  const line = [...task.split("\n", 1)[0]!.trim()].slice(0, TASK_LINE_MAX).join("");
+  return line === "" ? undefined : line;
+}
+
+/** The issue title as the pull_ticket step printed it ("# #37: Title"); "" when the output is not text or has none. */
+export function ticketTitleOf(output: unknown): string {
+  return typeof output === "string" ? /^# #\d+: (.+)$/m.exec(output)?.[1]?.trim() ?? "" : "";
+}
+
+function issueTitleOf(s: RunSummary): string | undefined {
+  const t = [...ticketTitleOf(s.state?.steps?.pull_ticket?.output)].slice(0, TASK_LINE_MAX).join("");
+  return t === "" ? undefined : t;
 }
 
 /** When run.json was last written (undefined when it cannot be read). */
@@ -171,7 +204,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;
@@ -219,6 +252,44 @@ export function adoptRun(runDir: string, owner: string, hooks: { beforeSwap?: ()
     // A second look: another process may have written run.json while we worked.
     if (readFileSync(file, "utf8") !== text) return false;
     renameSync(tmp, file);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+/**
+ * Sets (at: ISO time) or removes (at: null) the archive mark of a run.json and changes nothing else (not the file
+ * time or the mode). Skips a live run. Written beside the file and renamed over it; if run.json changed in between,
+ * nothing is replaced. Returns true when the file was replaced. Never throws.
+ */
+export function setRunArchived(runDir: string, at: string | null, by?: string, hooks: { beforeSwap?: () => void } = {}): boolean {
+  const file = runFile(runDir);
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    const st = statSync(file);
+    const text = readFileSync(file, "utf8");
+    const s = JSON.parse(text) as Record<string, unknown>;
+    if (!s || typeof s !== "object" || Array.isArray(s)) return false;
+    if (s.status === "running" && pidAlive(s.pid)) return false;
+    if ((typeof s.archivedAt === "string") === (at !== null)) return false;
+    let next: Record<string, unknown>;
+    if (at !== null) next = { ...s, archivedAt: at, ...(by ? { archivedBy: by } : {}) };
+    else {
+      next = { ...s };
+      delete next.archivedAt;
+      delete next.archivedBy;
+    }
+    writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: st.mode & 0o777, flag: "wx" });
+    chmodSync(tmp, st.mode & 0o777);
+    utimesSync(tmp, st.atime, new Date(Math.round(st.mtimeMs)));
+    hooks.beforeSwap?.();
+    // A second look: another process may have written run.json while we worked.
+    if (readFileSync(file, "utf8") !== text) return false;
+    renameSync(tmp, file);
+    briefCache.delete(file);
     return true;
   } catch {
     return false;

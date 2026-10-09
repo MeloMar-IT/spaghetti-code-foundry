@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { h, mount, svg } from "./dom.js";
 import { needsYou, nextList, waitingGroups } from "./next.js";
 import { ownerLabel } from "./runs.js";
+import { errorState, explainError, loadingState, staleNote } from "./states.js";
 
 const usd = (n, d = 2) => `$${(n ?? 0).toFixed(d)}`;
 const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "—");
@@ -11,13 +12,13 @@ function tile(label, value, sub) {
 }
 
 /** Single-series bar chart of daily cost: one accent hue, bars anchored to the baseline, hover tooltip per bar. */
-function costChart(days) {
+export function costChart(days) {
   const W = 720, H = 180, L = 44, B = 22, T = 10;
   const max = Math.max(0.01, ...days.map((d) => d.costUsd));
   const nice = (() => { const p = 10 ** Math.floor(Math.log10(max)); return Math.ceil(max / p) * p; })();
   const bw = (W - L) / days.length;
   const yv = (v) => T + (H - T - B) * (1 - v / nice);
-  const tip = h("div", { class: "chart-tip", role: "status" });
+  const tip = h("div", { class: "chart-tip", "aria-hidden": "true" });
   const grid = [0, 0.5, 1].map((f) => [
     svg("line", { x1: L, x2: W, y1: yv(nice * f), y2: yv(nice * f), class: "grid-line" }),
     svg("text", { x: L - 6, y: yv(nice * f) + 4, "text-anchor": "end", class: "axis" }, usd(nice * f, nice < 1 ? 2 : 0)),
@@ -35,7 +36,7 @@ function costChart(days) {
       tip.style.top = `${(Math.min(y, H - B - 20) / H) * 100}%`;
       tip.classList.add("show");
     };
-    return svg("g", { class: "bar-hit", onMouseenter: show, onMouseleave: () => tip.classList.remove("show"), tabindex: 0, onFocus: show, onBlur: () => tip.classList.remove("show") },
+    return svg("g", { class: "bar-hit", onMouseenter: show, onMouseleave: () => tip.classList.remove("show") },
       svg("rect", { x: L + i * bw, y: T, width: bw, height: H - T - B, fill: "transparent" }),
       path ? svg("path", { d: path, class: "bar" }) : null);
   });
@@ -46,9 +47,20 @@ function costChart(days) {
     tip);
 }
 
-function rateBar(ok, total) {
+/** Every bar of the cost chart as a table row: day, cost and runs. */
+export function costTable(days) {
+  return h("details", {}, h("summary", {}, "Show as table"),
+    h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Cost"), h("th", {}, "Runs"))),
+      h("tbody", {}, days.map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", { class: "mono" }, usd(d.costUsd, 3)), h("td", {}, d.runs))))));
+}
+
+export const rateText = (ok, total) => `${ok} of ${total}, ${pct(ok, total)}`;
+
+/** A rate as a bar and its percentage; the words ("12 of 15, 80%") are there for screen readers. */
+export function rateBar(ok, total) {
   const w = total ? (ok / total) * 100 : 0;
-  return h("span", { class: "rate" }, h("span", { class: "rate-track" }, h("span", { class: "rate-fill", style: { width: `${w}%` } })), h("span", { class: "mono" }, pct(ok, total)));
+  return h("span", { class: "rate" }, h("span", { class: "rate-track", "aria-hidden": "true" }, h("span", { class: "rate-fill", style: { width: `${w}%` } })),
+    h("span", { class: "mono" }, h("span", { class: "sr-only" }, `${ok} of ${total}, `), pct(ok, total)));
 }
 
 /** A length of time in plain words: "less than a minute", "5 min", "2 h 10 min", "3 days". `up` rounds up instead of to the nearest. */
@@ -120,55 +132,69 @@ export function byRepoCard(list) {
         h("td", {}, r.today?.runs ?? 0), h("td", { class: "mono" }, usd(r.today?.costUsd)))))) : h("p", { class: "muted" }, "No runs yet."));
 }
 
+const part = (p) => p.then((value) => ({ value }), (error) => ({ error }));
+
+/** The note in place of a part of the dashboard that could not be loaded. `what` is e.g. "evals". */
+export const partNote = (what, error, onRetry) =>
+  errorState(explainError(error, { what: `Could not load ${what}.`, safe: "The rest of the dashboard is shown." }), { onRetry });
+
 export async function renderDashboard(main) {
-  mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
-  const [s, info, evals, watchers, runs, clarity] = await Promise.all([api.stats(), api.info(), api.evals().catch(() => []), api.watchers().catch(() => []),
-    api.runs().catch(() => []), api.clarity().catch(() => null)]);
-  const { yours, rest } = waitingGroups(watchers);
+  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Dashboard")), loadingState("Loading the dashboard…", { rows: 6, shape: "cards" }));
+  const parts = await Promise.all([api.stats(), api.info(), api.evals(), api.watchers(), api.runs(), api.clarity()].map(part));
+  const [ps, pinfo, pevals, pwatchers, pruns, pclarity] = parts;
+  const retry = () => renderDashboard(main);
+  const note = (p, what) => (p.error ? partNote(what, p.error, retry) : null);
+  const s = ps.value;
+  const info = pinfo.value;
+  const evals = pevals.value ?? [];
+  const runs = pruns.value ?? [];
+  const clarity = pclarity.value ?? null;
+  const { yours, rest } = waitingGroups(pwatchers.value ?? []);
   const group = ({ w, records }) => h("div", { class: "hold-group" },
     h("div", { class: "muted text-sm" }, h("b", { class: "mono" }, w.id), ` · ${w.github_repo}${w.source === "issues" ? ` · label ${w.label}` : ""}`),
     nextList(records));
-  const t = s.totals;
-  const budget = info.dailyBudget;
+  const t = s?.totals;
+  const budget = info?.dailyBudget;
+  const statsNote = note(ps, "the statistics");
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Dashboard"), h("span", { class: "muted" }, "last 30 days")),
+    h("div", { class: "toolbar" }, h("h1", {}, "Dashboard"), h("span", { class: "muted" }, "last 30 days"), h("span", { class: "spacer" }), staleNote(Date.now())),
     h("div", { class: "tiles" },
-      tile("Spent today", usd(info.spentToday), info.costLimits === false ? "estimate at API prices · no limits enforced" : budget ? `of ${usd(budget)} daily budget` : "no daily budget set"),
-      tile("Spent (30 days)", usd(t.costUsd), `${t.runs} runs`),
-      tile("Success rate", pct(t.succeeded, t.runs), `${t.succeeded} succeeded · ${t.failed} failed`),
-      tile("Needs a human", String(needsYou(runs).length), h("a", { href: "#/runs" }, "see Needs you on the Runs page"))),
-    clarity ? clarityCard(clarity) : null,
-    yours.length || rest.length ? h("div", { class: "card" }, h("h3", {}, "Waiting — what happens next"),
+      tile("Spent today", info ? usd(info.spentToday) : "—", info ? (info.costLimits === false ? "estimate at API prices · no limits enforced" : budget ? `of ${usd(budget)} daily budget` : "no daily budget set") : null),
+      tile("Spent (30 days)", t ? usd(t.costUsd) : "—", t ? `${t.runs} runs` : null),
+      tile("Success rate", t ? pct(t.succeeded, t.runs) : "—", t ? `${t.succeeded} succeeded · ${t.failed} failed` : null),
+      tile("Needs a human", pruns.error ? "—" : String(needsYou(runs).length), h("a", { href: "#/runs" }, "see Needs you on the Runs page"))),
+    note(pinfo, "today's spending"),
+    note(pruns, "the runs"),
+    pclarity.error ? partNote("your turn in numbers", pclarity.error, retry) : clarity ? clarityCard(clarity) : null,
+    yours.length || rest.length || pwatchers.error ? h("div", { class: "card" }, h("h3", {}, "Waiting — what happens next"),
+      note(pwatchers, "the watchers"),
       yours.map(group),
       yours.length && rest.length ? h("div", { class: "hold-rest" }, rest.map(group)) : rest.map(group)) : null,
-    h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay),
-      h("details", {}, h("summary", {}, "Show as table"),
-        h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Runs"), h("th", {}, "Cost"))),
-          h("tbody", {}, s.byDay.filter((d) => d.runs).reverse().map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", {}, d.runs), h("td", { class: "mono" }, usd(d.costUsd, 3)))))))),
+    s ? h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay), costTable(s.byDay)) : statsNote,
     h("div", { class: "dash-grid" },
-      h("div", { class: "card" }, h("h3", {}, "By flow"),
+      s ? h("div", { class: "card" }, h("h3", {}, "By flow"),
         s.byFlow.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Flow", "Runs", "Success", "Avg time", "Cost"].map((x) => h("th", {}, x)))),
           h("tbody", {}, s.byFlow.map((f) => h("tr", {},
             h("td", {}, h("a", { href: `#/flows/${encodeURIComponent(f.flow)}` }, f.flow)),
             h("td", {}, f.runs), h("td", {}, rateBar(f.succeeded, f.runs)),
-            h("td", { class: "mono" }, `${f.avgMinutes}m`), h("td", { class: "mono" }, usd(f.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")),
-      byRepoCard(s.byRepo),
-      byUserCard(s.byUser ?? []),
-      h("div", { class: "card" }, h("h3", {}, "Where runs fail"),
+            h("td", { class: "mono" }, `${f.avgMinutes}m`), h("td", { class: "mono" }, usd(f.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")) : null,
+      s ? byRepoCard(s.byRepo) : null,
+      s ? byUserCard(s.byUser ?? []) : null,
+      s ? h("div", { class: "card" }, h("h3", {}, "Where runs fail"),
         s.failingSteps.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Failures", "Runs"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")),
+          h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")) : null,
       h("div", { class: "card span-all" }, h("h3", {}, "Evaluations"),
-        evals.length ? h("table", { class: "table compact" },
+        pevals.error ? partNote("evals", pevals.error, retry) : evals.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Suite", "When", "Variant", "Runs", "Pass", "Avg cost", "Avg tokens", "Avg time", "Fix loops"].map((x) => h("th", {}, x)))),
           h("tbody", {}, evals.flatMap((e) => e.summary.map((v, i) => h("tr", {},
             h("td", {}, i === 0 ? h("b", {}, e.suite) : ""), h("td", { class: "muted" }, i === 0 ? new Date(e.startedAt).toLocaleString() : ""),
             h("td", { class: "mono" }, v.variant), h("td", {}, v.runs), h("td", {}, rateBar(Math.round(v.passRate * v.runs), v.runs)),
             h("td", { class: "mono" }, usd(v.avgCostUsd, 3)), h("td", { class: "mono" }, v.avgTokens ? `${Math.round(v.avgTokens / 1000)}k` : "—"), h("td", { class: "mono" }, `${v.avgMinutes}m`), h("td", {}, v.avgFixLoops))))))
           : h("p", { class: "muted" }, "No evaluations yet. Run: ", h("code", {}, "scf eval evals/example.yaml"))),
-      h("div", { class: "card" }, h("h3", {}, "Most loops (fix cycles)"),
+      s ? h("div", { class: "card" }, h("h3", {}, "Most loops (fix cycles)"),
         s.loops.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Extra visits"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits))))) : h("p", { class: "muted" }, "No retries yet."))));
+          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits))))) : h("p", { class: "muted" }, "No retries yet.")) : null));
 }

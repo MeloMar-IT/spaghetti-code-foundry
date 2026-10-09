@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { glyph, h } from "./dom.js";
 import { area, field, insertAtCursor, list, select, setKey, text } from "./fields.js";
 import { STEP_TYPES, stepBody, stepAdvanced } from "./step-types.js";
 
@@ -44,18 +44,18 @@ function settingsCard(flow, onChange, rerender) {
         field("Timeout (sec)", text(d, "timeout_sec", onChange, { type: "number" })),
         field("Max visits / step", text(d, "max_visits", onChange, { type: "number", placeholder: "5" })),
         field("Budget / step ($)", text(d, "max_budget_usd", onChange, { type: "number" }))),
-      h("div", { style: { marginTop: "10px" } },
+      h("div", { class: "mt-10" },
         field("Allowed tools", list(d, "allowed_tools", onChange, 'Read, Edit, Write, Bash(npm *)'), "Comma-separated. Shell commands Claude may run without asking."))),
     h("details", { open: !!(flow.limits?.max_cost_usd || flow.sandbox?.claude || flow.sandbox?.docker_image || flow.one_per_repo) },
       h("summary", {}, "Safety: budget, sandbox & concurrency"),
       h("div", { class: "grid" },
         field("Max cost per run ($)", text((flow.limits ??= {}), "max_cost_usd", onChange, { type: "number", placeholder: "no limit" }), "The run fails once it has spent this much."),
         field("Docker image for sandboxed shell steps", text((flow.sandbox ??= {}), "docker_image", onChange, { mono: true, placeholder: "e.g. node:22 (global default in Settings)" }))),
-      h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px", marginTop: "8px" } },
-        h("input", { type: "checkbox", style: { width: "auto" }, checked: !!flow.sandbox.claude, onChange: (e) => { setKey(flow.sandbox, "claude", e.target.checked || ""); onChange(); } }),
+      h("label", { class: "row tight text-sm mt-8" },
+        h("input", { type: "checkbox", class: "fit", checked: !!flow.sandbox.claude, onChange: (e) => { setKey(flow.sandbox, "claude", e.target.checked || ""); onChange(); } }),
         h("span", {}, "Sandbox agents' shell commands (writes limited to the workspace)")),
-      h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px", marginTop: "4px" } },
-        h("input", { type: "checkbox", style: { width: "auto" }, checked: !!flow.one_per_repo, onChange: (e) => { setKey(flow, "one_per_repo", e.target.checked || ""); onChange(); } }),
+      h("label", { class: "row tight text-sm mt-4" },
+        h("input", { type: "checkbox", class: "fit", checked: !!flow.one_per_repo, onChange: (e) => { setKey(flow, "one_per_repo", e.target.checked || ""); onChange(); } }),
         h("span", {}, "One run at a time per repository (for flows that change code; other runs of such flows wait in the queue)"))),
     h("details", { open: vars.length > 0 },
       h("summary", {}, `Variables (${vars.length})`),
@@ -63,10 +63,10 @@ function settingsCard(flow, onChange, rerender) {
         vars.flatMap(([k, v], i) => [
           h("input", { class: "mono", value: k, placeholder: "name", onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
           h("input", { class: "mono", value: String(v), placeholder: "value", onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
-          h("button", { class: "icon", title: "Remove", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, "✕"),
+          h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
         ])),
-      h("button", { class: "small", style: { marginTop: "8px" }, onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
-      h("small", { class: "muted", style: { display: "block", marginTop: "6px" } }, "Use as {{vars.name}} in prompts and shell commands; override per run.")),
+      h("button", { class: "small mt-8", onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
+      h("small", { class: "muted block mt-6" }, "Use as {{vars.name}} in prompts and shell commands; override per run.")),
     publishPanel(flow, onChange, rerender));
 }
 
@@ -105,7 +105,7 @@ function stepCard(flow, step, i, ctx) {
           rerender();
         },
       }),
-      h("span", { class: `pill ${step.type}` }, `${STEP_TYPES[step.type]?.icon ?? "?"} ${step.type}`),
+      h("span", { class: `pill ${step.type}` }, glyph(STEP_TYPES[step.type]?.icon ?? "?"), " ", step.type),
       h("span", { class: "spacer" }),
       h("button", { class: "icon", title: "Move up", disabled: i === 0, onClick: () => move(-1) }, "↑"),
       h("button", { class: "icon", title: "Move down", disabled: i === flow.steps.length - 1, onClick: () => move(1) }, "↓"),
@@ -120,8 +120,8 @@ function stepCard(flow, step, i, ctx) {
         field("On failure →", select(step, "on_failure", targetOptions(flow, step, "fail").slice(1), () => { onChange(); }, { emptyLabel: "fail run (default)" })),
         field("Max visits", text(step, "max_visits", onChange, { type: "number", placeholder: String(flow.defaults?.max_visits ?? 5) })),
         field("Timeout (sec)", text(step, "timeout_sec", onChange, { type: "number", placeholder: flow.defaults?.timeout_sec ? String(flow.defaults.timeout_sec) : "none" }))),
-      h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px" } },
-        h("input", { type: "checkbox", style: { width: "auto" }, checked: !!step.jump_only,
+      h("label", { class: "row tight text-sm" },
+        h("input", { type: "checkbox", class: "fit", checked: !!step.jump_only,
           onChange: (e) => { setKey(step, "jump_only", e.target.checked || ""); rerender(); } }),
         h("span", {}, "Only reachable via jumps"),
         h("span", { class: "muted" }, "— skipped in normal order, e.g. an “ask for info” or “fix” handler")),
@@ -143,7 +143,7 @@ function insertBar(flow, at, { rerender, onSelect, onLibrary }) {
     h("button", { class: "small", onClick: () => add("shell") }, "+ Shell step"),
     h("select", { class: "small-select", title: "More step types", onChange: (e) => { if (e.target.value) add(e.target.value); } },
       h("option", { value: "" }, "+ more…"),
-      ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, `${STEP_TYPES[t].icon} ${STEP_TYPES[t].label}`))),
+      ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, STEP_TYPES[t].label))),
     h("button", { class: "small", onClick: () => onLibrary?.(at) }, "+ From library"));
 }
 
@@ -152,7 +152,7 @@ export function renderEditor(flow, ctx) {
   flow.steps ??= [];
   return h("div", { class: "steps" },
     settingsCard(flow, ctx.onChange, ctx.rerender),
-    h("h3", { style: { margin: "22px 0 4px" } }, `Steps (${flow.steps.length})`),
+    h("h3", { class: "mt-22 mb-4" }, `Steps (${flow.steps.length})`),
     insertBar(flow, 0, ctx),
     flow.steps.map((s, i) => [stepCard(flow, s, i, ctx), insertBar(flow, i + 1, ctx)]));
 }
@@ -207,8 +207,8 @@ const MODES = [["hidden", "Hidden (admin default)"], ["fixed", "Fixed (shown, re
 function defaultControl(flow, name, spec, onChange, rerender) {
   const own = Object.hasOwn(spec, "default");
   return h("div", { class: "field" },
-    h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px" } },
-      h("input", { type: "checkbox", style: { width: "auto" }, checked: own, onChange: (e) => {
+    h("label", { class: "row tight text-sm" },
+      h("input", { type: "checkbox", class: "fit", checked: own, onChange: (e) => {
         if (e.target.checked) spec.default = "";
         else delete spec.default;
         onChange();
@@ -223,7 +223,7 @@ function defaultControl(flow, name, spec, onChange, rerender) {
 function publishVarRow(flow, name, onChange, rerender) {
   const spec = flow.publish?.vars?.[name];
   return h("div", { class: "card-sub" },
-    h("div", { class: "row", style: { gap: "8px" } },
+    h("div", { class: "row" },
       h("strong", { class: "mono" }, name),
       h("select", { onChange: (e) => { setPublishMode(flow, name, e.target.value); onChange(); rerender(); } },
         MODES.map(([v, l]) => h("option", { value: v, selected: (spec?.mode ?? "hidden") === v }, l)))),
@@ -234,8 +234,8 @@ function publishVarRow(flow, name, onChange, rerender) {
       : null,
     spec?.mode === "input"
       ? [
-        h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px" } },
-          h("input", { type: "checkbox", style: { width: "auto" }, checked: !!spec.required, onChange: (e) => { setKey(spec, "required", e.target.checked || ""); onChange(); } }),
+        h("label", { class: "row tight text-sm" },
+          h("input", { type: "checkbox", class: "fit", checked: !!spec.required, onChange: (e) => { setKey(spec, "required", e.target.checked || ""); onChange(); } }),
           h("span", {}, "Required")),
         defaultControl(flow, name, spec, onChange, rerender),
       ]
@@ -248,13 +248,13 @@ export function publishPanel(flow, onChange, rerender) {
   const names = Object.keys(flow.vars ?? {});
   return h("details", { open: p.enabled === true },
     h("summary", {}, p.enabled ? `Publish to users — version ${p.version ?? 1}` : "Publish to users"),
-    h("label", { class: "row", style: { gap: "6px", fontSize: "12.5px", marginTop: "6px" } },
-      h("input", { type: "checkbox", style: { width: "auto" }, checked: p.enabled === true, onChange: (e) => { setKey(p, "enabled", e.target.checked || ""); onChange(); rerender(); } }),
+    h("label", { class: "row tight text-sm mt-6" },
+      h("input", { type: "checkbox", class: "fit", checked: p.enabled === true, onChange: (e) => { setKey(p, "enabled", e.target.checked || ""); onChange(); rerender(); } }),
       h("span", {}, "Available to users")),
     h("div", { class: "grid" },
       field("Name for users", text(p, "name", onChange, { placeholder: flow.name ?? "" })),
       field("Description for users", text(p, "description", onChange, { placeholder: flow.description ?? "" }))),
     names.map((n) => publishVarRow(flow, n, onChange, rerender)),
-    h("small", { class: "muted", style: { display: "block", marginTop: "6px" } },
+    h("small", { class: "muted block mt-6" },
       "The version goes up by itself when you save a change. Runs keep the version they started with. A published flow cannot have sub-flow steps."));
 }

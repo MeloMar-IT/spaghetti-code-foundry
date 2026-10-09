@@ -1,6 +1,6 @@
 import YAML from "/vendor/yaml/index.js";
 import { api } from "./api.js";
-import { h, modal, mount, toast } from "./dom.js";
+import { glyph, h, modal, mount, toast } from "./dom.js";
 
 const RESERVED = ["next", "end", "fail", "stop"];
 const CATEGORY_ORDER = ["GitHub", "Git", "Claude", "Agents", "Checks"];
@@ -45,7 +45,7 @@ function blockCard(b, onClick) {
     h("span", { class: "row" }, h("b", {}, blk?.name ?? b.id), h("span", { class: "spacer" }), b.scope !== "builtin" ? h("span", { class: "pill" }, b.scope) : null),
     h("span", { class: "muted d" }, blk?.description ?? b.error ?? ""),
     h("span", { class: "chips" }, (blk?.steps ?? []).map((s) =>
-      h("span", { class: `pill ${s.type}` }, `${s.type === "claude" ? "◆" : "$"} ${s.id}${s.jump_only ? " ↪" : ""}`))));
+      h("span", { class: `pill ${s.type}` }, glyph(s.type === "claude" ? "◆" : "$"), " ", h("span", { class: "sr-only" }, s.type === "claude" ? "Agent step: " : "Shell step: "), `${s.id}${s.jump_only ? " ↪" : ""}`))));
 }
 
 /** Modal to pick a block. Resolves with the block listing or undefined. */
@@ -61,7 +61,7 @@ export async function pickBlock() {
         h("div", { class: "block-group" }, h("h3", {}, cat), h("div", { class: "block-grid" }, items.map((b) => blockCard(b, () => close(b)))))));
     };
     draw();
-    return h("div", { style: { display: "grid", gap: "12px" } }, search, list);
+    return h("div", { class: "stack" }, search, list);
   });
 }
 
@@ -84,7 +84,7 @@ export async function saveStepAsBlock(flow, step) {
     const category = h("input", { value: "Custom", list: "block-cats" });
     const description = h("input", { placeholder: "What this block does" });
     const scope = h("select", {}, h("option", { value: "global" }, "global (all repos)"), h("option", { value: "repo" }, "this repo"));
-    const err = h("p", { class: "status bad", style: { margin: 0 } });
+    const err = h("p", { class: "status bad flush" });
     const save = h("button", { class: "primary", onClick: async () => {
       if (!/^[\w-]+$/.test(id.value)) return (err.textContent = "Id may only contain letters, digits, _ and -");
       if (blocks.some((b) => b.id === id.value && b.scope !== "builtin") && !confirm(`Overwrite block "${id.value}"?`)) return;
@@ -102,7 +102,7 @@ export async function saveStepAsBlock(flow, step) {
       }
     } }, "Save block");
     const f = (label, el) => h("label", { class: "field" }, h("span", {}, label), el);
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       h("datalist", { id: "block-cats" }, categories.map((c) => h("option", { value: c }))),
       h("div", { class: "grid" }, f("Id (file name)", id), f("Category", category)),
       f("Name", name), f("Description", description), f("Save to", scope),
@@ -118,7 +118,7 @@ export async function renderLibrary(main) {
   const blocks = await api.blocks();
   const draw = (items) => mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Block library"), h("span", { class: "muted" }, `${items.length} blocks`)),
-    h("p", { class: "muted", style: { marginTop: "-6px" } },
+    h("p", { class: "muted mt-neg-6" },
       "Reusable steps you can drop into any flow with “+ From library”. Create your own with “☆ Save as block” on any step."),
     byCategory(items).map(([cat, list]) => h("div", { class: "block-group" }, h("h3", {}, cat),
       h("div", { class: "block-grid" }, list.map((b) => h("div", { class: "block-item" },

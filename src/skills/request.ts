@@ -64,7 +64,7 @@ export function parseSkillRequestLine(line: string): SkillRequest {
   return parsed.data;
 }
 
-const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
+export const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
 
 /**
  * The step record of a run's final READY plan gate; undefined when there is none: the plan was not READY, it is
@@ -86,7 +86,16 @@ export function planGateRecord(run: Pick<RunSummary, "history"> & Partial<Pick<R
 /** The request of a run's final READY plan; undefined when there is none (see planGateRecord). Throws SkillRequestError for a line that is not valid. */
 export function planSkillRequest(run: Pick<RunSummary, "history"> & Partial<Pick<RunSummary, "flowDef">>): SkillRequest | undefined {
   const last = planGateRecord(run);
-  if (!last) return undefined;
+  return last ? requestOf(last) : undefined;
+}
+
+/** The request line of a draft plan under review: the last top-level plan-phase record is an ok `plan` step. Undefined otherwise. Throws SkillRequestError for a bad line. */
+export function draftSkillRequest(run: Pick<RunSummary, "history">): SkillRequest | undefined {
+  const last = [...run.history].reverse().find((r) => !r.parent && PLAN_PHASE_STEPS.has(r.id));
+  return last && last.ok && last.id === "plan" ? requestOf(last) : undefined;
+}
+
+function requestOf(last: StepRecord): SkillRequest | undefined {
   const lines = last.output.split("\n").filter((l) => l.startsWith(SKILL_REQUEST_MARKER) || l.startsWith("SKILL_REQUEST:"));
   if (lines.length === 0) return undefined;
   if (lines.length > 1) throw new SkillRequestError("more than one SKILL_REQUEST line");

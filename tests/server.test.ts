@@ -499,6 +499,12 @@ steps:
     expect(existsSync(join(home, "your-turn.json"))).toBe(true);
     expect(readdirSync(home).filter((f) => f.endsWith(".tmp"))).toEqual([]);
 
+    for (const key of [5, null, ""]) expect((await json("POST", "/api/your-turn/restore", { key })).status).toBe(400);
+    expect(mine(await turn())).toBeUndefined();
+    const keyed = await json("POST", "/api/your-turn/restore", { key: item.key });
+    expect(keyed.status).toBe(200);
+    expect(mine((await keyed.json()) as Turn)).toBeDefined();
+    expect((await dismiss(item.key)).status).toBe(200);
     expect((await json("POST", "/api/your-turn/restore", {})).status).toBe(200);
     expect(mine(await turn())).toBeDefined();
     await json("POST", `/api/runs/${runId}/approve`, {});
@@ -813,6 +819,18 @@ steps:
     expect(saved.daily_budget_usd).toBe(5);
     const info = (await (await json("GET", "/api/info")).json()) as { dailyBudget: number };
     expect(info.dailyBudget).toBe(5);
+  });
+
+  it("tells whether the redesign is on, and refuses unknown keys under ui", async () => {
+    const cfg = (await (await json("GET", "/api/config")).json()) as Record<string, unknown>;
+    const redesign = async () => ((await (await json("GET", "/api/info")).json()) as { redesign: boolean }).redesign;
+    expect(await redesign()).toBe(false);
+    expect((await json("PUT", "/api/config", { ...cfg, ui: { redesign: true } })).status).toBe(200);
+    expect(await redesign()).toBe(true);
+    expect((await json("PUT", "/api/config", { ...cfg, ui: { nope: 1 } })).status).toBe(400);
+    expect(await redesign()).toBe(true);
+    await json("PUT", "/api/config", { ...cfg, ui: { redesign: false } });
+    expect(await redesign()).toBe(false);
   });
 
   it("saves the notification settings and checks the times", async () => {

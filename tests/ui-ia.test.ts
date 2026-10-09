@@ -18,6 +18,28 @@ const read = (p: string) => readFileSync(p, "utf8");
 const navLinks = (html: string) => [...html.matchAll(/<a href="([^"]+)" data-nav="([\w-]+)"([^>]*)>([^<]+)</g)].map((m) => ({ href: m[1]!, id: m[2]!, attrs: m[3]!, label: m[4]!.trim() }));
 const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : []));
 
+describe("resolve with a query", () => {
+  const a = (h: any) => ia.resolve("admin", h);
+
+  it("returns the known keys as query and still resolves the same page", () => {
+    expect(a("#/runs?repo=acme%2Fapp&owner=u1")).toMatchObject({ page: { id: "runs" }, redirected: false, hash: "#/runs?repo=acme%2Fapp&owner=u1", query: { repo: "acme/app", owner: "u1" } });
+    expect(a("#/board/acme%2Fapp?owner=u1")).toMatchObject({ page: { id: "board-repo" }, arg: "acme/app", query: { owner: "u1" } });
+    expect(a("#/runs?repo=a/b")).toMatchObject({ page: { id: "runs" }, query: { repo: "a/b" } });
+    expect(a("#/runs?x=1&repo=bad")).toMatchObject({ page: { id: "runs" }, query: {} });
+  });
+
+  it("gives an empty query to every address without one", () => {
+    for (const p of ia.PAGES) expect(a(p.path.replace(":id", "x").replace(":name", "x")).query, p.path).toEqual({});
+  });
+
+  it("falls back as before and sends an alias on", () => {
+    expect(a("#/nope?repo=a%2Fb")).toMatchObject({ hash: "#/home", reason: "unknown", query: {} });
+    expect(a("#/runs/%E0%A4%A?repo=a%2Fb")).toMatchObject({ reason: "unknown" });
+    expect(a("#/?repo=a%2Fb")).toMatchObject({ reason: "none" });
+    expect(a("#/your-turn?owner=u1")).toMatchObject({ hash: "#/home", reason: "alias" });
+  });
+});
+
 describe("the navigation lists", () => {
   it("has seven primary destinations for an admin, four for a user, and one action each", () => {
     expect(ia.primaryFor("admin").map((p: any) => p.id)).toEqual(["home", "board", "refinement", "runs", "repos", "flows", "administration"]);
@@ -40,11 +62,19 @@ describe("the navigation lists", () => {
   });
 
   it("lists the secondary pages of a destination", () => {
-    expect(ia.subnavFor("admin", "administration").map((l: any) => l.label)).toEqual(["Users", "Watchers", "Models", "Problems", "Dashboard", "Audit", "Settings"]);
+    const adm = ia.subnavFor("admin", "administration");
+    expect(adm.map((l: any) => l.label)).toEqual(["Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
+    expect(adm.map((l: any) => l.section)).toEqual([...Array(4).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
     expect(ia.subnavFor("admin", "flows").map((l: any) => l.href)).toEqual(["#/flows", "#/library"]);
-    expect(ia.subnavFor("admin", "repos").map((l: any) => l.href)).toEqual(["#/repos", "#/all-repos", "#/credentials"]);
+    expect(ia.subnavFor("admin", "flows").every((l: any) => l.section === undefined)).toBe(true);
+    expect(ia.subnavFor("admin", "repos")).toEqual([]);
     expect(ia.subnavFor("user", "repos")).toEqual([]);
     expect(ia.subnavFor("admin", "runs")).toEqual([]);
+  });
+
+  it("only uses known sections", () => {
+    expect(ia.SECTIONS.map((s: any) => s.label)).toEqual(["Operations", "People and access", "System"]);
+    for (const p of ia.PAGES.filter((x: any) => x.section)) expect(ia.SECTIONS.map((s: any) => s.id)).toContain(p.section);
   });
 });
 
@@ -83,6 +113,10 @@ describe("resolve for an admin", () => {
     expect(r("#/runs/r1").back).toBe("#/runs");
     expect(crumbs("#/users")).toEqual([["Administration", "#/users"], ["Users", null]]);
     expect(r("#/users").back).toBeNull();
+    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/users"], ["All repositories", null]]);
+    expect(crumbs("#/credentials")).toEqual([["Administration", "#/users"], ["Credentials", null]]);
+    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/users"], ["Maintenance", null]]);
+    expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
     expect(crumbs("#/flows")).toEqual([]);
     expect(crumbs("#/flows/x")).toEqual([["Flows", "#/flows"], ["x", null]]);
     expect(crumbs("#/library")).toEqual([["Flows", "#/flows"], ["Library", null]]);
@@ -113,8 +147,22 @@ describe("resolve for a user", () => {
     expect(auth.isUserHash("#/refinement/backlog")).toBe(true);
   });
 
+  it("accepts a query on the three pages that take one, and sends the board to My runs", () => {
+    for (const h of ["#/runs?repo=a%2Fb&owner=u9", "#/refinement?owner=u1", "#/repos?x=1"]) {
+      expect(auth.isUserHash(h), h).toBe(true);
+      expect(r(h), h).toMatchObject({ hash: h, redirected: false });
+    }
+    expect(r("#/runs?repo=a%2Fb&owner=u9").query).toEqual({ repo: "a/b", owner: "u9" });
+    expect(r("#/board?owner=u1")).toMatchObject({ hash: "#/runs", redirected: true });
+  });
+
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/your-turn", "#/board"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+  });
+
+  it("has no link to the admin-only pages in the user HTML", () => {
+    const html = read("ui/user/index.html");
+    for (const h of ["#/maintenance", "#/all-repos", "#/credentials"]) expect(html).not.toContain(h);
   });
 
   it("builds crumbs", () => {

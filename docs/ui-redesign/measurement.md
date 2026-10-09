@@ -6,7 +6,7 @@
 
 | Width | Name | Why |
 |---|---|---|
-| 1440 | desktop | Wider than any rule in `ui/style.css`. The existing screenshots are not tied to it: their CSS viewport is unknown |
+| 1440 | desktop | Wider than any rule in `ui/style.css`. The guide images in `docs/images/` are taken at this width |
 | 1280 | laptop | Still above 1100, so the same layout as 1440 is expected; shows content that only just fits |
 | 768 | tablet | Between 760 and 1100: the `max-width: 1100px` rule applies (`style.css:288`) but not the 760 rule |
 | 390 | mobile | Below 760: both rules apply (`style.css:292`, `:381`) |
@@ -29,35 +29,35 @@ The four widths sit on both sides of 1100 and 760, so each width tests a differe
 
 ## Existing screenshots
 
-All 19 files in `docs/images/`. They are desktop only. Pixel size was not read in this run (no tool for it was available); the one size known is `board.png` at 2340×1410, so none is at an agreed CSS width and the device pixel ratio of the capture is not recorded. Status is "unverified" unless the changelog says otherwise.
+All 19 files in `docs/images/`, one per entry of `SHOTS` in `scripts/screenshots/shots.ts`. They are made by `npm run test:ui -- --grep @guide` from a seeded server (`tests/browser/seed.ts`): 1440 px wide, light theme, default density. They are desktop only.
 
 | File | Route shown | Used in | Status |
 |---|---|---|---|
-| `board.png` | `#/board` | `docs/USER_GUIDE.md`, `README.md` | unverified; 2340×1410 |
-| `dashboard.png` | `#/dashboard` | `docs/USER_GUIDE.md` | unverified |
-| `flow-yaml.png` | `#/flows/:name`, YAML view | `docs/USER_GUIDE.md` | unverified |
-| `flows.png` | `#/flows/:name`, editor | `docs/USER_GUIDE.md`, `README.md` | unverified |
-| `library.png` | `#/library` | `docs/USER_GUIDE.md` | unverified |
-| `models.png` | `#/models` | `docs/USER_GUIDE.md` | unverified |
-| `repos.png` | `#/repos` | `docs/USER_GUIDE.md` | unverified |
-| `run-dialog.png` | the "Run <flow>" dialog | `docs/USER_GUIDE.md` | unverified |
-| `run-diff.png` | `#/runs/:id`, Changes tab | `docs/USER_GUIDE.md` | unverified |
-| `run-log.png` | `#/runs/:id`, Live log tab | `docs/USER_GUIDE.md` | unverified |
-| `run-steps.png` | `#/runs/:id`, Steps tab | `docs/USER_GUIDE.md` | unverified |
-| `run-waiting.png` | `#/runs/:id`, waiting for approval | `docs/USER_GUIDE.md` | unverified |
-| `runs.png` | `#/runs` | `docs/USER_GUIDE.md` | unverified |
-| `settings.png` | `#/settings` | `docs/USER_GUIDE.md` | unverified |
-| `sign-in.png` | the sign-in page | `docs/USER_GUIDE.md` | unverified |
-| `user-home.png` | an old user home page | not used | unused: taken out of the guide (`docs/CHANGELOG.md:402`) |
-| `watcher-form.png` | the "Add a watcher" dialog | `docs/USER_GUIDE.md` | out of date (`docs/CHANGELOG.md:209`) |
-| `watchers.png` | `#/watchers` | `docs/USER_GUIDE.md` | out of date (`docs/CHANGELOG.md:209`) |
-| `your-turn.png` | `#/your-turn` | `docs/USER_GUIDE.md`, `README.md` | unverified |
+| `board.png` | `#/board` | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `dashboard.png` | `#/dashboard` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `flow-yaml.png` | `#/flows/:name`, YAML view | `docs/USER_GUIDE.md` | captured from the redesign |
+| `flows.png` | `#/flows/:name`, editor | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `home.png` | `#/home` (admin) | `docs/USER_GUIDE.md`, `README.md`, `docs/DESIGN.md` | captured from the redesign |
+| `library.png` | `#/library` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `models.png` | `#/models` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `repos.png` | `/user/#/repos` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-dialog.png` | the "Run <flow>" dialog | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-diff.png` | `#/runs/:id`, Changes tab | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-log.png` | `#/runs/:id`, Live log tab | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-steps.png` | `#/runs/:id`, Steps tab | `docs/USER_GUIDE.md` | captured from the redesign |
+| `run-waiting.png` | `#/runs/:id`, waiting for approval | `docs/USER_GUIDE.md`, `docs/DESIGN.md` | captured from the redesign |
+| `runs.png` | `#/runs` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `settings.png` | `#/settings` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `sign-in.png` | the sign-in page | `docs/USER_GUIDE.md` | captured from the redesign |
+| `user-home.png` | `/user/#/home` | `docs/USER_GUIDE.md` | captured from the redesign |
+| `watcher-form.png` | the "Add a watcher" dialog | `docs/USER_GUIDE.md` | captured from the redesign |
+| `watchers.png` | `#/watchers` | `docs/USER_GUIDE.md`, `docs/DESIGN.md` | captured from the redesign |
 
-This is not a baseline. There is no tablet or mobile image, no user-display image, and none of the other 17 admin and user routes' states.
+This is not a baseline for the four widths: there is no tablet or mobile image, and most routes and states are not shown.
 
 ## Capture list (open)
 
-Every row at 1440, 1280, 768 and 390. A capture tool is a follow-up with its own dependency decision (`scripts/screenshots/shots.ts` has an empty `SHOTS`).
+Every row at 1440, 1280, 768 and 390. The guide images cover 1440 only: `tests/browser/guide-shots.spec.ts` captures the 19 entries of `SHOTS` (`scripts/screenshots/shots.ts`). The other widths and the rows below are open.
 
 | Shot | Route | Fixture state |
 |---|---|---|
@@ -94,7 +94,8 @@ Every row at 1440, 1280, 768 and 390. A capture tool is a follow-up with its own
 
 ## Privacy rules for captures
 
-- The fixture data only: synthetic names, `example@example.test`, `example/app`.
+- The fixture data only: the accounts Test Admin (`admin@example.com`) and Ann (`ann@example.com`), the repository `acme/app`, and runs named "Seeded … run".
+- Host paths (the temporary folder, the home folder, the checkout) are rewritten to demo paths before a capture, and the capture fails when one is still on the page.
 - No real e-mail addresses, repository names, paths, logs, diffs or credentials.
 - No other product's logo or screenshot.
 - This repository is public; a capture is published when it is committed.

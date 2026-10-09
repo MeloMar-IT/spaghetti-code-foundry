@@ -136,6 +136,18 @@ describe("userRun", () => {
     expect(u.next!.repo).toBe("");
   });
 
+  it("shows what was decided about skills, and the skill lines of the log", () => {
+    const item = { id: "a", code: "unpinned", message: 'a@1.0.0 is not approved yet. Run "scf skills pin a@1.0.0 sha256:x", then resume the run.', kind: "untrusted", risk: "low", action: "stop", via: "zz" };
+    const plan = { version: 1, action: "stop", reason: "skills not resolved: 1 skill(s) cannot be used — a [unpinned]: x", warnings: ["skill b [unknown]: y"], unresolved: [item], selected: [], gate: "risk_gate", at: "t", checks: 1 };
+    const u = userRun({ ...full, skillPlan: plan } as unknown as RunSummary);
+    expect(u.skills).toEqual({ action: "stop", reason: plan.reason, warnings: plan.warnings, unresolved: [{ id: "a", code: "unpinned", message: item.message }] });
+    expect(userRun({ ...full, skillPlan: { ...plan, action: "continue" } } as unknown as RunSummary).skills).toBeUndefined();
+    expect("skills" in userRun(full as unknown as RunSummary)).toBe(false);
+    expect(userLogLine("⚠ skill some-style [unknown]: No skill \"some-style\" is installed. Continuing without it (skills.unresolved.unknown: warn).")).toMatch(/^⚠ skill some-style \[unknown\]/);
+    expect(userLogLine(`■ ${plan.reason}`)).toBe(`■ ${plan.reason}`);
+    expect(userLogLine("⚠ skill /etc/passwd")).toBeUndefined();
+  });
+
   it("shows the questions of a run that stopped to ask them, from that step only", () => {
     const base = { ...full, status: "stopped", reason: 'stopped at step "ask_for_info"', waiting: undefined, history: [
       { id: "plan", type: "claude", visit: 1, ok: true, output: "SECRET plan", startedAt: "x", durationMs: 1 },
@@ -664,5 +676,15 @@ describe("a run held by the daily budget of its owner", () => {
     expect(mine.next.why).toBe("The owner's daily budget of $4.25 is used up");
     const run = (await call(s, admin, "GET", `/api/runs/${stopped}`)).json();
     expect(run.next.why).toBe("The owner's daily budget of $4.25 is used up");
+  });
+});
+
+describe("archive mark in the user view", () => {
+  it("copies archivedAt and never archivedBy", () => {
+    const run = { runId: "r", flow: "f", task: "t", status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z", vars: {}, history: [], state: { next: null }, archivedAt: "2026-02-02T00:00:00.000Z", archivedBy: "u9" } as any;
+    const v = userRun(run);
+    expect(v.archivedAt).toBe("2026-02-02T00:00:00.000Z");
+    expect(JSON.stringify(v)).not.toContain("u9");
+    expect("archivedAt" in userRun({ ...run, archivedAt: undefined })).toBe(false);
   });
 });

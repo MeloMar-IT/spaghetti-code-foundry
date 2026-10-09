@@ -106,7 +106,7 @@ export const keepBody = (plan, picks, keep) =>
 /** The two versions side by side. Texts are set as text, never as HTML. */
 export function versionsNode(c) {
   const column = (head, v) => h("div", {}, h("h4", {}, head), h("b", {}, v.title), h("pre", {}, v.body));
-  return h("div", { "data-versions": "", style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" } }, column("On GitHub now", c.github), column("Yours", c.mine));
+  return h("div", { "data-versions": "", class: "stack cols-2" }, column("On GitHub now", c.github), column("Yours", c.mine));
 }
 
 /** The line under a failure: "On GitHub already: #101, #102." or "Nothing is on GitHub yet." */
@@ -116,9 +116,9 @@ export function onGithubText(s) {
 }
 
 const nodes = (v) => [v].flat(Infinity).filter(Boolean);
-const checkRow = (input, text) => h("label", { class: "check", style: { display: "flex", gap: "6px", alignItems: "center" } }, input, text);
+const checkRow = (input, text) => h("label", { class: "check check-row" }, input, text);
 const box = (props) => {
-  const el = h("input", { type: "checkbox", style: { width: "auto" }, ...props });
+  const el = h("input", { type: "checkbox", class: "fit", ...props });
   if (props.disabled) el.setAttribute("disabled", "");
   return el;
 };
@@ -189,7 +189,7 @@ function planDialog(plan, s, run) {
       );
     } else if (willPublish(plan).length) buttons.push(h("button", { class: "primary", onClick: send((read) => publishBody(plan, read), true) }, confirmText(plan)));
     const cancel = h("button", { onClick: () => (busy ? undefined : close(undefined)) }, "Cancel");
-    return h("div", { style: { display: "grid", gap: "12px" } },
+    return h("div", { class: "stack" },
       asked ? [h("p", { class: "status bad" }, changedText(asked)), versionsNode(asked), h("p", { class: "muted" }, CHANGED_HINT)] : null,
       h("p", {},`These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
       (plan.willUpdate ?? []).length ? h("p", {}, `Issue #${plan.items.find((x) => x.updates !== undefined)?.updates} is updated, not created again.`) : null,

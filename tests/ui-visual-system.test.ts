@@ -262,16 +262,16 @@ describe("ui/style.css", () => {
   });
 
   it("draws the focus indicators with --color-focus", () => {
-    expect(rule(style, "input:focus, select:focus, textarea:focus")).toMatch(/outline: 2px solid var\(--color-focus\)[^;]*;\s*border-color: var\(--color-focus\)/);
+    expect(rule(style, "input:focus-visible, select:focus-visible, textarea:focus-visible")).toMatch(/outline: 2px solid var\(--color-focus\)[^;]*;\s*border-color: var\(--color-focus\)/);
     expect(rule(style, "a:focus-visible, button:focus-visible, summary:focus-visible, [tabindex]:focus-visible")).toContain("var(--color-focus)");
   });
 });
 
 describe("pages", () => {
-  it("load /tokens.css before /style.css", () => {
+  it("load /tokens.css, /style.css, then /kit/kit.css", () => {
     for (const p of ["ui/index.html", "ui/user/index.html"]) {
       const hrefs = [...read(p).matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-      expect(hrefs, p).toEqual(["/tokens.css", "/style.css"]);
+      expect(hrefs, p).toEqual(["/tokens.css", "/style.css", "/kit/kit.css"]);
     }
   });
 });

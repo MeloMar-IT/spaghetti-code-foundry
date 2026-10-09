@@ -139,7 +139,7 @@ const shown = (src: string) => src
   .replace(/class(?:=|: )(?:"[^"]*"|`[^`]*`)/g, "") // class names
   .replace(/\bplaceholder\b/g, "") // the attribute name
   .replace(/thresholds?/gi, "") // the monitor's thresholds: the word merely contains "hold"
-  .replace(/\.holds\b|\.jump_only\b|setKey\(step, "jump_only"/g, ""); // property names and the flow key passed to setKey
+  .replace(/\.holds\b|\.jump_only\b|setKey\(step, "jump_only"|\bhold: isHeld\b/g, ""); // ... and the `hold` option name of the poller in ui/live.js // property names and the flow key passed to setKey
 
 describe("words in the app", () => {
   const dir = new URL("../ui/", import.meta.url);

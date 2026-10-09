@@ -25,6 +25,8 @@ export const EVENT_ACTIONS = [
   "run-reject",
   "run-resume",
   "run-answer",
+  "run-archive",
+  "run-unarchive",
   "refinement-publish",
   "repo-add",
   "repo-change",

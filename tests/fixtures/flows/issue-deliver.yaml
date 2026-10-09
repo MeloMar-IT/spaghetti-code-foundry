@@ -207,6 +207,7 @@ steps:
     max_budget_usd: 8
   - id: plan_review
     type: claude
+    skill_role: reviewer
     agent: codex
     effort: high
     jump_only: true
@@ -505,6 +506,7 @@ steps:
     on_success: run_tests
   - id: review_1
     type: claude
+    skill_role: reviewer
     agent: codex
     permission_mode: dontAsk
     allowed_tools:
@@ -564,6 +566,7 @@ steps:
     on_success: run_tests_1
   - id: review_2
     type: claude
+    skill_role: reviewer
     agent: codex
     permission_mode: dontAsk
     allowed_tools:
