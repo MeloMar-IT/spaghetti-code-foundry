@@ -874,7 +874,8 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
-- **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`.
+- **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`. If only the monitor cannot be loaded, the watchers are still shown and the monitor card says so, with **Retry**.
+- **While it works.** The page shows a grey skeleton while it loads. **Check now** shows "Checking…" next to its own button. **Delete** asks first in a dialog. If a reload fails, the list stays and a line says when it was last updated, with **Retry**. The same holds for Users and Problems.
 - **From config.yaml.** A watcher that is still in `config.yaml` (for example while there is no admin account, or at the connection limit) shows read-only with a note, and **Check now**. A watcher whose repository is gone can only be deleted.
 
 ### Watchers of a repository (API)
@@ -1655,6 +1656,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 ## 7. Settings and safety
 
 ![Settings](images/settings.png)
+
+**Saving.** Next to **Save** the page says "Saving…", then "Saved at …" or "Not saved.". A message also appears. **Clean up** in the Disk section asks first in a dialog.
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
@@ -2691,7 +2694,7 @@ Spend today and over 30 days, success rate, **Needs a human** (the number of run
 move is yours — the same as **Needs you** on the Runs page), the **Waiting** card (every
 labelled issue that isn't being worked on: who has the next move, what to do, why, and a link;
 lines for you come first), cost per day, the **By user** card (admins: name, runs and cost for the last 30 days, highest cost first, plus today's runs, runs active now and today's cost; runs without an owner are one line "no owner", a deleted account is "deleted user"; the costs add up to the 30-day spend), results per flow and per repository (with today's runs and cost),
-the steps where runs fail most, and eval results.
+the steps where runs fail most, and eval results. If one part cannot be loaded, for example the evals, that part says "Could not load evals." with **Retry**, and the rest of the page is shown.
 
 **By user and limits.** Where an account has limits (fair use), the card shows them next to the numbers, for example `2 / 5` for runs today against the limit. An account that has reached a limit (runs at the same time, runs per day, or cost per day) gets an **at limit** mark. Accounts that have limits or a run active now are listed even without runs in the last 30 days. A deleted account ("deleted user") has no limits and no mark. "Today" is the server's local day. Only admins get these numbers.
 

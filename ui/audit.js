@@ -1,6 +1,6 @@
 import { api } from "./api.js";
-import { errorText } from "./auth.js";
 import { h, markInvalid, mount } from "./dom.js";
+import { emptyState, errorState, explainError, loadingState } from "./states.js";
 
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
 export const ACTIONS = ["app-repos-change", "block", "create", "credential-add", "credential-remove", "delete", "edit", "flow-publish", "limits-change", "link",
@@ -95,7 +95,7 @@ export function renderAudit(main) {
   const to = date("to");
   const labelled = (t, el) => h("label", { class: "row" }, h("span", { class: "muted" }, t), el);
   const exportSlot = h("span");
-  const loading = () => h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…");
+  const loading = () => loadingState("Loading the audit log…", { rows: 8, shape: "table" });
   const result = h("div", {}, loading());
   let loads = 0; // the number of the newest list load of this page
 
@@ -107,7 +107,7 @@ export function renderAudit(main) {
       mount(exportSlot);
       // marked but not focused: this runs on `change`, while the person is still picking a date
       for (const d of [from, to]) d.setAttribute("aria-invalid", "true");
-      return mount(result, h("div", { class: "errors", role: "alert" }, problem));
+      return mount(result, errorState({ kind: "other", what: problem, safe: "The log is not changed.", next: "Fix the dates. The list then loads again." }));
     }
     markInvalid([from, to]);
     const filters = auditFilters(values);
@@ -117,13 +117,13 @@ export function renderAudit(main) {
     try {
       data = await api.audit(filters);
     } catch (e) {
-      if (my === loads && live()) mount(result, h("div", { class: "errors", role: "alert" }, errorText(e)));
+      if (my === loads && live()) mount(result, errorState(explainError(e, { what: "The audit log could not be loaded.", safe: "The log is not changed." }), { onRetry: load }));
       return;
     }
     if (my !== loads || !live()) return;
     mount(result,
       data.more ? h("p", { class: "status" }, moreText(data.entries.length)) : null,
-      data.entries.length ? table(data.entries) : h("div", { class: "empty" }, "No entries."));
+      data.entries.length ? table(data.entries) : emptyState("No entries."));
   };
 
   mount(main,
@@ -132,18 +132,22 @@ export function renderAudit(main) {
       h("span", { class: "spacer" }), exportSlot),
     result);
 
-  (async () => {
+  let starts = 0; // the newest users load; Retry can be pressed again before the first answer comes
+  const start = async () => {
+    const my = ++starts;
+    mount(result, loading());
     let users;
     try {
       users = await api.users();
     } catch (e) {
-      if (live()) mount(result, h("div", { class: "errors", role: "alert" }, errorText(e)));
+      if (my === starts && live()) mount(result, errorState(explainError(e, { what: "The list of users could not be loaded." }), { onRetry: start }));
       return;
     }
-    if (!live()) return;
-    for (const o of userOptions(users)) user.append(h("option", { value: o.value }, o.label));
+    if (my !== starts || !live()) return;
+    mount(user, h("option", { value: "" }, "All users"), userOptions(users).map((o) => h("option", { value: o.value }, o.label)));
     await load();
-  })();
+  };
+  start();
 
   return () => {
     generation++;

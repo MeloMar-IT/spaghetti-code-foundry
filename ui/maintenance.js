@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, toast } from "./dom.js";
+import { confirmDialog, h, mount, toast } from "./dom.js";
 import { check, input } from "./fields.js";
 
 /** The admin page for clean-up work: removes old run workspaces. */
@@ -9,7 +9,7 @@ export async function renderMaintenance(main) {
   const paused = check(false, "Include stopped / waiting runs (they can't be resumed afterwards)");
   const out = h("div");
   const go = async (dryRun) => {
-    if (!dryRun && !confirm("Remove these workspaces now? Branches in your repos are kept.")) return;
+    if (!dryRun && !(await confirmDialog({ title: "Remove these workspaces now?", text: "Branches in your repos are kept.", confirm: "Clean up" }))) return;
     try {
       const r = await api.clean({ olderThanDays: Number(days.value), purge: purge.el.checked, includePaused: paused.el.checked, dryRun });
       mount(out, h("p", { class: dryRun ? "muted flush" : "status ok flush" },

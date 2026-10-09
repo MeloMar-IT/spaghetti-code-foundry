@@ -198,6 +198,10 @@ describe("the dialogs match the code", () => {
     for (const r of dialogs) expect(files, `unknown file in dialogs: ${r[0]}`).toContain(code(r[0]!));
   });
 
+  it("has no native confirm left in the administration pages that use the shared dialog", () => {
+    for (const f of ["ui/admin.js", "ui/problems.js"]) expect(count(read(f), /\bconfirm\(/g), f).toBe(0);
+  });
+
   it("has a row for every native confirm or prompt", () => {
     for (const f of files) {
       const rows = natives.filter((r) => code(r[0]!).split(":")[0] === f);

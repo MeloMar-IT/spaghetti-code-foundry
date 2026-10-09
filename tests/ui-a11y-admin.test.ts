@@ -643,7 +643,8 @@ describe("Problems", () => {
   it("the load error is an alert", async () => {
     fail("GET", "/api/monitor", 500, "broken");
     await m.problems.renderProblems(main());
-    expect(alerts(main()).map((a) => a.textContent)).toEqual(["broken"]);
+    expect(alerts(main())).toHaveLength(1);
+    expect(alerts(main())[0]!.textContent).toContain("The problems could not be loaded. broken");
   });
 });
 
@@ -651,7 +652,7 @@ describe("Audit", () => {
   it("From after To marks both dates, keeps the focus, and a valid range clears it", async () => {
     routes = { "GET /api/users": USERS, "GET /api/audit": { more: false, entries: [] } };
     m.audit.renderAudit(main());
-    await vi.waitFor(() => expect(main().all("div").some((d) => d.textContent === "No entries.")).toBe(true));
+    await vi.waitFor(() => expect(main().all("p").some((d) => d.textContent === "No entries.")).toBe(true));
     const from = named(main(), "from");
     const to = named(main(), "to");
     const user = named(main(), "user");
@@ -661,7 +662,7 @@ describe("Audit", () => {
     from.fire("change");
     await settle();
     expect(invalid(main())).toEqual([from, to]);
-    expect(alerts(main())[0]!.textContent).toBe("The From date is after the To date.");
+    expect(alerts(main())[0]!.textContent).toContain("The From date is after the To date.");
     expect(doc().activeElement).toBe(user);
     to.value = "2026-10-09";
     to.fire("change");
@@ -671,7 +672,8 @@ describe("Audit", () => {
     routes = { "GET /api/users": USERS };
     fail("GET", "/api/audit", 500, "no log");
     m.audit.renderAudit(main());
-    await vi.waitFor(() => expect(alerts(main()).map((a) => a.textContent)).toEqual(["no log"]));
+    await vi.waitFor(() => expect(alerts(main())).toHaveLength(1));
+    expect(alerts(main())[0]!.textContent).toContain("no log");
   });
 });
 

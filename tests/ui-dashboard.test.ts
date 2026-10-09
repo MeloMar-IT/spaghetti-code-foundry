@@ -81,3 +81,114 @@ describe("byRepoCard", () => {
     expect((ui.byRepoCard([]) as FakeElement).textContent).toContain("No runs yet.");
   });
 });
+
+describe("states", () => {
+  const realFetch = globalThis.fetch;
+  const wait = () => new Promise((r) => setTimeout(r, 10));
+  const stats = {
+    totals: { runs: 3, succeeded: 2, failed: 1, costUsd: 4 }, byDay: [{ day: "2026-10-01", costUsd: 1, runs: 1 }],
+    byFlow: [], byRepo: [{ repo: "acme/app", runs: 1, costUsd: 1 }], byUser: [], failingSteps: [], loops: [],
+  };
+  const info = { spentToday: 1, dailyBudget: 5, costLimits: true };
+  const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
+  const URLS = ["/api/stats", "/api/info", "/api/evals", "/api/watchers", "/api/runs", "/api/clarity"];
+  const NAMES: Record<string, string> = {
+    "/api/stats": "the statistics", "/api/info": "today's spending", "/api/evals": "evals", "/api/watchers": "the watchers", "/api/runs": "the runs", "/api/clarity": "your turn in numbers",
+  };
+  let hits: string[];
+  let held: Promise<void> | undefined;
+  const install = (fail: string[]) => {
+    hits = [];
+    (globalThis as any).fetch = async (url: string) => {
+      const path = url.split("?")[0]!;
+      hits.push(path);
+      if (held) await held;
+      const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+      if (fail.includes(path)) return reply({ error: "boom" }, 500);
+      const body: Record<string, unknown> = {
+        "/api/stats": stats, "/api/info": info, "/api/evals": evals,
+        "/api/watchers": [{ id: "w1", source: "issues", github_repo: "o/a", label: "go", enabled: true, state: { name: "running" }, status: { id: "w1", lastActions: [] } }],
+        "/api/runs": [], "/api/clarity": null,
+      };
+      return reply(body[path]);
+    };
+  };
+  const render = async (fail: string[] = []) => {
+    install(fail);
+    const main = new FakeElement("div");
+    await ui.renderDashboard(main);
+    return main;
+  };
+  const errors = (main: FakeElement) => main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("state-error"));
+  const heading = (main: FakeElement, text: string) => main.all("h3").some((x) => x.textContent === text);
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("partNote names the part, is an alert and calls Retry", () => {
+    let retried = 0;
+    const note = ui.partNote("evals", Object.assign(new Error("boom"), { status: 500 }), () => retried++) as FakeElement;
+    expect(note.textContent).toContain("Could not load evals.");
+    expect(note.textContent).toContain("The rest of the dashboard is shown.");
+    expect(note.attrs.role).toBe("alert");
+    note.all("button").find((b) => b.textContent === "Retry")!.click();
+    expect(retried).toBe(1);
+  });
+
+  it("draws a skeleton while it loads", async () => {
+    install([]);
+    let release!: () => void;
+    held = new Promise<void>((r) => (release = r));
+    const main = new FakeElement("div");
+    const done = ui.renderDashboard(main);
+    await wait();
+    expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(true);
+    held = undefined;
+    release();
+    await done;
+    expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(false);
+  });
+
+  it("with everything loaded it has no error and says when it was updated", async () => {
+    const main = await render();
+    expect(errors(main)).toHaveLength(0);
+    expect(main.all("p").some((p) => (p.attrs.class ?? "") === "stale-note" && p.textContent.startsWith("Updated"))).toBe(true);
+  });
+
+  it.each(URLS)("when %s fails, its part is named and the rest is shown", async (url) => {
+    const main = await render([url]);
+    const notes = errors(main);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.textContent).toContain(`Could not load ${NAMES[url]}.`);
+    expect(notes[0]!.all("button").some((b) => b.textContent === "Retry")).toBe(true);
+    if (url === "/api/evals") expect(main.textContent).toContain("By repository");
+    else if (url === "/api/stats") expect(heading(main, "Evaluations")).toBe(true);
+    else expect(heading(main, "Cost per day")).toBe(true);
+    if (url === "/api/watchers") expect(heading(main, "Waiting — what happens next")).toBe(true);
+    if (url === "/api/evals") expect(main.textContent).not.toContain("No evaluations yet.");
+  });
+
+  it("shows a dash in the tiles of a part that failed", async () => {
+    const main = await render(["/api/stats"]);
+    const values = main.all("div").filter((d) => d.attrs.class === "tile-value").map((d) => d.textContent);
+    expect(values).toEqual(["$1.00", "—", "—", "0"]);
+  });
+
+  it("when all six calls fail, every part is named and each note has Retry", async () => {
+    const main = await render(URLS);
+    const notes = errors(main);
+    expect(notes).toHaveLength(6);
+    for (const url of URLS) expect(notes.some((n) => n.textContent.includes(`Could not load ${NAMES[url]}.`))).toBe(true);
+    expect(notes.every((n) => n.all("button").some((b) => b.textContent === "Retry"))).toBe(true);
+  });
+
+  it("Retry on a note asks the API again and the note goes", async () => {
+    const main = await render(["/api/evals"]);
+    install([]);
+    errors(main)[0]!.all("button").find((b) => b.textContent === "Retry")!.click();
+    await wait();
+    expect(hits.filter((u) => u === "/api/evals")).toHaveLength(1);
+    expect(errors(main)).toHaveLength(0);
+    expect(main.textContent).toContain("suite-a");
+  });
+});

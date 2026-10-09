@@ -1,5 +1,13 @@
 import { api } from "./api.js";
-import { fieldFor, h, modal, showError, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, modal, showError, toast } from "./dom.js";
+
+/** Asks before the monitor is switched on over a state file that cannot be read; resolves true on "Switch on". */
+export const confirmUnreadable = () => confirmDialog({
+  title: "The state file cannot be read",
+  text: "Switching on keeps it as monitor-guard.json.broken and starts a fresh one. Go on?",
+  confirm: "Switch on",
+  danger: false,
+});
 
 /** The choices of the mute form: label → hours ("" is for good). */
 export const DURATIONS = [["For good", ""], ["1 hour", "1"], ["1 day", "24"], ["1 week", "168"], ["30 days", "720"]];

@@ -69,7 +69,7 @@ Undo is offered only where the server already has a reverse call: `api.restoreTu
 
 ## Where each state is planned
 
-Every cell is "planned in part N" until the part converts that workspace. The parts are #343–#349.
+Every cell is "planned in part N" until the part converts that workspace. The parts are #343–#349. A converted cell names the function that draws the state; the Administration row (part 8) is converted.
 
 | Workspace | Loading | Empty | Partial | Stale | Offline / provider failure | Permission | Success |
 |---|---|---|---|---|---|---|---|
@@ -80,7 +80,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Repositories | Done (#346): skeleton table on My repositories, All repositories and Credentials | Done (#346): `emptyState`, and the add prompt | Done (#346): a failed `repoMethods` call shows the list with a note that adding is not possible now | Done (#346): `staleNote` with Retry when a reload fails; the list stays | Done (#346): "Connection failed" with the reason stays on the row until the next test | Done (#346): `permissionState` on a 403; no action buttons in the read-only preview | Done (#346): "Repository added" toast; the deploy-key follow-up stays as a banner until the connection works |
 | Build | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
-| Administration | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
+| Administration | `loadingState` on all six pages (`renderUsers`, `renderWatchers`, `renderProblems`, `renderDashboard`, `renderAudit`, `renderSettings`) | `emptyState` (`renderUsers`, `renderWatchers`, `renderProblems`, `renderAudit`) | `partNote` in `ui/dashboard.js` names each failed call ("Could not load evals."); `errorState` in the monitor card of `renderWatchers` when only the monitor call fails | `staleNote(at, { failed: true, onRetry })` after a failed reload in `renderUsers`, `renderWatchers`, `renderProblems`; `renderAudit` keeps its `my === loads` guard | `errorState(explainError(e, …), { onRetry })` on every page, also for the filter error in `renderAudit` | `explainError` (kind `permission` for a 403) drawn by `errorState`; the server enforces it | `saveNote` next to Save in `renderSettings` plus toast; busy state of Check now in `renderWatchers`; `confirmDialog` for delete watcher, clean up and `confirmUnreadable` |
 
 ## Background refresh (part 3, #344)
 
