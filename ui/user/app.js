@@ -30,7 +30,8 @@ async function route() {
   if (page.hash !== location.hash) history.replaceState(null, "", page.hash);
   cleanup?.();
   cleanup = null;
-  showPage("user", resolve("user", page.hash));
+  const to = resolve("user", page.hash);
+  showPage("user", to);
   // Each call draws into its own box, so a slow page that finishes after a hash change cannot touch the current one.
   const box = h("div", {});
   mount(main, box);
@@ -41,7 +42,7 @@ async function route() {
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly });
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
-    else done = await renderMyRuns(box, { readOnly });
+    else done = await renderMyRuns(box, { readOnly, query: to.query });
   } catch (e) {
     if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
     return;

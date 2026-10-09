@@ -113,6 +113,37 @@ function describe(role, page, arg, hash, reason) {
   };
 }
 
+const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
+const OWNER_OK = /^[\w-]+$/;
+const VALID = { repo: (v) => v.length <= 200 && REPO_OK.test(v), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
+
+/** Splits an address into its path and the text after the first "?" ("" when there is none). */
+export function splitHash(hash) {
+  const text = typeof hash === "string" ? hash : "";
+  const i = text.indexOf("?");
+  return i < 0 ? { path: text, query: "" } : { path: text.slice(0, i), query: text.slice(i + 1) };
+}
+
+/** The known filters of a query text ("?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
+export function parseQuery(text) {
+  const out = {};
+  const raw = typeof text === "string" ? text.replace(/^\?/, "") : "";
+  for (const part of raw.split("&")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const key = part.slice(0, i);
+    if (!Object.hasOwn(VALID, key) || Object.hasOwn(out, key)) continue;
+    let value;
+    try {
+      value = decodeURIComponent(part.slice(i + 1));
+    } catch {
+      continue;
+    }
+    if (VALID[key](value)) out[key] = value;
+  }
+  return out;
+}
+
 /** Resolves an address for a role to the page to draw. The data above is the source of truth; the document that describes it is still to be written. */
 export function resolve(role, hash) {
   const fallback = (reason) => {
@@ -120,17 +151,19 @@ export function resolve(role, hash) {
     const r = resolve(role, to);
     return { ...r, hash: to, redirected: true, reason };
   };
-  if (typeof hash !== "string" || hash === "" || hash === "#" || hash === "#/") return fallback("none");
+  if (typeof hash !== "string") return fallback("none");
+  const { path, query } = splitHash(hash);
+  if (path === "" || path === "#" || path === "#/") return fallback("none");
   let parts;
   try {
-    parts = hash.split("/").map(decodeURIComponent);
+    parts = path.split("/").map(decodeURIComponent);
   } catch {
     return fallback("unknown");
   }
   if (parts.length > 3 || (parts.length === 3 && parts[2] === "")) return fallback("unknown");
-  const alias = ALIASES.find((a) => a.from === hash && a.roles.includes(role));
+  const alias = ALIASES.find((a) => a.from === path && a.roles.includes(role));
   if (alias) return { ...resolve(role, alias.to), hash: alias.to, redirected: true, reason: "alias" };
   const m = match(role, parts);
   if (!m) return fallback("unknown");
-  return describe(role, m.page, m.arg, hash, null);
+  return { ...describe(role, m.page, m.arg, hash, null), query: parseQuery(query) };
 }

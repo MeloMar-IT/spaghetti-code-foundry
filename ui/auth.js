@@ -1,6 +1,7 @@
 import { api, setCsrf } from "./api.js";
 import { h, modal, mount, showError, toast } from "./dom.js";
 import { appearanceButton, initPrefs } from "./prefs.js";
+import { splitHash } from "./ia.js";
 
 const PASSWORD_MIN = 12;
 
@@ -238,12 +239,18 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 export const isAdmin = (user) => user?.role === "admin";
 
 const USER_HASH = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
+// Only these pages take a query (filters) in their address.
+const USER_QUERY = /^#\/(runs|refinement|repos)$/;
 
 /** True when the address names no page at all: no hash, "#" or "#/". */
 export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
 
 /** True for a hash the user display has a page for: Home, Start work, Runs, one run, My repositories, Refinement, one session. */
-export const isUserHash = (hash) => USER_HASH.test(hash ?? "");
+export const isUserHash = (hash) => {
+  const text = typeof hash === "string" ? hash : "";
+  const { path } = splitHash(text);
+  return USER_HASH.test(path) && (path === text || USER_QUERY.test(path));
+};
 
 /** The hash the user display draws: the given one when it has that page, else the Runs list. */
 export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
@@ -251,7 +258,7 @@ export const userHash = (hash) => (isUserHash(hash) ? hash : "#/runs");
 /** The page of the user display for a hash: { hash, section, id }. `id` is undefined for a list. */
 export function userPage(hash) {
   const to = userHash(hash);
-  const [, section, id] = to.split("/");
+  const [, section, id] = splitHash(to).path.split("/");
   return { hash: to, section, id };
 }
 

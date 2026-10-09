@@ -140,3 +140,8 @@ button.icon { justify-content: center; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
 .pill.ready-not-met { background: var(--fail-soft); color: var(--fail); }
 .check-row { display: flex; gap: 6px; align-items: center; }
+
+/* Filters in the address (chips above a list) */
+.filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); padding: 1px 4px 1px 10px; border-radius: var(--radius-pill); background: var(--panel-2); border: 1px solid var(--border); }
+.filter-chip button { padding: 0 6px; }

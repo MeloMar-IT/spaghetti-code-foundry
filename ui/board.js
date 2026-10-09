@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
+import { defaultGo, filterBar, filterEmpty, withQuery } from "./filters.js";
 import { whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
 
@@ -66,16 +67,22 @@ export function boardView(data, wanted, { highlight, owner = "", onOwner, onChai
   const picked = pickRepo(data, wanted);
   const repos = data?.repos ?? [];
   const all = picked ? picked.columns.flatMap((c) => c.cards) : [];
+  const owners = boardOwners(all);
   const filter = h("select", { class: "small-select", title: "Show the cards of one account", "aria-label": "Show the cards of one account", "data-focus": "owner-filter", onChange: (e) => onOwner?.(e.target.value) },
     h("option", { value: "" }, "All owners"),
-    boardOwners(all).map((o) => h("option", { value: o.id, selected: o.id === owner }, `${o.name} (${o.cards})`)));
+    owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${o.name} (${o.cards})`)));
   const toolbar = h("div", { class: "toolbar" },
     h("h1", {}, "Board"),
     repos.length > 1
-      ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: boardHash(r.repo), "data-focus": `repo-${r.repo}` }, r.repo))
+      ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: withQuery(boardHash(r.repo), owner ? { owner } : {}), "data-focus": `repo-${r.repo}` }, r.repo))
       : picked ? h("span", { class: "muted" }, picked.repo) : null,
     filter);
-  if (!picked) return [toolbar, data?.empty ? h("div", { class: "empty" }, data.empty) : null];
+  const filters = owner ? { owner } : {};
+  const labels = { owner: owners.find((o) => o.id === owner)?.name || owner };
+  const clearOwner = () => onOwner?.("");
+  const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner });
+  const none = () => filterEmpty("cards", filters, { labels, onClear: clearOwner });
+  if (!picked) return [toolbar, bar, owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null];
 
   const target = highlight == null ? undefined : all.find((c) => c.issue === highlight);
   const lit = target ? new Set([target.issue, ...target.chain]) : null;
@@ -100,22 +107,27 @@ export function boardView(data, wanted, { highlight, owner = "", onOwner, onChai
       h("h3", {}, col.title, " ", h("span", { class: "muted" }, String(shown.length))),
       ...body);
   });
-  return [toolbar, chainLine, h("div", { class: "board" }, ...cols)];
+  if (owner && !all.some((c) => c.owner === owner)) return [toolbar, bar, chainLine, none()];
+  return [toolbar, bar, chainLine, h("div", { class: "board" }, ...cols)];
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderBoard(main, wanted) {
+export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
   let closed = false;
   let data;
   let last;
   let highlight;
-  let owner = "";
+  let owner = query.owner ?? "";
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Board"));
 
   const draw = () => mount(main, boardView(data, wanted, {
     highlight, owner,
-    onOwner: (id) => { owner = id; draw(); },
+    onOwner: (id) => {
+      owner = id;
+      go(withQuery(wanted ? boardHash(wanted) : "#/board", owner ? { owner } : {}));
+      draw();
+    },
     onChain: (issue) => { highlight = issue; draw(); },
     onClear: () => { highlight = undefined; draw(); },
     onLeave: (card) => { if (card.watcher) left = card.watcher; },
@@ -137,7 +149,6 @@ export function renderBoard(main, wanted) {
     last = text;
     data = next;
     if (highlight != null && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.issue === highlight))) highlight = undefined;
-    if (owner && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.owner === owner))) owner = "";
     draw();
   };
 

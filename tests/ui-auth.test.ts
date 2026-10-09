@@ -570,6 +570,14 @@ describe("roles in the page", () => {
     for (const h of ["", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
   });
 
+  it("isUserHash takes a query only on Runs, Refinement and Repositories; userPage drops it from the section", () => {
+    for (const h of ["#/runs?repo=a%2Fb", "#/refinement?owner=x", "#/repos?x=1", "#/runs?"]) expect(auth.isUserHash(h), h).toBe(true);
+    for (const h of ["#/start?repo=a%2Fb", "#/runs/abc?repo=a%2Fb", "#/refinement/s-1?x=1", "#/settings?repo=a%2Fb"]) expect(auth.isUserHash(h), h).toBe(false);
+    expect(auth.userPage("#/runs?repo=a%2Fb")).toEqual({ hash: "#/runs?repo=a%2Fb", section: "runs", id: undefined });
+    expect(auth.otherDisplay({ role: "user" }, "admin", "#/runs?owner=u1")).toBe("/user/#/runs?owner=u1");
+    expect(auth.otherDisplay({ role: "admin" }, "user", "#/runs?owner=u1")).toBe("/#/runs?owner=u1");
+  });
+
   it("start is a page, isNoHash knows an empty address", () => {
     expect(auth.userHash("#/start/x")).toBe("#/runs");
     expect(auth.userPage("#/start")).toEqual({ hash: "#/start", section: "start", id: undefined });

@@ -299,6 +299,25 @@ With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows
 - **What is in the way?** A card or row with blockers has a button **What is in the way?**. It opens a side panel for that story; nothing on the board is dimmed or moved. The panel shows the title, issue link, status, the full sentence, who has the next move and where, owner, age and **Open run** when there is a run. Under "In the way of #N" every story that must finish first is listed in the order it must finish, the deepest blocker first; direct blockers are marked "directly". A story that is on the board is a button that opens it in the panel, and **Back** returns to the story before; one that is not on the board is a GitHub link. On a wide screen the panel sits next to the board and the board stays usable. Up to 760 px it covers the page and Tab stays inside it. **Escape** or **Close** closes it and focus returns to the button. A card without a run opens the panel on Enter. The panel updates every 5 seconds; if the story is gone it closes with "#N is no longer on the board". Filters, layout and scroll position do not change. The open panel is not saved.
 - **Saved choices:** your layout, filters, display choices, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
 - **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
+### Filters in the address
+
+You can filter **Runs** and the **Board** by repository and, as an admin, by owner. The filter is
+part of the address, so you can share it, and Back and Forward restore it:
+
+- `#/runs?repo=owner%2Fname&owner=<account>` (admin Runs). `repo` and `owner` are the only keys;
+  anything else is ignored. A repository must look like `owner/name`.
+- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`.
+- On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
+  there: a user only ever sees their own runs.
+
+Above the list a filter bar shows one chip per active filter, each with a remove button, and
+**Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
+and offers **Clear filters**; this also happens for a repository your account cannot see.
+
+The browser filters what the server already sent; no call gets a new parameter. The Runs list
+holds the newest 200 runs, so with a repository filter on a full list you see "Only the newest
+200 runs are searched." Older runs of that repository are not shown. The 30-second refresh keeps
+the filter.
 
 ### The runs list
 
