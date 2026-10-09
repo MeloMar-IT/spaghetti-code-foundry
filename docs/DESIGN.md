@@ -394,6 +394,12 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Since #304
   and #305 a user's run is also held by an OS sandbox profile (`os-sandbox.ts`); its agent steps get their
   own agent folders in the run folder and sign in by a token variable only (`src/agents/boxed.ts`).
+- **Codex sessions belong to a Codex folder.** Each Codex step records `codexHome` (`codex_home` in
+  `state.steps` and in the template context): `run` for the run's own folder, or `personal:` plus 12 hex
+  digits of the path (never the path). `codexHomeId()` and `codexResumeRefusal()` are in
+  `src/agents/codex-home.ts`. A step with `resume:` starts a new session, and logs why, when the recorded
+  folder differs from its own or none was recorded (a record from before #420), so it never asks Codex for
+  a session that folder does not hold.
   Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not

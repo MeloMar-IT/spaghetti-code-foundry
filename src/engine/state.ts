@@ -16,6 +16,8 @@ export interface StepRecord {
   error?: string;
   exitCode?: number | null;
   sessionId?: string;
+  /** The Codex folder of this session: "run" or "personal:<12 hex>", never a path. Codex steps only. */
+  codexHome?: string;
   costUsd?: number;
   /** Agent step target, e.g. "codex:openai:gpt-5". */
   agent?: string;

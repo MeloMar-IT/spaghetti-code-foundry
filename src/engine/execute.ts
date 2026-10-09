@@ -78,7 +78,7 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "skills">;
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "skills">;
 
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
@@ -116,6 +116,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     error: res.error ?? "",
     exit_code: res.exitCode ?? "",
     session_id: res.sessionId ?? "",
+    codex_home: res.codexHome ?? "",
     agent: res.agent ?? "",
     visit,
   };

@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill runtime 4a — Record the Codex folder of a session and resume only in the same folder (#420).
+  - **Record.** Every Codex step records its Codex folder: `run` for the run's own folder, or `personal:` plus 12 hex digits. The value never holds a path. It is `codexHome` on the step record, `steps.<id>.codex_home` in templates, and it comes back from `run.json` on a resume of the run.
+  - **Resume.** A Codex step with `resume:` starts a new session, and logs why, when the recorded folder differs from its own or none was recorded. With the same folder it resumes as before. Claude steps are unchanged.
+  - **Tests.** The test setup removes an inherited `CODEX_API_KEY` and `CODEX_HOME`.
+  - **Upgrade.** A run started before the upgrade starts a new Codex session once where a step would have resumed one.
 - Component kit 6 — record components: evidence, timeline entries, logs and diffs (#330). New `ui/kit/records.js` and `ui/kit/records.css` export `evidence`, `timelineEntry`, `timeline`, `logView` and `diffView`. `logView` is a `role="log"` region with a name and `tabindex="0"`, coloured by tokens so it follows the theme. `diffView` takes the `{ stat, patch }` data of `api.diff`, marks file, hunk, added and removed lines by class, keeps the `+` and `-` characters and shows the "Diff truncated" notice when `truncated` is set. Neither cuts its data. All text is added as text nodes. Every component draws with missing data (no time, steps or lines). The gallery has sections for long lines, 500 log lines, a large diff, empty states and the narrow layout. `docs/UI_COMPONENTS.md` has the five entries and the "Building a new screen" checklist. New `tests/ui-kit-records.test.ts`; `tests/ui-gallery.test.ts` and `tests/ui-kit-actions.test.ts` are extended. No existing page is changed.
 - Work tracking 2c — dependency chain in a side panel instead of dimming the board (#375).
   - **Button.** A card or row with blockers has **What is in the way?** (`aria-expanded`, `aria-controls`). A card without a run opens the panel on Enter. Nothing on the board is dimmed.
