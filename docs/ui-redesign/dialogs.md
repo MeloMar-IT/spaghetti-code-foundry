@@ -74,10 +74,10 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/app.js:97` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:260` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:281` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:302` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/app.js:98` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:261` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:282` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:303` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |

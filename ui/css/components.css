@@ -58,6 +58,8 @@ a.pill.refinement:hover { text-decoration: underline; }
 .chip { font-family: var(--mono); font-size: var(--text-micro); padding: 1px 7px; border-radius: var(--radius-sm); border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer; }
 .chip:hover { color: var(--accent); border-color: var(--accent); }
 .errors { background: var(--fail-soft); color: var(--fail); border-radius: var(--radius-md); padding: 10px 12px; white-space: pre-wrap; font-family: var(--mono); font-size: var(--text-meta); margin-bottom: 14px; }
+.problem-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+button.problem-link { border: none; background: transparent; padding: 0; color: inherit; font: inherit; text-align: left; text-decoration: underline; white-space: pre-wrap; cursor: pointer; }
 .small-select { width: auto; font-size: var(--text-small); padding: 3px 6px; }
 .checks { display: grid; gap: 4px; }
 .pill.approval { background: var(--color-waiting-soft); color: var(--color-waiting); }

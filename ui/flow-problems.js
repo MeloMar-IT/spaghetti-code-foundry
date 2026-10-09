@@ -114,7 +114,10 @@ export function renderProblems(problems, { onOpen, mode = "visual" } = {}) {
       })));
 }
 
-const byAttr = (root, attr, test) => [...root.querySelectorAll(`[${attr}]`)].find((el) => test(el.getAttribute(attr)));
+/** `renderProblems` under a name that does not clash with the monitor page's `renderProblems` in ui/app.js. */
+export const renderFlowProblems = renderProblems;
+
+const byAttr =(root, attr, test) => [...root.querySelectorAll(`[${attr}]`)].find((el) => test(el.getAttribute(attr)));
 
 function openDetails(el) {
   for (let d = el.closest?.("details"); d; d = d.parentNode?.closest?.("details")) d.open = true;

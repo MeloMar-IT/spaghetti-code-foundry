@@ -49,7 +49,7 @@ export const RULES: Rule[] = [
   r("GET", "blocks", "no", "list blocks"),
   r("PUT", "blocks/:id", "no", "save a block"),
   r("DELETE", "blocks/:id", "no", "delete a block"),
-  r("POST", "validate", "no", "check a flow"),
+  r("POST", "validate", "no", "check a flow; answers `{ ok, flow }` or `{ ok: false, error, issues }` (`issues` is `[{ path, message }]`, empty for a YAML syntax error)"),
   r("POST", "generate", "no", "write a flow with AI"),
   r("GET", "queue", "yes", "the queue (a user sees their own queued runs and how many are ahead)"),
   r("GET", "runs", "yes", "list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap"),

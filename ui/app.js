@@ -4,7 +4,7 @@ import { flowNameMark } from "./icons.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, editable, renderEditor } from "./editor.js";
-import { openInVisual, openInYaml, problemsOf, renderProblems as renderFlowProblems } from "./flow-problems.js";
+import { openInVisual, openInYaml, problemsOf, renderFlowProblems } from "./flow-problems.js";
 import { resolve, splitHash } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
