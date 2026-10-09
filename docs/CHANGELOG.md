@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill runtime 2a — plan record store and the `plan-comment` tool (#414). New `src/skills/plan-record.ts` (store under `<data folder>/skill-plans/`, own lock `skill-plans.lock`, 20 records per issue, age clean-up with a `purged.json` note) and `src/skills/plan-record-rules.ts` (`pickPlanRecord`, `planChanges`, `technologyHashOf`, the parsers). New `tools/plan-comment`: hashes a comment body, and lists the plan comments of an issue as IDs and hashes, never text. `projectEvidence` is exported from `src/skills/run-lock.ts`. Nothing calls them yet; no behaviour change.
 - Work tracking 2c — dependency chain in a side panel instead of dimming the board (#375).
   - **Button.** A card or row with blockers has **What is in the way?** (`aria-expanded`, `aria-controls`). A card without a run opens the panel on Enter. Nothing on the board is dimmed.
   - **Panel.** New `ui/work-panel.js`: `chainOrder(item, items)` (pure; deepest blocker first, direct blockers from `after` marked, safe against cycles, uses `next.blockers` and `after` from the same `GET /api/board` answer, no new request) and `panelView`. It shows title, issue link, status, sentence, next move and where, owner, age, "Open run" and "In the way of #N" with each story's status and next move, or a GitHub link when it is not on the board. Chain entries on the board open in the panel; **Back** returns.
