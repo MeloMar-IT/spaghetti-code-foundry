@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { RefinementError } from "../src/refinement/errors.js";
 import { changeEpic, dropDraft, newDraft, preview, saveTyped } from "../src/refinement/draft.js";
 import { mergeDrafts, moveCriterion } from "../src/refinement/draft-parts.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -18,7 +20,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 const reload = vi.fn();
 let state: { drafts: any[]; epic: number | undefined };
 let log: any[];
@@ -59,7 +61,7 @@ beforeEach(() => {
   (document as any).getElementById("toast").textContent = "";
   (document as any).activeElement = null;
   (globalThis as any).location = { hash: "#/refinement/s1", reload };
-  (globalThis as any).confirm = () => confirmAnswer;
+  stopDialog = autoDialog(() => confirmAnswer);
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
       gets++;
@@ -68,7 +70,7 @@ beforeEach(() => {
     sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });
     if (mode === "hold") await new Promise<void>((r) => holds.push(r));
     if (mode === "throw") throw new TypeError("fetch failed");
-    if (typeof mode === "number") return reply({ error: mode === 401 ? "sign in first" : "The title can have at most 120 characters" }, mode);
+    if (typeof mode === "number") return reply({ error: mode === 401 ? "sign in first" : mode === 409 ? "this draft is split into parts; change a part instead" : "The title can have at most 120 characters" }, mode);
     try {
       const m = /\/drafts(?:\/([^/]+))?$/.exec(url);
       const mv = /\/drafts\/([^/]+)\/criteria\/([^/]+)\/move$/.exec(url);
@@ -91,7 +93,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
@@ -796,6 +798,149 @@ describe("text and wiring", () => {
 });
 
 // ---- parts of a split: moving a criterion, merging, depends on ----
+describe("the save state of a field", () => {
+  /** The node that shows the save state of a field (it follows the label of the field). */
+  const saveOf = (name: string) => {
+    const label = field(name).parent!;
+    const kids = label.parent!.children;
+    return kids[kids.indexOf(label) + 1] as FakeElement;
+  };
+  const rowSave = (i: number) => walk(rows()[i]!).find((e) => e.attrs["data-save"] !== undefined)!;
+  const retryIn = (el: FakeElement) => walk(el).find((e) => e.tag === "button" && e.textContent === "Retry");
+
+  it("shows Saving… at the field that is typed in, and Saved after the PUT", async () => {
+    await withDraft();
+    type(field("title"), "New");
+    expect(saveOf("title").textContent).toBe("Saving…");
+    expect(saveOf("who").textContent).toBe("");
+    await wait(1000);
+    expect(saveOf("title").textContent).toBe("Saved");
+    expect(saveOf("who").textContent).toBe("");
+  });
+  it("a failed save shows the error with Retry and keeps the text; Retry sends again and shows Saved", async () => {
+    await withDraft();
+    const el = field("title");
+    mode = 500;
+    type(el, "Mine");
+    await wait(1000);
+    expect(saveOf("title").getAttribute("data-save")).toBe("failed");
+    expect(saveOf("title").textContent).toContain("The title can have at most 120 characters");
+    expect(el.value).toBe("Mine");
+    expect(dr.unsaved.size).toBe(1);
+    const before = sent.length;
+    mode = "ok";
+    await press(retryIn(saveOf("title")));
+    expect(sent.length).toBe(before + 1);
+    expect(sent.at(-1)!.body.title).toBe("Mine");
+    expect(saveOf("title").textContent).toBe("Saved");
+    expect(dr.unsaved.size).toBe(0);
+  });
+  it("a failed save of one field leaves the state of another field alone", async () => {
+    await withDraft();
+    type(field("who"), "a user");
+    await wait(1000);
+    mode = 400;
+    type(field("title"), "x".repeat(121));
+    await wait(1000);
+    expect(saveOf("title").getAttribute("data-save")).toBe("failed");
+    expect(saveOf("who").textContent).toBe("Saved");
+  });
+  it("does not say Saved while newer text waits", async () => {
+    await withDraft();
+    const el = field("title");
+    el.focus();
+    mode = "hold";
+    type(el, "One");
+    await wait(1000);
+    type(el, "One two");
+    mode = "ok";
+    await release();
+    expect(saveOf("title").textContent).toBe("Saving…");
+    await wait(1000);
+    await flush();
+    expect(saveOf("title").textContent).toBe("Saved");
+  });
+  it("a criterion row keeps its state when it gets an id, and an emptied row shows none", async () => {
+    await withDraft();
+    const ta = rows()[0]!.children[0] as FakeElement;
+    type(ta, "First");
+    expect(rowSave(0).textContent).toBe("Saving…");
+    await wait(1000);
+    await flush();
+    expect(rows()).toHaveLength(2);
+    expect(rowSave(0).textContent).toBe("Saved");
+    expect(rowSave(1).textContent).toBe("");
+    const second = rows()[1]!.children[0] as FakeElement;
+    type(second, "Second");
+    expect(rowSave(1).textContent).toBe("Saving…");
+    type(second, "");
+    expect(rowSave(1).textContent).toBe("");
+  });
+  it("a criterion whose save failed shows its text again when the draft is closed and opened, and Retry sends it", async () => {
+    await withDraft();
+    mode = 500;
+    type(rows()[0]!.children[0] as FakeElement, "First");
+    await wait(1000);
+    expect(rowSave(0).getAttribute("data-save")).toBe("failed");
+    await press(button("Close"));
+    await press(button("Open"));
+    expect((rows()[0]!.children[0] as FakeElement).value).toBe("First");
+    mode = "ok";
+    const before = sent.length;
+    await wait(1000);
+    await flush();
+    expect(sent.length).toBeGreaterThan(before);
+    expect(sent.at(-1)!.body.criteria.map((c: any) => c.text)).toEqual(["First"]);
+  });
+  it("a poll answer while text is unsaved does not change the field", async () => {
+    await withDraft();
+    const el = field("title");
+    mode = 400;
+    type(el, "Mine");
+    await wait(1000);
+    state.drafts[0].title = { text: "Theirs", from: "typed" };
+    await ui.renderRefinement(main(), { id: "s1" });
+    expect(field("title").value).toBe("Mine");
+  });
+  it("a save that is refused because the draft was split shows the conflict, keeps the text and links to the parts", async () => {
+    const D3 = "33333333-3333-4333-8333-333333333333";
+    await withDraft();
+    state.drafts = [
+      { id: D1, title: { text: "Export rows", from: "typed" }, criteria: [], dependsOn: [], splitInto: [D2, D3] },
+      { id: D2, title: { text: "Export a file", from: "typed" }, criteria: [], dependsOn: [], part: { of: D1 } },
+      { id: D3, title: { text: "Choose columns", from: "typed" }, criteria: [], dependsOn: [], part: { of: D1 } },
+    ];
+    mode = 409;
+    gets = 0;
+    type(field("title"), "My change");
+    await wait(1000);
+    await flush();
+    expect(gets).toBe(1); // the session is read again
+    const box = walk(section()).find((e) => e.attrs["data-kind"] === "conflict")!;
+    expect(box).toBeDefined();
+    expect(box.getAttribute("class")).toContain("state-error");
+    const links = walk(box).filter((e) => e.tag === "a");
+    expect(links.map((l) => l.textContent)).toEqual(["Part 1: Export a file", "Part 2: Choose columns"]);
+    expect(section().textContent).toContain("Not saved");
+    expect(section().textContent).toContain("My change");
+    mode = "ok";
+    await press(links[0]);
+    expect(field("title").value).toBe("Export a file");
+  });
+  it("Remove draft asks in the dialog; Move to notes is tested with the remarks", async () => {
+    confirmAnswer = false;
+    await withDraft({ title: { text: "T", from: "typed" } });
+    await press(button("Remove draft"));
+    expect(sent.filter((s) => s.method === "DELETE")).toEqual([]);
+    confirmAnswer = true;
+    await press(button("Remove draft"));
+    expect(sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+  });
+  it("ui/refinement-draft.js does not grow past 814 lines", () => {
+    expect(readFileSync("ui/refinement-draft.js", "utf8").split("\n").length - 1).toBeLessThanOrEqual(814);
+  });
+});
+
 describe("parts of a split", () => {
   const D3 = "33333333-3333-4333-8333-333333333333";
   const D4 = "44444444-4444-4444-8444-444444444444";
@@ -902,10 +1047,11 @@ describe("parts of a split", () => {
       await show();
       await openId(D4);
       let question = "";
-      (globalThis as any).confirm = (q: string) => {
+      stopDialog?.();
+      stopDialog = autoDialog((q: string) => {
         question = q;
         return true;
-      };
+      });
       mergeSel()!.value = D2;
       await press(button("Merge"));
       expect(question).toContain("Export a file");

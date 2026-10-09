@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 import { readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -17,7 +18,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 let page: any;
 let gets: string[];
 let sent: { method: string; url: string; body: any }[];
@@ -62,7 +63,7 @@ beforeEach(() => {
   (document as any).listeners.keydown = []; // dialogs of an earlier test
   (document as any).getElementById("toast").textContent = "";
   (globalThis as any).location = { hash: "#/refinement/s1" };
-  (globalThis as any).confirm = () => confirmAnswer;
+  stopDialog = autoDialog(() => confirmAnswer);
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
       gets.push(url);
@@ -85,7 +86,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
@@ -570,16 +571,88 @@ describe("failed calls, one at a time, drafts and races", () => {
     await press(byFocus("opt-q2-1"));
     expect(byFocus("own-q1")!.value).toBe("Typed");
   });
-  it("keeps the focus on the field over a redraw", async () => {
+  it("does not draw a poll answer over the field that has the focus; it is drawn after the blur", async () => {
     page = session({ architect: { state: "running", kind: "round", runId: "r" } });
     await show();
     const old = byFocus("own-q1")!;
     old.focus();
     page = session({ architect: { state: "running", kind: "round", runId: "r", doing: "Reading the code" } });
     await vi.advanceTimersByTimeAsync(ui.POLL_MS);
-    const now = byFocus("own-q1")!;
-    expect(now).not.toBe(old);
-    expect((document as any).activeElement).toBe(now);
+    expect(byFocus("own-q1")).toBe(old);
+    expect((document as any).activeElement).toBe(old);
+    (document as any).activeElement = null;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(byFocus("own-q1")).not.toBe(old);
+  });
+  it("does not draw a poll answer over typed text of the talk that has no focus", async () => {
+    page = session({ architect: { state: "running", kind: "round", runId: "r" } });
+    await show();
+    const old = byFocus("own-q1")!;
+    type(old, "Typed");
+    (document as any).activeElement = null;
+    page = session({ architect: { state: "running", kind: "round", runId: "r", doing: "Reading the code" } });
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS + 300);
+    expect(byFocus("own-q1")).toBe(old);
+    expect(byFocus("own-q1")!.value).toBe("Typed");
+  });
+  it("a 401 poll does not reload the browser while a text of the talk is typed", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/refinement/s1", reload };
+    page = session({ architect: { state: "running", kind: "round", runId: "r" } });
+    await show();
+    type(byFocus("own-q1")!, "Typed");
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: { method: string }) => (init.method === "GET" ? reply({ error: "sign in first" }, 401) : real(url, init));
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(reload).not.toHaveBeenCalled();
+    expect(byFocus("own-q1")!.value).toBe("Typed");
+    expect(main().textContent).toContain("Could not refresh.");
+    talk.drafts.clear();
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(reload).toHaveBeenCalled();
+  });
+  it("a 401 on a button does not reload the browser while a text of the talk is typed, and does when none is", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/refinement/s1", reload };
+    await show();
+    type(byFocus("own-q1")!, "Typed");
+    postMode = 401;
+    await press(byFocus("opt-q2-1"));
+    expect(reload).not.toHaveBeenCalled();
+    expect(byFocus("own-q1")!.value).toBe("Typed");
+    talk.drafts.clear();
+    await press(byFocus("opt-q2-1"));
+    expect(reload).toHaveBeenCalled();
+  });
+  it("choosing an option or I don't know forgets the text typed for that question", async () => {
+    await show();
+    type(byFocus("own-q1")!, "Typed");
+    await press(byFocus("opt-q1-1"));
+    expect([...talk.drafts.keys()].filter((k: string) => k.includes("own q1"))).toEqual([]);
+    type(byFocus("own-q2")!, "Typed too");
+    await press(byFocus("unknown-q2"));
+    expect([...talk.drafts.keys()].filter((k: string) => k.includes("own q2"))).toEqual([]);
+  });
+  it("a 403 or 404 poll keeps the page and the typed text and says so; without text it shows the state", async () => {
+    for (const status of [403, 404]) {
+      talk.drafts.clear();
+      page = session({ architect: { state: "running", kind: "round", runId: "r" } });
+      await show();
+      const old = byFocus("own-q1")!;
+      type(old, "Typed");
+      const real = (globalThis as any).fetch;
+      (globalThis as any).fetch = async (url: string, init: { method: string }) => (init.method === "GET" ? reply({ error: "gone now" }, status) : real(url, init));
+      await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+      expect(byFocus("own-q1")).toBe(old);
+      expect(old.value).toBe("Typed");
+      expect(main().textContent).toContain("gone now");
+      talk.drafts.clear();
+      cleanup?.();
+      await show();
+      expect(main().textContent).toContain("gone now");
+      expect(byFocus("own-q1")).toBeUndefined();
+      (globalThis as any).fetch = real;
+    }
   });
   it("does not let an old poll undo an answer", async () => {
     page = session({ architect: { state: "running", kind: "round", runId: "r", doing: "x" } });

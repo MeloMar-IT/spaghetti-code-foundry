@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { confirmDialog, h } from "./dom.js";
 import { NOWHERE } from "./refinement-split.js";
 
 // After a split, on the draft page: what the original was split into, the parts, moving a criterion and merging two drafts.
@@ -127,10 +127,11 @@ export function mergeNodes(s, d, act) {
   if (!act || !targets.length) return [];
   const sel = h("select", { "aria-label": MERGE, "data-focus": "merge-with" }, targets.map((o) => h("option", { value: o.id }, titleOf(o))));
   sel.value = targets[0].id;
-  return [h("label", {}, `${MERGE} `, sel), h("button", { "data-focus": "merge", onClick: (e) => {
+  return [h("label", {}, `${MERGE} `, sel), h("button", { "data-focus": "merge", onClick: async (e) => {
+    const btn = e.currentTarget;
     const other = targets.find((o) => o.id === sel.value);
     if (!other) return undefined;
-    if (!confirm(mergeAsk(d, other))) return undefined;
-    return act.merge(e.currentTarget, other.id);
+    if (!(await confirmDialog({ title: "Merge drafts", text: mergeAsk(d, other), confirm: MERGE_BUTTON }))) return undefined;
+    return act.merge(btn, other.id);
   } }, MERGE_BUTTON)];
 }

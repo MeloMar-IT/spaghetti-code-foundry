@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { aiProps, h, modal, toast } from "./dom.js";
+import { aiProps, confirmDialog, h, modal, toast } from "./dom.js";
 
 // The talk of a refinement session: the architect's questions, the person's answers and the map. Every text is set as text, never as HTML.
 
@@ -164,7 +164,7 @@ function questionCard(s, q, can, ctx) {
       return h("li", { class: "entry" }, o.text, " ", h("span", { class: "muted" }, `Trade-off: ${o.tradeoff}`),
         q.recommended === n ? h("span", { class: "pill ok" }, "Recommended") : null,
         !answered && can ? h("button", { class: "small", "data-focus": `opt-${q.id}-${n}`, "aria-label": `Choose option ${n}`,
-          onClick: (e) => ctx.send(e.currentTarget, () => api.answerQuestion(s.id, q.id, { option: n })) }, "Choose") : null);
+          onClick: (e) => ctx.send(e.currentTarget, () => forget(key, api.answerQuestion(s.id, q.id, { option: n }))) }, "Choose") : null);
     }))),
     answered ? h("p", { class: "said" }, h("b", {}, "Answer: "), answerText(q)) : null,
     !answered && can ? [
@@ -172,7 +172,7 @@ function questionCard(s, q, can, ctx) {
       h("div", { class: "row" },
         h("button", { class: "small", "data-focus": `own-send-${q.id}`, onClick: sendOwn }, "Send my answer"),
         h("button", { class: "small", "data-focus": `unknown-${q.id}`,
-          onClick: (e) => ctx.send(e.currentTarget, () => api.answerQuestion(s.id, q.id, { unknown: true })) }, "I don't know yet")),
+          onClick: (e) => ctx.send(e.currentTarget, () => forget(key, api.answerQuestion(s.id, q.id, { unknown: true }))) }, "I don't know yet")),
     ] : null,
     !answered && !can ? h("p", { class: "muted" }, "Not answered yet.") : null);
 }
@@ -237,9 +237,9 @@ function mapSection(s, talk, can, ctx) {
               h("button", { class: "small", "data-focus": `edit-${e.id}`, onClick: async () => {
                 await editDialog(ctx, s.id, e);
               } }, "Edit"),
-              h("button", { class: "small danger", "data-focus": `remove-${e.id}`, onClick: (ev) => {
+              h("button", { class: "small danger", "data-focus": `remove-${e.id}`, onClick: async (ev) => {
                 const btn = ev.currentTarget;
-                if (!confirm("Remove this entry from the map?")) return;
+                if (!(await confirmDialog({ title: "Remove entry", text: "Remove this entry from the map?", confirm: "Remove" }))) return undefined;
                 return ctx.send(btn, () => api.removeMapEntry(s.id, e.id));
               } }, "Remove"),
             ] : null)),

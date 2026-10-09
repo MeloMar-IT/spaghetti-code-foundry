@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { answerDialog, autoDialog, dialogText } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -22,7 +23,7 @@ let answers: Answer[];
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 let confirmAnswer = true;
 
 const session = (over: object = {}) => ({
@@ -51,7 +52,7 @@ beforeEach(async () => {
   holdNext = false;
   confirmAnswer = true;
   (globalThis as any).location = { hash: "#/refinement" };
-  (globalThis as any).confirm = () => confirmAnswer;
+  stopDialog = autoDialog(() => confirmAnswer);
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
@@ -83,7 +84,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -579,5 +580,160 @@ describe("wiring", () => {
       "POST /api/refinement/x/drop",
       "POST /api/refinement/x/restore",
     ]);
+  });
+});
+
+describe("states of the list and the session", () => {
+  const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+  const classes = (e: FakeElement) => (e.attrs.class ?? "").split(" ");
+  const withClass = (c: string) => walk(main()).filter((e) => classes(e).includes(c));
+  const kind = () => walk(main()).find((e) => e.attrs["data-kind"])?.attrs["data-kind"];
+  const retry = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Retry");
+  const table = () => walk(main()).find((e) => e.tag === "table");
+  const asGet = (list: (n: number) => Promise<ReturnType<typeof reply>>) => {
+    const real = (globalThis as any).fetch;
+    let n = 0;
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" && url === "/api/refinement" ? list(++n) : real(url, init));
+    return real;
+  };
+
+  it("draws a skeleton in the list while the first read runs", async () => {
+    let release!: () => void;
+    asGet(async () => {
+      await new Promise<void>((r) => (release = r));
+      return reply({ sessions: [session()], repos });
+    });
+    const shown = ui.renderRefinement(main(), {});
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(1);
+    release();
+    await shown;
+    expect(withClass("skeleton")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("shows an error state with Retry when the first read fails, and Retry loads the list", async () => {
+    let fails = true;
+    asGet(async () => (fails ? reply({ error: "boom" }, 500) : reply({ sessions: [session()], repos })));
+    await ui.renderRefinement(main(), {});
+    expect(withClass("state-error")).toHaveLength(1);
+    expect(main().textContent).toContain("boom");
+    expect(table()).toBeUndefined();
+    fails = false;
+    press(retry());
+    await flush();
+    expect(withClass("state-error")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("shows no permission as its own state, without Retry", async () => {
+    asGet(async () => reply({ error: "you may not see this" }, 403));
+    await ui.renderRefinement(main(), {});
+    expect(kind()).toBe("permission");
+    expect(retry()).toBeUndefined();
+  });
+  it("keeps the rows and says so when a reload fails; Retry clears the note", async () => {
+    sessions = [session()];
+    let fails = false;
+    asGet(async () => (fails ? reply({ error: "boom" }, 500) : reply({ sessions: [session()], repos })));
+    await ui.renderRefinement(main(), {});
+    fails = true;
+    press(button(main(), "Open sessions"));
+    await flush();
+    expect(table()).toBeDefined();
+    expect(withClass("stale-note").filter((e) => classes(e).includes("failed"))).toHaveLength(1);
+    fails = false;
+    press(retry());
+    await flush();
+    expect(withClass("stale-note")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("draws the newest read when two reads answer out of order", async () => {
+    const pending: ((b: unknown) => void)[] = [];
+    asGet(() => new Promise((r) => pending.push((b) => r(reply(b)))));
+    const shown = ui.renderRefinement(main(), {});
+    await flush();
+    pending[0]!({ sessions: [], repos });
+    await shown;
+    press(button(main(), "Open sessions"));
+    await flush();
+    press(button(main(), "Open sessions"));
+    await flush();
+    expect(pending).toHaveLength(3);
+    pending[2]!({ sessions: [session({ id: "b", title: "Newer" })], repos });
+    await flush();
+    pending[1]!({ sessions: [session({ id: "a", title: "Older" })], repos });
+    await flush();
+    expect(main().textContent).toContain("Newer");
+    expect(main().textContent).not.toContain("Older");
+  });
+  it("says it with emptyState when there is nothing", async () => {
+    sessions = [];
+    await ui.renderRefinement(main(), {});
+    expect(withClass("empty")).toHaveLength(1);
+    expect(main().textContent).toContain("No refinement sessions yet. Start one with a rough idea.");
+  });
+
+  it("draws a skeleton on the first load of a session, not on a quiet reload", async () => {
+    sessions = [session()];
+    let release!: () => void;
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (init.method === "GET") await new Promise<void>((r) => (release = r));
+      return real(url, init);
+    };
+    (globalThis as any).location.hash = "#/refinement/s1";
+    const first = ui.renderRefinement(main(), { id: "s1" });
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(1);
+    release();
+    await first;
+    expect(withClass("skeleton")).toHaveLength(0);
+    const again = ui.renderRefinement(main(), { id: "s1", quiet: true });
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(0);
+    expect(main().textContent).toContain("My idea");
+    release();
+    await again;
+  });
+  it("shows a session that is not there as missing, without Retry, with a way back", async () => {
+    sessions = [];
+    await showPage("nope");
+    expect(kind()).toBe("missing");
+    expect(retry()).toBeUndefined();
+    expect(walk(main()).some((e) => e.tag === "a" && e.attrs.href === "#/refinement")).toBe(true);
+  });
+  it("shows no permission for a session as its own state", async () => {
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" ? reply({ error: "not yours" }, 403) : real(url, init));
+    await showPage("s1");
+    expect(kind()).toBe("permission");
+    expect(retry()).toBeUndefined();
+  });
+  it("offers Retry after a server failure, and Retry draws the session", async () => {
+    const real = (globalThis as any).fetch;
+    let fails = true;
+    sessions = [session()];
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" && fails ? reply({ error: "boom" }, 500) : real(url, init));
+    await showPage("s1");
+    expect(kind()).toBe("server");
+    fails = false;
+    press(retry());
+    await flush();
+    expect(main().textContent).toContain("My idea");
+  });
+  it("asks in the dialog before it drops; Cancel sends nothing", async () => {
+    sessions = [session()];
+    await showPage();
+    stopDialog?.();
+    press(button(main(), "Drop"));
+    await flush();
+    expect(dialogText()).toContain('Drop "My idea"');
+    await answerDialog(false);
+    expect(sent).toEqual([]);
+    expect(dialogText()).toBeUndefined();
+    press(button(main(), "Drop"));
+    await flush();
+    await answerDialog(true);
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drop", body: {} }]);
   });
 });
