@@ -199,6 +199,32 @@ describe("staleNote", () => {
   });
 });
 
+describe("staleText", () => {
+  const at = Date.UTC(2026, 9, 9, 12, 3);
+  const t = new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  it("gives the four texts", () => {
+    expect(ui.staleText(at, false)).toBe(`Updated ${t}`);
+    expect(ui.staleText(at, true)).toBe(`Could not refresh. Showing data from ${t}.`);
+    expect(ui.staleText("nope", false)).toBe("");
+    expect(ui.staleText(undefined, true)).toBe("Could not refresh.");
+    expect(ui.staleNote(at).textContent).toBe(ui.staleText(at, false));
+  });
+});
+
+describe("focus names", () => {
+  const info = { kind: "other", what: "w", safe: "s", next: "n" };
+  it("errorState names the Retry button", () => {
+    expect(ui.errorState(info, { onRetry: () => {} }).all("button")[0].attrs["data-focus"]).toBe("retry");
+    expect(ui.errorState(info, { onRetry: () => {}, focus: "x-retry" }).all("button")[0].attrs["data-focus"]).toBe("x-retry");
+  });
+  it("banner actions take focus", () => {
+    const b = ui.banner("info", "t", [{ label: "R", onClick: () => {}, focus: "f" }, { label: "O", href: "#/x", focus: "g" }, { label: "P", onClick: () => {} }]);
+    expect(b.all("button")[0].attrs["data-focus"]).toBe("f");
+    expect(b.all("a")[0].attrs["data-focus"]).toBe("g");
+    expect(b.all("button")[1].attrs["data-focus"]).toBeUndefined();
+  });
+});
+
 describe("banner", () => {
   const root = (el: FakeElement) => el;
   it("is an alert for error and a status for the other kinds", () => {
@@ -227,11 +253,11 @@ describe("banner", () => {
 
 describe("module and styles", () => {
   const src = readFileSync("ui/states.js", "utf8");
-  it("imports dom.js and the kit, sets no inline style and exports the seven functions", () => {
+  it("imports dom.js and the kit, sets no inline style and exports the eight functions", () => {
     expect([...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1])).toEqual(["./dom.js", "./kit/actions.js", "./kit/display.js"]);
     expect(src).not.toContain("style:");
     expect([...src.matchAll(/^export function (\w+)/gm)].map((m) => m[1]).sort()).toEqual(
-      ["banner", "emptyState", "errorState", "explainError", "loadingState", "permissionState", "staleNote"]);
+      ["banner", "emptyState", "errorState", "explainError", "loadingState", "permissionState", "staleNote", "staleText"]);
   });
 
   it("keeps the old rules and adds the new ones", () => {
