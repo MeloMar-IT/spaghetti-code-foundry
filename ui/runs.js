@@ -1,18 +1,21 @@
 import { api } from "./api.js";
 import { glyph, h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
-import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
+import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
+// This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
+import { createRunHeader, firstLine } from "./run-header.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 
-const money = (n) => (n ? `$${n.toFixed(4)}` : "—");
+export const money =(n) => (n ? `$${n.toFixed(4)}` : "—");
 const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
 const what = (r) => (r.vars?.issue ? `${r.vars.github_repo}#${r.vars.issue}` : r.vars?.pr ? `${r.vars.github_repo} PR #${r.vars.pr}` : "");
 
 const REFRESH_MS = 30_000;
+const CLOCK_MS = 60_000;
 /** The server sends at most this many runs, so a repository filter searches only those. */
 export const RUNS_CAP = 200;
 export const CAP_NOTE = "Only the newest 200 runs are searched.";
@@ -186,8 +189,9 @@ export function statusAnnouncer() {
 }
 
 function stepsView(runId, summary, open = -1) {
-  if (!summary.history.length) return h("p", { class: "muted" }, "No steps finished yet.");
-  return h("div", { class: "timeline" }, summary.history.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
+  const steps = summary.history ?? [];
+  if (!steps.length) return h("p", { class: "muted" }, "No steps finished yet.");
+  return h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
 }
 
 /** The step that explains a failed run: the last failed one that is not a sub-flow or parallel step (else the last failed one). -1 if none. */
@@ -295,11 +299,11 @@ export function actions(s) {
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
   const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { class: "primary", "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
+    b.push(h("button", { "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
-    b.push(h("button", { class: "primary", "data-focus": "act-resume", onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, `↻ Resume at ${s.state.next}`));
+    b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, "Retry from the failing step"));
   }
   if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length && !closed) {
     b.push(h("select", { class: "small-select", title: "Re-run from a step", "aria-label": "Re-run from a step", "data-focus": "act-retry-from", onChange: (e) => {
@@ -345,6 +349,10 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
       return b;
     }));
 
+  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { picked = true; showTab("steps", i); }, backLabel: "Back to Runs" });
+  const cardBox = h("div");
+  const skillsBox = h("div");
+  mount(head, header.el, cardBox, skillsBox);
   mount(main, head, status.el, tabs, tabBody);
   mount(tabBody, log.el);
 
@@ -362,39 +370,25 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     held = null;
     const prev = summary;
     summary = s;
-    const failedIdx = s.status === "failed" ? failedStepIndex(s) : -1;
-    const card = s.status === "failed" ? failureCard(s, failedIdx >= 0 ? { onStep: () => { picked = true; showTab("steps", failedIdx); } } : {}) : null;
-    mount(head,
-      h("div", { class: "toolbar" },
-        h("a", { href: "#/runs", class: "btn ghost", "data-focus": "back", "aria-label": "Back to Runs" }, "←"),
-        h("h1", {}, s.flow),
-        s.next ? nextStatus(s.next, "status-help") : null,
-        admin ? h("span", { class: "muted mono" }, money(s.totalCostUsd)) : null,
-        s.resumes ? h("span", { class: "muted" }, `resumed ${s.resumes}×`) : null,
-        h("span", { class: "spacer" }),
-        ...actions(s),
-        admin ? h("a", { class: "btn", "data-focus": "open-flow", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
-      card ?? (s.next ? nextBlock(s.next) : null),
-      retiredLine(s),
-      h("div", { class: "card mb-16" },
-        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-        s.questions ? h("pre", { class: "mono pre-wrap" }, h("b", {}, "Questions"), "\n", s.questions) : null,
-        h("dl", { class: "meta" },
-          what(s) ? [h("dt", {}, "Ticket"), h("dd", {}, what(s))] : null,
-          h("dt", {}, "Run"), h("dd", {}, s.runId),
-          admin ? ownerRow(s, names) : null,
-          s.branch ? [h("dt", {}, "Branch"), h("dd", {}, s.branch)] : null,
-          s.workdir ? [h("dt", {}, "Workspace"), h("dd", {}, s.workdir)] : null,
-          versionRow(s),
-          stepRow(s),
-          card ? null : detailsRow(s))),
-      skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
+    const card = s.status === "failed" && !!s.next?.failure;
+    header.update(s, { names });
+    const title = firstLine(s.task) || s.flow || "Run";
+    mount(cardBox, h("div", { class: "card mb-16" },
+      s.task && s.task.trim() !== title ? h("p", { class: "flush pre-wrap" }, s.task) : null,
+      s.questions ? h("pre", { class: "mono pre-wrap" }, h("b", {}, "Questions"), "\n", s.questions) : null,
+      h("dl", { class: "meta" },
+        h("dt", {}, "Run"), h("dd", {}, s.runId),
+        card ? null : detailsRow(s))));
+    mount(skillsBox, skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
     // A failed run opens on its steps, once, unless the reader already chose a tab.
     if (card && !picked && !(prev && prev.status === "failed" && prev.next?.failure)) return showTab("steps");
-    if (tab === "steps" && (!prev || prev.history.length !== s.history.length)) showTab("steps");
+    if (tab === "steps" && (!prev || (prev.history ?? []).length !== (s.history ?? []).length)) showTab("steps");
   };
 
   if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});
+
+  // The times in the header move on even when the stream sends only pings.
+  const clock = setInterval(() => { if (summary && !fieldFocused(head)) header.update(summary, { names }); }, CLOCK_MS);
 
   const es = api.events(runId);
   es.addEventListener("update", (e) => {
@@ -409,6 +403,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   };
   return () => {
     open = false;
+    clearInterval(clock);
     es.close();
   };
 }

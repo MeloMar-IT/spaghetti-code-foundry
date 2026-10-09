@@ -54,7 +54,12 @@ describe("helpers", () => {
   });
 
   it("runActions per status", () => {
-    const k = (status: string, over: any = {}, queued = false) => ui.runActions({ status, ...over }, queued);
+    const k = (status: string, over: any = {}, queued = false) => ui.runActions({ status, state: { next: "a" }, ...over }, queued);
+    // Retry needs a step to continue at.
+    for (const s of ["failed", "stopped", "cancelled"]) {
+      expect(ui.runActions({ status: s }), s).toEqual([]);
+      expect(ui.runActions({ status: s, state: { next: null } }), s).toEqual([]);
+    }
     expect(k("waiting")).toEqual(["approve", "reject", "cancel"]);
     expect(k("running")).toEqual(["cancel"]);
     expect(k("failed")).toEqual(["retry"]);
@@ -499,13 +504,19 @@ describe("renderMyRun", () => {
     expect(main.textContent).not.toMatch(/\$|model|folder|Codex|claude/i);
   });
 
+  it("does not fill Retry while the answer form is shown", async () => {
+    state.summary = asking();
+    await open();
+    expect(button("retry").attrs.class ?? "").not.toContain("primary");
+  });
+
   it("shows the right buttons for each status", async () => {
     const cases: [any, string[]][] = [
       [{ status: "waiting", next: rec("approval") }, ["Approve", "Reject", "Cancel"]],
       [{ status: "running" }, ["Cancel"]],
-      [{ status: "failed" }, ["Retry"]],
-      [{ status: "stopped" }, ["Retry"]],
-      [{ status: "cancelled" }, ["Retry"]],
+      [{ status: "failed" }, ["Retry from the failing step"]],
+      [{ status: "stopped" }, ["Retry from the failing step"]],
+      [{ status: "cancelled" }, ["Retry from the failing step"]],
       [{ status: "succeeded" }, []],
       [{ status: "queued" }, ["Cancel"]],
       [{ status: "failed", refinement: "s1" }, []],
