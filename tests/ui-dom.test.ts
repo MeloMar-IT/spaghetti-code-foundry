@@ -277,6 +277,180 @@ describe("toast", () => {
     expect(el("toast").attrs.role).toBe("status");
     expect(el("toast").textContent).toBe("fine");
   });
+  it("an info toast shows for 3.5 s", () => {
+    dom.toast("x");
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(3499);
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(1);
+    expect((el("toast") as any).className).toBe("");
+  });
+  it("an error toast stays, has one Dismiss button without text, and the button hides it", () => {
+    dom.toast("bad", "error");
+    vi.advanceTimersByTime(60000);
+    expect((el("toast") as any).className).toBe("show error");
+    expect(el("toast").all("button")).toHaveLength(1);
+    expect(el("toast").all("button")[0].attrs["aria-label"]).toBe("Dismiss");
+    expect(el("toast").textContent).toBe("bad");
+    expect(el("toast").attrs["aria-live"]).toBe("assertive");
+    el("toast").all("button")[0].click();
+    expect((el("toast") as any).className).toBe("");
+    expect(el("toast").all("button")).toHaveLength(0);
+  });
+  it("sticky keeps an info toast but not its role", () => {
+    dom.toast("keep", "info", { sticky: true });
+    vi.advanceTimersByTime(60000);
+    expect((el("toast") as any).className).toBe("show info");
+    expect(el("toast").attrs.role).toBe("status");
+    expect(el("toast").attrs["aria-live"]).toBe("polite");
+  });
+  it("a new toast replaces the old one and resets the timer", () => {
+    dom.toast("a");
+    vi.advanceTimersByTime(3000);
+    dom.toast("b");
+    vi.advanceTimersByTime(3000);
+    expect((el("toast") as any).className).toBe("show info");
+    vi.advanceTimersByTime(500);
+    expect((el("toast") as any).className).toBe("");
+    dom.toast("bad", "error");
+    dom.toast("fine");
+    vi.advanceTimersByTime(3500);
+    expect((el("toast") as any).className).toBe("");
+  });
+  it("the same text within 5 s of its last call keeps the message node", () => {
+    const opts = { sticky: true }; // stays open, so only the 5 s window decides
+    dom.toast("x", "info", opts);
+    const first = el("toast").children[0];
+    vi.advanceTimersByTime(4000);
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).toBe(first);
+    vi.advanceTimersByTime(4000); // 8 s after the first, 4 s after the last
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).toBe(first);
+    vi.advanceTimersByTime(5000);
+    dom.toast("x", "info", opts);
+    expect(el("toast").children[0]).not.toBe(first);
+  });
+  it("a closed toast is empty, so nothing is left for a screen reader", () => {
+    dom.toast("x");
+    vi.advanceTimersByTime(3500);
+    expect(el("toast").children).toHaveLength(0);
+    expect(el("toast").textContent).toBe("");
+  });
+  it("the same text with other options keeps the node but updates the controls", () => {
+    dom.toast("x");
+    const first = el("toast").children[0];
+    dom.toast("x", "error");
+    expect(el("toast").children[0]).toBe(first);
+    expect(el("toast").all("button")).toHaveLength(1);
+    expect(el("toast").attrs.role).toBe("alert");
+  });
+  it("another text, or a toast cleared from outside, writes again", () => {
+    dom.toast("x");
+    const first = el("toast").children[0];
+    dom.toast("y");
+    expect(el("toast").children[0]).not.toBe(first);
+    el("toast").textContent = "";
+    dom.toast("y");
+    expect(el("toast").textContent).toBe("y");
+  });
+
+  describe("action", () => {
+    const button = () => el("toast").all("button")[0];
+    it("draws the label, runs once, closes the toast and removes the button", async () => {
+      const run = vi.fn();
+      dom.toast("done", "info", { action: { label: "Undo", run } });
+      expect(button().textContent).toBe("Undo");
+      const b = button();
+      b.click();
+      b.click();
+      await Promise.resolve();
+      expect(run).toHaveBeenCalledTimes(1);
+      expect((el("toast") as any).className).toBe("");
+      expect(el("toast").all("button")).toHaveLength(0);
+    });
+    it("a repeated toast runs the newest action", async () => {
+      const [a, b] = [vi.fn(), vi.fn()];
+      dom.toast("done", "info", { action: { label: "Undo", run: a } });
+      dom.toast("done", "info", { action: { label: "Undo", run: b } });
+      button().click();
+      await Promise.resolve();
+      expect(a).not.toHaveBeenCalled();
+      expect(b).toHaveBeenCalledTimes(1);
+    });
+    it("a failing action shows an error toast with its message", async () => {
+      dom.toast("done", "info", { action: { label: "Undo", run: async () => { throw new Error("nope"); } } });
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(el("toast").textContent).toBe("nope");
+      expect((el("toast") as any).className).toBe("show error");
+    });
+    it("gives the focus back to the opener, or to main when the action replaced it", async () => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      dom.toast("done", "info", { action: { label: "Undo", run: vi.fn() } });
+      button().focus();
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(doc().activeElement).toBe(opener);
+
+      opener.focus();
+      dom.toast("done 2", "info", { action: { label: "Undo", run: async () => { (opener as any).isConnected = false; } } });
+      button().focus();
+      button().click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(doc().activeElement).toBe(document.getElementById("main"));
+    });
+  });
+});
+
+describe("confirmDialog", () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const buttons = () => el("modal-root").all("button");
+  const open = (opts: any = { title: "Delete it?", text: "Sure?" }) => {
+    const opener = dom.h("button", {}, "open");
+    opener.focus();
+    return { opener, answer: dom.confirmDialog(opts) as Promise<boolean> };
+  };
+  it("starts on Cancel, with the default Delete button as danger", () => {
+    open();
+    const [, cancel, confirm] = buttons();
+    expect(doc().activeElement).toBe(cancel);
+    expect(cancel.textContent).toBe("Cancel");
+    expect(confirm.textContent).toBe("Delete");
+    expect(confirm.attrs.class).toBe("danger");
+    expect(el("modal-root").all("h2")[0].textContent).toBe("Delete it?");
+  });
+  it("the confirm button resolves true and the focus returns", async () => {
+    const { opener, answer } = open();
+    buttons()[2].click();
+    expect(await answer).toBe(true);
+    expect(doc().activeElement).toBe(opener);
+  });
+  it("Cancel, Escape, the ✕ and the backdrop resolve false", async () => {
+    let o = open();
+    buttons()[1].click();
+    expect(await o.answer).toBe(false);
+    expect(doc().activeElement).toBe(o.opener);
+    o = open();
+    keydown("Escape");
+    expect(await o.answer).toBe(false);
+    o = open();
+    buttons()[0].click();
+    expect(await o.answer).toBe(false);
+    o = open();
+    const backdrop = el("modal-root").children[0] as FakeElement;
+    backdrop.fire("mousedown", { target: backdrop, currentTarget: backdrop });
+    expect(await o.answer).toBe(false);
+    await flush();
+  });
+  it("takes the labels and a non-danger look", () => {
+    open({ title: "t", text: "x", confirm: "Stop", cancel: "Keep it", danger: false });
+    const [, cancel, confirm] = buttons();
+    expect(cancel.textContent).toBe("Keep it");
+    expect(confirm.textContent).toBe("Stop");
+    expect(confirm.attrs.class).toBe("primary");
+  });
 });
 
 describe("markInvalid, showError and fieldFor", () => {

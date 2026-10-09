@@ -342,5 +342,6 @@ describe("ui/style.css", () => {
 
   it("makes the toast a live region in both HTML files", () => {
     for (const f of ["ui/index.html", "ui/user/index.html"]) expect(read(f)).toMatch(/<div id="toast"[^>]*role="status"/);
+    for (const f of ["ui/index.html", "ui/user/index.html"]) expect(read(f)).toMatch(/<div id="toast"[^>]*aria-live="polite"/);
   });
 });

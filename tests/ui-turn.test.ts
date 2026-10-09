@@ -11,7 +11,7 @@ beforeAll(async () => {
 });
 afterAll(() => restore());
 
-interface Call { method: string; url: string; answer: (body: unknown, ok?: boolean) => void }
+interface Call { method: string; url: string; body?: string; answer: (body: unknown, ok?: boolean) => void }
 let calls: Call[];
 const realFetch = globalThis.fetch;
 
@@ -19,9 +19,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   calls = [];
   (document as any).title = "";
-  (globalThis as any).fetch = (url: string, init?: { method?: string }) =>
+  (globalThis as any).fetch = (url: string, init?: { method?: string; body?: string }) =>
     new Promise((resolve) => {
-      calls.push({ method: init?.method ?? "GET", url, answer: (body, ok = true) => resolve({ ok, status: ok ? 200 : 500, statusText: "x", json: async () => body }) });
+      calls.push({ method: init?.method ?? "GET", url, body: init?.body, answer: (body, ok = true) => resolve({ ok, status: ok ? 200 : 500, statusText: "x", json: async () => body }) });
     });
 });
 afterEach(() => {
@@ -254,6 +254,61 @@ describe("renderYourTurn", () => {
     await flush();
     expect(main.textContent).not.toContain("Other");
     cleanup();
+  });
+
+  describe("Undo after Dismiss", () => {
+    const toastEl = () => document.getElementById("toast") as unknown as FakeElement;
+    const undoBtn = () => toastEl().all("button").find((b) => b.textContent === "Undo");
+    const dismissed = async () => {
+      const o = await open(data([item({ key: "k5" }), item({ key: "b", what: "Other" })]));
+      click(o.main.all("button").find((b) => b.textContent === "Dismiss")!);
+      calls.shift()!.answer(data([item({ key: "b", what: "Other" })], { dismissed: 1 }));
+      await flush();
+      return o;
+    };
+
+    it("offers Undo that restores only that item and draws it again", async () => {
+      const { main, cleanup } = await dismissed();
+      expect(toastEl().textContent).toContain("Item dismissed");
+      expect(undoBtn()).toBeDefined();
+      undoBtn()!.click();
+      await flush();
+      const restoreCall = calls.shift()!;
+      expect(restoreCall.method).toBe("POST");
+      expect(restoreCall.url).toBe("/api/your-turn/restore");
+      expect(restoreCall.body).toBe(JSON.stringify({ key: "k5" }));
+      restoreCall.answer(data([item({ key: "k5" }), item({ key: "b", what: "Other" })]));
+      await flush();
+      expect(main.all("button").filter((b) => b.textContent === "Dismiss")).toHaveLength(2);
+      cleanup();
+    });
+
+    it("shows an error toast with no Undo when the dismiss fails", async () => {
+      const { main, cleanup } = await open(data([item({ key: "k5" })]));
+      click(main.all("button").find((b) => b.textContent === "Dismiss")!);
+      calls.shift()!.answer({ error: "no such item" }, false);
+      await flush();
+      expect(undoBtn()).toBeUndefined();
+      expect((toastEl() as any).className).toBe("show error");
+      cleanup();
+    });
+
+    it("shows an error toast when the undo fails", async () => {
+      const { cleanup } = await dismissed();
+      undoBtn()!.click();
+      await flush();
+      calls.shift()!.answer({ error: "boom" }, false);
+      await flush();
+      expect((toastEl() as any).className).toBe("show error");
+      cleanup();
+    });
+
+    it("Show again still restores all (an empty body)", async () => {
+      const { main, cleanup } = await open(data([], { dismissed: 2 }));
+      click(main.all("button").find((b) => b.textContent === "Show again")!);
+      expect(calls.shift()!.body).toBe("{}");
+      cleanup();
+    });
   });
 
   it("the newest answer wins over a slower poll", async () => {

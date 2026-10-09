@@ -281,6 +281,9 @@ pre.diff .file { font-weight: 700; display: block; }
 #toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: var(--radius-md); opacity: 0; transition: var(--motion-slow); pointer-events: none; z-index: var(--layer-toast); max-width: 90vw; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.error { background: var(--fail); color: var(--color-on-danger); }
+#toast button { pointer-events: auto; color: inherit; background: transparent; border-color: currentColor; margin-left: 12px; }
+#toast .toast-close { border: 0; }
+#toast .toast-close::before { content: "✕"; }
 
 @media (max-width: 1100px) {
   .editor, .run-grid, .dash-grid { grid-template-columns: 1fr; }

@@ -157,8 +157,16 @@ export async function renderYourTurn(main, { embedded = false, onData } = {}) {
   let left; // an item with a watcher whose link was opened: check GitHub again when the user comes back
   const fail = (e) => toast(e.message, "error");
   const handlers = {
-    onDismiss: (key) => refresh(() => api.dismissTurn(key)).catch(fail),
-    onRestore: () => refresh(api.restoreTurn).catch(fail),
+    onDismiss: async (key) => {
+      try {
+        await refresh(() => api.dismissTurn(key));
+        // Undo brings back only this item. It stays until used or replaced, so the keyboard can reach it.
+        toast("Item dismissed", "info", { sticky: true, action: { label: "Undo", run: () => refresh(() => api.restoreTurn(key)).catch(fail) } });
+      } catch (e) {
+        fail(e);
+      }
+    },
+    onRestore: () => refresh(() => api.restoreTurn()).catch(fail),
     onLeave: (item) => { if (item.watcher) left = item.watcher; },
     // Wait for the action first: a poll that started meanwhile is older than its answer and must not win.
     onAct: async (body) => {

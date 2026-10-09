@@ -1,4 +1,6 @@
 import { h } from "./dom.js";
+import { button, link } from "./kit/actions.js";
+import { banner as kitBanner } from "./kit/display.js";
 
 // What a page can say about a failure without guessing: the client cannot know if a request that got no answer took effect.
 const KINDS = {
@@ -85,4 +87,18 @@ export function staleNote(at, { failed = false, onRetry } = {}) {
     ? `Could not refresh. Showing data from ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
     : "Could not refresh.";
   return h("p", { class: "stale-note failed", role: "status" }, text, onRetry && h("button", { type: "button", class: "small", onClick: () => onRetry() }, "Retry"));
+}
+
+const BANNER_TONES = { error: "fail", warn: "warn", info: "neutral" };
+
+/**
+ * A message that stays on the page (a required follow-up, stale data, a lost stream). An adapter over the kit banner:
+ * "error" is `role="alert"`, the others `role="status"`. An action is `{ label, onClick }` or `{ label, href }`.
+ */
+export function banner(kind, text, actions) {
+  const k = Object.hasOwn(BANNER_TONES, kind) ? kind : "info";
+  const nodes = (actions ?? []).map((a) => (a.href
+    ? link({ href: a.href }, a.label)
+    : button({ size: "small", onClick: a.onClick }, a.label)));
+  return kitBanner({ tone: BANNER_TONES[k], actions: nodes.length ? nodes : undefined, "data-kind": k }, text);
 }

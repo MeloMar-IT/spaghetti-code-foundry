@@ -43,6 +43,29 @@ The client cannot know whether a request that got no answer took effect. The `of
 | Optimistic | The change is shown at once and sent after | Show the new value; on failure put the old value back and use `errorState` inline |
 | Blocking | The user must decide or wait before going on, or is not allowed | A dialog for the decision; `permissionState` when not allowed |
 
+## Messages and confirmations
+
+Part 2 of 8 (#343). `toast` and `confirmDialog` are in `ui/dom.js`; `banner` is in `ui/states.js`.
+
+| Function | What it does |
+|---|---|
+| `toast(msg, kind = "info", { action, sticky })` | A short message. Info goes after 3.5 s. `kind === "error"` or `sticky` stays until the ✕ button is pressed. `action: { label, run }` draws one button (used for Undo); it runs once and closes the toast. A new toast replaces the old one. The live region uses `role="status"` (info) or `role="alert"` (error); the same text within 5 s is announced once |
+| `confirmDialog({ title, text, confirm = "Delete", cancel, danger = true })` | `Promise<boolean>` on `modal()`. Focus starts on Cancel. `true` only from the confirm button; Escape, ✕ and the backdrop give `false` |
+| `banner(kind, text, actions?)` | A message that stays on the page. `kind` is `error`, `warn` or `info`. `role="alert"` for `error`, else `role="status"` |
+
+When to use which:
+
+| Need | Use |
+|---|---|
+| Confirm that an action worked | Info toast |
+| An action failed | Error toast (stays until read), or the inline pattern when it belongs to one field or row |
+| A field is wrong | Inline validation next to the field |
+| Required follow-up, stale data, a lost stream | `banner` or text on the page. A toast never carries the only copy of a required follow-up |
+| A dangerous or hard-to-reverse action | `confirmDialog` |
+| A reversible action | Do it, then a toast with Undo |
+
+Undo is offered only where the server already has a reverse call: `api.restoreTurn(key)` (Dismiss on Home, restores only that item) and `api.restoreRefinement` (Drop in Refinement, own sessions only). Drop keeps its confirmation. The two Undo toasts are sticky.
+
 ## Where each state is planned
 
 Every cell is "planned in part N" until the part converts that workspace. The parts are #343–#349.

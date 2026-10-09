@@ -14,13 +14,16 @@ afterAll(() => restore());
 const realFetch = globalThis.fetch;
 let answers: Record<string, any>;
 let log: string[];
+let sent: { method: string; path: string; body?: string }[];
 beforeEach(() => {
   vi.useFakeTimers();
   log = [];
   answers = {};
-  (globalThis as any).fetch = async (url: string) => {
+  sent = [];
+  (globalThis as any).fetch = async (url: string, init?: { method?: string; body?: string }) => {
     const path = url.split("?")[0]!;
     log.push(path);
+    if (init?.method && init.method !== "GET") sent.push({ method: init.method, path, body: init.body });
     const a = typeof answers[path] === "function" ? answers[path]() : answers[path];
     if (a instanceof Error) return { ok: false, status: 500, statusText: "x", json: async () => ({ error: a.message }) };
     return { ok: true, status: 200, statusText: "OK", json: async () => a ?? {} };
@@ -63,6 +66,26 @@ describe("renderAdminHome", () => {
     expect(main.all("h1").map((e) => e.textContent)).toEqual(["Home"]);
     expect(main.textContent).toContain("1 needs you");
     expect(main.all("a").some((a) => a.attrs.class?.includes("btn"))).toBe(true);
+    off();
+  });
+
+  it("Dismiss offers Undo, which restores only that item and draws it again in Needs you", async () => {
+    const next = nextStep("approval", { repo: "o/a", issue: 5, runId: "r9" }, { watched: true, issueUrl: "https://github.com/o/a/issues/5" });
+    const item = turnItem(next);
+    set({ turn: turn([item]) });
+    answers["/api/your-turn/dismiss"] = turn([], { dismissed: 1 });
+    const { main, off } = await open();
+    const toastEl = document.getElementById("toast") as unknown as FakeElement;
+    toastEl.textContent = "";
+    main.all("button").find((b) => b.textContent === "Dismiss")!.click();
+    await flush();
+    expect(sent).toEqual([{ method: "POST", path: "/api/your-turn/dismiss", body: JSON.stringify({ key: "k1" }) }]);
+    expect(h2(main)).not.toContain("Needs you (1)");
+    answers["/api/your-turn/restore"] = turn([item]);
+    toastEl.all("button").find((b) => b.textContent === "Undo")!.click();
+    await flush();
+    expect(sent[1]).toEqual({ method: "POST", path: "/api/your-turn/restore", body: JSON.stringify({ key: "k1" }) });
+    expect(h2(main)).toContain("Needs you (1)");
     off();
   });
 
