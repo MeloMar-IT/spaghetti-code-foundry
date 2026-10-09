@@ -106,25 +106,3 @@ describe("save", () => {
     expect(button(main, "Save").disabled).toBe(false);
   });
 });
-
-describe("clean up", () => {
-  it("Preview opens no dialog; Clean up asks first", async () => {
-    const main = await draw();
-    button(main, "Preview").click();
-    await flush();
-    expect(root().children).toHaveLength(0);
-    expect(sent.map((s) => s.body?.dryRun)).toEqual([true]);
-    button(main, "Clean up").click();
-    await flush();
-    expect(root().textContent).toContain("Remove these workspaces now?");
-    button(root(), "Cancel").click();
-    await flush();
-    expect(sent).toHaveLength(1);
-    button(main, "Clean up").click();
-    await flush();
-    button(root(), "Clean up").click();
-    await flush();
-    expect(sent).toHaveLength(2);
-    expect(sent[1]!.body.dryRun).toBe(false);
-  });
-});

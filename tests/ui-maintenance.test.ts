@@ -18,6 +18,8 @@ afterEach(() => {
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+const modalRoot = () => document.getElementById("modal-root") as unknown as FakeElement;
+const dialog = (text: string) => modalRoot().all("button").find((b) => b.textContent === text)!;
 
 async function render(answer: any = { workspaces: ["a", "b"], runs: ["x"], freedMb: 12, kept: ["k"] }, fail = false) {
   const calls: { url: string; method?: string; body: any }[] = [];
@@ -44,11 +46,10 @@ describe("Maintenance", () => {
   });
 
   it("previews with dryRun true and no confirm", async () => {
-    let asked = false;
-    (globalThis as any).confirm = () => ((asked = true), true);
     const { main, calls, button } = await render();
     button("Preview").click();
     await flush();
+    expect(modalRoot().children).toHaveLength(0);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain("/api/clean");
     expect(calls[0]!.method).toBe("POST");
@@ -56,7 +57,6 @@ describe("Maintenance", () => {
     expect(calls[0]!.body).toMatchObject({ olderThanDays: 7, dryRun: true });
     expect(calls[0]!.body.purge).toBeFalsy();
     expect(calls[0]!.body.includePaused).toBeFalsy();
-    expect(asked).toBe(false);
     expect(main.textContent).toContain("Would remove 2 workspace(s) and 1 run(s) · 12 MB · keeping 1 paused/running");
   });
 
@@ -69,22 +69,24 @@ describe("Maintenance", () => {
   });
 
   it("does nothing when the confirmation is declined", async () => {
-    (globalThis as any).confirm = () => false;
     const { calls, button } = await render();
     button("Clean up").click();
+    await flush();
+    dialog("Cancel").click();
     await flush();
     expect(calls).toHaveLength(0);
   });
 
   it("cleans up after confirming, with the changed values", async () => {
-    let seen = "";
-    (globalThis as any).confirm = (t: string) => ((seen = t), true);
     const { main, calls, button } = await render();
     main.all("input").find((i) => i.attrs.type === "number")!.value = "30";
     for (const b of main.all("input").filter((i) => i.attrs.type === "checkbox")) (b as any).checked = true;
     button("Clean up").click();
     await flush();
-    expect(seen).toBe("Remove these workspaces now? Branches in your repos are kept.");
+    expect(modalRoot().textContent).toContain("Remove these workspaces now?");
+    expect(modalRoot().textContent).toContain("Branches in your repos are kept.");
+    dialog("Clean up").click();
+    await flush();
     expect(calls[0]!.body).toEqual({ olderThanDays: 30, purge: true, includePaused: true, dryRun: false });
     expect(main.textContent).toContain("Removed 2 workspace(s)");
   });
