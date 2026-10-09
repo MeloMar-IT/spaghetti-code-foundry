@@ -67,18 +67,18 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/admin.js:44` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
-| `ui/admin.js:154` | confirm | Delete watcher <id>? | Delete a watcher (button) |
-| `ui/admin.js:159` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
-| `ui/admin.js:227` | confirm | Remove these workspaces now? | Clean workspaces |
-| `ui/app.js:92` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:255` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:276` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:297` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/admin.js:40` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
+| `ui/admin.js:150` | confirm | Delete watcher <id>? | Delete a watcher (button) |
+| `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
+| `ui/maintenance.js:12` | confirm | Remove these workspaces now? | Clean workspaces |
+| `ui/app.js:93` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:256` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:277` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:298` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/health.js:49` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
-| `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
+| `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:40`) | Switch the monitor on |
 | `ui/refinement-draft.js:471` | confirm | Remove this story draft? | Remove a draft |
 | `ui/refinement-draft.js:526` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
 | `ui/refinement-publish.js:223` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |

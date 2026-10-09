@@ -17,6 +17,8 @@ const A = ["admin"];
 const AU = ["admin", "user"];
 
 // nav: "primary" | "secondary" | "action" | "detail". dest: destination id, null for the Start work action.
+// section: id from SECTIONS, optional (administration pages only).
+const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "administration", dest: "administration", parent: null, nav: "secondary", label: { admin: title }, roles: A, section });
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home" }, roles: A },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
@@ -27,16 +29,20 @@ export const PAGES = [
   { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU },
   { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
   { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU },
-  { id: "all-repos", path: "#/all-repos", title: "All repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "All repositories" }, roles: A },
-  { id: "credentials", path: "#/credentials", title: "Credentials", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "Credentials" }, roles: A },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "library", path: "#/library", title: "Library", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Library" }, roles: A },
-  ...["users", "watchers", "models", "problems", "dashboard", "audit", "settings"].map((id) => ({
-    id, path: `#/${id}`, title: id[0].toUpperCase() + id.slice(1), area: "administration", dest: "administration", parent: null, nav: "secondary",
-    label: { admin: id[0].toUpperCase() + id.slice(1) }, roles: A,
-  })),
+  adminPage("problems", "Problems", "operations"),
+  adminPage("watchers", "Watchers", "operations"),
+  adminPage("models", "Models", "operations"),
+  adminPage("dashboard", "Dashboard", "operations"),
+  adminPage("users", "Users", "access"),
+  adminPage("all-repos", "All repositories", "access"),
+  adminPage("credentials", "Credentials", "access"),
+  adminPage("audit", "Audit", "access"),
+  adminPage("settings", "Settings", "system"),
+  adminPage("maintenance", "Maintenance", "system"),
 ];
 
 // group "work" = daily work; "setup" = configuration, drawn smaller and apart.
@@ -52,6 +58,9 @@ export const DESTINATIONS = [
 
 /** The groups of the sidebar, in order. */
 export const GROUPS = [{ id: "work", label: "Work" }, { id: "setup", label: "Setup" }];
+
+/** The labelled sections of the Administration secondary row, in order. */
+export const SECTIONS = [{ id: "operations", label: "Operations" }, { id: "access", label: "People and access" }, { id: "system", label: "System" }];
 
 export const ALIASES = [{ from: "#/your-turn", to: "#/home", roles: A }];
 
@@ -75,7 +84,7 @@ export function actionsFor(role) {
 /** The secondary pages of a destination; [] when there are fewer than two. */
 export function subnavFor(role, destId) {
   const list = PAGES.filter((p) => p.nav === "secondary" && p.dest === destId && forRole(role)(p));
-  return list.length < 2 ? [] : list.map((p) => ({ id: p.id, label: labelOf(p, role), href: p.path }));
+  return list.length < 2 ? [] : list.map((p) => ({ id: p.id, label: labelOf(p, role), href: p.path, ...(p.section ? { section: p.section } : {}) }));
 }
 
 function match(role, parts) {

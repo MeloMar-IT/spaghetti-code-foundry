@@ -8,6 +8,7 @@ import { initShell, showPage } from "./shell.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, renderLibrary, saveStepAsBlock } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
+import { renderMaintenance } from "./maintenance.js";
 import { refreshModelLists, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderProblems } from "./problems.js";
@@ -401,6 +402,7 @@ async function route() {
     else if (section === "watchers") await renderWatchers(main);
     else if (section === "problems") await renderProblems(main);
     else if (section === "settings") await renderSettings(main);
+    else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
     else if (section === "credentials") {

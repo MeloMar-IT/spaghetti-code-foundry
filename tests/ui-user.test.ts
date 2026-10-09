@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
-const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "admin-credentials"];
+const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "admin-credentials", "maintenance"];
 
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");

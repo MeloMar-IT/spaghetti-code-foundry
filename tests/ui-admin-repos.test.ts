@@ -390,7 +390,7 @@ describe("wiring", () => {
 
   it("links the page and imports it", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "repos")).toContainEqual({ id: "all-repos", href: "#/all-repos", label: "All repositories" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "all-repos", href: "#/all-repos", label: "All repositories", section: "access" });
     const app = read("app.js");
     expect(app).toContain('from "./admin-repos.js"');
     expect(app).toContain('section === "all-repos"');

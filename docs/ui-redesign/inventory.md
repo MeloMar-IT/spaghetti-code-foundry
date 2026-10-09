@@ -11,7 +11,7 @@ How to read it:
 
 ## Admin display
 
-The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 4 detail forms).
+The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 4 detail forms).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
@@ -30,9 +30,10 @@ The page at `/`. 22 route rows (18 sections in `route()` at `ui/app.js:375` and 
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
 | `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
-| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 19 inline styles, 4 native confirms and two pages |
-| `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings; clean workspaces | Save | Shares a file with Watchers (F6); the clean action is a native confirm (`admin.js:227`) |
-| `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:44` (`problems.js:88`) |
+| `#/maintenance` | Maintenance | `ui/maintenance.js` | `renderMaintenance` | `api-admin.ts` | admin display only | Clean old run workspaces | Clean up | The clean action is a native confirm (`maintenance.js:12`) |
+| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 14 inline styles, 3 native confirms and two pages |
+| `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
+| `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:40` (`problems.js:88`) |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 17 inline styles; 3 tables, none inside `.table-box` |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`); 7 inline styles |
@@ -101,6 +102,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/repos` | "No repositories yet..." (`repos.js:395`) | errors box | none |
 | `#/all-repos` | "No repositories yet." (`admin-repos.js:222`) | errors box | cleanup returned |
 | `#/credentials` | "No stored credentials yet." (`admin-credentials.js:36`) | errors box | cleanup returned |
+| `#/maintenance` | no empty state | toast | none |
 | `#/watchers` | `div.empty` (`admin.js:211`) | errors box | none found |
 | `#/settings` | no empty state | errors box | none |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
@@ -136,6 +138,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/repos` | `.table-box` scrolls | Same |
 | `#/all-repos` | Table not in `.table-box`: probably overflows | Probably overflows |
 | `#/credentials` | Table not in `.table-box` | Probably overflows |
+| `#/maintenance` | Form | Probably fits |
 | `#/watchers` | Cards with inline styles | Probably fits |
 | `#/settings` | Form | Probably fits |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
@@ -158,14 +161,14 @@ Count of `style:` occurrences per file (one line can hold more than one; `runs.j
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 157 in 22 files. Lines that contain one: 156.
+Total 161 in 25 files. Lines that contain one: 160.
 
 | File | Uses |
 |---|---|
-| `ui/admin.js` | 19 |
+| `ui/admin.js` | 14 |
 | `ui/editor.js` | 18 |
 | `ui/models.js` | 17 |
-| `ui/runs.js` | 13 |
+| `ui/runs.js` | 12 |
 | `ui/app.js` | 11 |
 | `ui/watcher-form.js` | 10 |
 | `ui/user/runs.js` | 9 |
@@ -177,8 +180,11 @@ Total 157 in 22 files. Lines that contain one: 156.
 | `ui/step-types.js` | 5 |
 | `ui/dashboard.js` | 4 |
 | `ui/library.js` | 4 |
+| `ui/maintenance.js` | 4 |
 | `ui/problems.js` | 3 |
+| `ui/refinement-publish.js` | 3 |
 | `ui/refinement-suggest.js` | 3 |
+| `ui/fields.js` | 2 |
 | `ui/refinement-impact.js` | 2 |
 | `ui/refinement-talk.js` | 2 |
 | `ui/monitor.js` | 1 |
