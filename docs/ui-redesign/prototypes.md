@@ -82,6 +82,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/repos` | both | Repositories, scope Mine (`repositories.html`) | yes | |
 | `#/all-repos` | admin | Repositories, scope All | yes | |
 | `#/credentials` | admin | Repositories, Credentials column and settings panel | yes | |
+| `#/maintenance` | admin | Administration, Maintenance (title only) | yes | |
 | `#/watchers` | admin | Administration, Watchers (title only) | yes | |
 | `#/settings` | admin | Administration, Settings | yes | |
 | `#/problems` | admin | Health band and panel; Administration, Problems (title only) | yes | |

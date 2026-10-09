@@ -21,6 +21,8 @@ let repos: any[];
 let sent: { method: string; url: string; body: any }[];
 let answers: Answer[];
 let heldGets: (() => void)[][];
+/** The next GETs fail with these answers (in order) instead of returning the list. */
+let getFails: (Answer | "throw")[];
 const realFetch = globalThis.fetch;
 let nextId = 1;
 
@@ -34,8 +36,12 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+  getFails = [];
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
+      const failed = getFails.shift();
+      if (failed === "throw") throw new TypeError("fetch failed");
+      if (failed) return reply({ error: failed.error }, failed.status);
       const snapshot = [...repos];
       const wait = heldGets.shift();
       if (wait) await new Promise<void>((r) => wait.push(r));
@@ -390,7 +396,7 @@ describe("wiring", () => {
 
   it("links the page and imports it", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "repos")).toContainEqual({ id: "all-repos", href: "#/all-repos", label: "All repositories" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "all-repos", href: "#/all-repos", label: "All repositories", section: "access" });
     const app = read("app.js");
     expect(app).toContain('from "./admin-repos.js"');
     expect(app).toContain('section === "all-repos"');
@@ -407,6 +413,101 @@ describe("wiring", () => {
     await api.setRepoReady("a b", { items: null });
     await api.transferRepo("a b", "x@y.io");
     expect(seen).toEqual(["GET /api/admin/repos", "PUT /api/admin/repos/a%20b/settings", "PUT /api/admin/repos/a%20b/ready", "POST /api/admin/repos/a%20b/transfer"]);
+  });
+
+  describe("states", () => {
+    const failedConnection = { at: new Date().toISOString(), ok: false, checks: [{ check: "clone", ok: false, code: "bad-token", message: "The host did not accept the token." }] };
+
+    it("draws a skeleton while the list loads", async () => {
+      const gate: (() => void)[] = [];
+      heldGets.push(gate);
+      const loading = show();
+      await flush();
+      expect(main().textContent).toContain("Repositories");
+      expect(byClass(main(), "skeleton")).toHaveLength(1);
+      expect(walk(main()).some((e) => e.attrs["aria-busy"] === "true")).toBe(true);
+      expect(walk(main()).some((e) => e.tag === "button")).toBe(false);
+      gate.forEach((r) => r());
+      await loading;
+      expect(byClass(main(), "skeleton")).toHaveLength(0);
+    });
+
+    it("shows a server error with Retry, and Retry loads again", async () => {
+      getFails.push({ status: 500, error: "the store is broken" });
+      await show();
+      expect(byClass(main(), "state-error")[0]!.attrs["data-kind"]).toBe("server");
+      expect(main().textContent).toContain("The repositories could not be loaded. the store is broken");
+      repos = [rec()];
+      press(button(main(), "Retry"));
+      await flush();
+      expect(byClass(main(), "state-error")).toHaveLength(0);
+      expect(main().textContent).toContain("https://github.com/o/a");
+    });
+
+    it("shows a network failure as offline", async () => {
+      getFails.push("throw");
+      await show();
+      expect(byClass(main(), "state-error")[0]!.attrs["data-kind"]).toBe("offline");
+    });
+
+    it("shows a 403 as a permission state with a link to My repositories", async () => {
+      getFails.push({ status: 403, error: "admin only" });
+      await show();
+      const box = byClass(main(), "state-permission")[0]!;
+      expect(box.textContent).toContain("Only an admin can see the repositories of all accounts.");
+      expect(walk(box).find((e) => e.tag === "a")!.attrs.href).toBe("#/repos");
+      expect(button(main(), "Retry")).toBeUndefined();
+    });
+
+    it("disposing an older render does not stop a newer one that is still loading", async () => {
+      (globalThis as any).location = { hash: "#/all-repos" };
+      repos = [rec()];
+      const a: (() => void)[] = [];
+      const b: (() => void)[] = [];
+      heldGets.push(a, b);
+      const first = show();
+      await flush();
+      const second = show();
+      await flush();
+      a.forEach((r) => r());
+      (await first)();
+      b.forEach((r) => r());
+      await second;
+      expect(main().textContent).toContain("https://github.com/o/a");
+      expect(byClass(main(), "skeleton")).toHaveLength(0);
+    });
+
+    it("draws an empty list through the empty box", async () => {
+      await show();
+      expect(byClass(main(), "empty")[0]!.textContent).toContain("No repositories yet.");
+    });
+
+    it("keeps the rows and says so when the reload after a dialog fails, and Retry clears it", async () => {
+      const r = rec();
+      repos = [r];
+      await show();
+      press(button(main(), "Settings"));
+      press(button(root(), "Save"));
+      getFails.push({ status: 500, error: "down" });
+      await flush();
+      await flush();
+      expect(toastText()).toBe("Settings saved");
+      expect(main().textContent).toContain(r.url);
+      expect(byClass(main(), "stale-note")[0]!.attrs.class).toContain("failed");
+      press(button(byClass(main(), "stale-note")[0]!, "Retry"));
+      await flush();
+      expect(byClass(main(), "stale-note")).toHaveLength(0);
+    });
+
+    it("shows a failed connection with its reasons, and no test button", async () => {
+      repos = [rec({ connection: failedConnection })];
+      await show();
+      const problem = walk(main()).find((e) => e.attrs["data-state"] === "provider-failure")!;
+      expect(problem.textContent).toContain("Connection failed");
+      expect(problem.textContent).toContain("Read: The host did not accept the token.");
+      expect(button(main(), "Test again")).toBeUndefined();
+      expect(button(main(), "Test connection")).toBeUndefined();
+    });
   });
 
   it("never gives the page to a user", () => {

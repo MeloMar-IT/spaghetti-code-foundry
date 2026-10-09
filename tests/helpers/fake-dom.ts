@@ -12,6 +12,8 @@ export class FakeElement extends FakeNode {
   value = "";
   checked = false;
   disabled = false;
+  scrollTop = 0;
+  scrollLeft = 0;
   classList = {
     names: new Set<string>(),
     add: (n: string) => void this.classList.names.add(n),

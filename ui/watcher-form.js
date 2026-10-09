@@ -89,7 +89,7 @@ function guarded(state, button, send, close, mark) {
     } catch (e) {
       state.busy = false;
       button.disabled = false;
-      mark(e.message);
+      mark(e instanceof TypeError ? "Could not reach the server." : e.message);
       return;
     }
     state.busy = false;
@@ -155,7 +155,10 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     showFor();
     const repoField = existing
       ? f("Repository", h("span", { class: "mono" }, existing.github_repo || existing.repoId))
-      : available.length ? f("Repository", repo) : h("p", { class: "status bad flush", role: "alert" }, "No connected repository can have a watcher.");
+      : available.length ? f("Repository", repo)
+        : !(repos ?? []).length
+          ? h("p", { class: "status bad flush", role: "alert" }, "No repositories yet. ", h("a", { href: "#/repos" }, "Add one under My repositories."))
+          : h("p", { class: "status bad flush", role: "alert" }, "No connected repository can have a watcher.");
     return h("div", { class: "stack" },
       h("datalist", { id: "watcher-flows" }, (flows ?? []).map((x) => h("option", { value: x.name }))),
       repoField,

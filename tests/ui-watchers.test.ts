@@ -288,6 +288,30 @@ describe("the dialog", () => {
     expect(sent).toEqual([]);
   });
 
+  it("with no repository at all it links to My repositories", async () => {
+    repos = [];
+    void open();
+    expect(root().textContent).toContain("No repositories yet.");
+    expect(root().textContent).not.toContain("No connected repository");
+    expect(walk(root()).find((e) => e.tag === "a")!.attrs.href).toBe("#/repos");
+    expect(button(root(), "Save watcher")!.attrs.disabled).toBeDefined();
+  });
+
+  it("a network failure says the server could not be reached and enables Save again", async () => {
+    const fetchBefore = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string, init: { method: string }) => {
+      if (init.method === "POST") throw new TypeError("fetch failed");
+      return (fetchBefore as any)(url, init);
+    };
+    void open();
+    inputOf(root(), "Id").value = "w";
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(root().textContent).toContain("Could not reach the server.");
+    expect(root().textContent).not.toContain("fetch failed");
+    expect(button(root(), "Save watcher")!.disabled).toBe(false);
+  });
+
   it("an answer of the API stays in the dialog, as it is", async () => {
     answers = [{ status: 409, error: 'a watcher with the id "w" exists already; choose another id' }];
     let closed = false;
@@ -416,7 +440,7 @@ describe("the user side", () => {
   it("the admin page has the Watchers link", async () => {
     // The link moved from the top bar to the Administration secondary row (ui/ia.js).
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers", section: "operations" });
     expect(ia.subnavFor("user", "administration")).toEqual([]);
   });
 });

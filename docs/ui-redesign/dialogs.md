@@ -6,7 +6,7 @@ Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
-- **Native `confirm` and `prompt`:** 24 calls in 12 files (second table).
+- **Native `confirm` and `prompt`:** 22 calls in 11 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
 
@@ -38,6 +38,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/repos.js` | Add repository | Add repository on `#/repos` | address; method list from `methodsFor` (varies with admin and GitHub App); fields change with the method | Add | `modal` (`repoDialog`) |
 | `ui/repos.js` | Change authentication | Change button on a row | method; fields change with the method | Save | `modal` (`repoDialog` with `repo`) |
 | `ui/repos.js` | Definition of Ready | Button on a row of `#/repos` | none (read-only list) | none; the ✕ closes it | `modal` |
+| `ui/repos.js` | Remove repository | Remove on a row | none | Remove | `confirmDialog` (`ui/dom.js`) |
+| `ui/repos.js` | Generate a new key | Generate a new key on a deploy-key row | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |
 | `ui/turn-act.js` | Show questions | Button on a Your turn item with questions | answer per question; Accept all recommendations; Use recommendation | Post answers | `openDetail` |
 | `ui/turn-act.js` | Show plan | Button on an item that waits for plan approval | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Show split | Button on an item that waits for split approval | notes | Approve or Reject | `openDetail` |
@@ -69,18 +71,18 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/admin.js:45` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
-| `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (button) |
-| `ui/admin.js:160` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
-| `ui/admin.js:228` | confirm | Remove these workspaces now? | Clean workspaces |
-| `ui/app.js:96` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:259` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:280` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:301` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/admin.js:41` | confirm | The state file cannot be read. Switching on keeps it as monitor-guard.json.broken ... | Switch the monitor on |
+| `ui/admin.js:151` | confirm | Delete watcher <id>? | Delete a watcher (button) |
+| `ui/admin.js:156` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
+| `ui/maintenance.js:12` | confirm | Remove these workspaces now? | Clean workspaces |
+| `ui/app.js:97` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:260` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:281` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:302` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
-| `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:44`) | Switch the monitor on |
+| `ui/problems.js:88` | confirm | The state file cannot be read ... (same text as `admin.js:41`) | Switch the monitor on |
 | `ui/refinement-draft.js:458` | confirm | Remove this story draft? | Remove a draft |
 | `ui/refinement-draft.js:585` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
 | `ui/refinement-parts.js:133` | confirm | Merge "<B>" into "<A>"? ... | Merge two drafts |
@@ -89,9 +91,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
 | `ui/refinement.js:422` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
-| `ui/repos.js:338` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
-| `ui/repos.js:392` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
-| `ui/runs.js:338` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:339` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:348` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:352` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:297` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:298` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:307` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:311` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

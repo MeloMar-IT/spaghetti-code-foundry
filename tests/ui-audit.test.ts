@@ -334,7 +334,7 @@ describe("wiring", () => {
   const read = (p: string) => readFileSync(new URL(`../ui/${p}`, import.meta.url), "utf8");
   it("has the link, the route and the role rule", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "audit", href: "#/audit", label: "Audit" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "audit", href: "#/audit", label: "Audit", section: "access" });
     expect(read("app.js")).toContain('from "./audit.js"');
     expect(read("app.js")).toContain('section === "audit"');
     expect(read("user/index.html")).not.toContain("#/audit");

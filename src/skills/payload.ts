@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { estimateTokens } from "./catalogue.js";
 
 // The text a Claude session gets for the skills its run locked: one bounded, delimited block in front of the task.
@@ -27,6 +28,17 @@ export interface SkillPayload {
   estimatedTokens: number;
   /** The first mandatory skill that was left out; the caller must refuse the session. */
   blocked?: string;
+  /** "reviewer" for the block of a reviewer session. */
+  role?: "reviewer";
+}
+
+/** What a reviewer block takes of a package: the description and REVIEW.md, never the instructions. */
+export interface ReviewSkill {
+  id: string;
+  version: string;
+  digest: string;
+  description: string;
+  review: string;
 }
 
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
@@ -52,8 +64,15 @@ function section(s: PayloadSkill): string {
   ].join("\n");
 }
 
-const wrap = (sections: string[]): string =>
-  [`<${SKILL_PAYLOAD_TAG} count="${sections.length}">`, INTRO, "", ...sections.flatMap((x) => [x, ""]), `</${SKILL_PAYLOAD_TAG}>`].join("\n");
+const REVIEW_INTRO = [
+  `The checks below are approved Foundry review guidance for the skills this change uses. Use them as extra checks and report only real problems.`,
+  INTRO.split("\n")[1]!,
+  INTRO.split("\n")[2]!,
+  `You are reviewing: do not change files and do not run anything a skill names.`,
+].join("\n");
+
+const wrap = (sections: string[], attrs = "", intro = INTRO): string =>
+  [`<${SKILL_PAYLOAD_TAG} count="${sections.length}"${attrs}>`, intro, "", ...sections.flatMap((x) => [x, ""]), `</${SKILL_PAYLOAD_TAG}>`].join("\n");
 
 export function renderSkillPayload(skills: readonly PayloadSkill[], limits: { maxTokens: number }): SkillPayload {
   const keyOf = (s: PayloadSkill) => `${s.id}@${s.version}`;
@@ -95,7 +114,71 @@ export function renderSkillPayload(skills: readonly PayloadSkill[], limits: { ma
   };
 }
 
+const reviewSection = (s: ReviewSkill): string =>
+  [`<foundry-skill id="${s.id}" version="${s.version}" digest="${s.digest}">`, oneLine(s.description), "", safe(s.review).trim(), `</foundry-skill>`].join("\n");
+
+const REVIEW_ATTRS = ` role="reviewer"`;
+
+/** The block of a reviewer session. Flat, in input order; never above min(maxTokens, below - 1). */
+export function renderReviewPayload(
+  skills: readonly ReviewSkill[],
+  limits: { maxTokens: number; maxSkillTokens: number; below?: number },
+): SkillPayload {
+  const cap = Math.min(limits.maxTokens, limits.below === undefined ? Infinity : limits.below - 1);
+  const loaded: string[] = [];
+  const omitted: string[] = [];
+  const sections: string[] = [];
+  for (const s of skills) {
+    const sec = reviewSection(s);
+    const key = `${s.id}@${s.version}`;
+    if (estimateTokens(sec) <= limits.maxSkillTokens && estimateTokens(wrap([...sections, sec], REVIEW_ATTRS, REVIEW_INTRO)) <= cap) {
+      sections.push(sec);
+      loaded.push(key);
+    } else omitted.push(key);
+  }
+  const text = sections.length ? wrap(sections, REVIEW_ATTRS, REVIEW_INTRO) : "";
+  return { text, loaded, omitted, bytes: Buffer.byteLength(text), estimatedTokens: estimateTokens(text), role: "reviewer" };
+}
+
 /** The prompt of a Claude session: the block, an empty line, then the task. Unchanged when the block is "". */
 export function withSkillPayload(prompt: string, payloadText: string): string {
   return payloadText ? `${payloadText}\n\n${prompt}` : prompt;
+}
+
+export type SkillContextState = "loaded" | "reloaded" | "reused";
+
+/** "sha256:<hex>" of the block text; "" for an empty text. */
+export function skillPayloadDigest(text: string): string {
+  return text ? `sha256:${createHash("sha256").update(text).digest("hex")}` : "";
+}
+
+/** One line for a session that already holds the block: ids and versions only. */
+export function skillReminder(loaded: readonly string[]): string {
+  return `The <${SKILL_PAYLOAD_TAG}> block given earlier in this session still applies: ${loaded.join(", ")}.`;
+}
+
+export interface SkillAttach {
+  state: SkillContextState;
+  /** What goes in front of the task. */
+  text: string;
+  digest: string;
+  /** What this step adds to the prompt (0 when reused). */
+  attachedBytes: number;
+  attachedEstimatedTokens: number;
+}
+
+/**
+ * Decide what a Claude session gets. `continues`: the CLI continues an earlier session; `holds`: the digest of
+ * the block that session received; `again`: this is not the first session of the step (resume, retry, fallback).
+ */
+export function attachSkillPayload(
+  payload: Pick<SkillPayload, "text" | "loaded" | "bytes" | "estimatedTokens">,
+  session: { continues: boolean; holds?: string; again: boolean },
+): SkillAttach | undefined {
+  if (!payload.text) return undefined;
+  const digest = skillPayloadDigest(payload.text);
+  if (session.continues && session.holds === digest) {
+    return { state: "reused", text: skillReminder(payload.loaded), digest, attachedBytes: 0, attachedEstimatedTokens: 0 };
+  }
+  return { state: session.again ? "reloaded" : "loaded", text: payload.text, digest, attachedBytes: payload.bytes, attachedEstimatedTokens: payload.estimatedTokens };
 }

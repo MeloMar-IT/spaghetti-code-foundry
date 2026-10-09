@@ -109,6 +109,7 @@ steps:
     on_success: send_back
   - id: plan_review
     type: claude
+    skill_role: reviewer
     agent: codex
     effort: high
     jump_only: true

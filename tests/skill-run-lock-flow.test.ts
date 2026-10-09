@@ -204,6 +204,113 @@ ${agentLine}    prompt: |
     expect(s.history.find((h) => h.id === "impl")!.skills).toBeUndefined();
   });
 
+  describe("a repair that continues the session", () => {
+    const repairFlow = (fixLine = "") =>
+      parseFlow(`
+name: t
+workspace: inplace
+steps:
+  - id: risk_gate
+    type: shell
+    run: |
+      # /skill-request
+      echo READY
+      echo '${REQUEST}'
+  - id: impl
+    type: claude
+    prompt: |
+      WRITE ran.txt yes
+      SHOWPROMPT
+  - id: fix
+    type: claude
+    resume: impl
+${fixLine}    prompt: |
+      SHOWPROMPT
+`);
+    const count = (prompt: string) => prompt.split("<foundry-skills count=").length - 1;
+    const out = (s: { history: { id: string; output: string }[] }, id: string) => split(s.history.filter((h) => h.id === id).at(-1)!.output);
+    const rec = (s: { history: { id: string; skills?: unknown }[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)!.skills as Record<string, unknown>;
+    const resumeFrom = (runId: string, from: string, cfg = config) => resumeRun({ runId, runsDir: join(tmp, "runs"), claudeBin, config: cfg, from });
+
+    it("adds only a reminder, keeps the isolation flags and logs it", async () => {
+      demo("1.3.0", low, "Prefer small functions.");
+      const s = await runFlow(repairFlow(), runOpts());
+      expect(s.status).toBe("succeeded");
+      const first = out(s, "impl");
+      const second = out(s, "fix");
+      expect(count(first.prompt)).toBe(1);
+      expect(rec(s, "impl")).toMatchObject({ state: "loaded" });
+      expect(second.args).toContain("--resume");
+      expect(count(second.prompt)).toBe(0);
+      expect(second.prompt).not.toContain("<foundry-skill id=");
+      expect(second.prompt).not.toContain("Prefer small functions.");
+      expect(second.prompt).toContain("still applies: demo@1.3.0");
+      expect(rec(s, "fix")).toMatchObject({ state: "reused", digest: rec(s, "impl").digest, attachedBytes: 0, loaded: ["demo@1.3.0"] });
+      expect(rec(s, "fix").bytes).toBe(rec(s, "impl").bytes);
+      for (const flag of ["--setting-sources project,local", "--strict-mcp-config", "--disable-slash-commands"]) expect(second.args).toContain(flag);
+      const log = readFileSync(join(s.runDir, "live.log"), "utf8");
+      expect(log).toMatch(/skill context: loaded demo@1\.3\.0/);
+      expect(log).toMatch(/skill context: reused demo@1\.3\.0 from the session of impl/);
+      expect(log).not.toContain("Prefer small functions.");
+    });
+
+    it("a resume at the repair reuses the session; a resume at the start loads a new one once", async () => {
+      demo("1.0.0");
+      const s = await runFlow(repairFlow(), runOpts());
+      demo("2.0.0", skills, "Do it better.");
+      const a = await resumeFrom(s.runId, "fix");
+      expect(rec(a, "fix")).toMatchObject({ state: "reused" });
+      const b = await resumeFrom(s.runId, "impl");
+      expect(count(out(b, "impl").prompt)).toBe(1);
+      expect(count(out(b, "fix").prompt)).toBe(0);
+      expect(rec(b, "impl")).toMatchObject({ state: "loaded", loaded: ["demo@1.0.0"] });
+      expect(runJson(s.runDir).skillLock!.skills.map((k) => k.version)).toEqual(["1.0.0"]);
+    });
+
+    it("an older run without the mark gets the block once, as reloaded", async () => {
+      demo("1.0.0");
+      const s = await runFlow(repairFlow(), runOpts());
+      const saved = JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8"));
+      delete saved.state.steps.impl.skills_digest;
+      writeFileSync(join(s.runDir, "run.json"), JSON.stringify(saved));
+      const r = await resumeFrom(s.runId, "fix");
+      expect(count(out(r, "fix").prompt)).toBe(1);
+      expect(rec(r, "fix")).toMatchObject({ state: "reloaded" });
+      expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toMatch(/skill context: reloaded demo@1\.0\.0.*new session/);
+    });
+
+    it.each([["another provider", "ollama:q"], ["another model of the same provider", "anthropic:haiku"]])("%s continues the session and reuses the block", async (_n, model) => {
+      demo("1.0.0");
+      const p = await runFlow(repairFlow(`    model: ${model}\n`), runOpts());
+      expect(p.status).toBe("succeeded");
+      expect(out(p, "fix").args).toContain("--resume");
+      expect(count(out(p, "fix").prompt)).toBe(0);
+      expect(rec(p, "fix")).toMatchObject({ state: "reused" });
+    });
+
+    it("a package that changed after the first session stops the repair before the agent starts", async () => {
+      const dir = demo("1.0.0");
+      const s = await runFlow(repairFlow(), runOpts());
+      writeFileSync(join(dir, "SKILL.md"), "---\nname: demo\ndescription: A test skill.\n---\n\nDo something else.\n");
+      const r = await resumeFrom(s.runId, "fix");
+      expect(r.status).toBe("failed");
+      expect(r.reason).toMatch(/skill integrity: demo@1\.0\.0 changed/);
+      expect(r.history.filter((h) => h.id === "fix").at(-1)!.sessionId).toBeUndefined();
+      expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("skill context: rejected");
+    });
+
+    it("a Codex repair gets no block and a later Claude repair still reuses the first session", async () => {
+      demo("1.0.0");
+      const f = repairFlow("    agent: codex\n");
+      f.steps.push({ id: "fix2", type: "claude", resume: "impl", prompt: "SHOWPROMPT" } as never);
+      const s = await runFlow(f, { ...runOpts(), codexBin });
+      expect(s.status).toBe("succeeded");
+      expect(s.history.find((h) => h.id === "fix")!.skills).toBeUndefined();
+      expect(count(out(s, "fix").prompt)).toBe(0);
+      expect(rec(s, "fix2")).toMatchObject({ state: "reused" });
+    });
+  });
+
   it("a run without a lock gets no block, no record and no isolation when the setting is off", async () => {
     const s = await runFlow(parseFlow("name: t\nworkspace: inplace\nsteps:\n  - {id: a, type: claude, prompt: 'SHOWPROMPT'}\n"), { ...runOpts(), config: ConfigSchema.parse({ isolate_agents: false }) });
     expect(s.history[0]!.skills).toBeUndefined();

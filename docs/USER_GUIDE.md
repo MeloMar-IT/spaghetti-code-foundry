@@ -89,11 +89,11 @@ admin for a new one.
 | **Board** | — | Where every story is, in columns per repository |
 | **Refinement** | — | Where a rough idea grows into a story before it goes to the backlog |
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
-| **Repositories** | My repositories, All repositories, Credentials | My repositories: The repositories you work in, and how the Foundry signs in to them. All repositories: Admin: the repositories of all accounts, their settings, and transfer to another account. Credentials: Admin: the stored credentials of all accounts, without any secret |
+| **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Users, Watchers, Models, Problems, Dashboard, Audit, Settings | Users: The accounts: add, edit, block and delete them (admins only). Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity, disk clean-up |
+| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories, All repositories, Credentials), Flows (Flows, Library) and Administration (Users, Watchers, Models, Problems, Dashboard, Audit, Settings). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 An account with the role `user` works on its own display at `/user/`, with **Home**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
@@ -145,8 +145,8 @@ Everything the UI does is also available from the command line (see [section 9](
 | Your turn | Home (Needs you) | `#/your-turn` |
 | Library | Flows → Library | `#/library` |
 | My repositories | Repositories → My repositories | `#/repos` |
-| All repositories | Repositories → All repositories | `#/all-repos` |
-| Credentials | Repositories → Credentials | `#/credentials` |
+| All repositories | Administration → All repositories | `#/all-repos` |
+| Credentials | Administration → Credentials | `#/credentials` |
 | Users | Administration → Users | `#/users` |
 | Watchers | Administration → Watchers | `#/watchers` |
 | Models | Administration → Models | `#/models` |
@@ -210,6 +210,8 @@ The same rules as for a user apply: only a published flow, only your own reposit
 Home asks again every 30 seconds.
 
 **Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
+
+**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. A read-only preview shows no action buttons.
 
 ### Your turn
 
@@ -415,6 +417,13 @@ its description, or the kind of step when the flow gives none.
   no output, no transcripts and no cost.
 
 - **Changes** — the complete diff the run made, including uncommitted work.
+
+  A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000
+  lines and says "N earlier lines are not shown" above them; it follows the end only while you
+  are at the end. **Changes** lists each file closed (a diff of one file is open) and builds the
+  lines when you open it; a file over 1,500 lines shows the first 1,500 and a **Show all**
+  button. A transcript shows the first 200 events with **Show 200 more**, and a tool result over
+  20,000 characters is cut with **Show all**.
 
   ![Changes](images/run-diff.png)
 
@@ -1750,8 +1759,8 @@ An admin's own connections are not limited. A user cannot read or change any lis
 
 After the first save with a name, an older build of the Foundry rejects the new `slug` field in `config.yaml`.
 
-**Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones here
-or with `scf clean` (branches in your repositories are kept).
+**Disk** — every run keeps its workspace so you can inspect or resume it. Remove old ones on the
+**Maintenance** page (Administration › Maintenance, `#/maintenance`; it is no longer on Settings) or with `scf clean` (branches in your repositories are kept).
 
 **Accounts.** `scf user` keeps accounts in `users.json` in the data folder. Each account has an id,
 name, e-mail, role (`admin` or `user`), status (`active` or `blocked`), password hash, created time
@@ -2511,7 +2520,20 @@ A Claude session gets only the skills of the run's lock. The Foundry puts their 
 - **Rules win.** The block says that the Foundry's safety rules and the instructions of the user and the task win over a skill, and that a skill cannot grant a tool, a permission or network access. Only the description and the instructions of a package are used; its tools, profile and files never reach the session. Text that looks like a block tag is escaped.
 - **Size.** The block may not be larger than `skills.selection.max_tokens`. A skill is added together with the skills it needs, or not at all. A skill that does not fit is left out and logged. If a mandatory skill does not fit, the step stops with `skill selection is blocked: … does not fit the skill context budget`; raise `max_tokens`, then resume.
 - **Recorded.** The step record in `run.json` gets `skills`: `loaded` (`id@version`, in load order), `omitted` (only when something was left out), `bytes` and `estimatedTokens`. Steps without a lock have no `skills`. The log shows the same sizes.
-- **Codex** sessions get no skills yet. The lock is still checked before them.
+- **Repairs and fallbacks.** The full text is given once per Claude session. A step with `resume:` that continues the session of an earlier step (same agent, same locked block) gets only a one-line reminder with the skill ids, not the text again. A new session gets the complete block exactly once: a retry, a fallback to another model or provider, or a resume that cannot continue the old session. Before every session the lock is checked again; if the skills changed, the step stops.
+- **Log.** `skill context: reused …` (nothing added), `skill context: loaded …` (first session), `skill context: reloaded … new session` (retry, fallback or fresh session) and `! skill context: rejected (…)` (lock check failed). The log shows ids, sizes and token estimates, never the package text. The step record `skills` also gets `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; `skills_digest` is kept for the next resume. Older run files without them still work.
+- **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+
+### Review checks for reviewers
+
+A skill package may hold an optional `REVIEW.md` next to `SKILL.md`: a few short checks for a reviewer (for example a Kafka skill checks delivery and ordering; a database skill checks the data model and migration risks). It is at most 8 KiB, must not be empty, and needs the `reviewer` role in `skill.yaml` (or no roles). It is part of the package digest, so a change needs a new pin.
+
+A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step and the `review_N` steps of `issue-plan` have it. Without `skill_role` a step is a coder, as before.
+
+- **Compact.** The block (`<foundry-skills role="reviewer">`) holds only the description and `REVIEW.md` of each skill, never `SKILL.md`, references, scripts or other files. It is limited by `skills.review.max_tokens` (100–20000, default 3000) and `skills.review.max_skill_tokens` (50–5000, default 1000). It is always smaller than the coding block of the same run and never above `skills.selection.max_tokens`. A skill over its limit is left out and logged.
+- **Only coding skills.** Only skills that were loaded for coding and allow the `reviewer` role are used. Skills that were not selected do not appear. Code review uses the run's skill lock. Plan review, before any lock exists, uses the skills of the draft plan's `SKILL_REQUEST` if they resolve; otherwise the reviewer gets none and the log says why.
+- **Read-only.** A reviewer step must be read-only (`permission_mode: plan`, or `dontAsk` without Edit, Write or Bash) and may allow only `Read`, `Glob`, `Grep` and `LS`. It cannot `resume` another step's session. A flow that breaks this is refused when it is loaded, and the step refuses to run for an older stored flow. A reviewer Claude session runs without your personal Claude setup. A Codex reviewer runs read-only, ignores your Codex user config and has MCP servers and hooks switched off.
+- **Same on both agents.** The block is the same for Claude and Codex. The step record gets `skills` with `role: "reviewer"`.
 
 ### Access from other computers
 

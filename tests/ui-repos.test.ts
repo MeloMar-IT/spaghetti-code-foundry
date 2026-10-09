@@ -34,6 +34,7 @@ const connection = (ok: boolean, over: object = {}) => ({
 /** The answer of GET /api/repos/methods (undefined: the call fails, and the page behaves as before). */
 let methodsAnswer: any;
 let methodsCalls = 0;
+let methodsFail = false;
 /** The answer of GET /api/repos/<id>/ready (undefined: a 404). */
 let readyAnswer: any;
 const APP_URL = "https://github.com/apps/foundry-app/installations/new";
@@ -42,7 +43,6 @@ let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
 let heldGets: (() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
 let nextId = 1;
 let keyCount = 0;
 /** A public key as the server shows it (built here, never a real one). */
@@ -63,13 +63,14 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
-  methodsAnswer = undefined;
+  methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } };
+  methodsFail = false;
   methodsCalls = 0;
   readyAnswer = undefined;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET" && url === "/api/repos/methods") {
       methodsCalls++;
-      return methodsAnswer ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+      return methodsAnswer && !methodsFail ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
     }
     if (init.method === "GET" && url.endsWith("/ready")) {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
@@ -117,7 +118,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -133,7 +133,12 @@ const press = (el: FakeElement | undefined) => {
   expect(el, "control").toBeDefined();
   el!.click();
 };
-const pressEscape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
+/** Presses a button of the open dialog (after it has been drawn). */
+const answerDialog = async (label: string) => {
+  await flush();
+  press(button(root(), label));
+};
+const pressEscape =() => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
 const rec = (over: object = {}) => ({ id: `r${nextId++}`, url: "https://github.com/o/a", method: "github-token", ...over });
 const show = async (admin = false) => {
   await ui.renderRepos(main(), { admin });
@@ -323,11 +328,15 @@ describe("the page", () => {
       await flush();
       expect(toastText()).toBe("a test of this repository is running already; wait for it to finish");
       expect(gets).toBe(2);
+      // the failure stays on the row, and there is one test button
+      expect(main().textContent).toContain("The test could not run. a test of this repository is running already");
+      expect(button(main(), "Test connection")).toBeUndefined();
       answers.push("throw");
-      press(button(main(), "Test connection"));
+      press(button(main(), "Test again"));
       await flush();
       expect(toastText()).toBe("Could not reach the server.");
-      expect(button(main(), "Test connection")!.disabled).toBeFalsy();
+      expect(main().textContent).toContain("The test could not run. Could not reach the server.");
+      expect(button(main(), "Test again")!.disabled).toBeFalsy();
     });
 
     it("api.testRepo posts to the escaped address", async () => {
@@ -612,23 +621,24 @@ describe("the page", () => {
     it("asks first", async () => {
       repos = [rec()];
       await show();
-      (globalThis as any).confirm = () => false;
       press(button(main(), "Remove"));
+      await answerDialog("Cancel");
       await flush();
       expect(sent).toEqual([]);
+      expect(root().children).toHaveLength(0);
     });
 
     it("removes after a confirmation and disables the button meanwhile", async () => {
       const r = rec();
       repos = [r];
       await show();
-      let asked = "";
-      (globalThis as any).confirm = (m: string) => ((asked = m), true);
       holdNext = true;
       const btn = button(main(), "Remove")!;
       press(btn);
       await flush();
-      expect(asked).toContain(r.url);
+      expect(root().textContent).toContain(`Remove ${r.url}? Its stored token is deleted too.`);
+      await answerDialog("Remove");
+      await flush();
       expect(btn.disabled).toBe(true);
       expect(sent).toEqual([{ method: "DELETE", url: `/api/repos/${r.id}`, body: undefined }]);
       hold!.release();
@@ -642,9 +652,9 @@ describe("the page", () => {
     it("shows a failed removal above the list without a retry", async () => {
       repos = [rec()];
       await show();
-      (globalThis as any).confirm = () => true;
       answers.push({ status: 404, error: "no such repository" });
       press(button(main(), "Remove"));
+      await answerDialog("Remove");
       await flush();
       expect(errLine(main())[0]!.textContent).toBe("no such repository");
       expect(button(main(), "Try again")).toBeUndefined();
@@ -657,9 +667,9 @@ describe("the page", () => {
         const r = rec();
         repos = [r];
         await show();
-        (globalThis as any).confirm = () => true;
         answers.push({ status: 500, error: msg });
         press(button(main(), "Remove"));
+        await answerDialog("Remove");
         await flush();
         expect(main().textContent).not.toContain(r.url);
         expect(errLine(main())[0]!.textContent).toContain(msg);
@@ -728,6 +738,7 @@ describe("late answers", () => {
     const loading = ui.renderRepos(main(), { admin: false });
     await flush();
     cleanup();
+    (globalThis as any).location = { hash: "#/runs" }; // the person went on to another page
     main().textContent = "other";
     gate.forEach((r) => r());
     await loading;
@@ -799,15 +810,16 @@ describe("the SSH deploy key", () => {
     const r = deployRec();
     repos = [r];
     await show();
-    (globalThis as any).confirm = () => false;
     press(button(main(), "Generate a new key"));
+    await answerDialog("Cancel");
     await flush();
     expect(sent).toEqual([]);
-    let asked = "";
-    (globalThis as any).confirm = (m: string) => ((asked = m), true);
     holdNext = true;
     const btn = button(main(), "Generate a new key")!;
     press(btn);
+    await flush();
+    const asked = walk(root()).find((e) => e.tag === "p")!.textContent;
+    await answerDialog("Generate a new key");
     await flush();
     expect(asked).toBe(`Generate a new key for ${SSH}? The old key stops working. Add the new public key as a deploy key and remove the old one.`);
     expect(btn.disabled).toBe(true);
@@ -822,9 +834,9 @@ describe("the SSH deploy key", () => {
   it("shows a failed new key above the list without a retry", async () => {
     repos = [deployRec()];
     await show();
-    (globalThis as any).confirm = () => true;
     answers.push({ status: 500, error: "the SSH key could not be made; see the server log" });
     press(button(main(), "Generate a new key"));
+    await answerDialog("Generate a new key");
     await flush();
     expect(errLine(main())[0]!.textContent).toBe("the SSH key could not be made; see the server log");
     expect(button(main(), "Try again")).toBeUndefined();
@@ -834,8 +846,12 @@ describe("the SSH deploy key", () => {
     repos = [deployRec(), rec()];
     await show();
     const asked: string[] = [];
-    (globalThis as any).confirm = (m: string) => (asked.push(m), false);
-    for (const b of walk(main()).filter((e) => e.tag === "button" && e.textContent === "Remove")) press(b);
+    for (const b of walk(main()).filter((e) => e.tag === "button" && e.textContent === "Remove")) {
+      press(b);
+      await flush();
+      asked.push(walk(root()).find((e) => e.tag === "p")?.textContent ?? "");
+      await answerDialog("Cancel");
+    }
     expect(asked[0]).toContain("Its stored key is deleted too.");
     expect(asked[1]).toContain("Its stored token is deleted too.");
   });
@@ -933,7 +949,7 @@ describe("wiring", () => {
   it("links the page for every account", async () => {
     expect(read("index.html")).toContain('href="#/repos" data-nav="repos">Repositories<');
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "repos")).toContainEqual({ id: "repos", href: "#/repos", label: "My repositories" });
+    expect(ia.subnavFor("admin", "repos")).toEqual([]);
     const app = read("app.js");
     expect(app).toContain('from "./repos.js"');
     expect(app).toContain('section === "repos"');
@@ -1054,10 +1070,10 @@ describe("the GitHub App", () => {
     methodsAnswer = appOptions();
     repos = [rec({ method: "github-app", installationId: "42" })];
     await show();
-    const asked: string[] = [];
-    (globalThis as any).confirm = (q: string) => (asked.push(q), false);
     press(button(main(), "Remove"));
-    expect(asked[0]).toContain("The app stays installed on GitHub.");
-    expect(asked[0]).not.toContain("token");
+    await flush();
+    const asked = walk(root()).find((e) => e.tag === "p")!.textContent;
+    expect(asked).toContain("The app stays installed on GitHub.");
+    expect(asked).not.toContain("token");
   });
 });
