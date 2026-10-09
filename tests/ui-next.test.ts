@@ -733,12 +733,12 @@ describe("the Runs pages for a user", () => {
     await vi.advanceTimersByTimeAsync(0);
     const buttons = () => main.all("button").map((b) => b.textContent);
     expect(main.textContent).toContain("This run's flow is retired — it cannot be resumed.");
-    expect(buttons().some((t) => /Resume|Approve|Reject/.test(t))).toBe(false);
+    expect(buttons().some((t) => /Retry|Approve|Reject/.test(t))).toBe(false);
     expect(main.all("select")).toHaveLength(0);
     handlers.update!({ data: JSON.stringify({ summary: { ...failed, next: { kind: "failed", status: "x", text: "t" } } }) });
     await vi.advanceTimersByTimeAsync(0);
     expect(main.textContent).not.toContain("flow is retired");
-    expect(buttons().some((t) => /Resume/.test(t))).toBe(true);
+    expect(buttons().some((t) => /Retry from the failing step/.test(t))).toBe(true);
     stop();
   });
 
@@ -790,7 +790,9 @@ describe("the Runs pages for a user", () => {
       const stop = runs.renderRunDetail(main, "r1");
       push(handlers, FAILED);
       const head = main.children[0] as FakeElement;
-      expect((head.children[1] as FakeElement).attrs.class).toContain("failure");
+      const failure = head.all("div").find((d) => (d.attrs.class ?? "").includes("failure"))!;
+      expect((head.children[0] as FakeElement).contains(failure)).toBe(true);
+      expect(main.all("button").filter((b) => b.attrs["data-tab"]).length).toBeGreaterThan(0);
       expect(main.textContent).not.toContain("What happens next");
       expect(main.all("dt").map((d) => d.textContent)).not.toContain("Details");
       expect(onTab(main)).toEqual(["Steps & transcripts"]);

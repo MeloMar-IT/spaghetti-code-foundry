@@ -5,7 +5,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:69` and `:82`), `withDialog` (`ui/user/runs.js:383`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 22 calls in 11 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
@@ -91,7 +91,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
 | `ui/refinement.js:422` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
-| `ui/runs.js:297` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:298` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:307` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:311` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:301` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:302` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:311` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:315` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

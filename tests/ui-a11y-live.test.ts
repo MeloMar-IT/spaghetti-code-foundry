@@ -482,7 +482,8 @@ describe("User run page", () => {
     const before = named(head, "act-cancel");
     before.focus();
     await tick(30_000);
-    expectKept(head, "act-cancel", before);
+    // The header is not drawn again: the same node keeps the focus.
+    expect(doc().activeElement).toBe(before);
     stop();
   });
 
@@ -539,7 +540,7 @@ describe("Admin run page", () => {
     const before = named(head, "act-approve");
     before.focus();
     handlers.update!({ data: JSON.stringify({ summary: { ...s, task: "changed" } }) });
-    expectKept(head, "act-approve", before);
+    expect(doc().activeElement).toBe(before);
     stop();
   });
 

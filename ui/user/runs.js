@@ -3,10 +3,11 @@
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
-import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
+import { nextStatus, whenParts, whoClass } from "../next.js";
+import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { createLog } from "../run-output.js";
-import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
+import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer, stepEntry } from "../runs.js";
 
 export const NO_RUNS = "No runs yet. Start work to begin.";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
@@ -17,11 +18,8 @@ export const NO_ANSWER = "Write your answer first.";
 export const ANSWER_SENT = "Answer sent — continuing";
 const NOT_CANCELLED = "The run could not be cancelled. It may have just finished.";
 
-/** The first line of a task. */
-export const firstLine = (text) => String(text ?? "").split(/\r?\n/)[0].trim();
-
-/** "owner/name#7", "owner/name", or "" when there is no repository. */
-export const workText = (repo, issue) => (repo ? (issue ? `${repo}#${issue}` : repo) : "");
+// The header of the run page lives in ui/run-header.js; the admin page shares it.
+export { firstLine, workText, runActions };
 
 const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
 const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
@@ -41,18 +39,6 @@ export function myRunsEntries(runs, pending) {
   const alone = [...jobs.values()].filter((p) => !listed.has(p.runId)).map((job) => ({ run: null, job }));
   const all = [...byRun, ...alone].sort((x, y) => when(y) - when(x));
   return [...all.filter(isYou), ...all.filter((e) => !isYou(e))];
-}
-
-/** The buttons of a run page, in order: "approve", "reject", "retry", "cancel". A refinement run is continued from its session. */
-export function runActions(s, queued = false) {
-  const out = [];
-  const own = !s.refinement && s.next?.kind !== "issue_closed" && !s.next?.retired;
-  // A run that is queued again can only be cancelled: the server refuses the rest.
-  if (queued || s.status === "queued") return ["cancel"];
-  if (s.status === "waiting" && own) out.push("approve", "reject");
-  if (["failed", "stopped", "cancelled"].includes(s.status) && own) out.push("retry");
-  if (s.status === "running" || s.status === "waiting") out.push("cancel");
-  return out;
 }
 
 /** One card of the list: a link to the run, its status, what happens next, and Remove for a queued run. */
@@ -206,13 +192,6 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
 /** A step as the user page draws it: no output, never a model name. */
 const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, type: s.type === "claude" ? "agent" : s.type });
 
-const LABELS = {
-  approve: { text: "Approve", cls: "primary" },
-  reject: { text: "Reject", cls: "danger" },
-  retry: { text: "Retry", cls: "primary", title: "Continue at the step where it stopped" },
-  cancel: { text: "Cancel", cls: "danger" },
-};
-
 /** The run page. Returns a cleanup that stops the stream and the timer. */
 export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {
   let summary = null;
@@ -229,6 +208,10 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let tabSeq = 0;
 
   const head = h("div");
+  // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: () => showTab("steps"), backLabel: "Back to My runs" });
+  const taskBox = h("div");
+  let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const log = createLog();
   const status = statusAnnouncer();
@@ -289,19 +272,6 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
 
-  const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
-  const back = () => h("a", { class: "btn ghost", href: "#/runs", "data-focus": "back", "aria-label": "Back to My runs" }, "←");
-
-  function actionButtons(kinds) {
-    if (readOnly) return null;
-    return h("div", { class: "run-actions" }, kinds.map((k) => {
-      const l = LABELS[k];
-      const b = h("button", { type: "button", class: l.cls, title: l.title, "data-focus": `act-${k}`, onClick: () => onAction(k) }, l.text);
-      // aria-disabled, not disabled: the button keeps the focus while a call is out.
-      if (busy) b.setAttribute("aria-disabled", "true");
-      return b;
-    }));
-  }
 
   function draw() {
     if (dialogOpen) return;
@@ -316,7 +286,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     mount(givenBox, given.length
       ? h("section", { class: "card run-answers", "aria-label": "Answers given" }, h("h2", {}, "Answers given"), h("ol", {}, given.map((x) => h("li", {}, String(x?.text ?? "")))))
       : null);
-    const show = !readOnly && !!s &&!!s.questions && s.canAnswer === true && job === null && s.status !== "queued";
+    const show = !readOnly && answerable(s, job);
     if (answerForm.hidden === !show) return;
     answerForm.hidden = !show;
     if (!show) answerErr.textContent = "";
@@ -358,42 +328,28 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     if (!summary && !job) {
       const missing = runError?.status === 404 && !queueError;
       const err = !missing && (queueError || runError);
+      mode = "state";
       return mount(head, missing
         ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
         : err
           ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
           : h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
     }
-    if (!summary) {
-      return mount(head,
-        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next, "status-help")),
-        actionButtons(runActions({ status: "queued" }, true)),
-        h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), nextBlock(job.next), job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null),
-        h("div", { class: "card mb-16" },
-          job.task ? h("p", { class: "flush pre-wrap" }, job.task) : null,
-          h("dl", { class: "meta" }, job.flow ? row("Flow", job.flow) : null, workText(job.githubRepo, job.issue) ? row("Repository", workText(job.githubRepo, job.issue)) : null)));
+    // `head` is mounted again only when it changes from one mode to the other, so the header nodes stay in the page.
+    if (mode !== "header") {
+      mode = "header";
+      mount(head, header.el, taskBox);
     }
-    const s = summary;
-    const failed = s.status === "failed" && s.next?.failure;
-    const queued = s.status === "queued" || job !== null;
-    const steprow = stepRow(s);
-    const work = workText(s.vars?.github_repo, s.vars?.issue);
-    mount(head,
-      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next, "status-help") : null, s.refinement ? refinementMark(s.refinement, "refinement") : null),
-      actionButtons(runActions(s, job !== null)),
-      h("section", { class: "run-now", "aria-label": "Now" },
-        h("h2", {}, "Now"),
-        failed ? failureCard({ ...s, reason: undefined }, failedStepIndex(s) >= 0 ? { onStep: () => showTab("steps") } : {}) : s.next ? nextBlock(s.next) : null,
-        retiredLine(s),
-        queued && job && job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null,
-        steprow ? h("dl", { class: "meta" }, steprow) : null),
-      h("div", { class: "card mb-16" },
-        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", s.questions) : null,
-        h("dl", { class: "meta" },
-          work ? row("Repository", work) : null,
-          s.branch ? row("Branch", s.branch) : null,
-          versionRow(s))));
+    header.update(summary, { job, busy });
+    const task = summary ? summary.task : job.task;
+    const questions = summary?.questions;
+    // The title is the first line of the task, so the full task is shown only when it is more than that (or has no title, as a queued run).
+    const showTask = !!task?.trim() && (!summary || task.trim() !== firstLine(task));
+    mount(taskBox, showTask || questions
+      ? h("div", { class: "card mb-16" },
+        showTask ? h("p", { class: "flush pre-wrap" }, task) : null,
+        questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", questions) : null)
+      : null);
   }
 
   async function refresh() {
@@ -509,9 +465,12 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   draw();
   refresh();
   const timer = setInterval(() => { if (job) refresh(); }, REFRESH_MS);
+  // The times in the header move on even when the stream sends only pings.
+  const clock = setInterval(() => { if (mode === "header" && !dialogOpen) header.update(summary, { job, busy }); }, 60_000);
   return () => {
     gone = true;
     clearInterval(timer);
+    clearInterval(clock);
     es.close();
   };
 }

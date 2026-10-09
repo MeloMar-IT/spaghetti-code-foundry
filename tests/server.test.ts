@@ -752,7 +752,7 @@ steps:
     expect(runs).toContain("detailsRow(");
     expect(runs).not.toContain("s.error.slice");
     expect(runs).toContain("s.reason");
-    expect(runs).toContain("nextBlock(");
+    expect(await text("/run-header.js")).toContain("nextBlock(");
     for (const w of ["waiting for approval", "why issues aren't", "x.reason", "holdList"]) expect(dashboard).not.toContain(w);
     for (const w of ["holdList", "Waiting:"]) expect(admin).not.toContain(w);
     expect(admin).not.toMatch(/errors[^\n]*lastError/);
