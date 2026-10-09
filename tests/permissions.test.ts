@@ -164,6 +164,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET next": no("next", 200),
   "GET health": no("health", 200),
   "GET board": no("board", 200),
+  "GET search": { path: "search?q=x", user: 200, admin: 200 },
   "GET since": no("since", 400),
   "GET your-turn": no("your-turn", 200),
   "POST your-turn/dismiss": no("your-turn/dismiss", 400, {}),

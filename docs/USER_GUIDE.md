@@ -311,6 +311,28 @@ runs and starts again when steps are added, removed or renamed. It is an estimat
 promise. "Taking longer than usual" means a step runs much longer than it usually does. Nothing
 is wrong yet: look at the live log.
 
+### Search (API)
+
+`GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
+There is no page for it yet; the new navigation will use it.
+
+- `?q=text` — words separated by spaces. Every word must match. Equal matches rank above
+  prefixes, prefixes above word starts, word starts above "contains". A word like `#254` matches
+  issue and run numbers only; `254` matches numbers and text. `q` can have 100 characters at most,
+  else the answer is 400. An empty `q` gives `{ "q": "", "groups": [] }`.
+- `?id=type:id` — up to 8 times, to check that things still exist and may be seen. `type` is
+  `run`, `issue`, `refinement`, `repo` or `flow`. A wrong shape gives 400. `q` is ignored.
+- The answer is `{ q, groups, incomplete? }`. A group has `type`, `label`, `hits` (8 at most) and
+  `more` (true when there are more). A hit has `type`, `id`, `title`, `href` and, when known,
+  `status`, `repo`, `detail`, `owner` and `at`. `status` is the same word that Runs and the queue
+  show. If one source fails, the other groups still come back and `incomplete` names the failed
+  type.
+- **A user** gets their own runs (also queued ones), repositories and refinement sessions, and the
+  flows they can start. No issues, no owner names, no server paths, no costs.
+- **An admin** gets the runs, repositories and sessions of all accounts with owner names, the
+  issues on the board, and all flows. With `as=<user>` while viewing as that user, the answer is
+  the one the user would get.
+
 ### A run
 
 Open a run to follow it live. At the top, the **What happens next** block says who has the next
@@ -2229,6 +2251,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |
 | `GET /api/board` | yes | no | the board of all work |
+| `GET /api/search` | yes | yes | find runs, repositories, refinement sessions and flows by text or id (a user: their own and the flows they can start; an admin: all accounts and the board's issues) |
 | `GET /api/since` | yes | no | what changed since a time |
 | `GET /api/your-turn` | yes | no | what waits for you |
 | `POST /api/your-turn/dismiss` | yes | no | dismiss an item |

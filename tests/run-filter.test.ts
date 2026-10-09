@@ -171,4 +171,21 @@ describe("taskLineOf", () => {
       rmSync(runs, { recursive: true, force: true });
     }
   });
+  it("has the issue title from the pull_ticket output, cut at 200, and none without state", () => {
+    const runs = mkdtempSync(join(tmpdir(), "run-filter-briefs-"));
+    try {
+      const out = (title: string) => ({ next: null, visits: {}, steps: { pull_ticket: { output: `# #7: ${title}\n\nbody` } } });
+      for (const [id, state] of [["r1", out("Fix login")], ["r2", out("x".repeat(300))], ["r3", undefined]] as const) {
+        const d = join(runs, id);
+        mkdirSync(d);
+        writeFileSync(join(d, "run.json"), JSON.stringify({ runId: id, flow: "f", task: "", status: "failed", startedAt: "2026-01-01T00:00:00.000Z", runDir: d, ...(state ? { state } : {}) }));
+      }
+      const by = new Map(listRunBriefs(runs).map((b) => [b.runId, b]));
+      expect(by.get("r1")!.issueTitle).toBe("Fix login");
+      expect(by.get("r2")!.issueTitle).toBe("x".repeat(200));
+      expect("issueTitle" in by.get("r3")!).toBe(false);
+    } finally {
+      rmSync(runs, { recursive: true, force: true });
+    }
+  });
 });

@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildBoard, columnOf, COLUMNS, EMPTY_BOARD, phasesOf, stepProgress, stepText, ticketTitle, type BoardCard, type BoardRun, type BoardSource, type Phase } from "../src/board.js";
+import { ticketTitleOf } from "../src/engine/state.js";
 import { ConfigSchema } from "../src/config.js";
 import { evalsDir } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -109,6 +110,11 @@ describe("ticketTitle", () => {
     expect(ticketTitle(withOut("hello"))).toBe("");
     expect(ticketTitle(withOut(5))).toBe("");
     expect(ticketTitle(undefined)).toBe("");
+  });
+  it("ticketTitleOf gives an empty title for output that is not text", () => {
+    expect(ticketTitleOf(5)).toBe("");
+    expect(ticketTitleOf(undefined)).toBe("");
+    expect(ticketTitleOf("# #3: Hi")).toBe("Hi");
   });
 });
 

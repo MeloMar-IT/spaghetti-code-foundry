@@ -237,14 +237,21 @@ export function ownerInfo(ctx: ApiContext, list: RunSummary[] = []): (runId?: st
 export function queueWithNext(ctx: ApiContext, forUser = false): Omit<Queue, "pending"> & { pending: (PendingJob & { next: NextStep; ownerName?: string })[] } {
   const q = ctx.scheduler.queue();
   const next = nextFor(ctx, undefined, forUser);
-  const tracked = ctx.watchers.tracked();
-  const waitLeft = waitLeftFor(ctx);
+  const job = queuedJobNext(ctx, forUser);
   const who = forUser ? undefined : ownerInfo(ctx);
   return { ...q, pending: q.pending.map((p) => {
     const run = ctx.scheduler.get(p.runId);
     const ownerName = who?.(p.runId).ownerName;
-    return { ...p, next: run ? next(run) : closedHold(tracked, p.runId) ?? waitLeft(jobNext(p, forUser, !forUser && p.limit === "budget" ? ctx.scheduler.userDailyBudget(who!(p.runId).owner ?? "") : undefined)), ...(ownerName ? { ownerName } : {}) };
+    return { ...p, next: run ? next(run) : job(p), ...(ownerName ? { ownerName } : {}) };
   }) };
+}
+
+/** The record of a queued job that has no run folder yet, as GET /api/queue shows it. `timeLeft: false` leaves out "(about N min left)" and reads no run file. */
+export function queuedJobNext(ctx: ApiContext, forUser = false, timeLeft = true): (p: PendingJob) => NextStep {
+  const tracked = ctx.watchers.tracked();
+  const waitLeft = timeLeft ? waitLeftFor(ctx) : (rec: NextStep) => rec;
+  const who = forUser ? undefined : ownerInfo(ctx);
+  return (p) => closedHold(tracked, p.runId) ?? waitLeft(jobNext(p, forUser, !forUser && p.limit === "budget" ? ctx.scheduler.userDailyBudget(who!(p.runId).owner ?? "") : undefined));
 }
 
 /** A record for a user: another account's run is not named, linked or described. */
