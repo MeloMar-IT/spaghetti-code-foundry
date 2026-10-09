@@ -616,3 +616,4 @@ body.side-closed .side { display: none; }
 .work-list { width: 100%; }
 .work-list td { vertical-align: top; overflow-wrap: anywhere; font-size: var(--text-small); }
 .work-list th { font-size: var(--text-meta); text-align: left; }
+.gallery-stack { display: grid; gap: var(--space-md); }

@@ -35,6 +35,7 @@ const all = (el: FakeElement) => [...walk(el)];
 const classes = (el: FakeElement) => all(el).flatMap((e) => (e.getAttribute("class") ?? "").split(" "));
 /** What a person (or a screen reader) gets: text, values and labels. */
 const shown = (el: FakeElement) => all(el).map((e) => `${e.textContent}|${e.value}|${e.getAttribute("aria-label") ?? ""}`).join("\n");
+const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState"];
 const isOff = (e: FakeElement) => e.getAttribute("disabled") !== null || e.getAttribute("aria-disabled") === "true";
 
 describe("the registry", () => {
@@ -54,7 +55,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(8);
+    expect(names.length).toBe(15);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
@@ -67,7 +68,8 @@ describe("the registry", () => {
   it("every section has Long content and Disabled examples", () => {
     for (const s of sections) {
       expect(s.examples.map((e) => e.name), s.id).toContain("Long content");
-      expect(s.examples.map((e) => e.name), s.id).toContain("Disabled");
+      if (NO_DISABLED.includes(s.id)) expect(s.examples.map((e) => e.name), s.id).not.toContain("Disabled");
+      else expect(s.examples.map((e) => e.name), s.id).toContain("Disabled");
     }
     expect(section("field").examples.map((e) => e.name)).toContain("Error");
   });
@@ -94,8 +96,29 @@ describe("the registry", () => {
     expect(ext.getAttribute("target")).toBe("_blank");
   });
 
+  it("each display section shows its own variants", () => {
+    const nodes = (id: string, name?: string) => (name ? all(example(id, name).build()) : section(id).examples.flatMap((e) => all(e.build())));
+    const cls = (id: string) => section(id).examples.flatMap((e) => classes(e.build()));
+    for (const id of ["badge", "banner", "card"]) {
+      for (const t of ["neutral", "ok", "fail", "run", "warn", "accent"]) expect(cls(id), `${id} ${t}`).toContain(`scf-${id}--${t}`);
+    }
+    const banners = nodes("banner");
+    expect(banners.some((e) => e.getAttribute("role") === "alert")).toBe(true);
+    expect(banners.some((e) => e.tag === "button" && e.getAttribute("aria-label") === "Dismiss")).toBe(true);
+    expect(nodes("table", "40 rows").filter((e) => e.tag === "tr" && e.all("td").length > 0).length).toBe(40);
+    expect(nodes("table", "Wide").filter((e) => e.tag === "th").length).toBeGreaterThanOrEqual(10);
+    const open = nodes("table", "Row open").filter((e) => e.tag === "tr" && e.all("td").length > 0);
+    expect(open.length).toBeGreaterThan(0);
+    for (const tr of open) expect(tr.all("td")[0]!.all("button").length).toBe(1);
+    expect(nodes("table", "Empty").some((e) => e.getAttribute("class") === "scf-table__empty")).toBe(true);
+    const tags = nodes("list").map((e) => e.tag);
+    expect(tags).toContain("ul");
+    expect(tags).toContain("ol");
+    expect(nodes("skeleton").some((e) => e.getAttribute("aria-busy") === "true")).toBe(true);
+  });
+
   it("every Disabled example has a really disabled control", () => {
-    for (const s of sections) {
+    for (const s of sections.filter((x) => !NO_DISABLED.includes(x.id))) {
       const off = all(example(s.id, "Disabled").build()).filter(isOff);
       expect(off.length, s.id).toBeGreaterThan(0);
     }
@@ -180,7 +203,7 @@ describe("the view", () => {
     const main = document.getElementById("gallery-main") as unknown as FakeElement;
     const bar = document.getElementById("gallery-bar") as unknown as FakeElement;
     expect(root.getAttribute("data-theme")).toBe("dark");
-    expect(main.children.filter((c) => c instanceof FakeElement && c.tag === "section").length).toBe(8);
+    expect(main.children.filter((c) => c instanceof FakeElement && c.tag === "section").length).toBe(15);
     const before = [...main.children];
     bar.all("button").find((b) => b.textContent === "compact")!.click();
     expect(replaceState.mock.calls[0]![2]).toBe("?theme=dark&density=compact&width=wide");

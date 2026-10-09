@@ -1,18 +1,18 @@
 # UI components (the kit)
 
-The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. This is part 1: actions and form controls. No page uses the kit yet.
+The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls and display primitives. No page uses the kit yet.
 
 ## Conventions
 
-- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
+- **Modules.** `ui/kit/actions.js` (button, iconButton, link), `ui/kit/forms.js` (field, textInput, textArea, select, checkbox), `ui/kit/display.js` (card, table, list, badge, banner, skeleton, emptyState). `ui/kit/core.js` has small shared helpers and is not part of the public kit.
 - **Plain functions.** Each component is a function that returns a DOM element. Props are one object; children follow it (`button(props, ...children)`). `class` is added to the kit classes. Other props (for example `id`, `name`, `aria-*`, `data-*`) go to the element.
 - **No inline styles.** Kit modules never pass `style` to `h()`. A component throws if the caller passes `style`. Use a class.
-- **CSS.** `ui/kit/kit.css` imports `actions.css` and `forms.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
+- **CSS.** `ui/kit/kit.css` imports `actions.css`, `forms.css` and `display.css`, and is linked from `ui/index.html` and `ui/user/index.html`. Kit CSS uses only `scf-` class selectors (`.scf-btn`, `.scf-btn--primary`, `.scf-field__label`) and token variables from the theme and density tokens. No id selectors, no bare tag selectors, no colour literals. `tests/ui-css.test.ts` reads the files and fails on these.
 - **Names.** Block `scf-name`, part `scf-name__part`, variant or state `scf-name--variant`.
 - **Global rules.** The global `button` rules in `ui/style.css` stay. Kit classes are written to look right on top of them.
 - **Unbound.** Controls take `value` and `onInput`/`onChange` and keep no state. They are not the bound inputs in `ui/fields.js`, which are unchanged.
 - **Errors.** A missing required prop (a label, an `href`, `options`) or an unknown variant or size throws an `Error` at once.
-- **Tests.** `tests/ui-kit-actions.test.ts` and `tests/ui-kit-forms.test.ts`, with `installFakeDom`.
+- **Tests.** `tests/ui-kit-actions.test.ts`, `tests/ui-kit-forms.test.ts` and `tests/ui-kit-display.test.ts`, with `installFakeDom`.
 
 ## Actions
 
@@ -86,6 +86,61 @@ The kit is a small set of plain JavaScript modules in `ui/kit/` that build commo
 - **Element:** `<label class="scf-checkbox">` holding a native `<input type="checkbox">` and a `span` with the label text.
 - **Keyboard:** Tab to focus; Space toggles.
 - **Accessible name:** the label text.
+
+## Display
+
+Tones for `card`, `badge` and `banner`: `neutral` | `ok` | `fail` | `run` | `warn` | `accent`. Any other tone throws. The meaning is always in the text, never in colour only. All tones use theme tokens. The old `.card`, `.table`, `.table-box`, `.pill`, `.badge` and `.empty` classes in `ui/style.css` stay for the existing pages; the kit uses `scf-` classes. `.scf-visually-hidden` hides text on screen but keeps it for screen readers.
+
+### card
+
+`card({ title, actions, tone, level, id, class, ...attrs }, ...children)`
+
+- **Element:** `<section class="scf-card scf-card--<tone>">`. With `title` it holds a heading (`h2` by default; `level` 2–6) and the section has `aria-labelledby` pointing at it. Without a title, pass your own `aria-label`. `actions` is a node shown next to the heading.
+- **Accessible name:** the title.
+
+### table
+
+`table({ caption, columns, rows, onRowOpen, empty, hideCaption, id, class })`
+
+- `columns`: `[{ key, label, align?, cell?(row, index) }]`. `align` is `start` (default) or `end`. `cell` returns text or a node; without it the cell shows `row[key]`.
+- `caption` and at least one column are required and throw if missing. `hideCaption: true` hides the caption visually; it stays for screen readers.
+- **Element:** a real `<table>` with `<caption>` and `<th scope="col">`, inside a scroll box (`div.scf-table-box`, `role="region"`, `tabindex="0"`, named by the caption). A wide table scrolls inside the box, not the page. This answers finding F14 in `docs/ui-redesign/findings.md`.
+- **Row open:** with `onRowOpen(row, index)` the first cell holds a `<button>` named by the cell text, so a row opens by mouse and keyboard.
+- **No rows:** shows `empty` (a string or a node, default "Nothing to show.") under the headers.
+- **Keyboard:** Tab to the scroll box and use the arrow keys to scroll; Tab to a row button and press Enter or Space.
+
+### list
+
+`list({ items, ordered, class, ...attrs })`
+
+- `items` is an array of strings, nodes or arrays of them (required). **Element:** `<ul>`, or `<ol>` with `ordered: true`, with one `<li>` per item.
+
+### badge
+
+`badge({ tone, label, class, ...attrs })`
+
+- `label` is required. **Element:** `<span class="scf-badge scf-badge--<tone>">`. Use words such as "Failed" or "Running", not only a colour.
+
+### banner
+
+`banner({ tone, title, actions, onDismiss, class, ...attrs }, ...children)`
+
+- Needs a `title` or content. **Element:** `<div>` with `role="alert"` for `fail` and `role="status"` for the other tones.
+- `onDismiss` adds an `iconButton` labelled "Dismiss". The banner does not remove itself; your handler does.
+- **Keyboard:** the dismiss button and any `actions` are reached with Tab.
+
+### skeleton
+
+`skeleton({ lines, label, class, ...attrs })`
+
+- `lines`: a whole number from 1 to 20 (default 3). `label` defaults to "Loading…".
+- **Element:** a container with `aria-busy="true"` and a visually hidden label. The grey lines are `aria-hidden`. Replace the skeleton with the content when it has loaded.
+
+### emptyState
+
+`emptyState({ title, text, action, level, class, ...attrs })`
+
+- `title` is required. **Element:** a heading (`h3` by default; `level` 2–6), optional text, and an optional `action` node (for example a `button`).
 
 ## The gallery
 
