@@ -1,12 +1,11 @@
 import { api } from "./api.js";
 import { glyph, h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
-import { icon } from "./icons.js";
 import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 
-export { diffView, logLine } from "./run-output.js";
+export { diffView, logLine, transcriptView } from "./run-output.js";
 
 const money = (n) => (n ? `$${n.toFixed(4)}` : "—");
 const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);

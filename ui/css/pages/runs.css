@@ -33,6 +33,12 @@ pre.diff .del { color: var(--fail); background: var(--fail-soft); display: block
 pre.diff .hunk { color: var(--run); display: block; }
 pre.diff .file { font-weight: 700; display: block; }
 .diffstat { background: var(--panel-2); border-radius: var(--radius-md); padding: 8px 10px; margin: 0 0 10px; overflow: auto; }
+.log-note { display: block; color: var(--color-log-dim); }
+.diff-files { display: grid; gap: var(--space-sm); }
+.diff-file { border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--panel); min-width: 0; overflow: hidden; }
+.diff-file > summary { display: flex; gap: var(--space-md); align-items: center; padding: var(--space-sm) var(--space-lg); font-size: var(--text-small); }
+.diff-file pre.diff { border: 0; border-top: var(--border-width) solid var(--border); border-radius: var(--radius-none); }
+.more-row { padding: var(--space-md) var(--space-lg); }
 .meta dd .muted { font-family: var(--sans); word-break: normal; }
 
 /* My runs and the run page of a user (ui/user/runs.js) */
@@ -51,9 +57,3 @@ pre.diff .file { font-weight: 700; display: block; }
 .run-answers ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .run-answers li { white-space: pre-wrap; overflow-wrap: anywhere; }
 .user-display .log, .user-display pre.diff, .user-display .diffstat { max-width: 100%; }
-.log-note { display: block; color: var(--color-log-dim); }
-.diff-files { display: grid; gap: var(--space-sm); }
-.diff-file { border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--panel); min-width: 0; overflow: hidden; }
-.diff-file > summary { display: flex; gap: var(--space-md); align-items: center; padding: var(--space-sm) var(--space-lg); font-size: var(--text-small); }
-.diff-file pre.diff { border: 0; border-top: var(--border-width) solid var(--border); border-radius: var(--radius-none); }
-.more-row { padding: var(--space-md) var(--space-lg); }
