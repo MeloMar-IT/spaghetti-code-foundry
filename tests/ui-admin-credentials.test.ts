@@ -132,7 +132,7 @@ describe("wiring", () => {
 
   it("links the page and imports it", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string }[] };
-    const repos = ia.subnavFor("admin", "repos").map((l) => l.href);
+    const repos = ia.subnavFor("admin", "administration").map((l) => l.href);
     expect(repos.indexOf("#/credentials")).toBe(repos.indexOf("#/all-repos") + 1);
     const app = read("app.js");
     expect(app).toContain('from "./admin-credentials.js"');

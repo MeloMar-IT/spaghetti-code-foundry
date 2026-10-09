@@ -106,6 +106,28 @@ describe("Settings → Redesign", () => {
   });
 });
 
+describe("Settings → no Disk section", () => {
+  it("has no Disk card, Clean up or Preview button", async () => {
+    const { main } = await render({});
+    expect(main.all("h3").some((x) => x.textContent === "Disk")).toBe(false);
+    expect(main.all("button").some((b) => ["Clean up", "Preview"].includes(b.textContent))).toBe(false);
+  });
+
+  it("saves with one PUT and never calls /api/clean", async () => {
+    const { main, puts } = await render({});
+    const calls: string[] = [];
+    const inner = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => {
+      calls.push(url);
+      return inner(url, init);
+    };
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(calls.some((u) => u.includes("/api/clean"))).toBe(false);
+  });
+});
+
 describe("Settings → GitHub App", () => {
   const appCard = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "GitHub App")!;
   const input = (card: FakeElement, label: string) => card.all("label").find((l) => l.textContent.startsWith(label))!.all("input")[0] as any;

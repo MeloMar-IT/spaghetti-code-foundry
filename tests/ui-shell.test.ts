@@ -59,9 +59,31 @@ describe("showPage", () => {
     expect(sub.hidden).toBe(true);
     shell.showPage("admin", ia.resolve("admin", "#/users"));
     expect(sub.hidden).toBe(false);
-    expect(sub.all("a").length).toBe(7);
+    expect(sub.all("a").length).toBe(10);
     expect(sub.all("a").filter((a) => a.attrs.class === "active").map((a) => a.textContent)).toEqual(["Users"]);
+    const heads = sub.all("span").filter((s) => s.attrs.class === "subnav-head");
+    expect(heads.map((s) => s.textContent)).toEqual(["Operations", "People and access", "System"]);
+    for (const label of ["Problems", "Users", "Settings"]) {
+      const i = sub.children.findIndex((c) => c.tag === "a" && c.textContent === label);
+      expect((sub.children[i - 1] as FakeElement).attrs.class).toBe("subnav-head");
+    }
     shell.showPage("admin", ia.resolve("admin", "#/runs"));
+    expect(sub.hidden).toBe(true);
+  });
+
+  it("highlights Administration and All repositories on #/all-repos", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/all-repos"));
+    expect(active()).toEqual(["administration"]);
+    const sub = doc().getElementById("subnav") as FakeElement;
+    expect(sub.all("a").filter((a) => a.attrs.class === "active").map((a) => a.textContent)).toEqual(["All repositories"]);
+  });
+
+  it("keeps Flows flat and hides the row on Repositories", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/flows"));
+    const sub = doc().getElementById("subnav") as FakeElement;
+    expect(sub.all("a").length).toBe(2);
+    expect(sub.all("span").filter((s) => s.attrs.class === "subnav-head")).toHaveLength(0);
+    shell.showPage("admin", ia.resolve("admin", "#/repos"));
     expect(sub.hidden).toBe(true);
   });
 

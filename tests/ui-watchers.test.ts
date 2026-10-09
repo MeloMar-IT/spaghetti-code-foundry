@@ -416,7 +416,7 @@ describe("the user side", () => {
   it("the admin page has the Watchers link", async () => {
     // The link moved from the top bar to the Administration secondary row (ui/ia.js).
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
-    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers" });
+    expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "watchers", href: "#/watchers", label: "Watchers", section: "operations" });
     expect(ia.subnavFor("user", "administration")).toEqual([]);
   });
 });

@@ -53,3 +53,9 @@ export function insertAtCursor(textarea, snippet) {
   textarea.focus();
 }
 
+export const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
+export const check = (checked, label) => {
+  const el = h("input", { type: "checkbox", style: { width: "auto" }, checked: !!checked });
+  return { el, row: h("label", { class: "row", style: { gap: "6px" } }, el, h("span", {}, label)) };
+};
+

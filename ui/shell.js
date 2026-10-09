@@ -1,5 +1,5 @@
 import { h, mount } from "./dom.js";
-import { splitHash, subnavFor } from "./ia.js";
+import { SECTIONS, splitHash, subnavFor } from "./ia.js";
 
 // The frame around a page: which top link is on, the secondary row, the breadcrumb line and the tab title.
 
@@ -156,7 +156,10 @@ export function showPage(role, to) {
   if (subnav) {
     const links = to.dest ? subnavFor(role, to.dest) : [];
     const own = to.page.nav === "detail" ? to.page.parent : to.page.id;
-    mount(subnav, links.map((l) => h("a", { href: l.href, class: l.id === own ? "active" : null, "aria-current": l.id === own ? "page" : null }, l.label)));
+    mount(subnav, links.flatMap((l, i) => [
+      l.section && l.section !== links[i - 1]?.section ? h("span", { class: "subnav-head" }, SECTIONS.find((s) => s.id === l.section)?.label ?? l.section) : null,
+      h("a", { href: l.href, class: l.id === own ? "active" : null, "aria-current": l.id === own ? "page" : null }, l.label),
+    ]));
     hide(subnav, links);
   }
   const crumbs = document.getElementById("crumbs");

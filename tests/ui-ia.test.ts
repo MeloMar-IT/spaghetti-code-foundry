@@ -62,11 +62,19 @@ describe("the navigation lists", () => {
   });
 
   it("lists the secondary pages of a destination", () => {
-    expect(ia.subnavFor("admin", "administration").map((l: any) => l.label)).toEqual(["Users", "Watchers", "Models", "Problems", "Dashboard", "Audit", "Settings"]);
+    const adm = ia.subnavFor("admin", "administration");
+    expect(adm.map((l: any) => l.label)).toEqual(["Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
+    expect(adm.map((l: any) => l.section)).toEqual([...Array(4).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
     expect(ia.subnavFor("admin", "flows").map((l: any) => l.href)).toEqual(["#/flows", "#/library"]);
-    expect(ia.subnavFor("admin", "repos").map((l: any) => l.href)).toEqual(["#/repos", "#/all-repos", "#/credentials"]);
+    expect(ia.subnavFor("admin", "flows").every((l: any) => l.section === undefined)).toBe(true);
+    expect(ia.subnavFor("admin", "repos")).toEqual([]);
     expect(ia.subnavFor("user", "repos")).toEqual([]);
     expect(ia.subnavFor("admin", "runs")).toEqual([]);
+  });
+
+  it("only uses known sections", () => {
+    expect(ia.SECTIONS.map((s: any) => s.label)).toEqual(["Operations", "People and access", "System"]);
+    for (const p of ia.PAGES.filter((x: any) => x.section)) expect(ia.SECTIONS.map((s: any) => s.id)).toContain(p.section);
   });
 });
 
@@ -105,6 +113,10 @@ describe("resolve for an admin", () => {
     expect(r("#/runs/r1").back).toBe("#/runs");
     expect(crumbs("#/users")).toEqual([["Administration", "#/users"], ["Users", null]]);
     expect(r("#/users").back).toBeNull();
+    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/users"], ["All repositories", null]]);
+    expect(crumbs("#/credentials")).toEqual([["Administration", "#/users"], ["Credentials", null]]);
+    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/users"], ["Maintenance", null]]);
+    expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
     expect(crumbs("#/flows")).toEqual([]);
     expect(crumbs("#/flows/x")).toEqual([["Flows", "#/flows"], ["x", null]]);
     expect(crumbs("#/library")).toEqual([["Flows", "#/flows"], ["Library", null]]);
@@ -145,7 +157,12 @@ describe("resolve for a user", () => {
   });
 
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/your-turn", "#/board"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+  });
+
+  it("has no link to the admin-only pages in the user HTML", () => {
+    const html = read("ui/user/index.html");
+    for (const h of ["#/maintenance", "#/all-repos", "#/credentials"]) expect(html).not.toContain(h);
   });
 
   it("builds crumbs", () => {
