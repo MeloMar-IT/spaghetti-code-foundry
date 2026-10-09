@@ -27,6 +27,17 @@ export interface SkillPayload {
   estimatedTokens: number;
   /** The first mandatory skill that was left out; the caller must refuse the session. */
   blocked?: string;
+  /** "reviewer" for the block of a reviewer session. */
+  role?: "reviewer";
+}
+
+/** What a reviewer block takes of a package: the description and REVIEW.md, never the instructions. */
+export interface ReviewSkill {
+  id: string;
+  version: string;
+  digest: string;
+  description: string;
+  review: string;
 }
 
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
@@ -52,8 +63,15 @@ function section(s: PayloadSkill): string {
   ].join("\n");
 }
 
-const wrap = (sections: string[]): string =>
-  [`<${SKILL_PAYLOAD_TAG} count="${sections.length}">`, INTRO, "", ...sections.flatMap((x) => [x, ""]), `</${SKILL_PAYLOAD_TAG}>`].join("\n");
+const REVIEW_INTRO = [
+  `The checks below are approved Foundry review guidance for the skills this change uses. Use them as extra checks and report only real problems.`,
+  INTRO.split("\n")[1]!,
+  INTRO.split("\n")[2]!,
+  `You are reviewing: do not change files and do not run anything a skill names.`,
+].join("\n");
+
+const wrap = (sections: string[], attrs = "", intro = INTRO): string =>
+  [`<${SKILL_PAYLOAD_TAG} count="${sections.length}"${attrs}>`, intro, "", ...sections.flatMap((x) => [x, ""]), `</${SKILL_PAYLOAD_TAG}>`].join("\n");
 
 export function renderSkillPayload(skills: readonly PayloadSkill[], limits: { maxTokens: number }): SkillPayload {
   const keyOf = (s: PayloadSkill) => `${s.id}@${s.version}`;
@@ -93,6 +111,32 @@ export function renderSkillPayload(skills: readonly PayloadSkill[], limits: { ma
     estimatedTokens: estimateTokens(text),
     ...(blocked ? { blocked } : {}),
   };
+}
+
+const reviewSection = (s: ReviewSkill): string =>
+  [`<foundry-skill id="${s.id}" version="${s.version}" digest="${s.digest}">`, oneLine(s.description), "", safe(s.review).trim(), `</foundry-skill>`].join("\n");
+
+const REVIEW_ATTRS = ` role="reviewer"`;
+
+/** The block of a reviewer session. Flat, in input order; never above min(maxTokens, below - 1). */
+export function renderReviewPayload(
+  skills: readonly ReviewSkill[],
+  limits: { maxTokens: number; maxSkillTokens: number; below?: number },
+): SkillPayload {
+  const cap = Math.min(limits.maxTokens, limits.below === undefined ? Infinity : limits.below - 1);
+  const loaded: string[] = [];
+  const omitted: string[] = [];
+  const sections: string[] = [];
+  for (const s of skills) {
+    const sec = reviewSection(s);
+    const key = `${s.id}@${s.version}`;
+    if (estimateTokens(sec) <= limits.maxSkillTokens && estimateTokens(wrap([...sections, sec], REVIEW_ATTRS, REVIEW_INTRO)) <= cap) {
+      sections.push(sec);
+      loaded.push(key);
+    } else omitted.push(key);
+  }
+  const text = sections.length ? wrap(sections, REVIEW_ATTRS, REVIEW_INTRO) : "";
+  return { text, loaded, omitted, bytes: Buffer.byteLength(text), estimatedTokens: estimateTokens(text), role: "reviewer" };
 }
 
 /** The prompt of a Claude session: the block, an empty line, then the task. Unchanged when the block is "". */

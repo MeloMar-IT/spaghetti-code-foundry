@@ -492,6 +492,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
     {
       id: "plan_review",
       type: "claude",
+      skill_role: "reviewer",
       agent: "codex",
       effort: "high",
       jump_only: true,
@@ -727,6 +728,7 @@ write("issue-plan", {
     {
       id: `review_${n}`,
       type: "claude",
+      skill_role: "reviewer",
       agent: "codex",
       permission_mode: "dontAsk",
       allowed_tools: ["Read", "Glob", "Grep"],

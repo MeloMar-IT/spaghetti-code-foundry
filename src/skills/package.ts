@@ -66,6 +66,7 @@ export function skillDigest(entries: readonly { path: string; content: Uint8Arra
 
 const SKILL_MD = "SKILL.md";
 const MANIFEST = "skill.yaml";
+const REVIEW_MD = "REVIEW.md";
 const PACKAGE = "(package)";
 const IGNORED = ".DS_Store";
 
@@ -108,6 +109,7 @@ function sizeOf(e: SkillEntry): number | undefined {
 function fileLimit(path: string): number {
   if (path === SKILL_MD) return SKILL_LIMITS.skillMdBytes;
   if (path === MANIFEST) return SKILL_LIMITS.manifestBytes;
+  if (path === REVIEW_MD) return SKILL_LIMITS.reviewMdBytes;
   return SKILL_LIMITS.fileBytes;
 }
 
@@ -151,9 +153,9 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     const top = path.split("/")[0]!;
     const nested = path.includes("/");
     const isFolder = (SKILL_FOLDERS as readonly string[]).includes(top);
-    const topFile = !nested && kind === "file" && (path === SKILL_MD || path === MANIFEST);
+    const topFile = !nested && kind === "file" && (path === SKILL_MD || path === MANIFEST || path === REVIEW_MD);
     if (!topFile && !isFolder) {
-      add(path, `unsupported entry (allowed at the top: ${SKILL_MD}, ${MANIFEST}, ${SKILL_FOLDERS.join(", ")})`);
+      add(path, `unsupported entry (allowed at the top: ${SKILL_MD}, ${MANIFEST}, ${REVIEW_MD}, ${SKILL_FOLDERS.join(", ")})`);
       continue;
     }
     if (kind === "directory") continue;
@@ -226,7 +228,22 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     }
   }
 
+  // 4b. REVIEW.md (optional)
+  let review: string | undefined;
+  const rv = find(REVIEW_MD);
+  if (rv) {
+    try {
+      const text = decode(rv).trim();
+      if (text) review = text;
+      else add(REVIEW_MD, "is empty");
+    } catch {
+      add(REVIEW_MD, "is not valid UTF-8 text");
+    }
+  }
+
   // 5. Cross checks
+  if (review !== undefined && manifest && manifest.roles.length && !manifest.roles.includes("reviewer"))
+    add(REVIEW_MD, `needs the reviewer role in ${MANIFEST} (or no roles)`);
   if (fm && manifest && fm.name !== manifest.id) add(`${SKILL_MD}: name`, `must equal the id in ${MANIFEST} (${manifest.id})`);
   if (fm && dirName !== undefined && fm.name !== dirName) add(`${SKILL_MD}: name`, `must equal the folder name (${dirName})`);
   if (manifest && manifest.risk === "low") {
@@ -255,6 +272,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     digest: skillDigest(kept.map((e) => ({ path: e.path, content: e.content! }))),
     files,
   };
+  if (review !== undefined) pkg.review = review;
   if (fm.license !== undefined) pkg.license = fm.license.trim();
   if (fm.compatibility !== undefined) pkg.compatibility = fm.compatibility;
   if (fm.metadata !== undefined) pkg.metadata = fm.metadata;

@@ -2509,7 +2509,18 @@ A Claude session gets only the skills of the run's lock. The Foundry puts their 
 - **Rules win.** The block says that the Foundry's safety rules and the instructions of the user and the task win over a skill, and that a skill cannot grant a tool, a permission or network access. Only the description and the instructions of a package are used; its tools, profile and files never reach the session. Text that looks like a block tag is escaped.
 - **Size.** The block may not be larger than `skills.selection.max_tokens`. A skill is added together with the skills it needs, or not at all. A skill that does not fit is left out and logged. If a mandatory skill does not fit, the step stops with `skill selection is blocked: … does not fit the skill context budget`; raise `max_tokens`, then resume.
 - **Recorded.** The step record in `run.json` gets `skills`: `loaded` (`id@version`, in load order), `omitted` (only when something was left out), `bytes` and `estimatedTokens`. Steps without a lock have no `skills`. The log shows the same sizes.
-- **Codex** sessions get no skills yet. The lock is still checked before them.
+- **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+
+### Review checks for reviewers
+
+A skill package may hold an optional `REVIEW.md` next to `SKILL.md`: a few short checks for a reviewer (for example a Kafka skill checks delivery and ordering; a database skill checks the data model and migration risks). It is at most 8 KiB, must not be empty, and needs the `reviewer` role in `skill.yaml` (or no roles). It is part of the package digest, so a change needs a new pin.
+
+A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step and the `review_N` steps of `issue-plan` have it. Without `skill_role` a step is a coder, as before.
+
+- **Compact.** The block (`<foundry-skills role="reviewer">`) holds only the description and `REVIEW.md` of each skill, never `SKILL.md`, references, scripts or other files. It is limited by `skills.review.max_tokens` (100–20000, default 3000) and `skills.review.max_skill_tokens` (50–5000, default 1000). It is always smaller than the coding block of the same run and never above `skills.selection.max_tokens`. A skill over its limit is left out and logged.
+- **Only coding skills.** Only skills that were loaded for coding and allow the `reviewer` role are used. Skills that were not selected do not appear. Code review uses the run's skill lock. Plan review, before any lock exists, uses the skills of the draft plan's `SKILL_REQUEST` if they resolve; otherwise the reviewer gets none and the log says why.
+- **Read-only.** A reviewer step must be read-only (`permission_mode: plan`, or `dontAsk` without Edit, Write or Bash) and may allow only `Read`, `Glob`, `Grep` and `LS`. It cannot `resume` another step's session. A flow that breaks this is refused when it is loaded, and the step refuses to run for an older stored flow. A reviewer Claude session runs without your personal Claude setup. A Codex reviewer runs read-only, ignores your Codex user config and has MCP servers and hooks switched off.
+- **Same on both agents.** The block is the same for Claude and Codex. The step record gets `skills` with `role: "reviewer"`.
 
 ### Access from other computers
 

@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill runtime 6 — compact review checks from selected skills for reviewers (#181).
+  - **Package.** A skill may hold an optional `REVIEW.md` (at most 8 KiB, not empty, needs the `reviewer` role or no roles). It is part of the digest. New `SkillPackage.review` and `SKILL_LIMITS.reviewMdBytes`.
+  - **Flow.** New optional `skill_role: coder | reviewer` on `claude` steps. A reviewer step must be read-only, allow only `Read`, `Glob`, `Grep` and `LS`, and not `resume` (`reviewerStepProblem`, `readOnlyStep` in `src/flow/schema.ts`); checked at load and again before the step runs. `plan_review` and the `review_N` steps of `issue-plan` are reviewers (`scripts/build-flows.mjs`; `flows/*.yaml` regenerated).
+  - **Context.** `renderReviewPayload` and `skillSession(…, role)` build a `<foundry-skills role="reviewer">` block with description and `REVIEW.md` only, from skills loaded for coding that allow the reviewer role. Plan review uses the draft plan's request (`draftSkillRequest`). The block is smaller than the coding block and limited by new `skills.review.max_tokens` (default 3000) and `max_skill_tokens` (default 1000).
+  - **Agents.** Claude and Codex reviewers get the same block. A reviewer Claude session runs without the personal setup; Codex reviewers run with `--ignore-user-config`, no MCP servers and no hooks.
+  - **Compatibility.** Steps without `skill_role` and runs without skills behave as before. The step record's `skills` gains an optional `role`.
+  - **Docs.** `docs/USER_GUIDE.md` "Review checks for reviewers"; `docs/FLOW_AUTHORING.md` `skill_role`.
+  - **Tests.** New `tests/skill-review.test.ts`; `tests/skill-registry.test.ts`.
 - Work tracking 2c — dependency chain in a side panel instead of dimming the board (#375).
   - **Button.** A card or row with blockers has **What is in the way?** (`aria-expanded`, `aria-controls`). A card without a run opens the panel on Enter. Nothing on the board is dimmed.
   - **Panel.** New `ui/work-panel.js`: `chainOrder(item, items)` (pure; deepest blocker first, direct blockers from `after` marked, safe against cycles, uses `next.blockers` and `after` from the same `GET /api/board` answer, no new request) and `panelView`. It shows title, issue link, status, sentence, next move and where, owner, age, "Open run" and "In the way of #N" with each story's status and next move, or a GitHub link when it is not on the board. Chain entries on the board open in the panel; **Back** returns.
