@@ -19,6 +19,7 @@ import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
 import { renderStart } from "./user/start.js";
+import { runForm } from "./run-form.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
 import { loadHealth, startHealth } from "./health.js";
@@ -130,7 +131,7 @@ function renderFlowView() {
     graph: h("div"),
   };
   const seg = (mode, label) => h("button", { class: c.mode === mode ? "on" : null, onClick: () => setMode(mode) }, label);
-  const scopeSel = h("select", { class: "fit", title: "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
+  const scopeSel = h("select", { class: "fit", title: "Where to save", "aria-label": "Where to save", onChange: (e) => (c.saveScope = e.target.value) },
     h("option", { value: "repo", selected: c.saveScope === "repo" }, "this repo"),
     h("option", { value: "global", selected: c.saveScope === "global" }, "global"));
 
@@ -158,7 +159,7 @@ function drawBody() {
   const c = S.cur;
   if (c.mode === "yaml") {
     mount(ui.body, h("textarea", {
-      class: "yaml-editor", spellcheck: "false", value: c.yaml,
+      class: "yaml-editor", spellcheck: "false", "aria-label": "Flow YAML", value: c.yaml,
       onInput: (e) => {
         c.yaml = e.target.value;
         const obj = tryParse(c.yaml);
@@ -289,40 +290,8 @@ async function runDialog() {
   await validate();
   if (!c.validation?.ok) return toast("Fix the errors before running", "error");
   const flow = c.validation.flow;
-  const runId = await modal(`Run ${flow.name}`, (close) => {
-    const usesTask = /\{\{\s*task\s*\}\}|(FACTORY|SCF)_TASK/.test(c.yaml);
-    const task = h("textarea", { rows: 5, placeholder: "Describe the task, e.g. “Add a --json flag to the export command”" });
-    const repo = h("input", { class: "mono", value: S.info.repo });
-    const vars = Object.entries(flow.vars).map(([k, v]) => [k, h("input", { class: "mono", value: v })]);
-    const err = h("p", { class: "status bad flush" });
-    const start = h("button", { class: "primary", onClick: async () => {
-      if (!task.value.trim() && flow.workspace !== "empty" && !confirm("Run without a task description?")) return;
-      start.disabled = true;
-      try {
-        const body = {
-          task: task.value, repo: repo.value,
-          vars: Object.fromEntries(vars.map(([k, el]) => [k, el.value])),
-          ...(c.dirty || !c.name ? { yaml: c.yaml } : { flow: c.name }),
-        };
-        close((await api.startRun(body)).runId);
-      } catch (e) {
-        err.textContent = e.message;
-        start.disabled = false;
-      }
-    } }, "▶ Start run");
-    task.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && start.click());
-    return h("div", { class: "stack" },
-      h("label", { class: "field" }, h("span", {}, flow.workspace === "empty" ? "Extra instructions (optional)" : "Task"), task,
-        !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null),
-      flow.workspace === "empty"
-        ? h("small", { class: "muted" }, "Runs in a fresh empty folder — the flow fetches its own code (e.g. clones from GitHub).")
-        : h("label", { class: "field" }, h("span", {}, "Repository"), repo,
-            h("small", {}, flow.workspace === "worktree" ? "Runs in a fresh git worktree + branch — your checkout is not touched." : "⚠ in-place: Claude edits this directory directly.")),
-      vars.length ? h("div", { class: "grid" }, vars.map(([k, el]) => h("label", { class: "field" }, h("span", { class: "mono" }, k), el))) : null,
-      c.dirty ? h("small", { class: "muted" }, "Runs your unsaved edits.") : null,
-      err,
-      h("div", { class: "row" }, h("span", { class: "spacer" }), h("small", { class: "muted" }, "⌘↵"), start));
-  });
+  const runId = await modal(`Run ${flow.name}`, (close) =>
+    runForm({ flow, cur: c, repo: S.info.repo, close }));
   if (runId) location.hash = `#/runs/${runId}`;
 }
 
@@ -330,7 +299,7 @@ async function generateDialog(modify) {
   if (!modify && !confirmDiscard()) return;
   const result = await modal(modify ? "Ask Claude to change this flow" : "Draft a flow with Claude", (close) => {
     const ta = h("textarea", {
-      rows: 6,
+      rows: 6, "aria-label": modify ? "Describe the change" : "Describe the flow",
       placeholder: modify
         ? "e.g. Add a lint step before the tests and use haiku for the fix step"
         : "e.g. Write failing tests first, implement until they pass, run eslint, then an opus security review that must approve before committing.",

@@ -198,7 +198,11 @@ describe("renderStart: repository", () => {
     await submit(main);
     expect(alertText(main)).toBe("Choose a repository.");
     expect(calls.start).toHaveLength(0);
-    expect((document as any).activeElement.attrs["data-focus"]).toBe("add-repo");
+    // the group that holds the sentence and the Add repository button is marked and focused
+    const group = one(main, "div", { role: "group", "aria-label": "Repository" });
+    expect((document as any).activeElement).toBe(group);
+    expect(group.attrs["aria-invalid"]).toBe("true");
+    expect(group.attrs["aria-describedby"]).toBe("start-error");
   });
 
   it("shows the sentence of a failing list and still offers Add repository", async () => {
@@ -327,6 +331,45 @@ describe("renderStart: fields and start", () => {
     expect(alertText(main)).toBe('Fill in "Branch".');
     expect(calls.start).toHaveLength(0);
     expect((document as any).activeElement).toBe(one(main, "input", { name: "x" }));
+    const input = one(main, "input", { name: "x" });
+    expect(input.attrs["aria-invalid"]).toBe("true");
+    expect(input.attrs["aria-describedby"]).toBe("start-error");
+    expect(one(main, "p", { role: "alert" }).attrs.id).toBe("start-error");
+  });
+
+  it("takes the mark off when the field is edited, and the next submit sends", async () => {
+    data.flows = [flow("a", [field("x", { label: "Branch", required: true })])];
+    await open();
+    await submit(main);
+    const input = one(main, "input", { name: "x" });
+    expect(input.attrs["aria-invalid"]).toBe("true");
+    input.value = "main";
+    input.fire("input", { target: input });
+    expect(input.attrs["aria-invalid"]).toBeUndefined();
+    expect(input.attrs["aria-describedby"]).toBeUndefined();
+    expect(alertText(main)).toBe("");
+    await submit(main);
+    expect(calls.start).toHaveLength(1);
+  });
+
+  it("marks and focuses only the first of two empty required inputs", async () => {
+    data.flows = [flow("a", [field("x", { required: true }), field("y", { required: true })])];
+    await open();
+    await submit(main);
+    expect(one(main, "input", { name: "x" }).attrs["aria-invalid"]).toBe("true");
+    expect(one(main, "input", { name: "y" }).attrs["aria-invalid"]).toBeUndefined();
+    expect((document as any).activeElement).toBe(one(main, "input", { name: "x" }));
+  });
+
+  it("clears the mark and the message when another flow is chosen", async () => {
+    data.flows = [flow("a", [field("x", { required: true })]), flow("b", [field("z")])];
+    await open();
+    await submit(main);
+    expect(alertText(main)).not.toBe("");
+    find(main, "input", { name: "flow" })[1]!.fire("change");
+    await flush();
+    expect(alertText(main)).toBe("");
+    expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
   });
 
   it("shows the server's sentence, keeps what was typed and turns the button on again", async () => {
@@ -337,6 +380,7 @@ describe("renderStart: fields and start", () => {
     one(main, "textarea").value = "kept task";
     await submit(main);
     expect(alertText(main)).toBe("you cannot start this");
+    expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
     expect(one(main, "input", { name: "x" }).value).toBe("keep");
     expect(one(main, "textarea").value).toBe("kept task");
     expect(submitBtn(main).disabled).toBe(false);
@@ -423,6 +467,16 @@ describe("helpers", () => {
     expect(ui.addedRepo(undefined, after)).toBe("");
     expect(ui.addedRepo(repo("2"), after)).toBe("");
   });
+  it("startProblem checks the repository first, as the page shows it, whatever the metadata order", async () => {
+    const f = flow("a", [field("x", { required: true }), field("github_repo", { required: true })]);
+    expect(ui.startProblem(f, {})).toEqual({ field: "github_repo", text: "Choose a repository." });
+    data.flows = [f];
+    await open();
+    await submit(main);
+    expect(alertText(main)).toBe("Choose a repository.");
+    expect((document as any).activeElement.attrs["aria-label"]).toBe("Repository");
+  });
+
   it("startProblem finds the first empty required input", () => {
     const f = flow("a", [field("x", { label: "X", required: true }), field("y", { label: "Y", required: true }), field("z", { mode: "fixed", required: true })]);
     expect(ui.startProblem(f, { x: "ok", y: " " })).toEqual({ field: "y", text: 'Fill in "Y".' });

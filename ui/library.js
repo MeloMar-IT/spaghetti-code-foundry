@@ -49,11 +49,11 @@ function blockCard(b, onClick) {
 }
 
 /** Modal to pick a block. Resolves with the block listing or undefined. */
-export async function pickBlock() {
-  const blocks = await api.blocks();
+export async function pickBlock({ a = api } = {}) {
+  const blocks = await a.blocks();
   return modal("Insert from library", (close) => {
     const list = h("div");
-    const search = h("input", { placeholder: "Search blocks…", onInput: () => draw() });
+    const search = h("input", { placeholder: "Search blocks…", "aria-label": "Search blocks", onInput: () => draw() });
     const draw = () => {
       const q = search.value.toLowerCase();
       const hits = blocks.filter((b) => !q || `${b.id} ${b.block?.name} ${b.block?.description} ${b.block?.category}`.toLowerCase().includes(q));
@@ -75,8 +75,8 @@ function referencedVars(step, flowVars) {
 }
 
 /** Save one step (plus the vars it uses) as a reusable block. */
-export async function saveStepAsBlock(flow, step) {
-  const blocks = await api.blocks();
+export async function saveStepAsBlock(flow, step, { a = api } = {}) {
+  const blocks = await a.blocks();
   const categories = [...new Set(blocks.map((b) => b.block?.category).filter(Boolean))];
   const saved = await modal("Save step as block", (close) => {
     const id = h("input", { class: "mono", value: step.id.replace(/_/g, "-") });
@@ -84,7 +84,7 @@ export async function saveStepAsBlock(flow, step) {
     const category = h("input", { value: "Custom", list: "block-cats" });
     const description = h("input", { placeholder: "What this block does" });
     const scope = h("select", {}, h("option", { value: "global" }, "global (all repos)"), h("option", { value: "repo" }, "this repo"));
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
     const save = h("button", { class: "primary", onClick: async () => {
       if (!/^[\w-]+$/.test(id.value)) return (err.textContent = "Id may only contain letters, digits, _ and -");
       if (blocks.some((b) => b.id === id.value && b.scope !== "builtin") && !confirm(`Overwrite block "${id.value}"?`)) return;
@@ -95,7 +95,7 @@ export async function saveStepAsBlock(flow, step) {
       const block = { name: name.value || id.value, category: category.value || "Custom", description: description.value || undefined, vars: referencedVars(step, flow.vars), steps: [s] };
       if (!Object.keys(block.vars).length) delete block.vars;
       try {
-        await api.saveBlock(id.value, YAML.stringify(block, { lineWidth: 0 }), scope.value);
+        await a.saveBlock(id.value, YAML.stringify(block, { lineWidth: 0 }), scope.value);
         close(id.value);
       } catch (e) {
         err.textContent = e.message;
@@ -113,9 +113,9 @@ export async function saveStepAsBlock(flow, step) {
 }
 
 /** The Library page: browse blocks, view their YAML, delete your own. */
-export async function renderLibrary(main) {
+export async function renderLibrary(main, { a = api } = {}) {
   mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading library…"));
-  const blocks = await api.blocks();
+  const blocks = await a.blocks();
   const draw = (items) => mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Block library"), h("span", { class: "muted" }, `${items.length} blocks`)),
     h("p", { class: "muted mt-neg-6" },
@@ -126,8 +126,8 @@ export async function renderLibrary(main) {
         h("details", {}, h("summary", {}, "YAML"), h("pre", { class: "mono" }, b.yaml)),
         b.scope !== "builtin" ? h("button", { class: "small danger", onClick: async () => {
           if (!confirm(`Delete block "${b.id}"?`)) return;
-          await api.deleteBlock(b.id).catch((e) => toast(e.message, "error"));
-          draw(await api.blocks());
+          await a.deleteBlock(b.id).catch((e) => toast(e.message, "error"));
+          draw(await a.blocks());
         } }, "Delete") : null))))));
   draw(blocks);
 }
