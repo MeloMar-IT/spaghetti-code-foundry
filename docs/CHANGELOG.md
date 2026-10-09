@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Runs list 3b — Search and filters for the run list (server) (#377).
+  - **List.** `GET /api/runs` accepts `q`, `repo`, `flow`, `status` and `since`, in any mix, with `archived` and (admin only) `owner`. All are applied before the 200-run cap, so a run older than the newest 200 can be found. The answer has the same shape as before; without parameters it is unchanged.
+  - **Values.** `q` is at most 200 characters and matches, without regard to case, a part of the run id, flow name, repository name, `owner/name#7`, `#7` and the first line of the task (for a user: the task line as the user sees it). `status` is a run status; `flow` and `repo` are exact names; `since` is an ISO date (`2026-10-01` or with a time) and matches runs started at or after it. A wrong value is 400 with a short sentence.
+  - **Users.** A user gets only their own runs with every filter; `owner` from a user is ignored.
+  - **New route.** `GET /api/run-filters` answers `{ repos, flows }`, the values of the runs the caller can see (a user: their own), for the filter menus. Rule `yes` in `src/server/permissions.ts`.
+  - **Code.** `src/server/run-filter.ts` (new: `parseRunFilter`, `matchesRun`, `runFilterValues`), `src/server/api-runs.ts`, `src/engine/state.ts` (`RunBrief.taskLine`, the first line of the task, at most 200 characters; optional). Tests: `tests/run-filter.test.ts` (new), `tests/run-archive.test.ts`, `tests/permissions.test.ts`. Docs: the route table in `docs/USER_GUIDE.md`.
 - UI CSS architecture 3 — no inline styles in the flow editor, graph and library (#339).
   - **Behaviour.** No change for users. `ui/editor.js`, `ui/app.js`, `ui/step-types.js`, `ui/graph.js` and `ui/library.js` no longer use `style:` or `.style.`; they use utility classes or named classes.
   - **Dirty dot.** Shown and hidden with the class `.dirty-dot.clean` (`visibility: hidden`), set with `classList.toggle("clean", !dirty)`. It keeps its space when hidden.

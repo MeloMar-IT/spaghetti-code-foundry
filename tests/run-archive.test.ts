@@ -334,4 +334,82 @@ describe("archive routes", () => {
     expect("archivedAt" in runJson(id)).toBe(false);
   });
 
+  describe("search and filters", () => {
+    const GHOST = "22222222-2222-4222-8222-222222222222";
+
+    it("finds a run beyond the 200 newest, with every filter applied before the cap", async () => {
+      const seeded: string[] = [];
+      const seed = (id: string, extra: Record<string, unknown>) => {
+        writeRun(id, { owner: GHOST, status: "succeeded", startedAt: "2026-06-01T00:00:00.000Z", ...extra });
+        seeded.push(id);
+      };
+      try {
+        for (let i = 0; i <= 200; i++) seed(`20200102-000000-f${String(i).padStart(3, "0")}`, {});
+        seed("20200101-000000-needle", { status: "failed", startedAt: "2020-01-01T10:00:00.000Z", task: "Find the Needle here\nsecond", flow: "oldflow", vars: { github_repo: "acme/old", issue: "7" } });
+        seed("20200101-000000-late", { startedAt: "2030-01-01T00:00:00.000Z", task: "other", flow: "lateflow" });
+        const needle = "20200101-000000-needle";
+        const late = "20200101-000000-late";
+        const o = `?owner=${GHOST}`;
+        const all = await ids(admin, o);
+        expect(all).toHaveLength(200);
+        expect(all).not.toContain(needle);
+        expect(all).not.toContain(late);
+        for (const q of ["&q=NEEDLE", "&q=acme/old%237", "&q=%237", "&flow=oldflow", "&repo=acme/old", "&status=failed", "&since=2020-01-01&status=failed&q=needle"]) {
+          expect(await ids(admin, o + q), q).toEqual([needle]);
+        }
+        expect(await ids(admin, `${o}&since=2029-01-01`)).toEqual([late]);
+        expect(await ids(admin, `${o}&since=2020-01-01T12:00:00Z&flow=lateflow`)).toEqual([late]);
+        expect(await ids(admin, `${o}&since=2020-01-01T09:00:00Z&flow=oldflow`)).toEqual([needle]);
+        expect(await ids(admin, `${o}&since=2020-01-01T11:00:00Z&flow=oldflow`)).toEqual([]);
+        // the row has the same shape as in the plain list
+        const row = (await call(admin, "GET", `/api/runs${o}&q=needle`)).json()[0];
+        const plain = (await call(admin, "GET", `/api/runs${o}`)).json()[0];
+        expect(Object.keys(row).sort()).toEqual(Object.keys(plain).sort());
+        // an unknown parameter changes nothing
+        expect(await ids(admin, `${o}&foo=1`)).toEqual(all);
+        // the filter menus
+        const menus = (await call(admin, "GET", "/api/run-filters")).json();
+        expect(menus.repos).toContain("acme/old");
+        expect(menus.flows).toEqual(expect.arrayContaining(["oldflow", "lateflow"]));
+        expect(menus.flows).toEqual([...menus.flows].sort((a: string, b: string) => a.localeCompare(b)));
+        expect(menus.repos).toEqual([...menus.repos].sort((a: string, b: string) => a.localeCompare(b)));
+      } finally {
+        for (const id of seeded) rmSync(join(runsDir, id), { recursive: true, force: true });
+      }
+    });
+
+    it("never shows a user another account's run, with any filter", async () => {
+      const id = "20200103-000000-bobsecret";
+      try {
+        writeRun(id, { owner: bob.user.id, flow: "bobflow", task: "secret-bob", vars: { github_repo: "bob/secret", issue: "9" } });
+        for (const q of ["?q=secret-bob", "?flow=bobflow", "?repo=bob/secret", "?q=%239", `?q=secret-bob&owner=${bob.user.id}`]) {
+          expect(await ids(ann, q), q).toEqual([]);
+        }
+        expect(await ids(bob, "?q=secret-bob")).toContain(id);
+        expect(await ids(admin, "?q=secret-bob")).toContain(id);
+        const annMenus = (await call(ann, "GET", "/api/run-filters")).json();
+        expect(JSON.stringify(annMenus)).not.toMatch(/bob\/secret|bobflow|oldflow/);
+        expect(annMenus.flows).toContain("quick");
+        const adminMenus = (await call(admin, "GET", "/api/run-filters")).json();
+        expect(adminMenus.repos).toContain("bob/secret");
+        expect(adminMenus.flows).toContain("bobflow");
+        // archived mixes in
+        writeFileSync(file(id), JSON.stringify({ ...runJson(id), archivedAt: "2026-01-02T00:00:00.000Z" }));
+        expect(await ids(bob, "?q=secret-bob")).not.toContain(id);
+        expect(await ids(bob, "?archived=1&q=secret-bob")).toContain(id);
+      } finally {
+        rmSync(join(runsDir, id), { recursive: true, force: true });
+      }
+    });
+
+    it("answers 400 with a short sentence for a wrong value", async () => {
+      for (const who of [admin, ann]) {
+        for (const q of ["?status=nope", "?since=nope", `?q=${"a".repeat(201)}`, "?flow="]) {
+          const r = await call(who, "GET", `/api/runs${q}`);
+          expect(r.status, q).toBe(400);
+          expect(r.json().error).toMatch(/^[^\n]{3,120}$/);
+        }
+      }
+    });
+  });
 });
