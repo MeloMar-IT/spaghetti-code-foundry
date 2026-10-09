@@ -421,14 +421,22 @@ async function route() {
     else if (section === "settings") await renderSettings(main);
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await renderModels(main);
-    else if (section === "all-repos") S.cleanup = await renderAllRepos(main);
+    else if (section === "all-repos") {
+      const off = await renderAllRepos(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "credentials") {
       const off = await renderCredentials(main);
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
-    else if (section === "repos") S.cleanup = await renderRepos(main, { admin: true });
+    else if (section === "repos") {
+      const off = await renderRepos(main, { admin: true });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "start") {

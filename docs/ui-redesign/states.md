@@ -78,7 +78,7 @@ Every cell is "planned in part N" until the part converts that workspace. The pa
 | Refinement | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Start work | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Runs | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
-| Repositories | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
+| Repositories | Done (#346): skeleton table on My repositories, All repositories and Credentials | Done (#346): `emptyState`, and the add prompt | Done (#346): a failed `repoMethods` call shows the list with a note that adding is not possible now | Done (#346): `staleNote` with Retry when a reload fails; the list stays | Done (#346): "Connection failed" with the reason stays on the row until the next test | Done (#346): `permissionState` on a 403; no action buttons in the read-only preview | Done (#346): "Repository added" toast; the deploy-key follow-up stays as a banner until the connection works |
 | Build | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 | Administration | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N | planned in part N |
 

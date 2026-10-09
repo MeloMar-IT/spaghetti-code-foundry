@@ -543,7 +543,7 @@ describe("watcher dialogs", () => {
   it("no repository is an alert", async () => {
     void m.watcherForm.repoWatcherDialog({ repos: [], flows, existing: null });
     await dialogUp();
-    expect(alerts(modalRoot()).map((a) => a.textContent)).toContain("No connected repository can have a watcher.");
+    expect(alerts(modalRoot()).map((a) => a.textContent)).toContain("No repositories yet. Add one under My repositories.");
   });
   it("a bad vars line and the server's sentences mark the field", async () => {
     void m.watcherForm.repoWatcherDialog({ repos, flows, existing: null });

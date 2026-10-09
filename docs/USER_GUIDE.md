@@ -211,6 +211,8 @@ Home asks again every 30 seconds.
 
 **Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
 
+**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. A read-only preview shows no action buttons.
+
 ### Your turn
 
 ![Needs you on Home](images/home.png)
