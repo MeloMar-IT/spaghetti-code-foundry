@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
+import { keepScroll, liveStates, poller } from "./live.js";
 import { nextStatus, whenParts, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { firstLine, myRunsEntries, workText } from "./user/runs.js";
@@ -86,10 +87,10 @@ export function countsText({ needs = 0, active = 0, problems = 0 }) {
   ].filter(Boolean).join(" · ");
 }
 
-function linkNode(l, cls) {
+function linkNode(l, cls, focus) {
   return l.external
-    ? h("a", { class: cls, href: l.href, target: "_blank", rel: "noopener noreferrer" }, l.label)
-    : h("a", { class: cls, href: l.href }, l.label);
+    ? h("a", { class: cls, href: l.href, target: "_blank", rel: "noopener noreferrer", "data-focus": focus }, l.label)
+    : h("a", { class: cls, href: l.href, "data-focus": focus }, l.label);
 }
 
 /** One row: status, task, the record's sentence, one primary link and a Details link to the run. */
@@ -97,6 +98,7 @@ export function workRow(entry, { role = "user", owner = false, primary = true } 
   const { run, job } = entry;
   const n = recordOf(entry);
   const id = idOf(entry);
+  const fid = id ?? "x";
   const task = firstLine(run?.task ?? job?.task);
   const work = run ? workText(run.vars?.github_repo, run.vars?.issue) : workText(job?.githubRepo, job?.issue);
   const detail = id ? `#/runs/${encodeURIComponent(id)}` : null;
@@ -104,25 +106,26 @@ export function workRow(entry, { role = "user", owner = false, primary = true } 
   const who = owner ? ownerLabel(run?.ownerName) : "";
   return h("li", { class: "home-row" },
     h("div", { class: "home-main" },
-      h("div", { class: "row" }, n ? nextStatus(n) : null, h("b", {}, task || run?.flow || job?.flow || "Queued run")),
+      h("div", { class: "row" }, n ? nextStatus(n, `home-status-${fid}`) : null, h("b", {}, task || run?.flow || job?.flow || "Queued run")),
       work ? h("div", { class: "muted mono" }, work) : null,
       n ? h("div", { class: "muted" }, n.text) : null,
       n && whenParts(n).length ? h("div", { class: "next-parts timing" }, whenParts(n)) : null,
       who ? h("div", { class: "muted" }, `Owner: ${who}`) : null),
     h("div", { class: "home-side" },
-      link ? linkNode(link, primary ? "btn primary" : "btn") : null,
-      detail && link?.href !== detail ? h("a", { class: "btn ghost small", href: detail }, "Details") : null));
+      link ? linkNode(link, primary ? "btn primary" : "btn", `home-open-${fid}`) : null,
+      detail && link?.href !== detail ? h("a", { class: "btn ghost small", href: detail, "data-focus": `home-details-${fid}` }, "Details") : null));
 }
 
 /** A section: h2 and rows (at most SHOWN, then "+n more" → #/runs). opts: { empty, collapsed, role, owner }. null with no entries and no `empty`. */
 export function sectionView(title, entries, { empty, collapsed = false, role = "user", owner = false } = {}) {
   if (!entries.length && !empty) return null;
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   // The head owns the one primary button; rows use plain buttons.
   const body = entries.length
     ? [h("ul", { class: "home-list" }, entries.slice(0, SHOWN).map((e) => workRow(e, { role, owner, primary: false }))),
-      entries.length > SHOWN ? h("a", { class: "home-more", href: "#/runs" }, `+${entries.length - SHOWN} more`) : null]
+      entries.length > SHOWN ? h("a", { class: "home-more", href: "#/runs", "data-focus": `home-more-${slug}` }, `+${entries.length - SHOWN} more`) : null]
     : [h("p", { class: "home-clear" }, empty)];
-  if (collapsed) return h("details", { class: "home-section" }, h("summary", {}, `${title} (${entries.length})`), ...body);
+  if (collapsed) return h("details", { class: "home-section" }, h("summary", { "data-focus": `home-summary-${slug}` }, `${title} (${entries.length})`), ...body);
   return h("section", { class: "home-section" }, h("h2", {}, entries.length ? `${title} (${entries.length})` : title), ...body);
 }
 
@@ -132,7 +135,7 @@ export function headView({ counts, action }) {
     h("h1", {}, "Home"),
     counts ? h("span", { class: "home-counts muted" }, counts) : null,
     h("span", { class: "spacer" }),
-    action ? linkNode(action, action.primary ? "btn primary" : "btn") : null);
+    action ? linkNode(action, action.primary ? "btn primary" : "btn", "home-action") : null);
 }
 
 /** The Ask SCF prompts, last on the page; null for none. */
@@ -140,7 +143,7 @@ export function askView(prompts, onAsk) {
   if (!prompts?.length) return null;
   return h("section", { class: "home-ask" },
     h("h2", {}, "Ask SCF"),
-    h("div", { class: "row" }, prompts.map((p) => h("button", { type: "button", class: "small", onClick: () => onAsk?.(p) }, p))));
+    h("div", { class: "row" }, prompts.map((p, i) => h("button", { type: "button", class: "small", "data-focus": `home-ask-${i}`, onClick: () => onAsk?.(p) }, p))));
 }
 
 /** The best action of a model. */
@@ -160,7 +163,7 @@ export function homeView(model, { role = "user", prompts = [], onAsk } = {}) {
       headView({ counts: "", action: null }),
       h("div", { class: "home-clear" },
         h("p", {}, EMPTY),
-        h("div", { class: "row" }, h("a", { class: "btn primary", href: "#/start" }, "Start work"), h("a", { href: "#/repos" }, "My repositories"))),
+        h("div", { class: "row" }, h("a", { class: "btn primary", href: "#/start", "data-focus": "home-start" }, "Start work"), h("a", { href: "#/repos", "data-focus": "home-repos" }, "My repositories"))),
       askView(prompts, onAsk),
     ];
   }
@@ -173,23 +176,31 @@ export function homeView(model, { role = "user", prompts = [], onAsk } = {}) {
   ];
 }
 
-/** The user Home; refreshes every 30 seconds; returns a cleanup. */
+/** The user Home; asks every 30 seconds while the tab is visible; never rejects; returns a cleanup. */
 export async function renderHome(main, { a = api } = {}) {
-  let gone = false;
-  let seq = 0;
   const box = h("div", { class: "home" });
-  async function load() {
-    const mine = ++seq;
-    const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
-    const all = await withActive(a, runs, queue);
-    if (gone || mine !== seq) return;
-    mount(box, homeView(homeModel(all, queue?.pending), { role: "user" }));
-  }
   mount(main, box);
-  await load();
-  const timer = setInterval(() => load().catch(() => {}), REFRESH_MS);
-  return () => {
-    gone = true;
-    clearInterval(timer);
-  };
+  let poll;
+  const states = liveStates({
+    body: box,
+    heading: () => headView({ counts: "", action: null }),
+    label: "Loading Home",
+    what: "Home could not be loaded.",
+    retry: () => poll.refresh(),
+    focus: "home",
+  });
+  poll = poller({
+    load: async () => {
+      const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
+      return { runs: await withActive(a, runs, queue), pending: queue?.pending };
+    },
+    draw: ({ runs, pending }) => {
+      const [head, ...rest] = homeView(homeModel(runs, pending), { role: "user" });
+      keepScroll(box, () => mount(box, head, states.alert, ...rest, states.note));
+    },
+    every: REFRESH_MS,
+    onState: states.onState,
+  });
+  await poll.ready;
+  return () => poll.stop();
 }

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, toast } from "./dom.js";
+import { dialogOpen, keepScroll, liveStates, poller } from "./live.js";
 import { ISSUE_UNCHECKED, whereTarget } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { setCount } from "./shell.js";
@@ -35,14 +36,31 @@ function openWhenWaiting(count) {
 }
 let page = null; // set while the Your turn page is open: (data) => draws it
 
-/** Asks the server (or runs `call`, which returns the same data), then updates the badge and the open page. */
-export async function refresh(call = api.yourTurn) {
+/**
+ * Asks the server (or runs `call`, which returns the same data), then updates the badge. → the data, or undefined when a
+ * newer request won. Does not draw. The failure of an older read (poll, badge) is dropped; a failed action always throws,
+ * so its handler can show the error.
+ */
+async function ask(call = api.yourTurn) {
   const g = ++gen;
-  const data = await call();
+  const read = call === api.yourTurn;
+  let data;
+  try {
+    data = await call();
+  } catch (e) {
+    if (read && g !== gen) return undefined;
+    throw e;
+  }
   if (g !== gen) return undefined; // a newer request was started; its answer is the one to show
   showCount(data.count);
   openWhenWaiting(data.count);
-  page?.(data);
+  return data;
+}
+
+/** `ask`, then the open page gets the answer (once, through its poller's `show`). */
+export async function refresh(call = api.yourTurn) {
+  const data = await ask(call);
+  page?.(data); // `show` ignores undefined
   return data;
 }
 
@@ -50,6 +68,7 @@ export async function refresh(call = api.yourTurn) {
 export async function startBadge() {
   const first = await refresh().then((d) => d?.count ?? 0, () => 0);
   openOnWaiting = first === 0 && !!globalThis.location && !globalThis.location.hash;
+  // Not the page's poller: this keeps asking every 30 s in a hidden tab too, so the tab title shows the count.
   setInterval(() => refresh().catch(() => {}), 30_000);
   return first;
 }
@@ -80,6 +99,9 @@ function storyLink(s, focus) {
     ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer", "data-focus": focus }, `#${s.issue}`)
     : h("span", {}, `#${s.issue}`);
 }
+
+const turnHead = (embedded, count = 0) =>
+  embedded ? h("h2", {}, count > 0 ? `Needs you (${count})` : "Needs you") : h("div", { class: "toolbar" }, h("h1", {}, "Your turn"));
 
 function itemView(item, { onDismiss, onLeave, onAct }) {
   const n = item.next;
@@ -137,9 +159,7 @@ function continuingView(item) {
 /** The page for one answer of the server. */
 export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embedded = false } = {}) {
   return [
-    embedded
-      ? h("h2", {}, data.count > 0 ? `Needs you (${data.count})` : "Needs you")
-      : h("div", { class: "toolbar" }, h("h1", {}, "Your turn")),
+    turnHead(embedded, data.count),
     data.count === 0 ? h("div", { class: embedded ? "home-clear" : "empty" }, data.empty) : null,
     ...(data.groups ?? []).map((g) =>
       h("div", { class: "card turn-group" }, h("h3", {}, g.repo), ...g.items.map((i) => itemView(i, { onDismiss, onLeave, onAct })))),
@@ -152,8 +172,9 @@ export function turnView(data, { onDismiss, onRestore, onLeave, onAct }, { embed
   ];
 }
 
-/** Opens the page; returns a function that closes it. `embedded`: a section of Home; `onData` gets every answer drawn. */
-export async function renderYourTurn(main, { embedded = false, onData } = {}) {
+/** Opens the page; returns a function that closes it. `embedded`: a section of Home; `onData` gets every answer drawn;
+ * `focus` is a prefix for the names of the Retry buttons. Never rejects. */
+export async function renderYourTurn(main, { embedded = false, onData, focus } = {}) {
   let left; // an item with a watcher whose link was opened: check GitHub again when the user comes back
   const fail = (e) => toast(e.message, "error");
   const handlers = {
@@ -174,50 +195,40 @@ export async function renderYourTurn(main, { embedded = false, onData } = {}) {
       await refresh(async () => data);
     },
   };
-  // A dialog opened from an item remembers its button to give the focus back: no redraw while it is open. The newest
-  // answer is kept and drawn when the dialog is closed.
-  let held = null;
-  let closed = false;
-  let waiting;
-  const dialogOpen = () => (document.getElementById("modal-root")?.children?.length ?? 0) > 0;
-  const mine = (data) => {
-    if (dialogOpen()) {
-      held = data;
-      if (!waiting && !closed) waiting = setTimeout(function again() {
-        if (closed) return;
-        if (dialogOpen()) { waiting = setTimeout(again, 250); return; }
-        waiting = undefined;
-        const d = held;
-        held = null;
-        if (d) mine(d);
-      }, 250);
-      return;
-    }
-    held = null;
-    mount(main, turnView(data, handlers, { embedded }));
+  let poll;
+  const states = liveStates({
+    body: main,
+    heading: () => turnHead(embedded),
+    label: "Loading what needs you",
+    what: "Could not load what needs you.",
+    quiet: embedded, // Home has its own note; the section shows none
+    retry: () => poll.refresh(),
+    focus,
+  });
+  const draw = (data) => {
+    const [head, ...rest] = turnView(data, handlers, { embedded });
+    keepScroll(main, () => mount(main, head, states.alert, ...rest, states.note));
     onData?.(data);
   };
+  const mine = (data) => poll.show(data);
   page = mine;
+  poll = poller({
+    load: () => ask(),
+    draw,
+    every: 5000,
+    onState: states.onState,
+    hold: dialogOpen, // a dialog opened from an item remembers its button: no redraw while it is open
+    wake: async () => { // back from a GitHub link: the watcher checks GitHub first
+      if (!left) return;
+      const id = left;
+      left = undefined;
+      await api.tickWatcher(id).catch(() => {});
+    },
+  });
+  await poll.ready;
   // Only clear the hook if it is still ours: a newer page may have taken it over.
-  const release = () => { closed = true; clearTimeout(waiting); if (page === mine) page = null; };
-  try {
-    await refresh();
-  } catch (e) {
-    release();
-    throw e;
-  }
-  const timer = setInterval(() => refresh().catch(() => {}), 5000);
-  const onVisible = async () => {
-    if (document.visibilityState !== "visible" || !left) return;
-    const id = left;
-    left = undefined;
-    await api.tickWatcher(id).catch(() => {});
-    refresh().catch(() => {});
-  };
-  document.addEventListener("visibilitychange", onVisible);
   return () => {
-    release();
-    clearInterval(timer);
-    document.removeEventListener("visibilitychange", onVisible);
+    poll.stop();
+    if (page === mine) page = null;
   };
 }
