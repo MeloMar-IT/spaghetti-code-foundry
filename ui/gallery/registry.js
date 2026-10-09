@@ -5,12 +5,14 @@
 //   build      returns one Node; use made-up text and call no API
 // Every section needs an example for each variant, and these reserved names: `Long content`, `Disabled`
 // (only where the component has a disabled state), `Error` (where it has an error state) and `Notes`
-// (where the component has keyboard behaviour: its keys, long content and the narrow layout).
+// (where the component has keyboard behaviour: its keys, long content and the narrow layout). Product components
+// (ui/kit/product.js) always have `Error` (the failure context, even where the component has no state of its own) and `Notes`.
 import { h } from "../dom.js";
 import { button, iconButton, link } from "../kit/actions.js";
 import { badge, banner, card, emptyState, list, skeleton, table } from "../kit/display.js";
 import { checkbox, field, select, textArea, textInput } from "../kit/forms.js";
 import { dialog, drawer, menu, tabs, toast, tooltip } from "../kit/overlays.js";
+import { confirmDestructive, entityLink, filters, nextAction, pageHeader, statusSummary } from "../kit/product.js";
 
 export const LONG = "This made-up sentence is much longer than any real label should be, so that it has to wrap or be cut inside a narrow box, and it ends with Supercalifragilisticexpialidocious_Unbroken_Word_Without_Any_Spaces_At_All.";
 
@@ -239,6 +241,72 @@ export const sections = [
       { name: "Stays until dismissed", build: () => button({ onClick: () => toast("This stays until you dismiss it", { tone: "fail" }) }, "Show failure") },
       { name: "Long content", build: () => button({ onClick: () => toast(LONG, { tone: "fail" }) }, "Show long toast") },
       { name: "Notes", build: () => notes("each toast has a Dismiss button; a failure toast stays until dismissed, the others go after a few seconds.", "a long message wraps.", "toasts stack at the bottom and stay inside the window.") },
+    ],
+  },
+  {
+    id: "pageHeader", title: "Page header", component: "pageHeader",
+    examples: [
+      { name: "Title only", build: () => pageHeader({ title: "Runs" }) },
+      { name: "Back, meta and actions", build: () => pageHeader({ title: "Run 42", back: { label: "Back to runs", href: "#button" }, meta: [badge({ tone: "run", label: "Running" }), "Started 2 minutes ago"], actions: [button({}, "Pause"), button({ variant: "primary" }, "Approve")] }) },
+      { name: "Long content", build: () => pageHeader({ title: LONG, back: { label: LONG, href: "#button" }, meta: LONG, actions: button({}, LONG) }) },
+      { name: "Error", build: () => pageHeader({ title: "Run 43", meta: badge({ tone: "fail", label: "Failed" }), actions: button({ variant: "primary" }, "Try again") }) },
+      { name: "Notes", build: () => notes("the back link and the actions are in tab order; there is one h1 per page.", "a long title, back label and meta wrap.", "the actions wrap under the title.") },
+    ],
+  },
+  {
+    id: "statusSummary", title: "Status summary", component: "statusSummary",
+    examples: [
+      { name: "Plain values", build: () => statusSummary({ label: "Run facts", items: [{ label: "Branch", value: "main" }, { label: "Steps", value: 0 }, { label: "Started", value: "2 minutes ago" }] }) },
+      { name: "Tones", build: () => statusSummary({ label: "Tones", items: TONES.map((tone) => ({ label: tone, value: tone, tone })) }) },
+      { name: "With links", build: () => statusSummary({ label: "Linked facts", items: [{ label: "Section", value: "Button", href: "#button" }, { label: "Site", value: "Example", href: "https://example.test/" }] }) },
+      { name: "Long content", build: () => statusSummary({ label: "Long facts", items: [{ label: LONG, value: LONG }, { label: "Link", value: LONG, href: "#button" }] }) },
+      { name: "Error", build: () => statusSummary({ label: "Failed facts", items: [{ label: "Build", value: "Failed", tone: "fail", href: "#button" }, { label: "Tests", value: "Not run" }] }) },
+      { name: "Notes", build: () => notes("an item with a link is a link in tab order; the rest is plain text.", "a long label and value wrap.", "the items wrap onto new lines.") },
+    ],
+  },
+  {
+    id: "nextAction", title: "Next action", component: "nextAction",
+    examples: [
+      { name: "You, with a button", build: () => nextAction({ who: "You", text: "Review the plan and approve it.", where: { label: "Open the plan", url: "#/runs" }, action: { label: "Approve", onClick: () => {} }, tone: "accent" }) },
+      { name: "Someone else, no button", build: () => nextAction({ who: "The factory", text: "The tests are running.", tone: "run" }) },
+      { name: "With a place", build: () => h("div", {}, nextAction({ who: "You", text: "Check the pull request.", where: { label: "Pull request 7", url: "https://example.test/pr/7" } }), nextAction({ who: "You", text: "Ask an admin for access.", where: { label: "Settings page" } })) },
+      { name: "Tones", build: () => h("div", {}, ...TONES.map((tone) => nextAction({ who: tone, text: `A ${tone} next step.`, tone, heading: `Next (${tone})`, level: 3 }))) },
+      { name: "Long content", build: () => nextAction({ who: LONG, text: LONG, where: { label: LONG, url: "#/runs" }, action: { label: LONG, onClick: () => {} } }) },
+      { name: "Error", build: () => nextAction({ who: "Something is wrong", text: "The build failed twice.", tone: "fail", action: { label: "Look at the log", onClick: () => {} } }) },
+      { name: "Notes", build: () => notes("the button and the link are in tab order; there is at most one button.", "a long text, place and button label wrap.", "the card fills the width and its content wraps.") },
+    ],
+  },
+  {
+    id: "filters", title: "Filters", component: "filters",
+    examples: [
+      { name: "Nothing set", build: () => filters({ label: "Filter runs", fields: [{ name: "q", label: "Search" }, { name: "state", label: "State", type: "select", options: OPTIONS }], onChange: () => {} }) },
+      { name: "Some set", build: () => filters({ label: "Filter runs", fields: [{ name: "q", label: "Search" }, { name: "mine", label: "Only mine", type: "checkbox" }], value: { q: "abc", mine: true }, onChange: () => {} }) },
+      { name: "All field types", build: () => filters({ label: "All types", fields: [{ name: "q", label: "Search", placeholder: "Words" }, { name: "state", label: "State", type: "select", options: OPTIONS, emptyLabel: "Any state" }, { name: "mine", label: "Only mine", type: "checkbox" }], onChange: () => {} }) },
+      { name: "Long content", build: () => filters({ label: "Long filters", fields: [{ name: "q", label: LONG }, { name: "mine", label: LONG, type: "checkbox" }], value: { q: LONG }, onChange: () => {} }) },
+      { name: "Error", build: () => filters({ label: "Filter with error", fields: [{ name: "q", label: "Search", error: "Use at least two letters." }], value: { q: "a" }, onChange: () => {} }) },
+      { name: "Notes", build: () => notes("Tab through the labelled controls; Clear shows only when a filter is set and puts the focus on the first control.", "a long label wraps above its control.", "the fields wrap onto new lines and Clear follows them.") },
+    ],
+  },
+  {
+    id: "entityLink", title: "Entity link", component: "entityLink",
+    examples: [
+      { name: "Kinds", build: () => row(...["run", "repo", "issue", "pr", "flow", "user"].map((kind) => entityLink({ kind, id: "12", label: `A ${kind}`, href: "#button" }))) },
+      { name: "Visible kind", build: () => row(entityLink({ kind: "issue", id: "329", label: "Product components", href: "#button", showKind: true }), entityLink({ kind: "pr", id: "330", showKind: true, href: "#button" })) },
+      { name: "Without a link", build: () => row(entityLink({ kind: "repo", label: "Private repository" }), entityLink({ kind: "run", id: "7", label: "Run seven", showKind: true })) },
+      { name: "External", build: () => entityLink({ kind: "pr", id: "9", label: "On the host", href: "https://example.test/pr/9" }) },
+      { name: "Long content", build: () => entityLink({ kind: "flow", id: LONG, label: LONG, href: "#button" }) },
+      { name: "Error", build: () => entityLink({ kind: "repo", label: "A repository you may not open", showKind: true }) },
+      { name: "Notes", build: () => notes("a link is in tab order and says its kind; without a link it is plain text.", "a long id and label wrap.", "it wraps inside its line.") },
+    ],
+  },
+  {
+    id: "confirmDestructive", title: "Destructive confirmation", component: "confirmDestructive",
+    examples: [
+      { name: "Open", build: () => button({ onClick: () => confirmDestructive({ title: "Delete this run?", text: "This cannot be undone.", send: () => Promise.resolve() }) }, "Delete run") },
+      { name: "Type to confirm", build: () => button({ onClick: () => confirmDestructive({ title: "Delete this repository?", text: "Type its name to go on.", typeToConfirm: "my-repo", confirmLabel: "Delete repository", send: () => Promise.resolve() }) }, "Delete repository") },
+      { name: "Long content", build: () => button({ onClick: () => confirmDestructive({ title: LONG, text: LONG, send: () => Promise.resolve() }) }, "Open long confirmation") },
+      { name: "Error", build: () => button({ onClick: () => confirmDestructive({ title: "Delete with an error?", text: "The server will refuse.", send: () => Promise.reject(new Error("The server refused this.")) }) }, "Open failing confirmation") },
+      { name: "Notes", build: () => notes("focus starts on Cancel; Escape closes it unless the call is out; with a typed text, Delete stays off until it matches.", "a long title and text wrap.", NARROW) },
     ],
   },
 ];

@@ -437,6 +437,29 @@ describe("dialog", () => {
     await b;
   });
 
+  it("focuses the element named by initialFocus, with no earlier focus on another element", async () => {
+    opener();
+    const input = dom.h("input", {});
+    const other = btn("other");
+    const seen: unknown[] = [];
+    const orig = FakeElement.prototype.focus;
+    FakeElement.prototype.focus = function (this: FakeElement) { seen.push(this); orig.call(this); };
+    try {
+      const a = ov.dialog({ title: "A", initialFocus: () => other, build: () => dom.h("div", {}, input, other) });
+      expect(active()).toBe(other);
+      expect(seen).toEqual([other]);
+      keydown("Escape");
+      await a;
+      // An element outside the dialog is ignored.
+      const b = ov.dialog({ title: "B", initialFocus: () => btn("outside"), build: () => input });
+      expect(active()).toBe(input);
+      keydown("Escape");
+      await b;
+    } finally {
+      FakeElement.prototype.focus = orig;
+    }
+  });
+
   it("skips a disabled or hidden first input and focuses the next usable one", async () => {
     opener();
     const off = dom.h("input", {});
