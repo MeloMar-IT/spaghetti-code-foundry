@@ -419,7 +419,13 @@ async function main(argv: string[]): Promise<number> {
       });
       const rows = report.summary.map((s) =>
         `${s.variant.padEnd(34)} ${String(Math.round(s.passRate * 100) + "%").padStart(5)}  $${s.avgCostUsd.toFixed(3).padStart(7)}  ${String(Math.round((s.avgTokens ?? 0) / 1000) + "k").padStart(6)}  ${s.avgMinutes.toFixed(1).padStart(5)}m  ${s.avgFixLoops.toFixed(1).padStart(5)}`);
-      process.stdout.write(`\n${"variant".padEnd(34)}  pass   avg cost  tokens   time  loops\n${rows.join("\n")}\n\nreport: ${file}\n`);
+      process.stdout.write(`\n${"variant".padEnd(34)}  pass   avg cost  tokens   time  loops\n${rows.join("\n")}\n`);
+      if (report.summary.some((s) => s.skills)) {
+        const pct = (n?: number) => (n === undefined ? "—" : Math.round(n * 100) + "%").padStart(10);
+        const skillRows = report.summary.map((s) => `${s.variant.padEnd(34)} ${pct(s.qualityRate ?? s.passRate)} ${pct(s.skills?.selectionRate)} ${pct(s.skills?.contextRate)} ${pct(s.skills?.activationRate)}`);
+        process.stdout.write(`\n${"variant".padEnd(34)} ${"quality".padStart(10)} ${"selection".padStart(10)} ${"context".padStart(10)} ${"activation".padStart(10)}\n${skillRows.join("\n")}\n`);
+      }
+      process.stdout.write(`\nreport: ${file}\n`);
       return 0;
     }
 
