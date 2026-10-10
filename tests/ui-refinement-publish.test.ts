@@ -675,7 +675,7 @@ describe("replacing a split issue", () => {
   const pubd = (d: any, n: number) => ({ ...d, published: { issue: n, url: `https://github.com/acme/app/issues/${n}` } });
   const rep = (extra: object = {}) => ({ issue: 7, parts: [{ issue: 101 }, { issue: 102 }], ready: true, dependants: [], ...extra });
   const toast = () => (document as any).getElementById("toast").textContent;
-  const replaced = { issue: 7, parts: [101, 102], dependants: [] };
+  const replaced = { issue: 7, parts: [101, 102], dependants: [], closed: "not_planned" };
   const dueDrafts = () => [split()[0], pubd(mk(D2, "Two"), 101), pubd(mk(D3, "Three"), 102)];
   const duePlan = () => makePlan({ items: [item(1, mk(D2, "Two"), { state: "on-github", issue: 101 }), item(2, mk(D3, "Three"), { state: "on-github", issue: 102 })], willCreate: [], replaces: rep() });
   const dueSession = () => { drafts = dueDrafts(); over = { state: "published", source: { ...source, replace: "due" } }; plan = duePlan(); };
@@ -700,19 +700,30 @@ describe("replacing a split issue", () => {
       expect(pub.confirmText({ replaces: { ready: false }, willCreate: [D2] })).toBe("Create the issues");
     });
     it("doneText", () => {
-      expect(pub.doneText({ created: [], replaced })).toBe("Issue #7 is replaced by its parts");
-      expect(pub.doneText({ created: [{}, {}], replaced })).toBe("2 issues are on GitHub and issue #7 is replaced by its parts");
-      expect(pub.doneText({ created: [{}], replaced })).toBe("1 issue is on GitHub and issue #7 is replaced by its parts");
+      expect(pub.doneText({ created: [], replaced })).toBe("Issue #7 is replaced");
+      expect(pub.doneText({ created: [{}, {}], replaced })).toBe("2 issues are on GitHub and issue #7 is replaced");
+      expect(pub.doneText({ created: [{}], replaced })).toBe("1 issue is on GitHub and issue #7 is replaced");
+    });
+    it("doneText for a replacement that is not closed", () => {
+      expect(pub.doneText({ created: [], replaced: { ...replaced, closed: "other" } })).toBe("Issue #7 is replaced; it was closed in another way");
+      expect(pub.doneText({ created: [{}], replaced: { ...replaced, closed: "other" } })).toBe("1 issue is on GitHub and issue #7 is replaced; it was closed in another way");
+      expect(pub.doneText({ created: [], replaced: { ...replaced, closed: "open" } })).toBe("Issue #7 is not closed: check and close it by hand");
+      expect(pub.doneText({ created: [{}, {}], replaced: { ...replaced, closed: "open" } })).toBe("2 issues are on GitHub and issue #7 is not closed: check and close it by hand");
     });
     it("replacesText", () => {
-      expect(pub.replacesText(rep())).toBe("Issue #7 is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #7 names them. #7 stays open.");
+      expect(pub.replacesText(rep())).toBe("Issue #7 is replaced by its parts and closed as not planned. Issues that depend on it are changed to depend on the parts, and a comment on #7 names them.");
+      const stays = pub.replacesText(rep({ staysOpen: true }));
+      expect(stays).toBe("Issue #7 is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #7 names them. #7 stays open: check it and close it by hand.");
+      expect(stays).not.toContain("closed as not planned");
       expect(pub.replacesText(rep({ ready: false }))).toBe("Issue #7 is replaced by its parts when every part is on GitHub. Nothing changes for it now.");
     });
     it("replaceText", () => {
       expect(pub.replaceText({ issue: 7, replace: "waiting" })).toBe("Issue #7 is replaced by its parts when every part is on GitHub.");
       expect(pub.replaceText({ issue: 7, replace: "due" })).toBe("Issue #7 is not replaced yet. Publish again to finish.");
       expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "open" })).toBe("Issue #7 was replaced by #101, #102. It is still open: check it and close it by hand.");
-      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "not_planned" })).toBe("Issue #7 was replaced by #101, #102. It is closed.");
+      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "not_planned" })).toBe("Issue #7 was replaced by #101, #102.");
+      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "other" })).toBe("Issue #7 was replaced by #101, #102. It was closed on GitHub in another way and is left so.");
+      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102] })).toBe("Issue #7 was replaced by #101, #102. It is still open: check it and close it by hand.");
       expect(pub.replaceText({ issue: 7 })).toBe("");
       expect(pub.replaceText(undefined)).toBe("");
     });
@@ -731,7 +742,7 @@ describe("replacing a split issue", () => {
       expect(lis[1]!.textContent).toContain("Change by hand: it names the issue by its title.");
       expect(walk(lis[1]!).some((e) => e.tag === "pre")).toBe(false);
       const none = text(rep());
-      expect(none.textContent).not.toContain("Issues that depend");
+      expect(none.textContent).not.toContain("Issues that depend on #7");
       expect(walk(none).some((e) => e.tag === "ul")).toBe(false);
     });
   });
@@ -746,7 +757,7 @@ describe("replacing a split issue", () => {
     expect(button("Create the issues", dialog())).toBeUndefined();
     await press(button("Create the issues and replace the original", dialog()));
     expect(posts()[0]!.body.drafts.map((x: any) => x.draft)).toEqual([D2, D3]);
-    expect(toast()).toBe("2 issues are on GitHub and issue #7 is replaced by its parts");
+    expect(toast()).toBe("2 issues are on GitHub and issue #7 is replaced");
   });
   it("a replacement that is not ready says so and keeps the plain button", async () => {
     createPlan(rep({ ready: false }));
@@ -777,7 +788,7 @@ describe("replacing a split issue", () => {
     expect(dialog()!.textContent).not.toContain(pub.NOTHING_READY);
     await press(button("Replace the issue", dialog()));
     expect(posts()[0]!.body).toEqual({ drafts: [] });
-    expect(toast()).toBe("Issue #7 is replaced by its parts");
+    expect(toast()).toBe("Issue #7 is replaced");
   });
   it("says the architect is busy while the replacement is due", async () => {
     dueSession();
@@ -796,7 +807,7 @@ describe("replacing a split issue", () => {
     cleanup?.();
     over.source.closed = "other";
     await show();
-    expect(publishBox().textContent).toContain("It is closed.");
+    expect(publishBox().textContent).toContain("It was closed on GitHub in another way and is left so.");
   });
   it("the waiting line comes before the not-changed line", async () => {
     drafts = split();
@@ -815,7 +826,7 @@ describe("replacing a split issue", () => {
     sec.update(sess({ replace: "done", replacedBy: [101, 102], closed: "open" }));
     expect(sec.node.textContent).toContain("was replaced by #101, #102.");
     sec.update(sess({ replace: "done", replacedBy: [101, 102], closed: "other" }));
-    expect(sec.node.textContent).toContain("It is closed.");
+    expect(sec.node.textContent).toContain("It was closed on GitHub in another way and is left so.");
   });
   it("a replacement that fails after every part is on GitHub can be retried", async () => {
     createPlan(rep());
@@ -839,7 +850,7 @@ describe("replacing a split issue", () => {
     await press(publishButton());
     await press(button("Replace the issue", dialog()));
     expect(posts()[1]!.body).toEqual({ drafts: [] });
-    expect(toast()).toBe("Issue #7 is replaced by its parts");
+    expect(toast()).toBe("Issue #7 is replaced");
     expect(publishBox().textContent).toContain("Issue #7 was replaced by #101, #102. It is still open");
     expect(publishButton()).toBeUndefined();
   });

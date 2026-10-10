@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dependantComment, dependsOnText, findDependants, originalComment, rangeHash, replaceMarker, rewriteDependsOn } from "../src/refinement/dependants.js";
+import { CLOSES_LINE, announcesClose, dependantComment, dependsOnText, findDependants, originalComment, rangeHash, replaceMarker, rewriteDependsOn } from "../src/refinement/dependants.js";
 
 describe("Windows line ends", () => {
   const body = "Intro #12\r\n### Depends on\r\n#12\r\n- #13 and #12\r\n\r\n### Notes\r\n#12";
@@ -165,6 +165,16 @@ describe("comments", () => {
     const already = originalComment({ ...o, ending: "closedAlready" });
     expect(already).toContain("closed already");
     expect(originalComment({ ...o, ending: "closes" })).toContain("will be closed as not planned");
+  });
+  it("originalComment: only the generated line in its place announces the close", () => {
+    const o = { parts: [31], by: "alice", marker };
+    expect(originalComment({ ...o, ending: "closes" })).toContain(CLOSES_LINE);
+    expect(announcesClose(originalComment({ ...o, ending: "closes" }))).toBe(true);
+    expect(announcesClose(originalComment({ ...o, ending: "staysOpen" }))).toBe(false);
+    // A criterion that repeats the sentence does not count.
+    const repeated = originalComment({ ...o, ending: "staysOpen", leftBehind: [CLOSES_LINE] });
+    expect(repeated).toContain(`- ${CLOSES_LINE}`);
+    expect(announcesClose(repeated)).toBe(false);
   });
   it("originalComment: the 1,000 issue warning, the labels, the list left behind", () => {
     const o = { ending: "staysOpen" as const, parts: [31], by: "alice", marker };

@@ -1,16 +1,25 @@
 import { githubKey } from "../auth/repo-url.js";
-import { commentOnIssue, findOwnComment, issueComments, listOpenIssues, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
-import { dependantComment, dependsOnText, findDependants, originalComment, replaceMarker, rewriteDependsOn, type DependantKind } from "../refinement/dependants.js";
+import { closeIssue, commentOnIssue, findOwnComment, issueComments, listOpenIssues, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
+import { storyKey, storyKeys } from "../monitor/breaker.js";
+import { readFindings } from "../monitor/findings.js";
+import { hashIn } from "../monitor/story.js";
+import { announcesClose, dependantComment, dependsOnText, findDependants, originalComment, replaceMarker, rewriteDependsOn, type DependantKind } from "../refinement/dependants.js";
 import type { PullKind } from "../refinement/issue-building.js";
 import { endsWithMarker, type ReplacePart } from "../refinement/publish.js";
-import { LABELS_MAX, markOf, mergeJournal, partsOf, replaceStarted, type Found } from "../refinement/replace-journal.js";
+import { LABELS_MAX, markOf, mergeJournal, partsOf, replaceStarted, type Closed, type Found } from "../refinement/replace-journal.js";
 import { getSession, recordDependantDone, recordDependantWrite, recordOriginalLabels, recordReplaced, recordReplacing, type Session } from "../refinement/store.js";
 import { labelsOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { HttpError } from "./http.js";
 import type { ApiContext } from "./server.js";
 
-/** The title the source issue has on GitHub now; the stored one when the issue is gone or is a pull request. */
-export async function originalTitle(s: Session, timeout: number): Promise<string> {
+/** Is this issue a story of the monitor: the marker is in its text, or a finding remembers it (also when the marker was taken out)? */
+function isMonitorStory(repo: string, issue: number, body: string | null | undefined): boolean {
+  if (hashIn(body ?? undefined) !== undefined) return true;
+  return storyKeys(readFindings().findings).has(storyKey(repo, issue));
+}
+
+/** The title the source issue has on GitHub now (the stored one when the issue is gone or is a pull request), and whether it is a monitor story. */
+export async function readOriginal(s: Session, timeout: number): Promise<{ title: string; monitor: boolean }> {
   const n = s.source!.issue;
   let issue;
   try {
@@ -18,15 +27,16 @@ export async function originalTitle(s: Session, timeout: number): Promise<string
   } catch (e) {
     throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}`);
   }
-  return issue && !issue.pull_request && typeof issue.title === "string" && issue.title ? issue.title : s.source!.title;
+  const live = issue && !issue.pull_request ? issue : undefined;
+  return { title: live && typeof live.title === "string" && live.title ? live.title : s.source!.title, monitor: live ? isMonitorStory(s.repo, n, live.body) : false };
 }
 
 /**
  * The open issues that depend on the issue a publish would replace: a fresh scan merged with the journal kept. It only reads.
  * `title` is the live title of the original when the caller read it already.
  */
-export async function replacePlan(ctx: ApiContext, s: Session, replaces: { issue: number; parts: ReplacePart[] }, timeout: number, title?: string): Promise<{ cut?: true; dependants: Found[] }> {
-  const live = title ?? (await originalTitle(s, timeout));
+export async function replacePlan(ctx: ApiContext, s: Session, replaces: { issue: number; parts: ReplacePart[] }, timeout: number, original?: { title: string; monitor: boolean }): Promise<{ cut?: true; staysOpen?: true; dependants: Found[] }> {
+  const live = original ?? (await readOriginal(s, timeout));
   let open;
   try {
     open = await listOpenIssues(s.repo, { pages: ctx.opts.openIssuePages ?? 10, timeoutMs: timeout });
@@ -35,7 +45,7 @@ export async function replacePlan(ctx: ApiContext, s: Session, replaces: { issue
   }
   const exclude = replaces.parts.flatMap((p) => ("issue" in p ? [p.issue] : []));
   const shown = replaces.parts.map((p) => ("issue" in p ? p.issue : `new issue ${p.item}`));
-  const found: Found[] = findDependants(open.issues, { number: replaces.issue, title: live }, exclude, shown).map((d) => ({
+  const found: Found[] = findDependants(open.issues, { number: replaces.issue, title: live.title }, exclude, shown).map((d) => ({
     issue: d.issue,
     title: d.title,
     ...(d.byHand ? { byHand: true as const } : { before: d.before, after: d.after }),
@@ -45,12 +55,16 @@ export async function replacePlan(ctx: ApiContext, s: Session, replaces: { issue
     .filter((d) => !d.done)
     .map((d): Found => ({ issue: d.issue, title: d.title, ...(d.byHand ? { byHand: true as const } : {}), ...(d.before !== undefined ? { before: d.before } : {}), ...(d.after !== undefined ? { after: d.after } : {}) }))
     .sort((a, b) => a.issue - b.issue);
-  return { ...(open.cut || s.source?.replacing?.cut || merged.cut ? { cut: true as const } : {}), dependants };
+  const cut = open.cut || s.source?.replacing?.cut || merged.cut;
+  // A dependant the journal has as done that names the original again (a person changed it back) still points at it.
+  const again = found.some((f) => merged.dependants.find((d) => d.issue === f.issue)?.done);
+  const staysOpen = cut || again || live.monitor || dependants.some((d) => d.byHand) || merged.dependants.some((d) => d.outcome === "by-hand" || d.outcome === "check");
+  return { ...(cut ? { cut: true as const } : {}), ...(staysOpen ? { staysOpen: true as const } : {}), dependants };
 }
 
 // ---- the ledger ----------------------------------------------------------------------------------------------------------------------
 
-export type Write = { issue: number; what: "created" | "found" | "updated" | "rewritten" | "commented" | "labelled" | "unlabelled" };
+export type Write = { issue: number; what: "created" | "found" | "updated" | "rewritten" | "commented" | "labelled" | "unlabelled" | "closed" };
 /** How many writes an error message names. */
 const LEDGER_SHOWN = 10;
 const PHRASE: Record<Exclude<Write["what"], "found">, string> = {
@@ -60,6 +74,7 @@ const PHRASE: Record<Exclude<Write["what"], "found">, string> = {
   commented: "got a comment",
   labelled: "got a label",
   unlabelled: "lost a label",
+  closed: "was closed",
 };
 
 /** Every write of one publish, in order: the issues made and changed, the dependants rewritten, the comments, the labels taken off. */
@@ -113,19 +128,28 @@ export function auditLines(repo: string, numbers: number[]): string[] {
 
 // ---- checks and reads ---------------------------------------------------------------------------------------------------------------
 
-/** Does an own comment with this marker exist on the issue? A comment of another login does not count. Rejects with 502. */
-export async function hasOwnComment(repo: string, issue: number, marker: string, timeout: number): Promise<boolean> {
+/** The body of the own comment with this marker on the issue; undefined when there is none. A comment of another login does not count. Rejects with 502. */
+export async function ownCommentBody(repo: string, issue: number, marker: string, timeout: number): Promise<string | undefined> {
   try {
-    return (await findOwnComment(await issueComments(repo, issue, timeout), (c) => endsWithMarker(c.body, marker), timeout)) !== undefined;
+    return (await findOwnComment(await issueComments(repo, issue, timeout), (c) => endsWithMarker(c.body, marker), timeout))?.body;
   } catch (e) {
     throw new HttpError(502, `could not read the comments of issue #${issue} on GitHub: ${whatHappened(e)}`);
   }
+}
+
+/** Does an own comment with this marker exist on the issue? */
+export async function hasOwnComment(repo: string, issue: number, marker: string, timeout: number): Promise<boolean> {
+  return (await ownCommentBody(repo, issue, marker, timeout)) !== undefined;
 }
 
 export interface OriginalState {
   title: string;
   closed: boolean;
   closedAt?: string;
+  /** Why GitHub closed it (`state_reason`). */
+  reason?: string;
+  /** It is a story of the monitor: closing it as not planned would mute the finding. */
+  monitor: boolean;
   /** The labels the original has now. */
   labels: string[];
 }
@@ -149,10 +173,11 @@ export async function checkOriginal(ctx: ApiContext, s: Session, timeout: number
   if (issue.pull_request) throw new HttpError(409, `#${n} is a pull request, not an issue${nothing || "; drop the session"}`);
   const labels = labelsOf(issue);
   const title = issue.title || s.source!.title;
+  const monitor = isMonitorStory(s.repo, n, issue.body);
   if (issue.state !== "open") {
     if (!started) throw new HttpError(409, `issue #${n} is closed, so nothing was written; reopen it on GitHub and publish again`);
     const at = typeof issue.closed_at === "string" ? Date.parse(issue.closed_at) : NaN;
-    return { title, closed: true, ...(Number.isFinite(at) ? { closedAt: new Date(at).toISOString() } : {}), labels };
+    return { title, closed: true, monitor, ...(typeof issue.state_reason === "string" ? { reason: issue.state_reason } : {}), ...(Number.isFinite(at) ? { closedAt: new Date(at).toISOString() } : {}), labels };
   }
   let why: string | undefined;
   try {
@@ -161,7 +186,7 @@ export async function checkOriginal(ctx: ApiContext, s: Session, timeout: number
     throw new HttpError(502, `could not read a pull request of issue #${n} on GitHub: ${whatHappened(e)}${nothing}`);
   }
   if (why) throw new HttpError(409, `issue #${n} cannot be replaced: ${why}${nothing || "; remove the label or drop the session, then publish again"}`);
-  return { title, closed: false, labels };
+  return { title, closed: false, monitor, labels };
 }
 
 /** The acceptance criteria that stay on the split drafts of the session (the mark and every split draft reached from it), in order. */
@@ -192,7 +217,7 @@ export interface ReplaceInput {
   original: OriginalState;
   leftBehind: string[];
   /** Called as soon as GitHub confirmed a write. */
-  wrote: (w: { issue: number; what: "rewritten" | "commented" | "unlabelled" }) => void;
+  wrote: (w: { issue: number; what: "rewritten" | "commented" | "unlabelled" | "closed" }) => void;
   /** What was written so far (for error messages) and the last write. */
   written: () => string;
   lastWrite: () => string | undefined;
@@ -208,10 +233,10 @@ function triggerLabels(ctx: ApiContext, s: Session): string[] {
 /**
  * Finishes the replacement of a split original once every part is on GitHub. In this order: the journal of the dependants; each unfinished
  * dependant in issue-number order (read, evidence, read again, PATCH of the "Depends on" text, comment); the trigger labels off the original;
- * the comment on the original; the end. The original is never changed otherwise. A retry finishes from the journal and from the markers of
+ * the comment on the original; the original read again; the close as not planned (not when it stays open); the end. The original is never changed otherwise. A retry finishes from the journal and from the markers of
  * the own comments: nothing is written twice. Issue text only goes to GitHub through stdin.
  */
-export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number; parts: number[]; dependants: { issue: number; outcome: string }[] }> {
+export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number; parts: number[]; dependants: { issue: number; outcome: string }[]; closed: Closed; closedAt?: string }> {
   const { ctx, s, timeout, actor, original } = o;
   const repo = s.repo;
   const n = s.source!.issue;
@@ -243,7 +268,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
     }
   };
 
-  const scan = await replacePlan(ctx, s, { issue: n, parts: parts.map((issue) => ({ issue })) }, timeout, original.title);
+  const scan = await replacePlan(ctx, s, { issue: n, parts: parts.map((issue) => ({ issue })) }, timeout, { title: original.title, monitor: original.monitor });
   const journal = keep(() => recordReplacing(actor, s.id, { parts, found: scan.dependants, ...(scan.cut ? { cut: true } : {}) }));
   const ownComment = (issue: number) => github(`could not read the comments of issue #${issue} on GitHub`, () => hasOwnComment(repo, issue, replaceMarker(s.id, issue), timeout));
   const read = (issue: number) => github(`could not read issue #${issue} on GitHub`, () => restIssue(repo, issue, timeout));
@@ -321,20 +346,42 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
   }
 
   const replacing = getSession(s.id)!.source!.replacing!;
-  if (!(await ownComment(n))) {
+  const dependants = replacing.dependants.map((d) => ({ issue: d.issue, outcome: d.outcome ?? "" })).sort((a, b) => a.issue - b.issue);
+  const keepOpen = scan.staysOpen === true || replacing.cut || original.monitor || replacing.dependants.some((d) => d.outcome === "by-hand" || d.outcome === "check");
+  const marker = replaceMarker(s.id, n);
+  const before = await github(`could not read the comments of issue #${n} on GitHub`, () => ownCommentBody(repo, n, marker, timeout));
+  let announced: boolean;
+  if (before === undefined) {
+    // The original is read again: it may have changed while the parts and the dependants were written.
+    const fresh = await checkOriginal(ctx, s, timeout);
     const text = originalComment({
-      ending: original.closed ? "closedAlready" : "staysOpen",
+      ending: fresh.closed ? "closedAlready" : keepOpen || fresh.monitor ? "staysOpen" : "closes",
       parts,
       by: o.by,
-      marker: replaceMarker(s.id, n),
+      marker,
       ...(replacing.cut ? { cut: true } : {}),
       ...(replacing.labels?.length ? { labels: replacing.labels } : {}),
       leftBehind: o.leftBehind,
     });
     await github(`GitHub did not add the comment on issue #${n}`, () => commentOnIssue(repo, n, text, timeout));
     o.wrote({ issue: n, what: "commented" });
+    announced = announcesClose(text);
+  } else {
+    announced = announcesClose(before);
   }
-  const dependants = replacing.dependants.map((d) => ({ issue: d.issue, outcome: d.outcome ?? "" })).sort((a, b) => a.issue - b.issue);
-  keep(() => recordReplaced(actor, s.id, { closed: original.closed ? "other" : "open", ...(original.closedAt ? { closedAt: original.closedAt } : {}) }));
-  return { issue: n, parts, dependants };
+  // Right before the close: built meanwhile gives 409 and nothing is closed; closed meanwhile is reported.
+  const now = await checkOriginal(ctx, s, timeout);
+  let result: { closed: Closed; closedAt?: string };
+  if (now.closed) {
+    result = now.reason === "not_planned" && before !== undefined && now.closedAt ? { closed: "not_planned", closedAt: now.closedAt } : { closed: "other" };
+  } else if (announced && !keepOpen && !now.monitor) {
+    const done = await github(`GitHub did not close issue #${n}`, () => closeIssue(repo, n, "not_planned", timeout));
+    o.wrote({ issue: n, what: "closed" });
+    const at = typeof done.closed_at === "string" ? Date.parse(done.closed_at) : NaN;
+    result = { closed: "not_planned", closedAt: new Date(Number.isFinite(at) ? at : Date.now()).toISOString() };
+  } else {
+    result = { closed: "open" };
+  }
+  keep(() => recordReplaced(actor, s.id, result));
+  return { issue: n, parts, dependants, ...result };
 }

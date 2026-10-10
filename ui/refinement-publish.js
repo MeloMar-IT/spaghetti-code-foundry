@@ -80,7 +80,12 @@ export function doneText(made) {
   const created = made.created?.length ?? 0;
   const issues = created === 1 ? "1 issue is on GitHub" : `${created} issues are on GitHub`;
   const rep = made.replaced;
-  if (rep) return created ? `${issues} and issue #${rep.issue} is replaced by its parts` : `Issue #${rep.issue} is replaced by its parts`;
+  if (rep) {
+    const phrase = rep.closed === "other" ? `issue #${rep.issue} is replaced; it was closed in another way`
+      : rep.closed === "not_planned" ? `issue #${rep.issue} is replaced`
+        : `issue #${rep.issue} is not closed: check and close it by hand`;
+    return created ? `${issues} and ${phrase}` : phrase[0].toUpperCase() + phrase.slice(1);
+  }
   const u = made.updated?.[0];
   if (!u) return issues;
   return created ? `Issue #${u.issue} is updated and ${issues}` : `Issue #${u.issue} is updated`;
@@ -121,8 +126,10 @@ export function versionsNode(c) {
 
 /** What the dialog says about a split issue that a publish replaces by its parts. */
 export const replacesText = (r) => (r.ready
-  ? `Issue #${r.issue} is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them. #${r.issue} stays open.`
-  : `Issue #${r.issue} is replaced by its parts when every part is on GitHub. Nothing changes for it now.`);
+  ? (r.staysOpen
+    ? `Issue #${r.issue} is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them. #${r.issue} stays open: check it and close it by hand.`
+    : `Issue #${r.issue} is replaced by its parts and closed as not planned. Issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them.`)
+  :`Issue #${r.issue} is replaced by its parts when every part is on GitHub. Nothing changes for it now.`);
 
 /** The replacement in the dialog: the sentence, the 1,000 warning and the dependants. Texts are set as text, never as HTML. */
 export function replacesNode(r) {
@@ -147,7 +154,8 @@ export function replaceText(source) {
   if (source?.replace === "due") return `Issue #${n} is not replaced yet. Publish again to finish.`;
   if (source?.replace !== "done") return "";
   const parts = (source.replacedBy ?? []).map((x) => `#${x}`).join(", ");
-  return `Issue #${n} was replaced by ${parts}.${source.closed === "open" ? " It is still open: check it and close it by hand." : " It is closed."}`;
+  const tail = source.closed === "not_planned" ? "" : source.closed === "other" ? " It was closed on GitHub in another way and is left so." : " It is still open: check it and close it by hand.";
+  return `Issue #${n} was replaced by ${parts}.${tail}`;
 }
 
 /** The line under a failure: "On GitHub already: #101, #102." or "Nothing is on GitHub yet." */
