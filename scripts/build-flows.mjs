@@ -1203,13 +1203,20 @@ write("issue-plan", {
       'slug=$(printf \'%s\' "$title" | tr \'[:upper:]\' \'[:lower:]\' | sed \'s/[^a-z0-9]\\{1,\\}/-/g; s/^-//; s/-$//\' | cut -c1-40 | sed \'s/-$//\')',
       'b="$FACTORY_VAR_FEATURE_PREFIX$FACTORY_VAR_ISSUE${slug:+-$slug}"',
       'if git ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1; then',
-      '  git checkout -q -B "$b" "origin/$b" && git merge -q --no-edit "origin/$dev" >/dev/null || { echo "could not update $b with $dev"; exit 1; }',
+      '  git checkout -q -B "$b" "origin/$b" || { echo "cannot check out $b"; exit 1; }',
+      '  # An earlier run finished this story (its "Resolve" commit is on the branch) but did not get it into $dev:',
+      '  # nothing is planned or coded again, it goes straight to the merge, where conflicts are resolved.',
+      '  if git log "origin/$dev..HEAD" --format=%s | grep -q "^Resolve #$FACTORY_VAR_ISSUE:"; then',
+      '    echo "$b" > "{{run.dir}}/feature-branch"',
+      '    echo "BRANCH: $b (its work is finished and committed by an earlier run — going straight to the merge with $dev)"; git log --oneline -1; echo "FINISHED_BEFORE"; exit 0',
+      '  fi',
+      '  git merge -q --no-edit "origin/$dev" >/dev/null 2>&1 || { git merge --abort >/dev/null 2>&1; echo "could not update $b with $dev: the unfinished work on $b conflicts with $dev. Delete the branch $b on GitHub to start this story again from $dev."; exit 1; }',
       '  echo "BRANCH: $b (continuing, up to date with $dev)"',
       'else git checkout -q -B "$b" "origin/$dev" || exit 1; echo "BRANCH: $b (new, from $dev)"; fi',
       '[ "$(git branch --show-current)" = "$b" ] || { echo "not on $b"; exit 1; }',
       'git log --oneline -1',
     ].join("\n"),
-    routes: [{ if: "^HOTFIX: yes", goto: "fetch_main" }],
+    routes: [{ if: "^HOTFIX: yes", goto: "fetch_main" }, { if: "^FINISHED_BEFORE\\s*$", goto: "pretest_merge" }],
   };
   // ── Hotfix path: a hotfix/<issue>-<title> branch from main, merged into main and then into develop ──
   // Every hotfix step first checks that this run is a hotfix and that the engine allows it (FACTORY_HOTFIX=on).
@@ -1510,10 +1517,10 @@ write("issue-plan", {
     type: "shell",
     repo_access: true,
     max_visits: 4,
-    timeout_sec: 7200,
+    timeout_sec: 28800,
     description: "Merge the feature branch into develop (one merge at a time); conflicts go to an agent",
     run: [
-      '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec 7000 >/dev/null || { echo "develop stayed locked too long"; exit 1; }',
+      '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec 28000 >/dev/null || { echo "develop stayed locked for 8 hours — another run holds the merge turn and does not finish; look at that run"; exit 1; }',
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD); [ "$f" = "$dev" ] && f=$(cat "{{run.dir}}/feature-branch")',
       'echo "$f" > "{{run.dir}}/feature-branch"',
       'git merge --abort >/dev/null 2>&1 || true',
@@ -1622,7 +1629,9 @@ write("issue-plan", {
     type: "shell",
     timeout_sec: 7200,
     description: "The merged develop must pass the tests before it is pushed",
-    run: testsRunReuse,
+    // This run holds the merge turn of the repository: its tests start at once, without waiting for a test
+    // slot behind other stories (everything that wants to merge waits for this run).
+    run: 'export FACTORY_VAR_TEST_SLOTS=0\n' + testsRunReuse,
     on_success: "push_develop",
     on_failure: "fix_develop",
   };

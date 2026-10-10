@@ -350,6 +350,33 @@ describe("gitflow pipeline", () => {
     }
   });
 
+  it("a retry of a story that an earlier run finished goes straight to the merge, also when it conflicts with develop", async () => {
+    // An earlier run committed and pushed the story, then did not get its turn at develop; develop moved on in the same file.
+    const wc = join(gh.tmp, "wc");
+    const git = (...a: string[]) => spawnSync("git", a, { cwd: wc, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    spawnSync("git", ["clone", "-q", gh.remote, wc]);
+    git("checkout", "-q", "-b", "develop"); git("push", "-q", "origin", "develop");
+    git("checkout", "-q", "-b", "feature/5-add-a-feature");
+    writeFileSync(join(wc, "feature.txt"), "implemented #5 by the earlier run\n");
+    git("add", "."); git("commit", "-q", "-m", "Resolve #5: Add a feature"); git("push", "-q", "origin", "feature/5-add-a-feature");
+    git("checkout", "-q", "develop");
+    writeFileSync(join(wc, "feature.txt"), "other work that landed on develop\n");
+    git("add", "."); git("commit", "-q", "-m", "Merge #9: other work"); git("push", "-q", "origin", "develop");
+
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status, run.reason).toBe("succeeded");
+    const ids = run.history.map((h) => h.id);
+    expect(run.history.find((h) => h.id === "feature_branch")!.output).toContain("its work is finished and committed by an earlier run");
+    for (const no of ["baseline_tests", "plan", "implement", "review_1", "push_feature"]) expect(ids, no).not.toContain(no);
+    expect(ids).toEqual(expect.arrayContaining(["pretest_merge", "merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "push_develop", "report"]));
+    const merged = gh.remoteGit("show", "develop:feature.txt");
+    expect(merged).toContain("implemented #5 by the earlier run");
+    expect(merged).toContain("other work that landed on develop");
+  });
+
   it("does not lock docs or whole test folders", () => {
     const dir = mkdtempSync(join(tmpdir(), "lockign-"));
     writeFileSync(join(dir, "run.json"), JSON.stringify({ status: "running" }));
