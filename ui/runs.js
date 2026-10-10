@@ -191,6 +191,8 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
           : noRuns());
   };
 
+  // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
+  const isHeld = () => !forcing && (fieldFocused(main) || dialogOpen());
   live = poller({
     load: async () => {
       try {
@@ -205,8 +207,7 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
     draw: (next) => { data = next; keepScroll(main, render); },
     every: REFRESH_MS,
     onState: states.onState,
-    // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
-    hold: () => !forcing && (fieldFocused(main) || dialogOpen()),
+    hold: isHeld,
   });
   await live.ready;
   return () => {
