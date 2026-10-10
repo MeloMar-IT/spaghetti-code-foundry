@@ -15,6 +15,10 @@ export function locate(path) {
   const [a, b, c] = path;
   if (a === "steps") {
     if (!Number.isInteger(b) || b < 0) return none;
+    // A route entry points at its own input: steps.0.routes.1.if -> "routes.1.if".
+    if (c === "routes" && Number.isInteger(path[3]) && typeof path[4] === "string") return { stepIndex: b, field: `routes.${path[3]}.${path[4]}`, section: null };
+    // A sub-flow variable points at its own value input: steps.0.vars.x -> "vars.x".
+    if (c === "vars" && typeof path[3] === "string") return { stepIndex: b, field: `vars.${path[3]}`, section: null };
     return { stepIndex: b, field: typeof c === "string" ? c : null, section: null };
   }
   if (SECTIONS.includes(a)) return { stepIndex: null, field: typeof b === "string" ? b : null, section: a };
@@ -129,22 +133,52 @@ function focusControl(el) {
   el.scrollIntoView?.({ behavior: "smooth", block: "center" });
 }
 
+/** Finds the control of a field; a nested field ("routes.1.if") falls back to its parent ("routes"). */
+function findControl(box, field) {
+  for (let f = field; f; f = f.includes(".") ? f.slice(0, f.lastIndexOf(".")) : "") {
+    const el = byAttr(box, "data-field", (v) => v === f);
+    if (el) return el;
+  }
+  return null;
+}
+
+/**
+ * Shows the "has a problem" mark on the rows of the structure list: on the step rows of steps with a problem
+ * and on the settings row for a problem in a settings section. An empty list clears all marks.
+ */
+export function markProblems(root, problems) {
+  if (!root) return;
+  for (const row of root.querySelectorAll("[data-step]")) {
+    const mark = row.querySelector("[data-mark]");
+    if (!mark) continue;
+    const key = row.getAttribute("data-step");
+    mark.hidden = !(problems ?? []).some((p) => (key === "settings" ? p.stepIndex == null && p.section != null : p.stepIndex === Number(key)));
+  }
+}
+
 /** Selects the step or opens the settings section a problem points at. False when it is not there. */
 export function openInVisual(root, p, select) {
   if (!root) return false;
   if (p.stepIndex != null) {
-    const card = byAttr(root, "id", (v) => v === `step-${p.stepIndex}`);
-    if (!card) return false;
+    const find = () => byAttr(root, "id", (v) => v === `step-${p.stepIndex}`);
+    if (!find() && !byAttr(root, "data-step", (v) => v === String(p.stepIndex))) return false;
     select(p.stepIndex, true);
-    const control = p.field ? byAttr(card, "data-field", (v) => v === p.field) : null;
+    const card = find();
+    if (!card) return false;
+    const control = findControl(card, p.field);
     if (control) focusControl(control);
     return true;
   }
   if (p.section) {
-    const box = byAttr(root, "data-section", (v) => v.split(" ").includes(p.section));
+    const find = () => byAttr(root, "data-section", (v) => v.split(" ").includes(p.section));
+    let box = find();
+    if (!box) {
+      select("settings", true);
+      box = find();
+    }
     if (!box) return false;
     openDetails(box);
-    const control = p.field ? byAttr(box, "data-field", (v) => v === p.field) : null;
+    const control = findControl(box, p.field);
     if (control) focusControl(control);
     else box.scrollIntoView?.({ block: "center" });
     return true;

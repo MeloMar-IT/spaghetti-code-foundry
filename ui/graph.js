@@ -18,12 +18,15 @@ function targetIndex(steps, i, target) {
 
 const ICON = { claude: "◆", shell: "$", approval: "✋", parallel: "⇉", flow: "⧉" };
 
-function subtitle(s) {
-  if (s.type === "shell") return "$ " + (s.run ?? "").split("\n")[0];
-  if (s.type === "approval") return s.message ?? "";
-  if (s.type === "parallel") return (s.steps ?? []).join(" + ");
-  if (s.type === "flow") return `flow: ${s.flow ?? ""}`;
-  return (s.model ? `${s.model} · ` : "") + (s.resume ? `↺ ${s.resume}` : (s.prompt ?? "").split("\n")[0]);
+const str = (v) => (typeof v === "string" ? v : v == null ? "" : String(v));
+
+/** One line that says what a step does. */
+export function subtitle(s) {
+  if (s.type === "shell") return "$ " + str(s.run).split("\n")[0];
+  if (s.type === "approval") return str(s.message);
+  if (s.type === "parallel") return (Array.isArray(s.steps) ? s.steps : []).join(" + ");
+  if (s.type === "flow") return `flow: ${str(s.flow)}`;
+  return (s.model ? `${str(s.model)} · ` : "") + (s.resume ? `↺ ${str(s.resume)}` : str(s.prompt).split("\n")[0]);
 }
 
 const clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
