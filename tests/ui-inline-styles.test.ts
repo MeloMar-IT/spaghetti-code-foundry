@@ -194,10 +194,9 @@ describe("ui/**/*.js", () => {
   });
 
   it("uses the same classes on both run pages", () => {
-    for (const f of ["ui/runs.js", "ui/user/runs.js"]) {
-      const src = readFileSync(f, "utf8");
-      for (const c of ["flush pre-wrap", "card mb-16", "seg tabs mb-12"]) expect(src, `${f}: ${c}`).toContain(`class: "${c}"`);
-    }
+    // Both pages share the tab set and the Overview panel, so the classes live in one file.
+    const src = readFileSync("ui/run-tabs.js", "utf8");
+    for (const c of ["flush pre-wrap", "card mb-16", "scf-tabs mb-12"]) expect(src, c).toContain(`class: "${c}"`);
   });
 
   it("does not use the stack class on a form that has no rule for it (ui/auth.js)", () => {

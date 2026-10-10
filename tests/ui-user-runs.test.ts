@@ -704,16 +704,17 @@ describe("renderMyRun", () => {
     expect(find(main, "details")).toHaveLength(0);
   });
 
-  it("has Log, Steps and Changes", async () => {
+  it("has Overview, Steps, Changes, Evidence and Logs", async () => {
     state.summary = summaryOf({ history: [
       { id: "a", type: "claude", visit: 1, ok: true, durationMs: 1000, output: "secret", agent: "claude", model: "opus-x" },
       { id: "b", type: "shell", visit: 1, ok: false, durationMs: 50, error: "exit 1" },
     ] });
     await open();
-    const tabs = find(one(main, "div", { class: "seg tabs mb-12" }), "button");
-    expect(tabs.map((b) => b.textContent)).toEqual(["Log", "Steps", "Changes"]);
+    const tabs = find(main, "button").filter((b) => b.attrs["data-tab"]);
+    expect(tabs.map((b) => b.textContent)).toEqual(["Overview", "Steps", "Changes", "Evidence", "Logs"]);
     emit("log", { line: "▶ a (shell)" });
     emit("log", "not json");
+    tabs[4]!.click();
     expect(one(main, "pre", { class: "log" }).textContent).toContain("▶ a (shell)");
 
     tabs[1]!.click();
@@ -722,18 +723,72 @@ describe("renderMyRun", () => {
     expect(main.textContent).not.toContain("secret");
     expect(main.textContent).toContain("Agent");
 
+    // Changes loads on the first open, not on later opens or updates, and again on Refresh
+    expect(a.diff).not.toHaveBeenCalled();
     tabs[2]!.click();
     await flush();
+    expect(a.diff).toHaveBeenCalledTimes(1);
     one(main, "pre", { class: "diff" });
-    a.diff.mockResolvedValueOnce({ patch: "" });
+    emit("update", { summary: summaryOf({ history: state.summary.history }) });
+    tabs[0]!.click();
     tabs[2]!.click();
     await flush();
+    expect(a.diff).toHaveBeenCalledTimes(1);
+    const refreshBtn = () => find(main, "button").find((b) => b.attrs["data-focus"] === "diff-refresh")!;
+    a.diff.mockResolvedValueOnce({ patch: "" });
+    refreshBtn().click();
+    await flush();
+    expect(a.diff).toHaveBeenCalledTimes(2);
     expect(main.textContent).toContain(ui.NO_CHANGES);
     a.diff.mockRejectedValueOnce(refused("no access", 403));
-    tabs[2]!.click();
+    refreshBtn().click();
     await flush();
     expect(one(main, "button", { "data-focus": "diff-retry" }).textContent).toBe("Retry");
     expect(main.textContent).toContain("no access");
+  });
+
+  describe("the tabs keep their state", () => {
+    const tabButtons = () => find(main, "button").filter((b) => b.attrs["data-tab"]);
+    const selected = () => tabButtons().filter((b) => b.attrs["aria-selected"] === "true").map((b) => b.textContent);
+    const failed = { status: "failed", reason: "x", next: { ...rec("failed"), failure } };
+
+    it("keeps the selected tab over a stream update and a refresh", async () => {
+      await open();
+      expect(selected()).toEqual(["Overview"]);
+      tabButtons()[4]!.click();
+      emit("update", { summary: summaryOf({ task: "changed" }) });
+      expect(selected()).toEqual(["Logs"]);
+      emit("update", { summary: summaryOf({ task: "changed again" }) });
+      expect(selected()).toEqual(["Logs"]);
+    });
+
+    it("opens Steps once when the run fails, and not after the reader picked a tab", async () => {
+      await open();
+      emit("update", { summary: summaryOf(failed) });
+      expect(selected()).toEqual(["Steps"]);
+      tabButtons()[0]!.click();
+      emit("update", { summary: summaryOf({ ...failed, task: "again" }) });
+      expect(selected()).toEqual(["Overview"]);
+    });
+
+    it("keeps the answer text over a switch to Logs and back, and over an update", async () => {
+      state.summary = asking();
+      await open();
+      box().value = "half an answ";
+      tabButtons()[4]!.click();
+      tabButtons()[0]!.click();
+      emit("update", { summary: asking({ task: "changed" }) });
+      expect(box().value).toBe("half an answ");
+    });
+
+    it("has the form and the answers given in the Overview panel", async () => {
+      state.summary = asking({ answers: [{ at: "2026-01-01T00:00:00Z", text: "first" }] });
+      await open();
+      const overview = find(main, "div").find((d) => d.attrs.role === "tabpanel")!;
+      expect(overview.contains(form())).toBe(true);
+      expect(overview.textContent).toContain("Answers given");
+      expect(overview.textContent).toContain("Q1?");
+    });
   });
 
   it("draws no cost, model, agent, folder or admin control on any tab", async () => {
@@ -744,7 +799,7 @@ describe("renderMyRun", () => {
     state.summary.flowDef.steps = [{ id: "step2", type: "agent" }];
     await open();
     const texts: string[] = [main.textContent];
-    for (const b of find(one(main, "div", { class: "seg tabs mb-12" }), "button")) {
+    for (const b of find(main, "button").filter((x) => x.attrs["data-tab"])) {
       b.click();
       await flush();
       texts.push(main.textContent);

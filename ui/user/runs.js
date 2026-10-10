@@ -2,18 +2,19 @@
 // answers and show its sentences when it refuses. Relative imports, so a test can load them.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
-import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
+import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextStatus, whenParts, whoClass } from "../next.js";
 import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
-import { loadInto, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
+import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
+import { changesPanel, createTabs, evidencePanel, noStepsText, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer, stepEntry } from "../runs.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
-export const NO_STEPS = "No steps finished yet.";
+export { NO_STEPS } from "../run-tabs.js";
 export const NO_CHANGES = "No changes yet.";
 const REFRESH_MS = 30_000;
 export const NO_ANSWER = "Write your answer first.";
@@ -205,14 +206,13 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let busy = false;
   let acting = false;
   let dialogOpen = false;
-  let tab = "log";
+  let drawn = null; // the summary the tabs last saw
   let runSeq = 0;
   let queueSeq = 0;
-  let tabSeq = 0;
 
   const head = h("div");
   // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
-  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: () => showTab("steps"), backLabel: "Back to My runs" });
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: () => tabs.show("steps", { byUser: true }), backLabel: "Back to My runs" });
   const taskBox = h("div");
   const skillsBox = h("div");
   let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
@@ -220,31 +220,9 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const log = createLog();
   const status = statusAnnouncer();
-  const tabBody = h("div");
-  const tabButtons = [];
   const tabsBox = h("div");
 
   const setAlert = (text) => { alertEl.textContent = text; };
-
-  async function showTab(t) {
-    tab = t;
-    const mine = ++tabSeq;
-    for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, log.el);
-    if (t === "steps") {
-      const steps = summary?.history ?? [];
-      return mount(tabBody, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, NO_STEPS));
-    }
-    if (!summary) return mount(tabBody, h("p", { class: "muted" }, NO_CHANGES));
-    await loadInto(tabBody, { loading: "Loading the changes…", load: () => a.diff(runId), draw: (d) => diffView(d, { none: NO_CHANGES }), what: "Could not load the changes.", focus: "diff-retry", current: () => !gone && tab === t && mine === tabSeq });
-  }
-
-  for (const [k, label] of [["log", "Log"], ["steps", "Steps"], ["diff", "Changes"]]) {
-    const b = h("button", { type: "button", "data-tab": k, class: k === tab ? "on" : null, onClick: () => showTab(k) }, label);
-    tabButtons.push([k, b]);
-  }
-  mount(tabsBox, h("div", { class: "seg tabs mb-12" }, tabButtons.map(([, b]) => b)), tabBody);
-  mount(tabBody, log.el);
 
   // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
   let sending = false;
@@ -265,6 +243,19 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
+  const stepsBox = h("div");
+  const drawSteps = () => {
+    const steps = summary?.history ?? [];
+    mount(stepsBox, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, noStepsText(summary)));
+  };
+  const tabs = createTabs([
+    { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
+    { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId), onError: (e) => h("p", { class: "status bad", role: "alert" }, errorText(e)) }) },
+    { id: "evidence", label: "Evidence", ...evidencePanel() },
+    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+  ], { initial: "overview" });
+  mount(tabsBox, tabs.el);
   // The stream is made here, started below. A closed stream asks the server: a refusal or a missing run ends the view.
   const stream = runStream({
     open: () => a.events(runId),
@@ -279,11 +270,9 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         if (!s || typeof s !== "object") return;
         if (staleAfterSend(s)) return;
         runSeq++;
-        const had = summary?.history?.length;
         summary = s;
         runError = null;
         draw();
-        if (tab === "steps" && had !== s.history?.length) showTab("steps");
         if (job !== null) refresh();
       },
       log: (e) => {
@@ -299,7 +288,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     onLost: () => refresh(),
     onReopen: () => log.clear(),
   });
-  mount(main, head, stream.el, alertEl, status.el, answerBox, tabsBox);
+  mount(main, head, stream.el, alertEl, status.el, tabsBox);
 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
@@ -310,6 +299,12 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     status.say(summary ?? (job ? { next: job.next } : null));
     drawHead();
     drawAnswer();
+    if (summary && summary !== drawn) {
+      const prev = drawn;
+      drawn = summary;
+      showFailedOnce(tabs, summary, prev);
+      tabs.update(summary, prev);
+    }
   }
 
   function drawAnswer() {
@@ -378,15 +373,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       mount(head, header.el, taskBox, skillsBox);
     }
     header.update(summary, { job, busy });
-    const task = summary ? summary.task : job.task;
-    const questions = summary?.questions;
-    // The title is the first line of the task, so the full task is shown only when it is more than that (or has no title, as a queued run).
-    const showTask = !!task?.trim() && (!summary || task.trim() !== firstLine(task));
-    mount(taskBox, showTask || questions
-      ? h("div", { class: "card mb-16" },
-        showTask ? h("p", { class: "flush pre-wrap" }, task) : null,
-        questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", questions) : null)
-      : null);
+    // With a run, the task and the questions are in the Overview tab; a queued job has only its task.
+    mount(taskBox, summary || !job.task?.trim() ? null : h("div", { class: "card mb-16" }, h("p", { class: "flush pre-wrap" }, job.task)));
     mount(skillsBox, skillsCard(summary?.skillView, { repo: summary?.vars?.github_repo }));
   }
 
@@ -401,10 +389,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       if (runP.status === "fulfilled" && staleAfterSend(runP.value)) {
         // older than the answer just sent: keep what we have
       } else if (runP.status === "fulfilled") {
-        const had = summary?.history?.length;
         summary = runP.value;
         runError = null;
-        if (tab === "steps" && had !== summary?.history?.length) showTab("steps");
       } else {
         runError = runP.reason;
         const status = Number(runError?.status) || 0;

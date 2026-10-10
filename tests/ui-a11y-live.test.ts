@@ -608,6 +608,8 @@ describe("User run page", () => {
     const main = connected();
     const stop = mine.renderMyRun(main, "r1", { a });
     await flush();
+    esHandlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
+    main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
     const log = named(main, "log");
     expect(log.attrs).toMatchObject({ role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0" });
     esHandlers.log!({ data: JSON.stringify({ line: "▶ step" }) });
@@ -709,6 +711,8 @@ describe("Admin run page", () => {
     const handlers = stubEventSource();
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
+    handlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
+    main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
     const log = named(main, "log");
     expect(log.attrs).toMatchObject({ role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0" });
     handlers.log!({ data: JSON.stringify({ line: "✔ done" }) });
