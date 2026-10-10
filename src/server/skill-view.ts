@@ -1,5 +1,6 @@
 import type { RunSummary } from "../engine/state.js";
 import type { SkillRegistry } from "../skills/registry.js";
+import { flowSkillSource } from "../skills/run-plan.js";
 import { planGateRecord, planSkillRequest, SKILL_REQUEST_GATES } from "../skills/request.js";
 import { RESOLVE_REASONS, RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KINDS } from "../skills/resolve-rules.js";
 import { planHashOf, readRunSkillLock, safeText, verifyRunSkillLock, type RunSkillLock, type RunSkillLockRead } from "../skills/run-lock.js";
@@ -176,25 +177,28 @@ export function runSkillView(s: RunSummary, opts: SkillViewOptions): RunSkillVie
 function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined {
   const history = Array.isArray(s.history) ? s.history : [];
   const flowDef = obj(s.flowDef) ? s.flowDef : undefined;
+  // Only a planned flow has a plan gate; an explicit flow names its skills and an off flow has none.
+  const src = flowSkillSource(flowDef);
   const gate = (() => {
     try {
-      return planGateRecord({ history, flowDef });
+      return src.mode === "planned" ? planGateRecord({ history, flowDef }) : undefined;
     } catch {
       return undefined;
     }
   })();
   const plan = readPlan(s.skillPlan);
   const kept = obj(s.skillLock);
-  if (!gate && !plan && !kept) return undefined;
+  const hasPlan = !!gate || src.mode === "explicit";
+  if (!hasPlan && !plan && !kept) return undefined;
 
   // The plan is current when its gate is the last one.
-  const planHash = gate ? planHashOf(gate.output) : undefined;
+  const planHash = src.mode === "explicit" ? src.planHash : gate ? planHashOf(gate.output) : undefined;
   // A plan that names its gate output belongs to it only when the hashes agree; an older plan has no hash and is taken as current.
   const planOwn = obj(s.skillPlan)?.planHash;
-  const planCurrent = !!gate && !!plan && (planOwn === undefined || planOwn === planHash);
+  const planCurrent = hasPlan && !!plan && (planOwn === undefined || planOwn === planHash);
   let request: ReturnType<typeof planSkillRequest>;
   try {
-    request = gate ? planSkillRequest({ history, flowDef }) : undefined;
+    request = src.mode === "explicit" ? src.request : gate ? planSkillRequest({ history, flowDef }) : undefined;
   } catch {
     request = undefined;
   }
@@ -214,12 +218,12 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
     const l = read.lock;
     const sameLock = !!kept && kept.planHash === l.planHash && kept.lockDigest === read.lockDigest;
     const bad = l.runId !== s.runId
-      || (gate && l.planHash !== planHash ? !sameLock : !!kept && kept.planHash === l.planHash && kept.lockDigest !== read.lockDigest);
+      || (hasPlan && l.planHash !== planHash ? !sameLock : !!kept && kept.planHash === l.planHash && kept.lockDigest !== read.lockDigest);
     if (bad) lock = "changed";
     else {
       lock = "ok";
       locked = read.lock;
-      planChanged = !!gate && read.lock.planHash !== planHash;
+      planChanged = hasPlan && read.lock.planHash !== planHash;
     }
   } else lock = read.reason === "missing" ? (kept ? "missing" : "none") : "changed";
 

@@ -3,6 +3,7 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseFlow } from "../src/flow/load.js";
 import { ApprovalStepSchema, ClaudeStepSchema, DefaultsSchema, FlowSchema, FlowStepSchema, ParallelStepSchema, PublishSchema, PublishVarSchema, SandboxSchema, ShellStepSchema, StepSchema } from "../src/flow/schema.js";
+import { FLOW_SKILL_MODES, STEP_SKILL_MODES } from "../src/skills/schema.js";
 import { detectorInfo } from "../src/monitor/work-detectors.js";
 import { flowGuide } from "../src/server/generate.js";
 import { statusName } from "../src/words.js";
@@ -88,6 +89,11 @@ describe("flow authoring guide matches the schema", () => {
     expect(sorted(under.defaults ?? [])).toEqual(sorted(keysOf(DefaultsSchema)));
     expect(sorted(under.sandbox ?? [])).toEqual(sorted(keysOf(SandboxSchema)));
     expect(sorted(under.limits ?? [])).toEqual(sorted(Object.keys(FlowSchema.shape.limits.unwrap().shape)));
+  });
+
+  it("names every skill mode in backticks", () => {
+    const text = section(guide, "## Skills");
+    for (const m of [...FLOW_SKILL_MODES, ...STEP_SKILL_MODES]) expect(text).toContain(`\`${m}\``);
   });
 
   it("lists the fields every step has", () => {

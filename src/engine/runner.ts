@@ -32,7 +32,7 @@ import { removeSignInDir } from "./repo-access.js";
 import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
 import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, spentTodayBy, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
-import { planRunSkills, recheckRunSkills } from "../skills/run-plan.js";
+import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -288,11 +288,15 @@ async function drive(
   log(resume
     ? `↻ resuming run ${summary.runId} at "${resume.startAt}"${resume.decision ? ` (${resume.decision.approved ? "approved" : "rejected"})` : ""}`
     : `run ${summary.runId} · flow ${summary.flow} · ${summary.workdir}${summary.branch ? ` (branch ${summary.branch})` : ""}`);
+  if (!resume && flowSkillSource(summary.flowDef).mode === "off") log("· skills: off for this flow");
   save();
 
   // a marker for tools/area-lock: this run is running (a step may not read other runs' folders)
-  const skillStop = resume ? recheckRunSkills(summary, config, resume.startAt, log) : undefined;
-  if (skillStop) return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next: resume!.startAt, lastOutput: "" });
+  const skillStop = resume ? recheckRunSkills(summary, config, resume.startAt, log) : startRunSkills(summary, config, log);
+  if (skillStop) {
+    const next = resume ? resume.startAt : (summary.flowDef.steps.find((s) => !s.jump_only)?.id ?? summary.flowDef.steps[0]!.id);
+    return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next, lastOutput: "" });
+  }
   sweepRunning(opts.runsDir);
   const marker = markRunning(summary.runId);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");

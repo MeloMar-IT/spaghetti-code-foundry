@@ -2503,6 +2503,10 @@ When a run has a plan that is ready to code, the first agent step resolves the p
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
 
+### Skill modes in a flow
+
+A flow can say how it gets its skills: `skills: {mode: planned}` (the default, from the plan gate), `skills: {mode: explicit, ids: [...]}` (the flow names them) or `skills: {mode: off}`. A claude step can set `skills: off` to get no skill block. `mode: off` also skips the skills of `skills.selection.include`, and the log says "skills: off for this flow". Only administrators can save flows. See `docs/FLOW_AUTHORING.md` for the syntax.
+
 ### Missing and conflicting skills
 
 After the plan gate (`issue-plan`: the plan step) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.

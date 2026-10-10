@@ -138,6 +138,10 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
   let resumeId = askedId;
   if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
+  if (resumeId && step.skills === "off") {
+    resumeId = undefined;
+    engine.log(`    · not resuming ${step.resume}: this step has skills: off and a resumed session may hold a skill block`);
+  }
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
   // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
   let home: string | undefined;
@@ -261,7 +265,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
-    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder");
+    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder", step.skills !== "off");
     if ("refused" in session) {
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
