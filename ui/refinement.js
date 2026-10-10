@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { renderBacklog } from "./refinement-backlog.js";
@@ -184,7 +185,7 @@ let openPage = { id: undefined, reload: async () => {} };
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent((location.hash ?? "").split("?")[0].split("/")[1] ?? "") === "refinement";
+    return decodeURIComponent(splitHash(location.hash ?? "").path.split("/")[1] ?? "") === "refinement";
   } catch {
     return false;
   }
@@ -198,7 +199,7 @@ const goTo = (hash) => {
 let showDropped = false;
 
 /** Asks for the repository, the idea and an optional title. Resolves with the new session, or undefined when closed. */
-function newSessionDialog(repos, onMade) {
+function newSessionDialog(repos, onMade, preferred) {
   return modal("New refinement session", (close) => {
     if (!repos.length) {
       return h("div", { class: "stack" },
@@ -206,7 +207,7 @@ function newSessionDialog(repos, onMade) {
         h("a", { href: "#/repos", onClick: () => close(undefined) }, "Go to My repositories"));
     }
     const select = h("select", { name: "repo" }, repos.map((r) => h("option", { value: r }, r)));
-    select.value = repos[0];
+    select.value = repos.find((r) => sameRepo(r, preferred)) ?? repos[0];
     const title = h("input", { name: "title", placeholder: "Optional. The first line of the idea is used when empty.", autocomplete: "off" });
     const idea = h("textarea", { name: "idea", rows: 8, placeholder: "Describe your idea in your own words" });
     const err = h("p", { class: "status bad flush" });
@@ -270,7 +271,9 @@ function renameDialog(session, onRenamed) {
 }
 
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
-export async function renderRefinement(main, { admin = false, id, readOnly = false } = {}) {
+export async function renderRefinement(main, { admin = false, id, readOnly = false, query = {}, go = defaultGo, view } = {}) {
+  // one state for the page and its reloads, so a filter removed while a reload runs stays removed (a session page has none)
+  view ??= { filters: !id && query.repo ? { repo: query.repo } : {} };
   // In a preview the server answers as the viewed user (`mine: true`); every button hangs on `mine`, so it is turned off here.
   const seen = (s) => (readOnly ? { ...s, mine: false } : s);
   const mine = ++generation;
@@ -278,7 +281,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const current = () => mine === generation && onPage();
   // A reload draws a new page; the cleanup the app holds must reach that page, so navigation always ends the current one.
   let reloaded;
-  const reload = () => renderRefinement(main, { admin, id, readOnly }).then((c) => {
+  const reload = () => renderRefinement(main, { admin, id, readOnly, query: view.filters, go, view }).then((c) => {
     reloaded = c;
   }, (e) => toast(errorText(e), "error"));
   openPage = { id, reload };
@@ -478,7 +481,6 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   if (!current()) return () => {};
   const { repos } = listed;
   const sessions = listed.sessions.map(seen);
-  const shown = sessions.filter((s) => (s.state === "dropped") === showDropped);
   const opened = (made) => {
     if (!made?.id) return;
     if (current()) goTo(`#/refinement/${encodeURIComponent(made.id)}`);
@@ -499,19 +501,35 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     showDropped = dropped;
     reload();
   } }, label);
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
-      h("span", { class: "muted" }, "Where a rough idea grows into a story"),
-      h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
-      readOnly ? null : h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
-      readOnly ? null : h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
-      readOnly ? null : h("button", { class: "primary", onClick: async () => {
-        await newSessionDialog(repos, opened);
-      } }, "New session")),
-    shown.length
-      ? h("div", { class: "table-box" }, h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
-        h("tbody", {}, shown.map(row))))
-      : h("div", { class: "empty" }, showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
+  const setFilters = (next) => {
+    view.filters = next;
+    go(withQuery("#/refinement", next));
+    draw();
+  };
+  const clear = () => setFilters({});
+  const draw = () => {
+    const { filters } = view;
+    const inRepo = filters.repo ? sessions.filter((s) => sameRepo(s.repo, filters.repo)) : sessions;
+    const shown = inRepo.filter((s) => (s.state === "dropped") === showDropped);
+    const known = !filters.repo || inRepo.length > 0 || repos.some((r) => sameRepo(r, filters.repo));
+    mount(main,
+      h("div", { class: "toolbar" }, h("h1", {}, "Refinement"),
+        h("span", { class: "muted" }, "Where a rough idea grows into a story"),
+        h("span", { class: "spacer" }), filter("Open sessions", false), filter("Dropped", true),
+        readOnly ? null : h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
+        readOnly ? null : h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
+        readOnly ? null : h("button", { class: "primary", onClick: async () => {
+          await newSessionDialog(repos, opened, view.filters.repo);
+        } }, "New session")),
+      filterBar(filters, { onRemove: clear, onClear: clear }),
+      shown.length
+        ? h("div", { class: "table-box" }, h("table", { class: "table" },
+          h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
+          h("tbody", {}, shown.map(row))))
+        : !known ? filterGone({ onClear: clear })
+          : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear })
+            : h("div", { class: "empty" }, showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
+  };
+  draw();
   return cleanup;
 }

@@ -120,7 +120,7 @@ async function route() {
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await renderModels(main);
     else if (section === "all-repos") {
-      const off = await renderAllRepos(main);
+      const off = await renderAllRepos(main, { query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
@@ -129,9 +129,9 @@ async function route() {
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
-    else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg });
+    else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg, query: to.query, go });
     else if (section === "repos") {
-      const off = await renderRepos(main, { admin: true });
+      const off = await renderRepos(main, { admin: true, query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

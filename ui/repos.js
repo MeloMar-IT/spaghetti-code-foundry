@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 
@@ -328,17 +329,18 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "repos";
+    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === "repos";
   } catch {
     return false;
   }
 };
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice, readOnly = false } = {}) {
+export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
-  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map() };
+  // the filters live in the state, so a reload keeps them and a removed filter stays removed
+  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {} };
   const live = () => mine === generation && onPage();
   const fetchAll = async (n) => {
     const [repos, methods] = await Promise.all([api.repos(), api.repoMethods().then((options) => ({ options }), () => ({ failed: true }))]);
@@ -465,11 +467,19 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
           return whileBusy(btn, () => remove(repo.id));
         } }, "Remove")));
   };
+  const setFilters = (next) => {
+    state.filters = next;
+    go(withQuery("#/repos", next));
+    draw();
+  };
+  const clear = () => setFilters({});
   const draw = () => {
     const canAdd = !readOnly && !state.methodsFailed;
     const pending = needsDeployKey(state.repos);
+    const shown = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
     mount(main,
       head(canAdd),
+      filterBar(state.filters, { onRemove: clear, onClear: clear }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: () => reload(state.notice) }) : null,
       state.methodsFailed && !readOnly
         ? banner("warn", "The sign-in methods could not be loaded. You cannot add a repository now.", [{ label: "Retry", onClick: () => reload(state.notice) }])
@@ -482,11 +492,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
           const btn = e.currentTarget;
           return whileBusy(btn, () => remove(state.notice.retryId, true));
         } }, "Try again")] : null) : null,
-      state.repos.length
+      shown.length
         ? h("div", { class: "table-box" }, h("table", { class: "table" },
           h("caption", { class: "sr-only" }, "My repositories"),
           h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, state.repos.map(row))))
+          h("tbody", {}, shown.map(row))))
+        : state.filters.repo ? filterGone({ onClear: clear })
         : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
   };
   await load();

@@ -323,6 +323,16 @@ holds the newest 200 runs, so with a repository filter on a full list you see "O
 200 runs are searched." Older runs of that repository are not shown. The 30-second refresh keeps
 the filter.
 
+**Refinement and repositories.** The same `?repo=owner%2Fname` filter and filter bar work on
+`#/refinement` (open and dropped sessions), `#/repos` (My repositories) and, as an admin,
+`#/all-repos` (the matching records of all owners). Remove and **Clear filters** work as on Runs.
+On Refinement, **New refinement session** preselects the filtered repository when it is in your
+list. A session page `#/refinement/<id>` is not filtered and ignores the query. If the
+repository is not in the answer, the page says "This repository is not in your list. It may have
+been removed, or you may not have access." with **Clear filters**; the text is the same whether
+the repository exists for another account or not. Refreshes keep the filter. The server gets no
+new parameter.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.
