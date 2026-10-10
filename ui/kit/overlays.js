@@ -217,7 +217,7 @@ export function tooltip({ text, placement = "above", align = "start", class: cls
 let titleSeq = 0;
 
 /** Shows a layer in #modal-root and resolves with the value passed to `close`. Layers stack; the top one gets the keys. */
-function openLayer({ kind, title, build, busy = () => false, side, dismissOnBackdrop, class: cls, ...more }) {
+function openLayer({ kind, title, build, busy = () => false, initialFocus, side, dismissOnBackdrop, class: cls, ...more }) {
   rest(more);
   if (blank(title)) throw new Error(`a ${kind} needs a title`);
   if (typeof build !== "function") throw new Error(`a ${kind} needs a build function`);
@@ -261,8 +261,9 @@ function openLayer({ kind, title, build, busy = () => false, side, dismissOnBack
     root.append(layer.overlay);
     refresh();
     syncKeys();
-    // The first enabled, visible text control; the box itself when there is none.
-    const field = tabStops(layer.box).find((el) => (el.tag === "input" || el.tag === "textarea") && el.getAttribute("type") !== "hidden");
+    // `initialFocus()` may name an element inside the layer; else the first enabled, visible text control; else the box itself.
+    const chosen = typeof initialFocus === "function" ? initialFocus() : undefined;
+    const field = chosen && layer.box.contains(chosen) ? chosen : tabStops(layer.box).find((el) => (el.tag === "input" || el.tag === "textarea") && el.getAttribute("type") !== "hidden");
     (field ?? layer.box).focus();
   });
 }
@@ -274,7 +275,7 @@ function refresh() {
   });
 }
 
-/** `dialog({ title, build, busy, dismissOnBackdrop })`: a centred dialog. `build(close)` returns the content. A backdrop click closes it by default. */
+/** `dialog({ title, build, busy, initialFocus, dismissOnBackdrop })`: a centred dialog. `build(close)` returns the content. `initialFocus()` may return the element to focus first. A backdrop click closes it by default. */
 export const dialog = ({ dismissOnBackdrop = true, ...props } = {}) => openLayer({ ...props, kind: "dialog", dismissOnBackdrop });
 
 /** `drawer({ title, side, build, busy, dismissOnBackdrop })`: the same as `dialog`, drawn as a side panel. A backdrop click does not close it by default. */
