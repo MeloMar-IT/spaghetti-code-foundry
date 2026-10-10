@@ -1,5 +1,5 @@
 import { glyph, h } from "./dom.js";
-import { area, field, insertAtCursor, list, select, setKey, text } from "./fields.js";
+import { area, field, group, insertAtCursor, list, select, setKey, text } from "./fields.js";
 
 const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"];
 
@@ -56,7 +56,7 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
       const candidates = flow.steps.filter((s) => s !== step && (s.type === "claude" || s.type === "shell"));
       step.steps ??= [];
       return [
-        field("Run these steps at the same time", h("div", { class: "checks" },
+        group("Run these steps at the same time", h("div", { class: "checks" },
           candidates.length
             ? candidates.map((s) => h("label", { class: "row tight" },
                 h("input", { type: "checkbox", class: "fit", checked: step.steps.includes(s.id), onChange: (e) => {
@@ -76,8 +76,8 @@ export function stepBody(flow, step, i, { onChange, rerender, vars, earlier, pri
         field("Flow to run", text(step, "flow", onChange, { list: "flow-names", mono: true, placeholder: "flow name" }), "Runs in the same workspace. Its steps appear as <this id>/<step>."),
         h("div", { class: "kv" },
           entries.flatMap(([k, v], j) => [
-            h("input", { class: "mono", value: k, placeholder: "var", onChange: (e) => { entries[j][0] = e.target.value.trim(); setVars(entries); rerender(); } }),
-            h("input", { class: "mono", value: v, placeholder: "value (may use {{vars.x}})", onInput: (e) => { entries[j][1] = e.target.value; setVars(entries); } }),
+            h("input", { class: "mono", value: k, placeholder: "var", "aria-label": `Sub-flow variable ${j + 1} name`, onChange: (e) => { entries[j][0] = e.target.value.trim(); setVars(entries); rerender(); } }),
+            h("input", { class: "mono", value: v, placeholder: "value (may use {{vars.x}})", "aria-label": `Sub-flow variable ${j + 1} value`, onInput: (e) => { entries[j][1] = e.target.value; setVars(entries); } }),
             h("button", { class: "icon", title: "Remove variable", "aria-label": "Remove variable", onClick: () => { entries.splice(j, 1); setVars(entries); rerender(); } }, glyph("✕")),
           ])),
         h("button", { class: "small", onClick: () => { entries.push([`var${entries.length + 1}`, ""]); setVars(entries); rerender(); } }, "+ Variable for sub-flow"),
@@ -104,9 +104,9 @@ export function stepAdvanced(flow, step, { onChange, rerender, targets }) {
     h("div", { class: "route-list" },
       routes.map((r, j) => h("div", { class: "route" },
         h("span", { class: "muted" }, "if output matches"),
-        h("input", { class: "mono", value: r.if ?? "", placeholder: "^ROUTE: small", onInput: (e) => { routes[j].if = e.target.value; setRoutes(routes); } }),
+        h("input", { class: "mono", value: r.if ?? "", placeholder: "^ROUTE: small", "aria-label": `Route ${j + 1} pattern`, onInput: (e) => { routes[j].if = e.target.value; setRoutes(routes); } }),
         h("span", { class: "muted" }, "go to"),
-        h("select", { onChange: (e) => { routes[j].goto = e.target.value; setRoutes(routes); rerender(); } },
+        h("select", { "aria-label": `Route ${j + 1} target`, onChange: (e) => { routes[j].goto = e.target.value; setRoutes(routes); rerender(); } },
           opts.map(([v, l]) => h("option", { value: v, selected: r.goto === v }, l))),
         h("button", { class: "icon", title: "Remove route", "aria-label": "Remove route", onClick: () => { routes.splice(j, 1); setRoutes(routes); rerender(); } }, glyph("✕"))))),
     h("button", { class: "small", onClick: () => { step.routes = [...routes, { if: "", goto: "" }]; rerender(); } }, "+ Route"),

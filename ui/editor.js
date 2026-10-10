@@ -61,8 +61,8 @@ function settingsCard(flow, onChange, rerender) {
       h("summary", {}, `Variables (${vars.length})`),
       h("div", { class: "kv" },
         vars.flatMap(([k, v], i) => [
-          h("input", { class: "mono", value: k, placeholder: "name", onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
-          h("input", { class: "mono", "data-field": k, value: String(v), placeholder: "value", onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
+          h("input", { class: "mono", value: k, placeholder: "name", "aria-label": `Variable ${i + 1} name`, onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
+          h("input", { class: "mono", "data-field": k, value: String(v), placeholder: "value", "aria-label": `Variable ${i + 1} value`, onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
           h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
         ])),
       h("button", { class: "small mt-8", onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
@@ -97,6 +97,7 @@ function stepCard(flow, step, i, ctx) {
     h("div", { class: "card-head" },
       h("span", { class: "num" }, `${i + 1}`),
       text(step, "id", onChange, {
+        label: `Step ${i + 1} id`,
         onCommit: (e) => {
           // References still point at the id this card was rendered with.
           const next = e.target.value.trim();
@@ -142,7 +143,7 @@ function insertBar(flow, at, { rerender, onSelect, onLibrary }) {
   return h("div", { class: "insert" },
     h("button", { class: "small", onClick: () => add("claude") }, "+ Agent step"),
     h("button", { class: "small", onClick: () => add("shell") }, "+ Shell step"),
-    h("select", { class: "small-select", title: "More step types", onChange: (e) => { if (e.target.value) add(e.target.value); } },
+    h("select", { class: "small-select", title: "More step types", "aria-label": "More step types", onChange: (e) => { if (e.target.value) add(e.target.value); } },
       h("option", { value: "" }, "+ more…"),
       ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, STEP_TYPES[t].label))),
     h("button", { class: "small", onClick: () => onLibrary?.(at) }, "+ From library"));
@@ -226,7 +227,7 @@ function defaultControl(flow, name, spec, onChange, rerender) {
       } }),
       h("span", {}, "Own default")),
     own
-      ? h("input", { class: "mono", "data-field": `vars.${name}.default`, value: spec.default, placeholder: "default value", onInput: (e) => { spec.default = e.target.value; onChange(); } })
+      ? h("input", { class: "mono", "data-field": `vars.${name}.default`, value: spec.default, placeholder: "default value", "aria-label": `Default value for ${name}`, onInput: (e) => { spec.default = e.target.value; onChange(); } })
       : h("small", { class: "muted" }, `Uses the flow's value: ${flow.vars?.[name] === "" || flow.vars?.[name] == null ? "(empty)" : String(flow.vars[name])}`));
 }
 
@@ -235,7 +236,7 @@ function publishVarRow(flow, name, onChange, rerender) {
   return h("div", { class: "card-sub" },
     h("div", { class: "row" },
       h("strong", { class: "mono" }, name),
-      h("select", { "data-field": `vars.${name}.mode`, onChange: (e) => { setPublishMode(flow, name, e.target.value); onChange(); rerender(); } },
+      h("select", { "data-field": `vars.${name}.mode`, "aria-label": `How ${name} shows to users`, onChange: (e) => { setPublishMode(flow, name, e.target.value); onChange(); rerender(); } },
         MODES.map(([v, l]) => h("option", { value: v, selected: (spec?.mode ?? "hidden") === v }, l)))),
     spec && spec.mode !== "hidden"
       ? h("div", { class: "grid" },

@@ -88,7 +88,7 @@ function blockCard(b, onClick) {
 
 /** Search box and category select; `filter` ({ q, category }) is changed in place and `onChange` is called after each change. */
 function filterControls(blocks, filter, onChange) {
-  const input = h("input", { type: "search", placeholder: "Search blocks…", value: filter.q, "data-focus": "block-search", onInput: () => { filter.q = input.value; onChange(); } });
+  const input = h("input", { type: "search", placeholder: "Search blocks…", "aria-label": "Search blocks", value: filter.q, "data-focus": "block-search", onInput: () => { filter.q = input.value; onChange(); } });
   const select = h("select", { "data-focus": "block-category", onChange: () => { filter.category = select.value; onChange(); } },
     h("option", { value: "" }, "All categories"),
     byCategory(blocks).map(([cat]) => h("option", { value: cat }, cat)));
@@ -126,8 +126,8 @@ function previewView(b, plan, { onBack, onInsert }) {
 }
 
 /** Modal to pick a block, with a preview before anything changes. Resolves with the block listing after "Insert", else undefined. */
-export async function pickBlock(flow) {
-  const blocks = await api.blocks();
+export async function pickBlock(flow, { a = api } = {}) {
+  const blocks = await a.blocks();
   return modal("Insert from library", (close) => {
     const filter = { q: "", category: "" };
     const list = h("div");
@@ -172,7 +172,7 @@ function blockForm(values, categories, info) {
     const description = h("input", { placeholder: "What this block does", value: values.description });
     const scope = h("select", {}, h("option", { value: "global", selected: values.scope === "global" }, "global (all repos)"), h("option", { value: "repo", selected: values.scope === "repo" }, "this repo"));
     scope.value = values.scope;
-    const err = h("p", { class: "status bad flush" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
     const save = h("button", { class: "primary", onClick: () => {
       if (!/^[\w-]+$/.test(id.value)) return (err.textContent = "Id may only contain letters, digits, _ and -");
       close({ id: id.value, name: name.value, category: category.value, description: description.value, scope: scope.value });
@@ -200,8 +200,8 @@ function blockYaml(flow, step, v) {
 }
 
 /** Save one step (plus the vars it uses) as a reusable block. The form closes before the request, so a failure or a "no" reopens it with the typed values. */
-export async function saveStepAsBlock(flow, step) {
-  const blocks = await api.blocks();
+export async function saveStepAsBlock(flow, step, { a = api } = {}) {
+  const blocks = await a.blocks();
   const categories = [...new Set(blocks.map((b) => b.block?.category).filter(Boolean))];
   let values = { id: step.id.replace(/_/g, "-"), name: step.description ?? step.id, category: "Custom", description: "", scope: "global" };
   let info;
@@ -213,7 +213,7 @@ export async function saveStepAsBlock(flow, step) {
     if (blocks.some((b) => b.id === typed.id && b.scope !== "builtin")
       && !(await confirmDialog({ title: "Overwrite block?", text: `Overwrite block "${typed.id}"?`, confirm: "Overwrite" }))) continue;
     try {
-      await api.saveBlock(typed.id, blockYaml(flow, step, typed), typed.scope);
+      await a.saveBlock(typed.id, blockYaml(flow, step, typed), typed.scope);
     } catch (e) {
       info = explainError(e, { what: "The block was not saved.", safe: "Your entries are kept. Nothing was changed." });
       // Another dialog was opened meanwhile: do not replace it; say what happened instead.
@@ -225,7 +225,7 @@ export async function saveStepAsBlock(flow, step) {
 }
 
 /** The Library page: browse blocks, view their YAML, delete your own. */
-export async function renderLibrary(main) {
+export async function renderLibrary(main, { a = api } = {}) {
   // The page draws into its own box, so an answer that comes after another page was mounted cannot touch it.
   const box = h("div");
   mount(main, box);
@@ -238,7 +238,7 @@ export async function renderLibrary(main) {
     mount(box, loadingState("Loading library…", { shape: "cards" }));
     let blocks;
     try {
-      blocks = await api.blocks();
+      blocks = await a.blocks();
     } catch (e) {
       if (mine !== gen) return;
       mount(box, Number(e?.status) === 403
@@ -252,7 +252,7 @@ export async function renderLibrary(main) {
     if (deleting.has(b.id)) return;
     deleting.add(b.id);
     try {
-      await api.deleteBlock(b.id);
+      await a.deleteBlock(b.id);
     } catch (e) {
       mount(failure, errorState(explainError(e, { what: `The block "${b.id}" was not deleted.`, safe: "The block is still in the library." }), { onRetry: () => doDelete(b) }));
       return;

@@ -4,6 +4,7 @@
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, mount, toast } from "../dom.js";
+import { clearInvalid, markInvalid } from "../fields.js";
 import { connectionStatus, repoDialog } from "../repos.js";
 
 export const REPO_FIELD = "github_repo";
@@ -27,9 +28,11 @@ export function addedRepo(created, after) {
   return githubRepos(after).some((r) => r.id === created.id) ? created.github : "";
 }
 
-/** The first required input that is empty: { field, text }, or null. */
+/** The first required input that is empty, in the order the page shows them: { field, text }, or null. */
 export function startProblem(flow, values) {
-  for (const f of flow.fields) {
+  // the page shows the repository first, then the other fields
+  const shown = [...flow.fields.filter((f) => f.name === REPO_FIELD), ...flow.fields.filter((f) => f.name !== REPO_FIELD)];
+  for (const f of shown) {
     if (f.mode !== "input" || !f.required) continue;
     if (String(values[f.name] ?? "").trim() !== "") continue;
     return { field: f.name, text: f.name === REPO_FIELD ? "Choose a repository." : `Fill in "${f.label}".` };
@@ -90,7 +93,18 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   let controls = {};
   let repoSelect = null;
   let addBtn = null;
-  const err = h("p", { class: "status bad", role: "alert" });
+  let repoGroup = null;
+  const err = h("p", { class: "status bad", role: "alert", id: "start-error" });
+  // The field the message in `err` is about, while it is marked.
+  let invalid = null;
+  function unmark() {
+    if (!invalid) return;
+    clearInvalid(invalid, "start-error");
+    invalid = null;
+    err.textContent = "";
+  }
+  /** Typing in, or choosing for, the marked field takes the mark off. */
+  const edited = (el) => () => { if (invalid === el) unmark(); };
   const submitBtn = h("button", { class: "primary", type: "submit" }, "Start");
   const rest = h("div", { class: "start-rest" });
 
@@ -111,9 +125,12 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     addBtn = add;
     const addRow = add ? h("div", { class: "row" }, add) : null;
     if (!list.length) {
-      return h("fieldset", {}, legend, repoData.error ? h("p", { class: "status bad" }, repoData.error) : null, h("p", { class: "muted" }, NO_REPOS), addRow);
+      // No repository to choose: the group is what a "Choose a repository." message points at.
+      repoGroup = h("div", { role: "group", "aria-label": "Repository", tabindex: "-1" },
+        repoData.error ? h("p", { class: "status bad" }, repoData.error) : null, h("p", { class: "muted" }, NO_REPOS), addRow);
+      return h("fieldset", {}, legend, repoGroup);
     }
-    repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null },
+    repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null, onChange: () => { if (invalid === repoSelect) unmark(); } },
       list.map((r) => h("option", { value: r.github }, `${r.github} — ${connectionStatus(r)}`)));
     const mine = state.values[state.flow.name];
     repoSelect.value = pickRepo(list, mine[REPO_FIELD]);
@@ -134,6 +151,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         continue;
       }
       const input = h("input", { name: f.name, type: "text", autocomplete: "off", "aria-required": f.required ? "true" : null, value: state.values[flow.name][f.name] ?? "" });
+      input.addEventListener("input", edited(input));
       controls[f.name] = input;
       rows.push(h("label", { class: "field" }, h("span", {}, f.label, f.required ? h("span", { class: "req" }, " (required)") : null), input, f.help ? h("small", {}, f.help) : null));
     }
@@ -141,9 +159,11 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   }
 
   function drawRest() {
+    unmark();
     controls = {};
     repoSelect = null;
     addBtn = null;
+    repoGroup = null;
     const field = state.flow.fields.find((f) => f.name === REPO_FIELD);
     const repo = field ? repoStep(field, 2) : null;
     mount(rest, repo, detailsStep(field ? 3 : 2));
@@ -176,6 +196,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
 
   async function addRepository() {
     keep();
+    unmark();
     err.textContent = "";
     const created = await dialog({ admin, options: repoData.options });
     try {
@@ -195,6 +216,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     if (readOnly) return;
     if (busy || loading) return;
     keep();
+    unmark();
     const flow = state.flow;
     const values = { ...state.values[flow.name] };
     // only a repository that is listed and chosen is sent; a default that is not listed is not
@@ -202,7 +224,12 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     const problem = startProblem(flow, values);
     if (problem) {
       err.textContent = problem.text;
-      (controls[problem.field] ?? (problem.field === REPO_FIELD ? repoSelect ?? addBtn : null))?.focus();
+      const target = controls[problem.field] ?? (problem.field === REPO_FIELD ? repoSelect ?? repoGroup : null);
+      if (target) {
+        markInvalid(target, "start-error");
+        invalid = target;
+        target.focus();
+      }
       return;
     }
     busy = true;

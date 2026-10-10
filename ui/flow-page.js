@@ -8,6 +8,7 @@ import { splitHash } from "./ia.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 import { renderGraph } from "./graph.js";
 import { insertBlock, pickBlock, saveStepAsBlock } from "./library.js";
+import { runForm } from "./run-form.js";
 
 const NAME_RE = /^[\w-]+$/;
 
@@ -248,7 +249,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const c = state.cur;
     if (c.mode === "yaml") {
       mount(ui.body, h("textarea", {
-        class: "yaml-editor", spellcheck: "false", value: c.yaml,
+        class: "yaml-editor", spellcheck: "false", "aria-label": "Flow YAML", value: c.yaml,
         onInput: (e) => {
           c.yaml = e.target.value;
           const obj = tryParse(c.yaml);
@@ -535,57 +536,9 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const { yaml } = v;
     const flow = v.r.flow;
     let starting = false;
-    const runId = await modal(`Run ${flow.name}`, (close) => {
-      const usesTask = /\{\{\s*task\s*\}\}|(FACTORY|SCF)_TASK/.test(yaml);
-      const task = h("textarea", { rows: 5, placeholder: "Describe the task, e.g. “Add a --json flag to the export command”" });
-      const repo = h("input", { class: "mono", value: state.info.repo });
-      const vars = Object.entries(flow.vars).map(([k, v]) => [k, h("input", { class: "mono", value: v })]);
-      const warn = h("p", { class: "status bad flush", role: "status" });
-      const err = h("div");
-      let confirmedEmpty = false; // the first click on an empty task only warns
-      const start = h("button", { class: "primary", onClick: async () => {
-        if (starting) return;
-        if (!task.value.trim() && flow.workspace !== "empty" && !confirmedEmpty) {
-          confirmedEmpty = true;
-          warn.textContent = "There is no task text. Click “Run without a task” to start anyway.";
-          start.textContent = "▶ Run without a task";
-          return;
-        }
-        starting = true;
-        start.disabled = task.disabled = true;
-        mount(err, null);
-        try {
-          const body = {
-            task: task.value, repo: repo.value,
-            vars: Object.fromEntries(vars.map(([k, el]) => [k, el.value])),
-            ...(c.dirty || !c.name ? { yaml } : { flow: c.name }),
-          };
-          close((await api.startRun(body)).runId);
-        } catch (e) {
-          const info = explainError(e, { what: "The run was not started.", safe: "Your task is kept. Nothing was started." });
-          mount(err, errorState(info));
-          starting = false;
-          start.disabled = task.disabled = false;
-        }
-      } }, "▶ Start run");
-      task.addEventListener("input", () => {
-        confirmedEmpty = false;
-        warn.textContent = "";
-        start.textContent = "▶ Start run";
-      });
-      task.addEventListener("keydown", (e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && start.click());
-      return h("div", { class: "stack" },
-        h("label", { class: "field" }, h("span", {}, flow.workspace === "empty" ? "Extra instructions (optional)" : "Task"), task,
-          !usesTask ? h("small", {}, "This flow doesn't use the task text.") : null),
-        flow.workspace === "empty"
-          ? h("small", { class: "muted" }, "Runs in a fresh empty folder — the flow fetches its own code (e.g. clones from GitHub).")
-          : h("label", { class: "field" }, h("span", {}, "Repository"), repo,
-              h("small", {}, flow.workspace === "worktree" ? "Runs in a fresh git worktree + branch — your checkout is not touched." : "⚠ in-place: Claude edits this directory directly.")),
-        vars.length ? h("div", { class: "grid" }, vars.map(([k, el]) => h("label", { class: "field" }, h("span", { class: "mono" }, k), el))) : null,
-        c.dirty ? h("small", { class: "muted" }, "Runs your unsaved edits.") : null,
-        warn, err,
-        h("div", { class: "row" }, h("span", { class: "spacer" }), h("small", { class: "muted" }, "⌘↵"), start));
-    }, { busy: () => starting });
+    const runId = await modal(`Run ${flow.name}`, (close) =>
+      runForm({ flow, yaml, cur: c, repo: state.info.repo, close, onBusy: (b) => { starting = b; }, a: api }),
+    { busy: () => starting });
     if (runId) onNavigate(`#/runs/${runId}`, "go");
   }
 
@@ -596,6 +549,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const result = await modal(modify ? "Ask Claude to change this flow" : "Draft a flow with Claude", (close) => {
       const ta = h("textarea", {
         rows: 6,
+        "aria-label": modify ? "Describe the change" : "Describe the flow",
         placeholder: modify
           ? "e.g. Add a lint step before the tests and use haiku for the fix step"
           : "e.g. Write failing tests first, implement until they pass, run eslint, then an opus security review that must approve before committing.",

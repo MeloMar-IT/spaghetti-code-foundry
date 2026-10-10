@@ -2,6 +2,8 @@ import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // The browser loads the YAML library from the server (/vendor/yaml); tests use the installed package.
+  resolve: { alias: { "/vendor/yaml/index.js": "yaml" } },
   test: {
     include: ["tests/**/*.test.ts"],
     setupFiles: ["tests/setup.ts"],
