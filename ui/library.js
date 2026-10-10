@@ -6,10 +6,12 @@ import { emptyState, errorState, explainError, loadingState, permissionState } f
 const RESERVED = ["next", "end", "fail", "stop"];
 const CATEGORY_ORDER = ["GitHub", "Git", "Claude", "Agents", "Checks"];
 
+const categoryOf = (b) => b.block?.category ?? "Invalid";
+
 function byCategory(blocks) {
   const groups = new Map();
   for (const b of blocks) {
-    const cat = b.block?.category ?? "Invalid";
+    const cat = categoryOf(b);
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat).push(b);
   }
@@ -17,52 +19,138 @@ function byCategory(blocks) {
   return [...groups].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
 }
 
-/** Insert a block's steps at `at`, renaming ids that already exist (and the block's own references to them). */
-export function insertBlock(flow, block, at) {
-  const taken = new Set(flow.steps.map((s) => s.id));
-  const rename = {};
+/** Blocks that match the text (id, name, description, category, scope) and the category. "" means all. */
+export function filterBlocks(blocks, { q = "", category = "" } = {}) {
+  const text = String(q ?? "").trim().toLowerCase();
+  return blocks.filter((b) => {
+    if (category && categoryOf(b) !== category) return false;
+    if (!text) return true;
+    return [b.id, b.block?.name, b.block?.description, categoryOf(b), b.scope].map((x) => x ?? "").join("\n").toLowerCase().includes(text);
+  });
+}
+
+/** "12 blocks", "1 block", or "3 of 12 blocks" when a filter hides some. */
+export function countText(shown, total) {
+  const noun = total === 1 ? "block" : "blocks";
+  return shown === total ? `${total} ${noun}` : `${shown} of ${total} ${noun}`;
+}
+
+/** What inserting a block does: new ids, the cloned steps with their references mapped, and the variables to add. */
+function planInsert(flow, block) {
+  const taken = new Set((flow.steps ?? []).map((s) => s.id));
+  const rename = new Map();
   for (const s of block.steps) {
     let id = s.id;
     for (let n = 2; taken.has(id); n++) id = `${s.id}${n}`;
-    rename[s.id] = id;
+    rename.set(s.id, id);
     taken.add(id);
   }
+  const to = (id) => (typeof id === "string" && rename.has(id) ? rename.get(id) : id);
   const steps = block.steps.map((s) => {
     const c = structuredClone(s);
-    c.id = rename[s.id];
-    for (const k of ["on_success", "on_failure", "resume"]) if (c[k] && rename[c[k]]) c[k] = rename[c[k]];
+    c.id = rename.get(s.id);
+    for (const k of ["on_success", "on_failure", "resume", "resume_from"]) if (c[k]) c[k] = to(c[k]);
+    for (const r of c.routes ?? []) if (r.goto) r.goto = to(r.goto);
+    if (c.type === "parallel" && Array.isArray(c.steps)) c.steps = c.steps.map(to);
     return c;
   });
-  flow.steps.splice(at, 0, ...steps);
-  flow.vars ??= {};
-  for (const [k, v] of Object.entries(block.vars ?? {})) if (!(k in flow.vars)) flow.vars[k] = v;
-  const renamed = Object.entries(rename).filter(([a, b]) => a !== b);
-  return { count: steps.length, renamed };
+  const have = flow.vars ?? {};
+  const vars = Object.fromEntries(Object.entries(block.vars ?? {}).filter(([k]) => !Object.hasOwn(have, k)));
+  return { rename, steps, vars };
+}
+
+const renamedOf = (rename) => [...rename].filter(([a, b]) => a !== b);
+
+/** What insertBlock would do, without changing the flow. */
+export function previewInsert(flow, block) {
+  const plan = planInsert(flow, block);
+  return { steps: plan.steps.map((s) => ({ id: s.id, type: s.type })), vars: plan.vars, renamed: renamedOf(plan.rename) };
+}
+
+/** Insert a block's steps at `at`, renaming ids that already exist (and the block's own references to them). */
+export function insertBlock(flow, block, at) {
+  const plan = planInsert(flow, block);
+  flow.steps.splice(at, 0, ...plan.steps);
+  // Rebuilt, not assigned key by key: a variable named __proto__ must stay a data property.
+  flow.vars = Object.fromEntries([...Object.entries(flow.vars ?? {}), ...Object.entries(plan.vars)]);
+  return { count: plan.steps.length, renamed: renamedOf(plan.rename) };
 }
 
 function blockCard(b, onClick) {
   const blk = b.block;
-  return h("button", { class: "block-card", onClick, disabled: !blk, title: b.error ?? "" },
-    h("span", { class: "row" }, h("b", {}, blk?.name ?? b.id), h("span", { class: "spacer" }), b.scope !== "builtin" ? h("span", { class: "pill" }, b.scope) : null),
+  return h("button", { class: "block-card", onClick, disabled: !blk, title: b.error ?? "", "data-focus": `block-${b.id}` },
+    h("span", { class: "row" }, h("b", {}, blk?.name ?? b.id), h("span", { class: "spacer" }),
+      blk ? null : h("span", { class: "pill fail" }, "Invalid"), h("span", { class: "pill" }, b.scope)),
     h("span", { class: "muted d" }, blk?.description ?? b.error ?? ""),
     h("span", { class: "chips" }, (blk?.steps ?? []).map((s) =>
       h("span", { class: `pill ${s.type}` }, glyph(s.type === "claude" ? "◆" : "$"), " ", h("span", { class: "sr-only" }, s.type === "claude" ? "Agent step: " : "Shell step: "), `${s.id}${s.jump_only ? " ↪" : ""}`))));
 }
 
-/** Modal to pick a block. Resolves with the block listing or undefined. */
-export async function pickBlock() {
+/** Search box and category select; `filter` ({ q, category }) is changed in place and `onChange` is called after each change. */
+function filterControls(blocks, filter, onChange) {
+  const input = h("input", { type: "search", placeholder: "Search blocks…", value: filter.q, "data-focus": "block-search", onInput: () => { filter.q = input.value; onChange(); } });
+  const select = h("select", { "data-focus": "block-category", onChange: () => { filter.category = select.value; onChange(); } },
+    h("option", { value: "" }, "All categories"),
+    byCategory(blocks).map(([cat]) => h("option", { value: cat }, cat)));
+  select.value = filter.category;
+  const f = (label, el) => h("label", { class: "field" }, h("span", {}, label), el);
+  return h("div", { class: "grid" }, f("Search", input), f("Category", select));
+}
+
+/** The blocks by category; `item(b)` draws one block. */
+const blockGroups = (hits, item) => byCategory(hits).map(([cat, list]) =>
+  h("div", { class: "block-group" }, h("h3", {}, cat), h("div", { class: "block-grid" }, list.map(item))));
+
+/** What a block will add, before anything changes. */
+function previewView(b, plan, { onBack, onInsert }) {
+  const blk = b.block;
+  const vars = Object.entries(plan.vars);
+  const was = new Map(plan.renamed.map(([from, to]) => [to, from]));
+  return h("div", { class: "stack" },
+    h("div", { class: "row" }, h("h3", {}, blk.name), h("span", { class: "pill" }, b.scope), h("span", { class: "pill" }, categoryOf(b))),
+    blk.description ? h("p", { class: "muted" }, blk.description) : null,
+    h("h4", {}, `Steps (${plan.steps.length})`),
+    h("ul", {}, plan.steps.map((s) => h("li", {},
+      h("span", { class: "mono" }, s.id), " ", h("span", { class: "pill" }, s.type),
+      was.has(s.id) ? h("span", { class: "muted" }, ` (was ${was.get(s.id)})`) : null))),
+    h("h4", {}, "Variables added"),
+    vars.length ? h("ul", {}, vars.map(([k, v]) => h("li", { class: "mono" }, `${k} = ${v}`))) : h("p", { class: "muted" }, "No variables are added."),
+    plan.renamed.length ? [
+      h("h4", {}, "Renamed ids"),
+      h("p", { class: "muted" }, "These ids already exist in the flow, so the new steps get another id."),
+      h("ul", {}, plan.renamed.map(([from, to]) => h("li", { class: "mono" }, `${from} → ${to}`))),
+    ] : null,
+    h("div", { class: "row" }, h("span", { class: "spacer" }),
+      h("button", { type: "button", onClick: onBack }, "Back"),
+      h("button", { type: "button", class: "primary", "data-focus": "block-insert", onClick: onInsert }, "Insert")));
+}
+
+/** Modal to pick a block, with a preview before anything changes. Resolves with the block listing after "Insert", else undefined. */
+export async function pickBlock(flow) {
   const blocks = await api.blocks();
   return modal("Insert from library", (close) => {
+    const filter = { q: "", category: "" };
     const list = h("div");
-    const search = h("input", { placeholder: "Search blocks…", onInput: () => draw() });
-    const draw = () => {
-      const q = search.value.toLowerCase();
-      const hits = blocks.filter((b) => !q || `${b.id} ${b.block?.name} ${b.block?.description} ${b.block?.category}`.toLowerCase().includes(q));
-      mount(list, byCategory(hits).map(([cat, items]) =>
-        h("div", { class: "block-group" }, h("h3", {}, cat), h("div", { class: "block-grid" }, items.map((b) => blockCard(b, () => close(b)))))));
+    const box = h("div");
+    const focusIn = (name) => [...box.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name)?.focus();
+    const drawList = () => {
+      const hits = filterBlocks(blocks, filter);
+      mount(list, hits.length
+        ? blockGroups(hits, (b) => blockCard(b, () => showPreview(b)))
+        : emptyState("No blocks match.", { label: "Clear filters", onClick: () => { filter.q = ""; filter.category = ""; showList(); } }));
     };
-    draw();
-    return h("div", { class: "stack" }, search, list);
+    const showList = (focusId) => {
+      mount(box, h("div", { class: "stack" }, filterControls(blocks, filter, drawList), list));
+      drawList();
+      focusIn(focusId ? `block-${focusId}` : "block-search");
+    };
+    const showPreview = (b) => {
+      if (!b.block) return;
+      mount(box, previewView(b, previewInsert(flow, b.block), { onBack: () => showList(b.id), onInsert: () => close(b) }));
+      focusIn("block-insert");
+    };
+    showList();
+    return box;
   });
 }
 
@@ -143,6 +231,7 @@ export async function renderLibrary(main) {
   mount(main, box);
   const failure = h("div");
   const deleting = new Set();
+  const filter = { q: "", category: "" };
   let gen = 0;
   const load = async () => {
     const mine = ++gen;
@@ -178,16 +267,30 @@ export async function renderLibrary(main) {
     if (!(await confirmDialog({ title: "Delete block?", text: `Delete block "${b.id}"?`, confirm: "Delete" }))) return;
     await doDelete(b);
   };
-  const draw = (items) => mount(box,
-    h("div", { class: "toolbar" }, h("h1", {}, "Block library"), h("span", { class: "muted" }, `${items.length} blocks`)),
-    h("p", { class: "muted mt-neg-6" },
-      "Reusable steps you can drop into any flow with “+ From library”. Create your own with “☆ Save as block” on any step."),
-    failure,
-    items.length ? null : emptyState("No blocks yet."),
-    byCategory(items).map(([cat, list]) => h("div", { class: "block-group" }, h("h3", {}, cat),
-      h("div", { class: "block-grid" }, list.map((b) => h("div", { class: "block-item" },
-        blockCard(b, null),
-        h("details", {}, h("summary", {}, "YAML"), h("pre", { class: "mono" }, b.yaml)),
-        b.scope !== "builtin" ? h("button", { class: "small danger", onClick: () => remove(b) }, "Delete") : null))))));
+  const draw = (items) => {
+    if (filter.category && !items.some((b) => categoryOf(b) === filter.category)) filter.category = "";
+    const count = h("span", { class: "muted" });
+    const list = h("div");
+    const drawList = () => {
+      const hits = filterBlocks(items, filter);
+      count.textContent = countText(hits.length, items.length);
+      mount(list, !items.length
+        ? emptyState("No blocks yet.")
+        : !hits.length
+          ? emptyState("No blocks match.", { label: "Clear filters", onClick: () => { filter.q = ""; filter.category = ""; draw(items); } })
+          : blockGroups(hits, (b) => h("div", { class: "block-item" },
+            blockCard(b, null),
+            h("details", {}, h("summary", {}, "YAML"), h("pre", { class: "mono" }, b.yaml)),
+            b.scope !== "builtin" ? h("button", { class: "small danger", onClick: () => remove(b) }, "Delete") : null)));
+    };
+    mount(box,
+      h("div", { class: "toolbar" }, h("h1", {}, "Block library"), count),
+      h("p", { class: "muted mt-neg-6" },
+        "Reusable steps you can drop into any flow with “+ From library”. Create your own with “☆ Save as block” on any step."),
+      items.length ? filterControls(items, filter, drawList) : null,
+      failure,
+      list);
+    drawList();
+  };
   await load();
 }

@@ -279,7 +279,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
         },
         onSelect: (i, scroll = true) => select(i, scroll),
         onLibrary: async (at) => {
-          const picked = await pickBlock().catch((e) => toast(e.message, "error"));
+          const picked = await pickBlock(c.obj).catch((e) => toast(e.message, "error"));
           if (!picked?.block) return;
           const { count, renamed } = insertBlock(c.obj, picked.block, at);
           c.selected = at;
