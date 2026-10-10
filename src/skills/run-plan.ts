@@ -3,7 +3,7 @@ import type { RunSummary } from "../engine/state.js";
 import { discoverSkills } from "./registry.js";
 import { FlowSkillsSchema } from "../flow/schema.js";
 import { planHashOf } from "./run-lock.js";
-import { PLAN_PHASE_STEPS, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError, type SkillRequest } from "./request.js";
+import { PLAN_CHECK_STEP, PLAN_PHASE_STEPS, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError, type SkillRequest } from "./request.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
 import { assessSkills, type SkillPlan } from "./unresolved.js";
 
@@ -62,13 +62,15 @@ function failClosed(reason: string): SkillPlan {
 function check(run: RunSummary, config: Config, stepId: string, log: (m: string) => void, deps: Deps, recheck: boolean): string | undefined {
   const src = flowSkillSource(run.flowDef);
   if (src.mode === "off") return undefined;
-  if (src.mode === "explicit" ? stepId !== EXPLICIT_SKILL_GATE : !(SKILL_REQUEST_GATES as readonly string[]).includes(stepId)) return undefined;
+  const carryStep = src.mode === "planned" && stepId === PLAN_CHECK_STEP;
+  if (src.mode === "explicit" ? stepId !== EXPLICIT_SKILL_GATE : !carryStep && !(SKILL_REQUEST_GATES as readonly string[]).includes(stepId)) return undefined;
+  if (carryStep && planGateRecord(run)) return undefined; // a plan gate wins over a carry
   const previous = run.skillPlan;
   let ids: string[] | undefined;
   if (src.mode === "explicit") ids = src.request.skills.map((s) => s.id);
   else {
     try {
-      ids = planSkillRequest(run)?.skills.map((s) => s.id);
+      ids = carryStep ? run.skillCarry?.request.skills.map((s) => s.id) : planSkillRequest(run)?.skills.map((s) => s.id);
     } catch (e) {
       if (!(e instanceof SkillRequestError)) throw e;
     }

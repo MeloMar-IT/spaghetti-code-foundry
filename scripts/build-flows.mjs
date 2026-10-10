@@ -801,6 +801,13 @@ write("issue-plan", {
       run: 'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; ' + CLONE_ELSE + '\n"$FACTORY_TOOLS/daily-branch" prepare --wait-for-merge',
       routes: [{ if: "^WAIT:", goto: "wait_for_merge" }],
     },
+    {
+      id: "plan_check",
+      type: "shell",
+      repo_access: true,
+      description: "Read the plan comments again, to check the skills of the plan against the Foundry's own record",
+      run: 'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments,labels | node "$FACTORY_TOOLS/plan-comment"',
+    },
     { ...tests("baseline_tests", "baseline_failed")[0], run: testsRunReuse, description: "Tests must pass before we change anything (a failing run is tried once more)", on_failure: "baseline_failed" },
     {
       id: "implement",
@@ -936,7 +943,7 @@ write("issue-plan", {
     lines: [
       "factory run issue-code-daily --var github_repo=owner/repo --var issue=42 --var test_cmd=\"./gradlew test\"",
       "",
-      "pull ticket → today's branch (waits while the daily PR is unmerged) → baseline tests",
+      "pull ticket → today's branch (waits while the daily PR is unmerged) → plan check → baseline tests",
       "  → Claude codes → guard → tests ⟲ fix (max 3)",
       "  → Codex review 1 → Claude fixes → tests ⟲ fix (max 3)",
       "  → Codex review 2 → Claude fixes → tests ⟲ fix (max 3)      (an APPROVE skips ahead)",

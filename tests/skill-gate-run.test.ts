@@ -119,6 +119,51 @@ describe("planRunSkills and recheckRunSkills", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
+  describe("at plan_check", () => {
+    const withCarry = (ids: string[], over: Record<string, unknown> = {}) =>
+      mk(null, {
+        flowDef: { steps: [{ id: "plan_check", type: "shell", run: "x" }, { id: "implement", type: "shell", run: "true" }] },
+        skillCarry: { request: { version: 1, skills: ids.map((id) => ({ id, reason: "needed", evidence: [] })) }, planHash: "p", lockHash: "p", commentId: "1", changes: [], at: "" },
+        ...over,
+      });
+
+    it("resolves the ids of the carry", () => {
+      const id = uid();
+      install(id);
+      pin(cfg(), id);
+      const run = withCarry([id]);
+      expect(planRunSkills(run, cfg(), "plan_check", noop)).toBeUndefined();
+      expect(run.skillPlan).toMatchObject({ gate: "plan_check", checks: 1, action: "continue" });
+      expect(run.skillPlan?.planHash).toBeUndefined();
+    });
+
+    it("stops for an unknown skill under unknown: stop", () => {
+      const run = withCarry(["nope-skill"]);
+      expect(planRunSkills(run, cfg({ unknown: "stop" }), "plan_check", noop)).toMatch(/^skills not resolved/);
+      expect(run.skillPlan).toMatchObject({ action: "stop", gate: "plan_check" });
+    });
+
+    it("without a carry it clears a stale plan", () => {
+      const run = withCarry([], { skillPlan: { action: "go", checks: 1 } });
+      delete (run as { skillCarry?: unknown }).skillCarry;
+      expect(planRunSkills(run, cfg(), "plan_check", noop)).toBeUndefined();
+      expect("skillPlan" in run).toBe(false);
+    });
+
+    it("recheck: runs the check again at plan_check, and after it with and without a carry", () => {
+      const stopped = (carry: boolean) => {
+        const run = withCarry(["nope-skill"], { skillPlan: { action: "stop", gate: "plan_check", checks: 1, selected: [], unresolved: [], warnings: [], reason: "r", version: 1, role: "coder", at: "" } });
+        if (!carry) delete (run as { skillCarry?: unknown }).skillCarry;
+        return run;
+      };
+      expect(recheckRunSkills(stopped(true), cfg(), "plan_check", noop)).toBeUndefined();
+      const again = stopped(true);
+      expect(recheckRunSkills(again, cfg({ unknown: "stop" }), "implement", noop)).toMatch(/^skills not resolved/);
+      expect(again.skillPlan?.checks).toBe(2);
+      expect(recheckRunSkills(stopped(false), cfg(), "implement", noop)).toMatch(/could not be read again/);
+    });
+  });
+
   it("an empty request without include does not read the registry and clears a stale plan", () => {
     const discover = vi.fn(registry);
     const run = mk([], { skillPlan: { action: "stop", checks: 1 } });

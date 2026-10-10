@@ -486,7 +486,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: `cancelled during step "${step.id}"`, ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
-    const skillStop = top && res.ok ? (carryRunSkills(summary, config, step.id, engine.log) ?? planRunSkills(summary, config, step.id, engine.log)) : undefined;
+    const carryStop = top && res.ok ? carryRunSkills(summary, config, step.id, engine.log) : undefined;
+    const skillStop = carryStop ?? (top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined);
     const target = res.ok ? (routed ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
     if (skillStop && target === "end") {
       // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
@@ -504,7 +505,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     idx = target === "next" ? sequential(idx + 1) : indexOf.get(target)!;
     setNext(steps[idx]?.id ?? null);
     if (skillStop) {
-      if (!steps[idx]) setNext(step.id); // the gate was the last step: resume at the gate
+      if (!steps[idx] || carryStop) setNext(step.id); // a carry stop runs the check again on resume
       return { outcome: "stopped", reason: skillStop, ...here() };
     }
     engine.save();
