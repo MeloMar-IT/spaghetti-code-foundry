@@ -156,7 +156,7 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
       yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
       shown.length ? table(shown, "run")
         : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
-          : h("div", { class: "empty" }, admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
+          : h("div", { class: "empty" }, admin ? "No runs yet. Open a flow and press Test run." : "No runs yet."));
   };
   await load();
   timer = setInterval(() => load(true).catch(() => {}), REFRESH_MS);

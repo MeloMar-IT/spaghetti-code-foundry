@@ -10,11 +10,12 @@ body > * { flex: none; }
 .signed-out .layout { grid-template-columns: 1fr; }
 aside { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--panel); }
 main { padding: var(--page-pad-y) var(--page-pad-x) 80px; min-width: 0; }
-.editor { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.editor.with-overview { grid-template-columns: minmax(0, 1fr) 340px; }
 .run-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .dash-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); margin-top: 14px; }
 @media (max-width: 1100px) {
-  .editor, .run-grid, .dash-grid { grid-template-columns: 1fr; }
+  .editor, .editor.with-overview, .run-grid, .dash-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; }

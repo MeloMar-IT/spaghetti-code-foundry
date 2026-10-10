@@ -9,12 +9,12 @@ export const PREPARE: Record<string, ShotPrep> = {
     act: async (page) => {
       await page.locator("#main .seg button", { hasText: "YAML" }).click();
       await page.locator("#main textarea.yaml-editor").waitFor();
-      await page.locator("#main .status.ok", { hasText: "✓ valid" }).waitFor();
+      await page.locator("#main .flow-validation.ok", { hasText: "Valid" }).waitFor();
     },
   },
   "run-dialog": {
     act: async (page) => {
-      await page.locator("#main button", { hasText: "▶ Run" }).click();
+      await page.locator("#main button", { hasText: "Test run" }).click();
       await page.locator("#modal-root .modal-head h2").waitFor();
     },
   },

@@ -182,7 +182,7 @@ describe("glyphs", () => {
   });
 
   it("keeps the validation text free of its own glyphs", () => {
-    expect(readFileSync("ui/app.js", "utf8")).not.toMatch(/"[✓✕] (in)?valid"/);
+    for (const f of ["ui/flow-shell.js", "ui/flow-state.js"]) expect(readFileSync(f, "utf8")).not.toMatch(/"[✓✕] (in)?valid"/i);
   });
 });
 

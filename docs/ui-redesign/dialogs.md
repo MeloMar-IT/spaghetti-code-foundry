@@ -20,13 +20,13 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
 | `ui/monitor.js` | Switch on with a fresh state file | Switch on button when the state file cannot be read (`#/watchers` and `#/problems`, through `confirmUnreadable`) | none | Switch on | `confirmDialog` |
-| `ui/app.js` | Run <flow> | Run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter) | `modal` |
-| `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
-| `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
+| `ui/flow-page.js` | Run <flow> | Test run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter) | `modal` |
+| `ui/flow-page.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
+| `ui/flow-page.js` | Ask Claude to change this flow | More menu in the flow editor | request text | Apply | `modal` (`generateDialog(true)`) |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
 | `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
-| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
+| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; one card per block | Click a block card (closes with that block) | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
 | `ui/monitor.js` | Mute a finding | Button on a finding | reason, duration | Mute | `modal` |
@@ -75,10 +75,10 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/app.js:98` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:261` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:282` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:303` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/flow-page.js:88` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/flow-page.js:289` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/flow-page.js:319` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/flow-page.js:345` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
 | `ui/refinement-draft.js:458` | confirm | Remove this story draft? | Remove a draft |

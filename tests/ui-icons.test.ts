@@ -148,6 +148,6 @@ describe("source", () => {
   });
 
   it("uses the helper in the sidebar", () => {
-    expect(readFileSync("ui/app.js", "utf8")).toContain("flowNameMark(f)");
+    expect(readFileSync("ui/flow-shell.js", "utf8")).toContain("flowNameMark(f)");
   });
 });
