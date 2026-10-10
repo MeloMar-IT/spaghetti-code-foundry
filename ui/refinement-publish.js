@@ -11,6 +11,9 @@ export const PUBLISH_TITLE = "Publish to GitHub";
 export const CONFIRM = "Create the issues";
 export const CONFIRM_UPDATE = "Update the issue";
 export const CONFIRM_BOTH = "Update and create the issues";
+export const CONFIRM_REPLACE = "Replace the issue";
+export const CONFIRM_CREATE_REPLACE = "Create the issues and replace the original";
+export const BY_HAND = "Change by hand: it names the issue by its title.";
 export const START = "Start building this story";
 export const NOTHING_SENT = "Nothing is sent to GitHub until you confirm.";
 export const NO_WATCHER = "This repository has no enabled watcher for issues, so no label can start a build from here.";
@@ -26,8 +29,8 @@ export const LABELS_MAX = 20;
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
-/** True when Publish is offered: an own open session with its repository, and a ready draft that is not on GitHub. */
-export const canPublish = (s) => mayChange(s) && (s.drafts ?? []).some((d) => d.state === "ready" && !d.published);
+/** True when Publish is offered: an own open session with its repository, and a ready draft that is not on GitHub, or the replacement of a split issue is due. */
+export const canPublish = (s) => mayChange(s) && ((s.drafts ?? []).some((d) => d.state === "ready" && !d.published) || s.source?.replace === "due");
 
 /** The drafts that are on GitHub: [{ id, issue, url, title }]. */
 export const onGithub = (s) => (s?.drafts ?? []).filter((d) => d.published).map((d) => ({ id: d.id, issue: d.published.issue, url: d.published.url, title: d.preview?.title || d.title?.text || "" }));
@@ -66,13 +69,18 @@ export function choiceProblem(plan, s, draftId, pick) {
 export const willPublish = (plan) => [...(plan.willUpdate ?? []), ...(plan.willCreate ?? [])];
 
 /** The text of the confirm button. */
-export const confirmText = (plan) => ((plan.willUpdate ?? []).length ? ((plan.willCreate ?? []).length ? CONFIRM_BOTH : CONFIRM_UPDATE) : CONFIRM);
+export const confirmText = (plan) => {
+  if (plan.replaces?.ready) return (plan.willCreate ?? []).length ? CONFIRM_CREATE_REPLACE : CONFIRM_REPLACE;
+  return (plan.willUpdate ?? []).length ? ((plan.willCreate ?? []).length ? CONFIRM_BOTH : CONFIRM_UPDATE) : CONFIRM;
+};
 
 /** The toast after publishing: `made` is the answer of the server. */
 export function doneText(made) {
   if (made.kept) return `Issue #${made.kept.issue} is not changed. Your draft is not published.`;
   const created = made.created?.length ?? 0;
   const issues = created === 1 ? "1 issue is on GitHub" : `${created} issues are on GitHub`;
+  const rep = made.replaced;
+  if (rep) return created ? `${issues} and issue #${rep.issue} is replaced by its parts` : `Issue #${rep.issue} is replaced by its parts`;
   const u = made.updated?.[0];
   if (!u) return issues;
   return created ? `Issue #${u.issue} is updated and ${issues}` : `Issue #${u.issue} is updated`;
@@ -109,6 +117,37 @@ export const keepBody = (plan, picks, keep) =>
 export function versionsNode(c) {
   const column = (head, v) => h("div", {}, h("h4", {}, head), h("b", {}, v.title), h("pre", {}, v.body));
   return h("div", { "data-versions": "", class: "stack cols-2" }, column("On GitHub now", c.github), column("Yours", c.mine));
+}
+
+/** What the dialog says about a split issue that a publish replaces by its parts. */
+export const replacesText = (r) => (r.ready
+  ? `Issue #${r.issue} is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #${r.issue} names them. #${r.issue} stays open.`
+  : `Issue #${r.issue} is replaced by its parts when every part is on GitHub. Nothing changes for it now.`);
+
+/** The replacement in the dialog: the sentence, the 1,000 warning and the dependants. Texts are set as text, never as HTML. */
+export function replacesNode(r) {
+  const list = r.dependants ?? [];
+  return [
+    h("p", { "data-replaces": "" }, replacesText(r)),
+    r.cut ? h("p", { class: "status bad" }, `This repository has more than 1,000 open issues and pull requests. Some issues that depend on #${r.issue} may be missing.`) : null,
+    list.length ? [
+      h("h4", {}, `Issues that depend on #${r.issue}`),
+      h("ul", { "data-dependants": "" }, list.map((d) => h("li", { "data-dependant": String(d.issue) },
+        h("b", {}, `#${d.issue} ${d.title}`),
+        d.byHand ? h("p", { class: "muted" }, BY_HAND)
+          : [h("h4", {}, "Before"), h("pre", {}, d.before ?? ""), h("h4", {}, "After"), h("pre", {}, d.after ?? "")]))),
+    ] : null,
+  ];
+}
+
+/** The line about a split source issue: how far its replacement is, or "" when it is not replaced by parts. */
+export function replaceText(source) {
+  const n = source?.issue;
+  if (source?.replace === "waiting") return `Issue #${n} is replaced by its parts when every part is on GitHub.`;
+  if (source?.replace === "due") return `Issue #${n} is not replaced yet. Publish again to finish.`;
+  if (source?.replace !== "done") return "";
+  const parts = (source.replacedBy ?? []).map((x) => `#${x}`).join(", ");
+  return `Issue #${n} was replaced by ${parts}.${source.closed === "open" ? " It is still open: check it and close it by hand." : " It is closed."}`;
 }
 
 /** The line under a failure: "On GitHub already: #101, #102." or "Nothing is on GitHub yet." */
@@ -206,12 +245,13 @@ function planDialog(plan, s, run) {
         h("button", { class: "primary", "data-keep": "mine", onClick: send((read) => keepBody(plan, read, "mine"), true) }, KEEP_MINE),
         h("button", { "data-keep": "github", onClick: send(() => keepBody(plan, {}, "github"), false) }, KEEP_GITHUB),
       );
-    } else if (willPublish(plan).length) buttons.push(h("button", { class: "primary", onClick: send((read) => publishBody(plan, read), true) }, confirmText(plan)));
+    } else if (willPublish(plan).length || plan.replaces?.ready) buttons.push(h("button", { class: "primary", onClick: send((read) => publishBody(plan, read), true) }, confirmText(plan)));
     const cancel = h("button", { onClick: () => (busy ? undefined : close(undefined)) }, "Cancel");
     return h("div", { class: "stack" },
       asked ? [h("p", { class: "status bad" }, changedText(asked)), versionsNode(asked), h("p", { class: "muted" }, CHANGED_HINT)] : null,
       h("p", {},`These issues will be ${(plan.willUpdate ?? []).length && !(plan.willCreate ?? []).length ? "changed" : "created"} in ${plan.repo}, in this order. ${NOTHING_SENT}`),
       (plan.willUpdate ?? []).length ? h("p", {}, `Issue #${plan.items.find((x) => x.updates !== undefined)?.updates} is updated, not created again.`) : null,
+      plan.replaces ? replacesNode(plan.replaces) : null,
       plan.notChanged !== undefined ? h("p", { class: "muted" }, `Issue #${plan.notChanged} is not changed: no story draft stands for it.`) : null,
       choice.why ? h("p", { class: "muted" }, choice.why) : null,
       h("ol", { class: "plan" }, plan.items.map(item)),
@@ -237,6 +277,8 @@ export function publishSection(ctx) {
   /** What the page says about the issue the session came from: that the draft updates it, that it was updated, or that it is not changed. */
   const sourceLine = (s) => {
     if (!s.source) return null;
+    const replaced = replaceText(s.source);
+    if (replaced) return h("p", { class: "muted" }, replaced);
     const u = updatesOf(s);
     if (!u) return h("p", { class: "muted" }, `Issue #${s.source.issue} is not changed.`);
     if (u.published) return h("p", { class: "muted" }, "Updated ", issueLink(u));
@@ -254,22 +296,23 @@ export function publishSection(ctx) {
   const draw = () => {
     const s = sess;
     const partial = partialNow();
+    const open = s.state !== "published" || s.source?.replace === "due";
     node.replaceChildren(...nodes(!mayChange(s) ? null : [
       h("h2", {}, PUBLISH),
       sourceLine(s),
       partial ? banner("warn", partialText(partial, s), [{ label: "Retry", focus: "publish-retry", onClick: (e) => start(e.currentTarget) }]) : null,
       failure ? [h("p", { class: "status bad" }, failure), unknown ? h("p", { class: "muted" }, UNKNOWN) : h("p", { class: "muted" }, onGithubText(s))] : null,
       s.state === "published" ? h("p", { class: "muted" }, ALL_PUBLISHED) : null,
-      s.state !== "published" && canPublish(s) && ["queued", "running"].includes(s.architect?.state) ? h("p", { class: "muted" }, ARCHITECT_BUSY) : null,
-      s.state !== "published" && canPublish(s) && !["queued", "running"].includes(s.architect?.state)
+      open && canPublish(s) && ["queued", "running"].includes(s.architect?.state) ? h("p", { class: "muted" }, ARCHITECT_BUSY) : null,
+      open && canPublish(s) && !["queued", "running"].includes(s.architect?.state)
         ? h("button", { class: "primary", "data-focus": "publish", onClick: (e) => start(e.currentTarget) }, PUBLISH) : null,
-      s.state !== "published" && !canPublish(s) && !failure ? h("p", { class: "muted" }, NO_READY_YET) : null,
+      open && !canPublish(s) && !failure ? h("p", { class: "muted" }, NO_READY_YET) : null,
     ]));
   };
   const update = (s) => {
     sess = s;
     const u = updatesOf(s);
-    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown, partialNow(), s.source?.issue, s.source?.draft, u?.draft.preview?.title || u?.draft.title?.text, u?.published?.issue]);
+    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown, partialNow(), s.source?.issue, s.source?.draft, u?.draft.preview?.title || u?.draft.title?.text, u?.published?.issue, s.source?.replace, s.source?.replacedBy, s.source?.closed]);
     if (key === shown) return;
     shown = key;
     draw();
