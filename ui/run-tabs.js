@@ -3,6 +3,7 @@
 // and never the selected tab. Relative imports, so a test can load it.
 import { aiProps, h, mount } from "./dom.js";
 import { whereTarget } from "./next.js";
+import { errorState, explainError } from "./states.js";
 
 export const NO_STEPS = "No steps finished yet.";
 export const NO_STEPS_OLD = "No steps recorded.";
@@ -237,14 +238,15 @@ export function changesPanel({ load, view, none, loading = "Loading the changesâ
     if (!shown) mount(body, h("p", { class: "muted" }, loading));
     else button.disabled = true;
     let node;
+    let ok = true;
     try {
       node = view(await load(), none ? { none } : undefined);
     } catch (e) {
-      if (!onError) { button.disabled = false; throw e; }
-      node = onError(e);
+      ok = false;
+      node = onError ? onError(e) : errorState(explainError(e, { what: "Could not load the changes." }), { onRetry: () => reload().catch(() => {}), focus: "diff-retry" });
     }
     if (mine !== seq) return;
-    shown = true;
+    shown = ok;
     button.disabled = false;
     mount(body, node);
   }

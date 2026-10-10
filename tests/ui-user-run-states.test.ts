@@ -171,6 +171,7 @@ describe("renderMyRun states", () => {
     lose();
     expect(banners()).toHaveLength(1);
     expect(main.textContent).toContain("Do the thing");
+    one(main, "button", { "data-tab": "log" }).click();
     expect(main.textContent).toContain("▶ one");
     expect(toastText()).toBe("");
     await flush();
@@ -200,6 +201,7 @@ describe("renderMyRun states", () => {
     emit(stream(), "log", { line: "▶ one" });
     emit(stream(), "update", { summary: summaryOf() });
     expect(banners()).toHaveLength(0);
+    one(main, "button", { "data-tab": "log" }).click();
     expect(main.textContent.split("▶ one").length - 1).toBe(1);
     stop();
   });

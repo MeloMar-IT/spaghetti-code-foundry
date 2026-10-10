@@ -317,6 +317,7 @@ describe("renderRunDetail states", () => {
     lose();
     expect(banners()).toHaveLength(1);
     expect(main.textContent).toContain("do the thing");
+    one(main, "button", { "data-tab": "log" }).click();
     expect(main.textContent).toContain("▶ step one");
     expect(toastText()).toBe("");
     await flush();
@@ -336,6 +337,7 @@ describe("renderRunDetail states", () => {
     log(1, "▶ step one");
     update(1);
     expect(banners()).toHaveLength(0);
+    one(main, "button", { "data-tab": "log" }).click();
     expect(main.textContent.split("▶ step one").length - 1).toBe(1);
     log(0, "late");
     expect(main.textContent).not.toContain("late");
@@ -420,12 +422,13 @@ describe("renderRunDetail states", () => {
     await flush();
     expect(find(main, "pre", { class: "diff" }).length).toBeGreaterThan(0);
 
+    // The panels are built once: a new load comes from Refresh, and a late failure stays in the Changes panel.
     table["/api/runs/r1/diff"] = { hang: true };
-    one(main, "button", { "data-tab": "diff" }).click();
+    one(main, "button", { "data-focus": "diff-refresh" }).click();
     one(main, "button", { "data-tab": "log" }).click();
     pending["/api/runs/r1/diff"]!({ status: 500, body: { error: "late" } });
     await flush();
-    expect(find(main, "button", { "data-focus": "diff-retry" })).toHaveLength(0);
+    expect(one(main, "button", { "data-tab": "log" }).attrs["aria-selected"]).toBe("true");
     expect(find(main, "pre", { role: "log" })).toHaveLength(1);
   });
 

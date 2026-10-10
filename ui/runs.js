@@ -322,7 +322,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
 /** The published version of the flow a run started with; null for a flow that is not published. */
 export const versionRow = (s) => (s.flowDef?.publish?.enabled ? [h("dt", {}, "Flow version"), h("dd", {}, String(s.flowDef.publish.version))] : null);
 
-export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { class: "pre-wrap" }, s.reason)] : null);
+export function detailsRow(s) { return s.reason ? [h("dt", {}, "Details"), h("dd", { class: "pre-wrap" }, s.reason)] : null; }
 
 // ── actions ──
 
@@ -385,7 +385,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const tabs = createTabs([
     { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
     { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
-    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId).catch((e) => ({ patch: "", stat: e.message })) }) },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
     { id: "evidence", label: "Evidence", ...evidencePanel() },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
   ], { initial: "overview" });

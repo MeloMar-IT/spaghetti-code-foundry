@@ -251,7 +251,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const tabs = createTabs([
     { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
     { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
-    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId), onError: (e) => h("p", { class: "status bad", role: "alert" }, errorText(e)) }) },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
     { id: "evidence", label: "Evidence", ...evidencePanel() },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
   ], { initial: "overview" });
