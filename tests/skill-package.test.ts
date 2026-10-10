@@ -52,6 +52,7 @@ describe("parseSkillPackage: success", () => {
       roles: [],
       dependencies: [],
       conflicts: [],
+      connectors: [],
       tool_profile: { shell: false, network: false, filesystem: "read" },
       risk: "low",
       description: "A tiny example skill used only in tests.",

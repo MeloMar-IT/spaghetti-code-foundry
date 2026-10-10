@@ -2446,6 +2446,23 @@ skills:
 - **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
 - **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
 
+#### Credentials, endpoints and connectors
+
+`skill.yaml` can name the connectors a skill needs:
+
+```yaml
+risk: medium
+connectors: [kafka, oracle]
+```
+
+- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. Nothing uses them yet.
+- **Refused:** credential files by name (`.env`, `*.pem`, `id_rsa`, `*.key`, `*.p12` and similar; `.example`, `.sample` and `.template` copies are fine), credentials and live endpoints in any file, and file or folder names that look like a credential.
+- **Write endpoints like this:** `kafka://<broker>:9092`, `redis://${REDIS_HOST}:6379`, `amqp://mq.example.com`, `localhost`, the words `host`, `hostname`, `server`, `broker` or `db`, and names ending in `.example`, `.test` or `.invalid`. A placeholder user or password does not help when the host is real.
+- **Messages:** `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value.
+- **One finding at a time.** The scan runs before anything else is read. While it finds something, no other problem of the package is shown; they appear once the finding is fixed.
+- **No allow-list.** The scan cannot be switched off for a line (there is no `factory:allow-secret` here).
+- **Pinned packages too.** A pinned package that trips the scan no longer loads. Fix the text, give the package a new version and pin again.
+
 #### Pinned versions and integrity
 
 A pin ties one skill version to the exact content you looked at. If the content changes later, the skill stops being usable until you decide again.
