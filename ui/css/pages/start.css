@@ -11,3 +11,4 @@
 .start-form .choice input { width: auto; margin-top: 3px; }
 .start-form .choice span { grid-column: 2; }
 .start-form .req { color: var(--fail); }
+.start-form .empty { padding: 8px 0; }

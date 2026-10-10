@@ -153,7 +153,7 @@ describe("renderStart: repository", () => {
     expect(one(main, "select").value).toBe("c/c");
   });
 
-  it("keeps Start off and the old fields until the repositories of the new flow have loaded", async () => {
+  it("keeps Start off until the repositories of the new flow have loaded", async () => {
     data.flows = [flow("a", [field("x")]), flow("b", [field("github_repo")])];
     data.repos = [repo("1", "a/a")];
     await open();
@@ -161,6 +161,7 @@ describe("renderStart: repository", () => {
     one(main, "input", { name: "x" }).value = "typed";
     find(main, "input", { name: "flow" })[1]!.fire("change");
     await flush();
+    expect(main.textContent).toContain("Loading your repositories");
     expect(submitBtn(main).disabled).toBe(true);
     await submit(main);
     expect(calls.start).toHaveLength(0);
@@ -258,7 +259,15 @@ describe("renderStart: repository", () => {
     data.reposFail = true;
     one(main, "button", { "data-focus": "add-repo" }).click();
     await flush();
-    expect(alertText(main)).toBe("repo list broken");
+    // the last known list stays, and the step explains the failure with Retry
+    expect(one(main, "select").value).toBe("a/a");
+    expect(one(main, "div", { class: "state-error" }).textContent).toContain("repo list broken");
+    expect(find(main, "button", { "data-focus": "retry-repos" })).toHaveLength(1);
+    data.reposFail = false;
+    one(main, "button", { "data-focus": "retry-repos" }).click();
+    await flush();
+    expect(find(main, "div", { class: "state-error" })).toHaveLength(0);
+    expect(one(main, "select").value).toBe("a/a");
   });
 
   it("shows a fixed github_repo as text, without select, button or var", async () => {
@@ -379,7 +388,11 @@ describe("renderStart: fields and start", () => {
     one(main, "input", { name: "x" }).value = "keep";
     one(main, "textarea").value = "kept task";
     await submit(main);
-    expect(alertText(main)).toBe("you cannot start this");
+    const box = one(main, "div", { role: "alert" });
+    expect(box.attrs["data-kind"]).toBe("permission");
+    expect(box.textContent).toContain("The run could not be started. you cannot start this");
+    expect(box.textContent).toContain(ui.START_KEPT);
+    expect(alertText(main)).toBe("");
     expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
     expect(one(main, "input", { name: "x" }).value).toBe("keep");
     expect(one(main, "textarea").value).toBe("kept task");
@@ -392,7 +405,10 @@ describe("renderStart: fields and start", () => {
     data.startFail = new TypeError("fetch failed");
     await open();
     await submit(main);
-    expect(alertText(main)).toBe("Could not reach the server.");
+    const box = one(main, "div", { role: "alert" });
+    expect(box.textContent).toContain("The server could not be reached.");
+    expect(box.textContent).toContain(ui.START_UNSURE);
+    expect(one(box, "p", { class: "state-next" }).textContent).toBe(ui.START_UNSURE_NEXT);
   });
 
   it("switches the button off while the call runs, ignores a second submit and keeps it off on success", async () => {
