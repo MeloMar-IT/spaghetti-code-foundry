@@ -158,7 +158,10 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
   }
 }
 
-export type SkillSession = { refused: string } | { payload?: SkillPayload };
+export type SkillSession =
+  | { refused: string }
+  /** `draft`: The block is for a draft plan under review; the run has no lock for it. */
+  | { payload?: SkillPayload; draft?: true };
 
 type SessionEngine = Pick<Engine, "summary" | "config" | "log" | "save">;
 
@@ -218,14 +221,15 @@ function reviewSession(engine: SessionEngine, list: PayloadSkill[], reg: ReturnT
 }
 
 /**
- * The skill check before a session of this agent, plus the payload: the coder gets the lock of the current plan (Claude only),
- * a reviewer gets the compact review checks of the same skills, on both agents. Synchronous; never throws.
+ * The skill check before a session of this agent, plus the payload: the coder gets the lock of the current plan,
+ * a reviewer gets the compact review checks of the same skills, on both agents. A block from a draft plan is marked `draft`.
+ * Synchronous; never throws.
  */
-export function skillSession(engine: SessionEngine, agent: "claude" | "codex", deps: SkillLockDeps = {}, role: StepSkillRole = "coder", block = true): SkillSession {
+export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, role: StepSkillRole = "coder", block = true): SkillSession {
   try {
     if (flowSkillSource(engine.summary.flowDef).mode === "off") return {};
     // A step with `skills: off` (block = false) still has the lock made or verified, but gets no skill block.
-    if (!block || (role === "coder" && agent !== "claude")) {
+    if (!block) {
       const r = ensureSkillLock(engine, deps);
       return r ? { refused: r } : {};
     }
@@ -235,14 +239,18 @@ export function skillSession(engine: SessionEngine, agent: "claude" | "codex", d
     if (role === "reviewer") {
       let list: PayloadSkill[] | { refused: string } | undefined;
       let reg = out.reg;
+      let draft = false;
       if (out.lock) list = lockList(out.lock, out.reg);
       else if (!planGateRecord({ history: engine.summary.history ?? [], flowDef: engine.summary.flowDef })) {
         reg = (deps.discover ?? ((skills) => discoverSkills(skills)))(engine.config.skills);
         list = draftList(engine, reg);
+        draft = true;
       }
       if (!list || !reg) return {};
       if ("refused" in list) return list;
-      return list.length ? reviewSession(engine, list, reg) : {};
+      if (!list.length) return {};
+      const rs = reviewSession(engine, list, reg);
+      return draft && "payload" in rs ? { ...rs, draft: true } : rs;
     }
     if (!out.lock) return {};
     const list = lockList(out.lock, out.reg);

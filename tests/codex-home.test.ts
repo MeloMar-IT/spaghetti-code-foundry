@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CODEX_HOME_CHANGED, CODEX_HOME_REFUSED, CODEX_HOME_UNKNOWN, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome } from "../src/agents/codex-home.js";
+import { SKILL_REFUSED_RE } from "../src/skills/eval.js";
+import { CODEX_HOME_CHANGED, CODEX_HOME_REFUSED, CODEX_SKILLS_REFUSED, CODEX_HOME_UNKNOWN, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome } from "../src/agents/codex-home.js";
 
 describe("codexHomeId", () => {
   it("is 'run' for the run's own folder, whatever the folders are", () => {
@@ -103,5 +104,13 @@ describe("codexIsolationLine", () => {
     expect(codexIsolationLine("off")).toBeUndefined();
     for (const m of ["private", "ignore-config", "unsupported"] as const) expect(codexIsolationLine(m)).toMatch(/^Codex: /);
     expect(codexIsolationLine("ignore-config")).toContain("personal skills, AGENTS.md and command rules still apply");
+  });
+});
+
+describe("CODEX_SKILLS_REFUSED", () => {
+  it("is a skill selection refusal that names the fix", () => {
+    expect(CODEX_SKILLS_REFUSED.startsWith("skill selection is blocked: ")).toBe(true);
+    expect(SKILL_REFUSED_RE.test(CODEX_SKILLS_REFUSED)).toBe(true);
+    expect(CODEX_SKILLS_REFUSED).toContain("CODEX_API_KEY");
   });
 });

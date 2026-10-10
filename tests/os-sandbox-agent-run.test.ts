@@ -12,6 +12,8 @@ import { resetSandboxCache } from "../src/engine/os-sandbox.js";
 import { runFlow } from "../src/engine/runner.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
 import { parseFlow } from "../src/flow/load.js";
+import { addSkillPins } from "../src/skills/lock.js";
+import { loadSkillPackage } from "../src/skills/package.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
@@ -102,6 +104,27 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "c3")).toContain("ANTHROPIC_API_KEY");
     expect(out(s, "x3")).toContain("OPENAI_API_KEY");
     expect(out(s, "x3")).toContain("CODEX_API_KEY");
+  });
+
+  it("a boxed Codex step gets the locked skill block and the record, with no flag and no note", async () => {
+    const low = join(gh.tmp, "low-skills");
+    const d = join(low, "demo");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "SKILL.md"), "---\nname: demo\ndescription: A test skill.\n---\n\nDo it.\n");
+    writeFileSync(join(d, "skill.yaml"), "id: demo\nversion: 1.0.0\n");
+    addSkillPins([{ key: "demo@1.0.0", digest: loadSkillPackage(d).digest }]);
+    const request = 'SKILL_REQUEST: {"version":1,"skills":[{"id":"demo","reason":"Needed for the change","evidence":["catalogue:demo"]}]}';
+    const gate = `  - id: risk_gate\n    type: shell\n    run: |\n      # /skill-request\n      echo READY\n      echo '${request}'\n`;
+    const s = await go(flowOf(gate + step("x", "codex", "hello")), user.id, { config: config({ skills: { roots: [low] } }) });
+    expect(s.status, s.reason).toBe("succeeded");
+    const o = out(s, "x");
+    expect(o).toContain('<foundry-skills count="1">');
+    const rec = s.history.find((h) => h.id === "x")!;
+    expect(rec.skills).toMatchObject({ loaded: ["demo@1.0.0"] });
+    expect(rec.codexHome).toBe("run");
+    expect(o).not.toContain("--ignore-user-config");
+    expect(o).not.toContain("running unattended");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
   });
 
   it("hides a key a flow brings in agent_env: it is ignored, and the server's key is not shown", async () => {

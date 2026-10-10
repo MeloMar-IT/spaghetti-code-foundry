@@ -409,6 +409,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   `CODEX_HOME`, and rules are separate (`--ignore-rules` is never passed). `fake-codex.mjs` models exactly
   this. Not yet checked on a real CLI: whether `exec resume` lists the flag, and whether a private
   `CODEX_HOME` hides personal skills kept outside it.
+  The skill payload path (`skillSession()`, `withSkillPayload()`, `skillsRecord()`) is shared by both agents (#422): a lock with skills forces Codex isolation, and `unsupported` refuses it.
   Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not

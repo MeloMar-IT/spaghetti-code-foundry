@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { estimateTokens } from "./catalogue.js";
 
-// The text a Claude session gets for the skills its run locked: one bounded, delimited block in front of the task.
+// The text an agent session gets for the skills its run locked: one bounded, delimited block in front of the task.
 // Pure. It takes only the description and the instructions of a package, so tools, profiles and files cannot reach it.
 
 export const SKILL_PAYLOAD_TAG = "foundry-skills";
@@ -140,7 +140,7 @@ export function renderReviewPayload(
   return { text, loaded, omitted, bytes: Buffer.byteLength(text), estimatedTokens: estimateTokens(text), role: "reviewer" };
 }
 
-/** The prompt of a Claude session: the block, an empty line, then the task. Unchanged when the block is "". */
+/** The prompt of an agent session: the block, an empty line, then the task. Unchanged when the block is "". */
 export function withSkillPayload(prompt: string, payloadText: string): string {
   return payloadText ? `${payloadText}\n\n${prompt}` : prompt;
 }
@@ -168,7 +168,7 @@ export interface SkillAttach {
 }
 
 /**
- * Decide what a Claude session gets. `continues`: the CLI continues an earlier session; `holds`: the digest of
+ * Decide what an agent session gets. `continues`: the CLI continues an earlier session; `holds`: the digest of
  * the block that session received; `again`: this is not the first session of the step (resume, retry, fallback).
  */
 export function attachSkillPayload(

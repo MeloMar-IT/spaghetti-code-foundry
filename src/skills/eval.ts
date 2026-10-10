@@ -66,7 +66,7 @@ export function evaluateSkillRun(run: SkillEvalRun, expect: SkillExpect): SkillE
     tokens, attachedTokens, maxTokens: expect.max_tokens, maxAttachedTokens: expect.max_attached_tokens,
   };
 
-  // An agent step after the first skill session that has no skills record got none (e.g. a Codex coder): an empty load.
+  // An agent step after the first skill session that has no skills record got none (e.g. a step with `skills: off`): an empty load.
   // Steps named "review…" are skipped: a reviewer legitimately has no block.
   const first = run.history.findIndex((h) => h.skills);
   const sessions = (first < 0 ? [] : run.history.slice(first))

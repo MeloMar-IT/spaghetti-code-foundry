@@ -27,6 +27,9 @@ export function codexIsolationMode(o: { isolate: boolean; local: boolean; hasKey
   return o.local || o.hasKey ? "private" : "ignore-config";
 }
 
+/** A step with a skill block from the run's lock on a Codex CLI that cannot skip the personal setup. Keep the prefix: the eval counts it as a refusal. */
+export const CODEX_SKILLS_REFUSED = "skill selection is blocked: this Codex CLI has no --ignore-user-config, so the skills of this run cannot be loaded without the personal Codex setup; update the Codex CLI, or use a local model or CODEX_API_KEY";
+
 export const CODEX_HOME_REFUSED = "Codex isolation: ";
 
 /** Makes <runDir>/home and <runDir>/home/.codex (0700, a symlink at the path is replaced). */

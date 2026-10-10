@@ -2523,7 +2523,7 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 - **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
 - **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
-- **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). Nothing loads the skills yet, and no skill catalogue reaches the planner, so requests are empty for now.
+- **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). The locked skills are loaded into agent sessions (see [Skills in Claude sessions](#skills-in-claude-sessions) and [Skills in Codex and local-model sessions](#skills-in-codex-and-local-model-sessions)), but no skill catalogue reaches the planner, so requests are empty for now.
 - **`issue-code-daily`** does not get a request: it would have to trust a comment.
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
@@ -2593,7 +2593,18 @@ A Claude session gets only the skills of the run's lock. The Foundry puts their 
 - **Recorded.** The step record in `run.json` gets `skills`: `loaded` (`id@version`, in load order), `omitted` (only when something was left out), `bytes` and `estimatedTokens`. Steps without a lock have no `skills`. The log shows the same sizes.
 - **Repairs and fallbacks.** The full text is given once per Claude session. A step with `resume:` that continues the session of an earlier step (same agent, same locked block) gets only a one-line reminder with the skill ids, not the text again. A new session gets the complete block exactly once: a retry, a fallback to another model or provider, or a resume that cannot continue the old session. Before every session the lock is checked again; if the skills changed, the step stops.
 - **Log.** `skill context: reused …` (nothing added), `skill context: loaded …` (first session), `skill context: reloaded … new session` (retry, fallback or fresh session) and `! skill context: rejected (…)` (lock check failed). The log shows ids, sizes and token estimates, never the package text. The step record `skills` also gets `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; `skills_digest` is kept for the next resume. Older run files without them still work.
-- **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+- **Codex** sessions get the same block; see [Skills in Codex and local-model sessions](#skills-in-codex-and-local-model-sessions). Reviewer steps get review checks on both agents; see below.
+
+### Skills in Codex and local-model sessions
+
+A Codex step, also on a local model, gets the same `<foundry-skills>` block as a Claude step of the same run: after `</instructions>` and before the task. Nothing is written to the repository.
+
+- **Isolation.** A run whose lock holds skills runs its Codex steps without your personal Codex setup, even with `isolate_agents: false`. The mode depends on how the step signs in; see "Codex and your personal setup" in [When something goes wrong](#when-something-goes-wrong). A step held by the OS sandbox gets the block and the record too, with no flag and no note.
+- **Old Codex CLI.** If the CLI has no `--ignore-user-config`, a step with locked skills is refused before Codex starts (`skill selection is blocked: this Codex CLI has no --ignore-user-config …`). Update the CLI, or use a local model or `CODEX_API_KEY`. Without locked skills, the step runs as before.
+- **Size and record.** The same limits and the same `skills` record apply as for Claude. A mandatory skill that does not fit `skills.selection.max_tokens` stops the step before Codex starts.
+- **Every session.** Codex never reuses the block: a resumed session, a retry and a fallback each get the full text again. The log says "the full block is sent again".
+- **Review steps.** A review step on Codex gets the review checks of the run's lock.
+- **No lock, no block.** A run without a lock is unchanged.
 
 ### Skills on the run page
 

@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill runtime 4 — load locked skills into Codex and local-model sessions (#179, #422).
+  - **Same block.** A Codex step of a run whose lock holds skills gets the same `<foundry-skills>` block as a Claude step, after `</instructions>` and before the task. This holds for local models (`codex:ollama:m`, `ollama:m`) and boxed steps too, with no flag and no note. `skillSession(engine, deps, role, block)` no longer takes an `agent`; every agent gets the payload.
+  - **Record.** The step record of a Codex step holds `skills` (`loaded`, `omitted`, `bytes`, `estimatedTokens`, as for Claude).
+  - **Isolation.** A lock with skills turns Codex isolation on even with `isolate_agents: false` (the modes of #421). Nothing is written into the workspace. Runs without a lock are unchanged.
+  - **Budget refusal.** A mandatory skill that does not fit `skills.selection.max_tokens` now stops a Codex step too, before Codex starts, with the same reason as for Claude.
+  - **Review steps on Codex.** A review step on Codex gets the coder skills of the run's lock, as Claude does. A block for a draft plan (no lock yet) does not isolate a Codex session.
+  - **Every session.** Codex never reuses the block: a resumed, retried or fallback Codex session gets the full block again. The log says "the full block is sent again".
+  - **Old Codex CLI.** A step with a locked skill block is refused on a Codex CLI that has no `--ignore-user-config` (`unsupported` mode): `skill selection is blocked: this Codex CLI has no --ignore-user-config …`. Update the CLI, or use a local model or `CODEX_API_KEY`. Without a lock, such a CLI still runs as before.
 - Skill safety 1a — skill packages may not hold credentials or live endpoints, and may name connectors (#428).
   - **Connectors.** `skill.yaml` accepts `connectors`: a list of slugs (at most 16, no duplicates, default `[]`). A package that names connectors needs `risk: medium` or `high`. `connectors` is in the parsed package, sorted. Nothing enforces it yet. Existing `skill.yaml` files parse as before and digests do not change.
   - **Scan.** `parseSkillPackage` scans every file name, the folder name and every file's content (`SKILL.md`, `skill.yaml`, `REVIEW.md` and all folder files). It runs before any file is parsed. There are four messages: `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value. On a hit only the scan's findings are shown, so no later message can repeat the value.
