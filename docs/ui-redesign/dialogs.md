@@ -5,7 +5,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js` and the refinement pages), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:72` and `:85`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:416`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js` and the refinement pages), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:72` and `:85`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:413`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 4 calls in 1 file (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
@@ -88,7 +88,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/runs.js:347` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:348` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:357` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:361` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:288` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:289` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:298` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:302` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

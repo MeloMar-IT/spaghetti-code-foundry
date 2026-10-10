@@ -85,8 +85,8 @@ test.describe("the five tasks", () => {
       const j = await journey(page);
       await j.click(page.locator('#side a[data-nav="runs"]'), { opens: "page" });
       await j.click(page.locator("tr.link", { hasText: task }), { opens: "page" });
+      // The failing step is already open when the run page shows: no click is needed.
       const step = page.locator("details.tl", { hasText: "check" }).first();
-      await j.click(step.locator("summary"));
       await expect(step).toHaveJSProperty("open", true);
       await expect(step.locator("pre").first()).toContainText("broken");
       settle(3, await j.finish());
