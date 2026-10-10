@@ -638,8 +638,19 @@ Every record from `GET /api/next` has these as `status` and `help`. Text the Fou
 
 ![Flow editor](images/flows.png)
 
-Edit a flow **visually** (left) or as **YAML** (tab at the top). The graph on the right shows
-how steps connect: grey = next, green = on success, red dashed = on failure, purple = route.
+The header always shows which flow you edit and its scope (*builtin*, *repo*, *global* or
+*not saved yet*), a text state (**Saved** or **Unsaved changes**), whether the flow is valid
+(**Valid**, **n problems** or **Checking…**; click it to go to the problem list) and where Save
+writes ("Saves to this repo"; for a built-in flow "Saves your own copy to this repo").
+
+Edit a flow **visually** or as **YAML** (switch at the top). There is one main button: **Save**
+when the flow is new or has changes, otherwise **Test run**. **Ask Claude**, **Save to** and
+**Delete flow** are in the **More** menu. Ctrl/Cmd+S saves, and leaving with unsaved changes asks.
+
+The **Overview** button opens the graph of how steps connect: grey = next, green = on success,
+red dashed = on failure, purple = route. Click a node to select the step. The choice is
+remembered; at 1100 px wide and below the overview starts closed and opens above the form.
+The list on the left has a search box that filters by name and description.
 
 ![YAML view](images/flow-yaml.png)
 

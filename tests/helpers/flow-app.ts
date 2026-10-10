@@ -97,7 +97,15 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
   };
   for (const n of ["./admin.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js",
     "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
-  const mod = await loadUiSource("app.js", { ...deps, ...depsOver }, ["refreshFlows"]);
+  // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
+  deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);
+  deps["./flow-shell.js"] = await import("../../ui/flow-shell.js" as string);
+  const all = { ...deps, ...depsOver };
+  const { createFlowPage } = await loadUiSource("flow-page.js", all, ["createFlowPage"]);
+  let page: any;
+  all["./flow-page.js"] = { createFlowPage: (o: unknown) => (page = createFlowPage({ ...(o as object), storage: undefined, isNarrow: () => false, watchNarrow: undefined })) };
+  await loadUiSource("app.js", all);
+  const mod = { refreshFlows: () => page.refreshFlows() };
   return { api, mod, debounced, ...browser };
 }
 

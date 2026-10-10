@@ -73,7 +73,7 @@ export const SHOTS: readonly Shot[] = [
   { name: "sign-in", guide: "user", role: "none", path: "/", expect: "Sign in" },
   { name: "board", guide: "admin", role: "admin", path: "/#/board", expect: "acme/app" },
   { name: "runs", guide: "admin", role: "admin", path: "/#/runs", expect: "Seeded failed run" },
-  { name: "flows", guide: "admin", role: "admin", path: "/#/flows/issue-gitflow", expect: "▶ Run" },
+  { name: "flows", guide: "admin", role: "admin", path: "/#/flows/issue-gitflow", expect: "Test run" },
   { name: "flow-yaml", guide: "admin", role: "admin", path: "/#/flows/issue-gitflow", expect: "YAML" },
   { name: "library", guide: "admin", role: "admin", path: "/#/library", expect: "Block library" },
   { name: "models", guide: "admin", role: "admin", path: "/#/models", expect: "Agents, providers and which model runs which step" },

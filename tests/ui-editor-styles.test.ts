@@ -29,9 +29,12 @@ const checkRows = (el: FakeElement): Array<{ label: FakeElement; input: FakeElem
   });
 
 describe("editor.css", () => {
-  it("hides the dirty dot with a class and keeps its space", () => {
-    expect(decls(".dirty-dot.clean")).toEqual(["visibility: hidden"]);
-    expect(decls(".dirty-dot")!.some((d) => d.startsWith("visibility"))).toBe(false);
+  it("has the overview pane and the state line, and no dirty dot or graph pane", () => {
+    expect(decls(".dirty-dot")).toBeUndefined();
+    expect(decls(".dirty-dot.clean")).toBeUndefined();
+    expect(decls(".graph-pane")).toBeUndefined();
+    expect(decls(".overview-pane")).toBeDefined();
+    expect(decls(".flow-state")).toBeDefined();
   });
 
   it("styles the five legend lines after the base rule", () => {
@@ -114,14 +117,7 @@ describe("checkbox rows", () => {
   });
 });
 
-describe("dirty dot", () => {
-  it("is toggled with a class in app.js", () => {
-    const src = read("ui/app.js");
-    expect(src).toContain('class: c.dirty ? "dirty-dot" : "dirty-dot clean"');
-    expect(src).toContain('ui.dirty.classList.toggle("clean", !S.cur.dirty)');
-    expect(src).not.toContain("visibility");
-  });
-
+describe("class toggling", () => {
   it("fake classList.toggle adds and removes the class", () => {
     const el = new FakeElement("span");
     el.classList.toggle("clean", true);

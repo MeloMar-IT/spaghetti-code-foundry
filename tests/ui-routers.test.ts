@@ -150,6 +150,7 @@ describe("admin router", () => {
       "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
       ...Object.fromEntries(names.map((n) => [n, never])),
       "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
+      "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: () => true }) },
       ...over,
     };
   };

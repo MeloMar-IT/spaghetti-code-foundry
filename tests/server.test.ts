@@ -754,7 +754,7 @@ steps:
     expect(index).toContain('id="health"');
     expect(app).toContain("startHealth(");
     // "+ Blank flow" uses pushState, which fires no hashchange: it reloads the line itself.
-    expect(app).toMatch(/pushState\(null, "", "#\/new"\);[\s\S]{0,80}loadHealth\(/);
+    expect(app).toMatch(/pushState\(null, "", hash\);[\s\S]{0,80}loadHealth\(/);
     expect(dashboard).not.toContain("api.next(");
     expect(dashboard).not.toContain('"Server"');
     for (const w of ["Waiting for approval", "waiting for a free slot", "the run on the same ticket", "the coding run on", "Task / reason"]) expect(runs).not.toContain(w);

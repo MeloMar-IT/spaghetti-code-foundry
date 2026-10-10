@@ -167,8 +167,8 @@ describe("the UI under the Content-Security-Policy", () => {
     for (const bad of ["innerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", 'setAttribute("style"']) expect(src, bad).not.toContain(bad);
     expect(src).not.toMatch(/style:\s*["'`]/);
   });
-  it("app.js and library.js import yaml by its path", () => {
-    for (const f of ["app.js", "library.js"]) {
+  it("flow-page.js and library.js import yaml by its path", () => {
+    for (const f of ["flow-page.js", "library.js"]) {
       const src = readFileSync(`ui/${f}`, "utf8");
       expect(src).not.toMatch(/from\s+["']yaml["']/);
       expect(src).toContain('from "/vendor/yaml/index.js"');

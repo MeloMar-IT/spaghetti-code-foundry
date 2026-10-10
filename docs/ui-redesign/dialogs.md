@@ -5,7 +5,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/app.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:70` and `:83`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:386`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:70` and `:83`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:386`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 12 calls in 8 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
@@ -20,16 +20,16 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
 | `ui/monitor.js` | Switch on with a fresh state file | Switch on button when the state file cannot be read (`#/watchers` and `#/problems`, through `confirmUnreadable`) | none | Switch on | `confirmDialog` |
-| `ui/app.js` | Run <flow> | Run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter); with an empty task the first click only warns and the button becomes "Run without a task" (inline, no second dialog) | `modal` |
-| `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
-| `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
-| `ui/app.js` | Discard unsaved changes | Open another flow, Blank flow or Draft a flow with an edited flow | none | Discard | `confirmDialog` |
-| `ui/app.js` | Overwrite flow | Save under the name of another flow | none | Overwrite | `confirmDialog` |
-| `ui/app.js` | Delete flow | Delete button in the flow editor | none | Delete | `confirmDialog` |
+| `ui/flow-page.js` | Run <flow> | Test run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter); with an empty task the first click only warns and the button becomes "Run without a task" (inline, no second dialog) | `modal` |
+| `ui/flow-page.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
+| `ui/flow-page.js` | Ask Claude to change this flow | More menu in the flow editor | request text | Apply | `modal` (`generateDialog(true)`) |
+| `ui/flow-page.js` | Discard unsaved changes | Open another flow, Blank flow or Draft a flow with an edited flow | none | Discard | `confirmDialog` |
+| `ui/flow-page.js` | Overwrite flow | Save under the name of another flow | none | Overwrite | `confirmDialog` |
+| `ui/flow-page.js` | Delete flow | Delete in the More menu of the flow editor | none | Delete | `confirmDialog` |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
 | `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
-| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
+| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; one card per block | Click a block card (closes with that block) | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
 | `ui/library.js` | Overwrite block | Save a step as a block under an id that exists | none | Overwrite | `confirmDialog` |
 | `ui/library.js` | Delete block | Delete on a block of the Library page | none | Delete | `confirmDialog` |

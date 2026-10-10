@@ -218,7 +218,7 @@ describe("discard on navigation", () => {
 
 describe("source", () => {
   it("uses no native confirm and keeps the beforeunload guard", () => {
-    for (const f of ["ui/app.js", "ui/library.js"]) expect(readFileSync(f, "utf8")).not.toMatch(/\bconfirm\(/);
+    for (const f of ["ui/app.js", "ui/flow-page.js", "ui/library.js"]) expect(readFileSync(f, "utf8")).not.toMatch(/\bconfirm\(/);
     expect(readFileSync("ui/app.js", "utf8")).toContain('window.addEventListener("beforeunload"');
   });
 });
