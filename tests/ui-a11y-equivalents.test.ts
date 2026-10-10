@@ -251,7 +251,7 @@ describe("Written by AI", () => {
     const plain = open({ text: "Plain questions" });
     expect(groups(plain)).toHaveLength(1);
     expect(groups(plain)[0]!.tag).toBe("pre");
-    expect(readFileSync("ui/user/runs.js", "utf8")).toMatch(/h\("pre", \{[^}]*\.\.\.aiProps\("questions"\)/);
+    expect(readFileSync("ui/run-tabs.js", "utf8")).toMatch(/h\("pre", \{[^}]*\.\.\.aiProps\("questions"\)/);
   });
 });
 

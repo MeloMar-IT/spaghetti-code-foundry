@@ -775,8 +775,8 @@ describe("the Runs pages for a user", () => {
       history: [{ id: "a", type: "shell", ok: false, visit: 1, output: "boom output", error: "exit code 1", durationMs: 5 }], state: { next: "a" },
     };
     const FAILED = { ...base, next: runNextStep(base as never, {}) };
-    const tabs = (main: FakeElement) => main.all("button").filter((b) => ["Live log", "Steps & transcripts", "Changes"].includes(b.textContent));
-    const onTab = (main: FakeElement) => tabs(main).filter((b) => b.attrs.class === "on").map((b) => b.textContent);
+    const tabs = (main: FakeElement) => main.all("button").filter((b) => ["Overview", "Steps", "Changes", "Evidence", "Logs"].includes(b.textContent));
+    const onTab = (main: FakeElement) => tabs(main).filter((b) => b.attrs["aria-selected"] === "true").map((b) => b.textContent);
     const push = (handlers: Record<string, (e: { data: string }) => void>, summary: unknown) => handlers.update!({ data: JSON.stringify({ summary }) });
 
     it("failureCard shows who, kind, what, why, tried, what to do first and the four options in order", async () => {
@@ -812,7 +812,7 @@ describe("the Runs pages for a user", () => {
       expect(main.all("button").filter((b) => b.attrs["data-tab"]).length).toBeGreaterThan(0);
       expect(main.textContent).not.toContain("What happens next");
       expect(main.all("dt").map((d) => d.textContent)).not.toContain("Details");
-      expect(onTab(main)).toEqual(["Steps & transcripts"]);
+      expect(onTab(main)).toEqual(["Steps"]);
       stop();
     });
     it("'Show the failed step' lists the steps with that one open", async () => {
@@ -830,12 +830,12 @@ describe("the Runs pages for a user", () => {
     });
     it("moves to Steps when a running run fails, unless the reader picked a tab", async () => {
       const runs = (await import("../ui/runs.js" as string)) as any;
-      for (const [pick, want] of [[undefined, "Steps & transcripts"], ["Live log", "Live log"], ["Changes", "Changes"]] as const) {
+      for (const [pick, want] of [[undefined, "Steps"], ["Logs", "Logs"], ["Changes", "Changes"]] as const) {
         const { handlers } = stubEventSource();
         const main = connected();
         const stop = runs.renderRunDetail(main, "r1");
         push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running") });
-        expect(onTab(main)).toEqual(["Live log"]);
+        expect(onTab(main)).toEqual(["Overview"]);
         if (pick) tabs(main).find((b) => b.textContent === pick)!.click();
         push(handlers, FAILED);
         expect(onTab(main)).toEqual([want]);
@@ -850,7 +850,18 @@ describe("the Runs pages for a user", () => {
       push(handlers, { ...base, status: "waiting", reason: "Go on?", next: nextStep("approval") });
       expect(main.textContent).toContain("What happens next");
       expect(main.all("dt").map((d) => d.textContent)).toContain("Details");
-      expect(onTab(main)).toEqual(["Live log"]);
+      expect(onTab(main)).toEqual(["Overview"]);
+      stop();
+    });
+    it("an old run (no steps) says so, and no tab throws", async () => {
+      const runs = (await import("../ui/runs.js" as string)) as any;
+      const { handlers } = stubEventSource();
+      const main = connected();
+      const stop = runs.renderRunDetail(main, "r1");
+      push(handlers, { ...base, status: "succeeded", reason: undefined, history: [], next: nextStep("running") });
+      tabs(main).find((b) => b.textContent === "Steps")!.click();
+      expect(main.textContent).toContain("No steps recorded.");
+      for (const b of tabs(main)) expect(() => b.click()).not.toThrow();
       stop();
     });
     it("stepEntry can be opened without a toggle", async () => {

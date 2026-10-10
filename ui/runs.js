@@ -4,14 +4,14 @@ import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from 
 import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
-import { createRunHeader, firstLine } from "./run-header.js";
+import { createRunHeader } from "./run-header.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
+import { changesPanel, createTabs, evidencePanel, noStepsText, overviewPanel, secs, showFailedOnce } from "./run-tabs.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 
 export const money =(n) => (n ? `$${n.toFixed(4)}` : "—");
-const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
 const what = (r) => (r.vars?.issue ? `${r.vars.github_repo}#${r.vars.issue}` : r.vars?.pr ? `${r.vars.github_repo} PR #${r.vars.pr}` : "");
 
 const REFRESH_MS = 30_000;
@@ -190,7 +190,7 @@ export function statusAnnouncer() {
 
 function stepsView(runId, summary, open = -1) {
   const steps = summary.history ?? [];
-  if (!steps.length) return h("p", { class: "muted" }, "No steps finished yet.");
+  if (!steps.length) return h("p", { class: "muted" }, noStepsText(summary));
   return h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
 }
 
@@ -323,38 +323,26 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const log = createLog();
   const status = statusAnnouncer();
   const head = h("div");
-  const tabBody = h("div");
   let summary;
   let held = null; // an update that came while a field of the head had the focus: drawn when the focus leaves
-  let tab = "log";
   let names = null;
   let open = true;
 
-  // The reader picked a tab: the page does not move it any more (a failed run opens on Steps until then).
-  let picked = false;
-  const tabButtons = [];
-  const showTab = async (t, open = -1) => {
-    tab = t;
-    for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, log.el);
-    if (t === "steps") return mount(tabBody, summary ? stepsView(runId, summary, open) : null);
-    mount(tabBody, h("p", { class: "muted" }, "Computing diff…"));
-    mount(tabBody, diffView(await api.diff(runId).catch((e) => ({ patch: "", stat: e.message }))));
-  };
+  const stepsBox = h("div");
+  const drawSteps = (open = -1) => { if (summary) mount(stepsBox, stepsView(runId, summary, open)); };
+  // The reader's tab is never moved by an update; a failed run opens on Steps once (see showFailedOnce).
+  const tabs = createTabs([
+    { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
+    { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId).catch((e) => ({ patch: "", stat: e.message })) }) },
+    { id: "evidence", label: "Evidence", ...evidencePanel() },
+    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+  ], { initial: "overview" });
 
-  const tabs = h("div", { class: "seg tabs mb-12" },
-    [["log", "Live log"], ["steps", admin ? "Steps & transcripts" : "Steps"], ["diff", "Changes"]].map(([k, l]) => {
-      const b = h("button", { "data-tab": k, class: k === tab ? "on" : null, onClick: () => { picked = true; showTab(k); } }, l);
-      tabButtons.push([k, b]);
-      return b;
-    }));
-
-  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { picked = true; showTab("steps", i); }, backLabel: "Back to Runs" });
-  const cardBox = h("div");
+  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); drawSteps(i); }, backLabel: "Back to Runs" });
   const skillsBox = h("div");
-  mount(head, header.el, cardBox, skillsBox);
-  mount(main, head, status.el, tabs, tabBody);
-  mount(tabBody, log.el);
+  mount(head, header.el, skillsBox);
+  mount(main, head, status.el, tabs.el);
 
   // The select of "Retry from step…" must not be replaced under the reader's hands. The timeout lets the next control take the focus first.
   head.addEventListener("focusout", () => setTimeout(() => {
@@ -370,19 +358,10 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     held = null;
     const prev = summary;
     summary = s;
-    const card = s.status === "failed" && !!s.next?.failure;
     header.update(s, { names });
-    const title = firstLine(s.task) || s.flow || "Run";
-    mount(cardBox, h("div", { class: "card mb-16" },
-      s.task && s.task.trim() !== title ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-      s.questions ? h("pre", { class: "mono pre-wrap" }, h("b", {}, "Questions"), "\n", s.questions) : null,
-      h("dl", { class: "meta" },
-        h("dt", {}, "Run"), h("dd", {}, s.runId),
-        card ? null : detailsRow(s))));
     mount(skillsBox, skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
-    // A failed run opens on its steps, once, unless the reader already chose a tab.
-    if (card && !picked && !(prev && prev.status === "failed" && prev.next?.failure)) return showTab("steps");
-    if (tab === "steps" && (!prev || (prev.history ?? []).length !== (s.history ?? []).length)) showTab("steps");
+    showFailedOnce(tabs, s, prev);
+    tabs.update(s, prev);
   };
 
   if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});

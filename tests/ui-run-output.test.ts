@@ -73,6 +73,32 @@ describe("createLog", () => {
     expect(el.scrollTop).toBe(900);
   });
 
+  it("restore() puts the stored position back, or the end while following", () => {
+    const log = mod.createLog();
+    const el = log.el as any;
+    el.scrollHeight = 900;
+    log.add("a");
+    el.clientHeight = 100;
+    el.scrollTop = 200;
+    el.fire("scroll");
+    el.scrollTop = 0;
+    log.restore();
+    expect(el.scrollTop).toBe(200);
+    el.scrollTop = 800;
+    el.fire("scroll");
+    el.scrollTop = 0;
+    log.restore();
+    expect(el.scrollTop).toBe(900);
+    // a hidden log (no height) does not overwrite the stored position
+    el.scrollTop = 200;
+    el.fire("scroll");
+    el.clientHeight = 0;
+    el.scrollTop = 0;
+    el.fire("scroll");
+    log.restore();
+    expect(el.scrollTop).toBe(200);
+  });
+
   it("keeps what the reader looks at when old lines are dropped", () => {
     const make = (top: number) => {
       const log = mod.createLog({ max: 5 });
@@ -134,6 +160,7 @@ describe("the run pages use the bounded log", () => {
     const main = new FakeElement("div") as any;
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
     for (let i = 0; i < 2010; i++) handlers.log!({ data: JSON.stringify({ line: `l${i}` }) });
+    main.all("button").find((b: any) => b.attrs["data-tab"] === "log").click();
     const pre = one(main, "pre", { class: "log" });
     expect(spans(pre)).toHaveLength(2000);
     expect(notes(pre)[0].textContent).toBe("10 earlier lines are not shown");
@@ -148,6 +175,7 @@ describe("the run pages use the bounded log", () => {
     const main = new FakeElement("div") as any;
     const stop = ui.renderMyRun(main, "r1", { a });
     for (let i = 0; i < 2010; i++) listeners.log!({ data: JSON.stringify({ line: `l${i}` }) });
+    main.all("button").find((b: any) => b.attrs["data-tab"] === "log").click();
     const pre = one(main, "pre", { class: "log" });
     expect(spans(pre)).toHaveLength(2000);
     expect(notes(pre)[0].textContent).toBe("10 earlier lines are not shown");

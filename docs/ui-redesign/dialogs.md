@@ -5,7 +5,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/app.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:70` and `:83`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:386`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/app.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:71` and `:84`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:367`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **Native `confirm` and `prompt`:** 12 calls in 8 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
