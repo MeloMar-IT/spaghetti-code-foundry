@@ -337,6 +337,28 @@ describe("the flow page controller", () => {
     toggle().click();
     graphOpts.onSelect(0);
     expect(s.cur.selected).toBe(0);
+    expect(editorOpts.selected).toBe(0); // the body was drawn again for the new item
+  });
+
+  it("does not draw the editor again when the same item is selected", async () => {
+    await open({ storage: memory() });
+    editorOpts.onSelect(0, false);
+    const first = editorOpts;
+    editorOpts.onSelect(0, false);
+    expect(editorOpts).toBe(first);
+    editorOpts.onSelect("settings", false);
+    expect(editorOpts).not.toBe(first);
+    expect(editorOpts.selected).toBe("settings");
+  });
+
+  it("hands the problems of the current text to the editor, and none for changed text", async () => {
+    const api = apiFor({ validate: vi.fn(async () => ({ ok: false, issues: [{ path: ["steps", 0, "run"], message: "bad" }] })) });
+    const { s } = await open({ storage: memory(), api });
+    editorOpts.onSelect(0, false);
+    expect(editorOpts.problems.map((p: any) => p.stepIndex)).toEqual([0]);
+    s.cur.obj.name = "changed";
+    editorOpts.rerender();
+    expect(editorOpts.problems).toEqual([]);
   });
 
   it("marks the open flow as unsaved in the list and makes Save primary after an edit", async () => {

@@ -17,7 +17,8 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const read = (f: string) => readFileSync(f, "utf8");
-const rules = parseCss(read("ui/css/pages/editor.css"));
+const css = read("ui/css/pages/editor.css");
+const rules = parseCss(css);
 const decls = (selector: string) => rules.find((r) => r.selector === selector)?.declarations;
 const index = (selector: string) => rules.findIndex((r) => r.selector === selector);
 
@@ -41,6 +42,11 @@ describe("editor.css", () => {
     expect(decls(".legend i.seq")).toEqual(["border-color: var(--muted)"]);
     expect(decls(".legend i.ok")).toEqual(["border-color: var(--ok)"]);
     expect(decls(".legend i.fail")).toEqual(["border-color: var(--fail)", "border-top-style: dashed"]);
+    expect(decls(".card-head")).toContain("flex-wrap: wrap");
+    expect(decls(".insert")).toContain("flex-wrap: wrap");
+    expect(decls(".flow-form")).toBeDefined();
+    const narrow = css.slice(css.indexOf("@media (max-width: 1100px)"));
+    expect(narrow.slice(0, narrow.indexOf("}\n@media") + 1)).toContain(".flow-form { grid-template-columns: 1fr; }");
     expect(decls(".legend i.route")).toEqual(["border-color: var(--route)"]);
     expect(decls(".legend i.par")).toEqual(["border-color: var(--muted)", "border-top-style: dotted"]);
     for (const k of ["seq", "ok", "fail", "route", "par"]) expect(index(`.legend i.${k}`)).toBeGreaterThan(index(".legend i"));
@@ -97,7 +103,11 @@ describe("checkbox rows", () => {
   });
 
   it("parallel step rows use row tight and fit", () => {
-    const rows = checkRows(body({ id: "p", type: "parallel", steps: [] })).filter((r) => r.label.attrs.class !== "field");
+    const step = { id: "p", type: "parallel", steps: [] };
+    const flow = { name: "t", steps: [step, { id: "z", type: "shell", run: "x" }, { id: "y", type: "shell", run: "x" }] };
+    const root = new FakeElement("div");
+    root.append(...types.stepMain(flow, step, 0, { onChange: () => {}, rerender: () => {}, vars: [], earlier: [] }));
+    const rows = checkRows(root).filter((r) => r.label.attrs.class !== "field");
     expect(rows.length).toBeGreaterThanOrEqual(2);
     for (const { label, input } of rows) {
       expect(label.attrs.class).toBe("row tight");
@@ -111,8 +121,8 @@ describe("checkbox rows", () => {
     for (const src of [e, s]) {
       for (const line of src.split("\n").filter((l) => l.includes('type: "checkbox"'))) expect(line).toContain('class: "fit"');
     }
-    expect(e.split('class: "row tight text-sm').length - 1).toBe(6);
-    expect(s.split('class: "row tight text-sm').length - 1).toBe(1);
+    expect(e.split('class: "row tight text-sm').length - 1).toBe(5);
+    expect(s.split('class: "row tight text-sm').length - 1).toBe(2);
     expect(s.split('class: "row tight" }').length - 1).toBe(1);
   });
 });

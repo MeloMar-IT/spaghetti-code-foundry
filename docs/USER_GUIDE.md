@@ -652,6 +652,26 @@ red dashed = on failure, purple = route. Click a node to select the step. The ch
 remembered; at 1100 px wide and below the overview starts closed and opens above the form.
 The list on the left has a search box that filters by name and description.
 
+In the visual editor, the **structure list** shows **Flow settings** first, then one row per step:
+number, id, type icon, a one-line summary, and marks for "only via jumps" and "has a problem".
+Select a row to edit it. The **inspector** next to the list shows only the selected item, either the
+flow settings or one step. Add step (Agent, Shell, more types, **+ From library**), move up/down,
+duplicate, delete, **Save as block** and rename work from the list and from the inspector header.
+At 1100 px wide and below, the list is above the inspector.
+
+A step shows only the settings of its type: an agent step its prompt and model, a shell step its
+command, an approval step its question, a parallel step the step picker, a sub-flow step the flow
+and its variables. Less used options are in groups that start closed and open by themselves when
+they hold a value: **Routing** (on success, on failure, routes, only via jumps, pass/fail patterns,
+resume point), **Limits** (max visits, timeout, budget), **Sandbox & access** (shell and agent
+steps) and **Model & agent settings** (agent, provider, permission mode, allowed tools, extra system
+prompt, continue session). An approval step has no model, sandbox or tools group. A parallel or
+sub-flow step has no pass/fail patterns unless a value is already set; then it stays visible and
+editable. A step of an unknown type says to edit it in the YAML tab. The flow settings use groups
+too: basics, **Defaults for agent steps**, **Safety**, **Variables** and **Publish to users**.
+Clicking a node in the overview, or a problem, opens that step, focuses the field and opens the
+group that holds it.
+
 ![YAML view](images/flow-yaml.png)
 
 - **Save to** — *this repo* (`<repo>/.claude-factory/flows/`, shared with your team through git)
