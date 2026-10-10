@@ -308,19 +308,21 @@ describe("Runs list", () => {
     stop();
   });
 
-  it("does not ask or draw while the owner filter has the focus", async () => {
+  it("asks but does not draw while the owner filter has the focus", async () => {
     listAnswers([RUN("r1")]);
     const main = connected();
     const stop = await runs.renderRunsList(main);
     const select = named(main, "owner-filter");
     select.focus();
     asked.length = 0;
-    await tick(30_000);
-    expect(asked).toEqual([]);
-    expect(named(main, "owner-filter")).toBe(select);
-    named(main, "run-r1").focus();
+    listAnswers([RUN("r1", { task: "Changed" })]);
     await tick(30_000);
     expect(asked).toContain("/api/runs");
+    expect(named(main, "owner-filter")).toBe(select);
+    expect(main.textContent).not.toContain("Changed");
+    named(main, "run-r1").focus();
+    await tick(300);
+    expect(main.textContent).toContain("Changed");
     expect(named(main, "owner-filter")).not.toBe(select);
     stop();
   });
@@ -337,12 +339,17 @@ describe("Runs list", () => {
       await gate;
       return { ok: true, status: 200, statusText: "OK", json: async () => answers[url] ?? {} };
     };
+    listAnswers([RUN("r1", { task: "Changed" })]);
     await tick(30_000);
     const select = named(main, "owner-filter");
     select.focus();
     release();
     await flush();
     expect(named(main, "owner-filter")).toBe(select);
+    expect(main.textContent).not.toContain("Changed");
+    named(main, "run-r1").focus();
+    await tick(300);
+    expect(main.textContent).toContain("Changed");
     stop();
   });
 });
@@ -567,7 +574,7 @@ describe("My runs", () => {
     await tick(30_000);
     expect(named(list, "remove-q1")).toBe(opener);
     answer(false);
-    await flush();
+    await tick(300); // the poller lets go of a held answer after a short wait
     expect(list.textContent).toContain("Newest");
     expect(doc().activeElement?.attrs["data-focus"]).toBe("remove-q1");
     stop();

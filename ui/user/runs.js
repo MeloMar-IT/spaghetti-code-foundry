@@ -7,9 +7,11 @@ import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
+import { dialogOpen, keepScroll, poller } from "../live.js";
+import { noRuns, part, partNote, runsLiveStates } from "../run-states.js";
 import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
 
-export const NO_RUNS = "No runs yet. Start work to begin.";
+export { NO_RUNS } from "../run-states.js";
 export const NOT_FOUND = "This run was not found. It may have been removed.";
 export const NO_STEPS = "No steps finished yet.";
 export const NO_CHANGES = "No changes yet.";
@@ -134,72 +136,72 @@ export async function decisionDialog(kind, send) {
 
 // ── My runs ──
 
-/** The My runs page; refreshes every 30 seconds. Returns a cleanup. */
+/** The My runs page; refreshes every 30 seconds through the poller and never rejects. Returns a cleanup. */
 export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo } = {}) {
-  let gone = false;
-  let entries = [];
-  let capped = false;
-  let seq = 0;
+  let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
+  let data = null;
+  let asking = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
+  let live;
   // Only the repository filter counts here: a user never filters by owner.
   let filters = query.repo ? { repo: query.repo } : {};
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
-  let dialogOpen = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
+  const refresh = () => live.refresh();
+  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
+  const states = runsLiveStates({ body: list, label: "Loading your runs", rows: 4, shape: "cards", what: "Could not load your runs.", denied: "You are not allowed to see your runs.", retry: refresh, focus: "my-runs" });
 
   const setFilters = (next) => {
     filters = next;
     go(withQuery("#/runs", filters));
-    draw();
+    render();
   };
   const clear = () => setFilters({});
-  const draw = () => {
-    if (dialogOpen) return;
+  const render = () => {
+    if (asking || !data) return;
+    const { runs, queue } = data;
+    const entries = myRunsEntries(runs, queue.ok ? queue.value?.pending : []);
     const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
-    const note = filters.repo && capped ? CAP_NOTE : null;
+    const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
     mount(list,
+      states.alert,
       filterBar(filters, { onRemove: () => setFilters({}), onClear: clear }),
+      queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." }),
       shown.length
         ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
-        : filters.repo
-          ? filterEmpty("runs", filters, { note, onClear: clear })
-          : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work")));
+        : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns(),
+      states.note);
   };
-  async function load() {
-    const mine = ++seq;
-    const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
-    if (gone || mine !== seq) return;
-    entries = myRunsEntries(runs, queue?.pending);
-    capped = Array.isArray(runs) && runs.length >= RUNS_CAP;
-    draw();
-  }
   async function remove(job) {
     alertEl.textContent = "";
-    dialogOpen = true;
+    asking = true;
     let yes;
-    try {
-      yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it");
-    } finally {
-      dialogOpen = false;
-    }
-    if (!yes) return draw(); // the newest answer that came while the dialog was open
+    try { yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it"); } finally { asking = false; }
+    if (!yes) return render(); // an answer that came while the dialog was open is drawn by the poller
     try {
       const r = await a.cancelRun(job.runId);
       if (r?.cancelled === false) alertEl.textContent = NOT_CANCELLED;
       else toast("Removed");
     } catch (e) {
       alertEl.textContent = errorText(e);
-      return draw();
+      return render();
     }
-    await load().catch((e) => { alertEl.textContent = errorText(e); });
+    gen++; // an answer asked before the cancel still shows the job
+    await refresh();
   }
 
-  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
-  await load();
-  const timer = setInterval(() => load().catch(() => {}), REFRESH_MS);
-  return () => {
-    gone = true;
-    clearInterval(timer);
-  };
+  live = poller({
+    load: async () => {
+      const mine = ++gen;
+      const [runs, queue] = await Promise.all([a.runs(), part(a.queue())]).catch((e) => { if (mine === gen) throw e; return []; });
+      return mine === gen ? { runs, queue } : undefined;
+    },
+    draw: (next) => { data = next; keepScroll(list, render); },
+    every: REFRESH_MS,
+    onState: states.onState,
+    hold: () => asking || dialogOpen(),
+  });
+  await live.ready;
+  return () => live.stop();
 }
 
 // ── The run page ──

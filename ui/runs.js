@@ -5,6 +5,8 @@ import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from 
 import { STEP_TYPES } from "./step-types.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
+import { dialogOpen, keepScroll, poller } from "./live.js";
+import { noRuns, part, partNote, runsLiveStates } from "./run-states.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 
@@ -83,59 +85,79 @@ export function stepRow(s) {
   return [h("dt", {}, s.status === "running" ? "Current step" : "Resumes at step"), h("dd", {}, id, h("span", { class: "muted" }, ` — ${about}`))];
 }
 
-/** Runs list; refreshes itself every 30 seconds. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
+/** Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
 export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo } = {}) {
-  mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading runs…"));
-  let timer;
   let closed = false;
-  let seq = 0;
+  let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
+  let forcing = false;
   let data = null;
+  let live;
   // A user gets their own runs and queue; the owner filter and its options are for admins.
   let filters = { ...(query.repo ? { repo: query.repo } : {}), ...(admin && query.owner ? { owner: query.owner } : {}) };
+  const wanted = () => (admin ? filters.owner ?? "" : "");
+  const refresh = () => live.refresh();
 
-  // Asks the server (owner filter included) and draws. An older answer never overwrites a newer one, nor a page that was left.
-  // `timed`: the redraw of the timer. It waits while a select or text field of the page has the focus, before it asks
-  // and again before it draws (the focus may arrive while the answers are on their way).
-  const load = async (timed = false) => {
-    if (timed && fieldFocused(main)) return;
-    const mine = ++seq;
-    const [runs, queue, owners] = await Promise.all([api.runs(admin ? filters.owner ?? "" : ""), api.queue(), admin ? api.runOwners() : []]);
-    if (closed || mine !== seq || !main.isConnected) return;
-    if (timed && fieldFocused(main)) return;
-    data = { runs, queue, owners };
-    draw();
+  const states = runsLiveStates({
+    body: main, heading: () => h("div", { class: "toolbar" }, h("h1", {}, "Runs")),
+    label: "Loading runs", rows: 6, shape: "table", what: "Could not load the runs.", retry: refresh, focus: "runs",
+  });
+
+  // Asks the server (owner filter included). Undefined when a newer request started meanwhile: that one is the answer.
+  const fetchAll = async () => {
+    const mine = ++gen;
+    const owner = wanted();
+    try {
+      const [runs, queue, owners] = await Promise.all([api.runs(owner), part(api.queue()), admin ? part(api.runOwners()) : null]);
+      return mine === gen ? { runs, queue, owners } : undefined;
+    } catch (e) {
+      if (mine !== gen) return undefined;
+      throw e;
+    }
   };
-  // A change of the repository only filters what is here; a change of the owner asks the server again.
+  let switching = null; // an owner change whose answer has not been drawn yet
+  const rollback = (e) => {
+    const s = switching;
+    switching = null;
+    if (closed || !s || filters !== s.next) return;
+    filters = s.before;
+    go(withQuery("#/runs", filters));
+    if (data) render();
+    toast(e?.message || "Could not load the runs.", "error");
+  };
+  // A change of the repository only filters what is here; a change of the owner asks the server again and draws at once.
   const setFilters = (next) => {
     const reload = (next.owner ?? "") !== (filters.owner ?? "");
     const before = filters;
     filters = next;
     go(withQuery("#/runs", filters));
-    if (!reload) return draw();
-    // If the server cannot answer, the address and the filters go back to what the page still shows.
-    load().catch((e) => {
-      if (closed || filters !== next) return;
-      filters = before;
-      go(withQuery("#/runs", filters));
-      if (data) draw();
-      toast(e?.message || "Could not load the runs.", "error");
-    });
+    if (!reload) return render();
+    // If the server cannot answer, the address and the filters go back to what the page still shows. A request that a
+    // newer one overtook (a tick) hands this over: that request's failure rolls back too.
+    switching = { before, next };
+    fetchAll().then((d) => {
+      if (closed || !d) return;
+      switching = null;
+      forcing = true;
+      try { live.show(d); } finally { forcing = false; }
+    }, rollback);
   };
   const clear = () => setFilters({});
 
-  const draw = () => {
-    const { runs, queue, owners } = data;
+  const render = () => {
+    const { runs } = data;
+    const queue = data.queue.ok ? data.queue.value : null;
+    const owners = data.owners?.ok ? data.owners.value : null;
     const shown = filters.repo ? runs.filter((r) => sameRepo(r.vars?.github_repo, filters.repo)) : runs;
-    const pending = filters.repo ? queue.pending.filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue.pending;
+    const pending = filters.repo ? (queue?.pending ?? []).filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue?.pending ?? [];
     const yours = needsYou(shown);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
     const table = (list, scope) => h("div", { class: "table-box" }, h("table", { class: "table" },
       h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
       h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })))));
-    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
+    const filter = admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
       h("option", { value: "" }, "All owners"),
       owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
-    const labels = { owner: ownerLabel(owners.find((o) => o.id === filters.owner)?.name) || filters.owner };
+    const labels = { owner: ownerLabel(owners?.find((o) => o.id === filters.owner)?.name) || filters.owner };
     const note = filters.repo && runs.length >= RUNS_CAP ? CAP_NOTE : null;
     const active = Boolean(filters.repo || filters.owner);
     // A queued job that matches is a result too.
@@ -143,26 +165,50 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
 
     mount(main,
       h("div", { class: "toolbar" }, h("h1", {}, "Runs"),
-        admin ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
+        admin && queue ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
         filter,
         h("span", { class: "spacer" }),
-        h("span", { class: "muted text-xs" }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
-        h("button", { "data-focus": "refresh", onClick: () => load().catch(() => {}) }, "↻ Refresh")),
+        states.note,
+        h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")),
+      states.alert,
       filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
+      admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
       note && found ? h("p", { class: "muted" }, note) : null,
-      pending.length ? h("div", { class: "card mb-16" },
-        h("h3", {}, "Queue"),
-        pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); load().catch(() => {}); }))) : null,
+      !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
+        : pending.length ? h("div", { class: "card mb-16" },
+          h("h3", {}, "Queue"),
+          pending.map((p) => queueRow(p, async () => {
+            await api.cancelRun(p.runId);
+            gen++; // an answer asked before the cancel still shows the job
+            refresh();
+          }))) : null,
       yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
       shown.length ? table(shown, "run")
         : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
-          : h("div", { class: "empty" }, admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
+          : noRuns());
   };
-  await load();
-  timer = setInterval(() => load(true).catch(() => {}), REFRESH_MS);
+
+  live = poller({
+    load: async () => {
+      try {
+        const d = await fetchAll();
+        if (d) switching = null;
+        return d;
+      } catch (e) {
+        rollback(e);
+        throw e;
+      }
+    },
+    draw: (next) => { data = next; keepScroll(main, render); },
+    every: REFRESH_MS,
+    onState: states.onState,
+    // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
+    hold: () => !forcing && (fieldFocused(main) || dialogOpen()),
+  });
+  await live.ready;
   return () => {
     closed = true;
-    clearInterval(timer);
+    live.stop();
   };
 }
 

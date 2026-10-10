@@ -39,8 +39,11 @@ const load = (key: string, browser: Browser, hash: string, ready: Ready, opts: {
     return { ...m, rows };
   })));
 
-const poll = (key: string, browser: Browser, hash: string, ready: Ready, marker: Marker, hold?: string[]) =>
-  collect(key, () => medianOf(() => onFreshPage(browser, hash, ready, { clock: true }, (page) => pollTick(page, { marker, hold }))));
+const poll = (key: string, browser: Browser, hash: string, ready: Ready, marker: Marker, hold?: string[], change?: (json: any) => any) =>
+  collect(key, () => medianOf(() => onFreshPage(browser, hash, ready, { clock: true }, (page) => pollTick(page, { marker, hold, change }))));
+
+/** The Runs list draws only a changed answer: this edit makes the answer of a tick differ from the one on the page. */
+const changedRuns = (json: any) => (Array.isArray(json) ? json.map((r, i) => (i === 0 ? { ...r, task: `${r.task ?? ""} (changed)` } : r)) : json);
 
 /** One test per budget: measure, record, then (unless known) assert. The value is recorded before a known case stops. */
 function budgetTest(title: string, b: Budget, get: (browser: Browser) => Promise<number>): void {
@@ -64,12 +67,20 @@ test.describe("harness", () => {
     await onFreshPage(browser, "#/runs", RUNS_READY, { clock: true }, async (page) => {
       await page.evaluate(() => (window as any).__perf.settled());
       const before = await page.evaluate(() => performance.now());
-      const m = await pollTick(page, { marker: RUNS_MARKER });
+      const m = await pollTick(page, { marker: RUNS_MARKER, change: changedRuns });
       const after = await page.evaluate(() => performance.now());
       expect(after - before).toBeGreaterThanOrEqual(30_000);
       expect(m.redrawMs).toBeGreaterThanOrEqual(0);
       expect(m.redrawMs).toBeLessThan(10_000);
       expect(m.requests).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  test("a polling tick with an unchanged answer does not redraw the Runs list", async ({ browser }) => {
+    await onFreshPage(browser, "#/runs", RUNS_READY, { clock: true }, async (page) => {
+      const m = await pollTick(page, { marker: RUNS_MARKER, unchanged: true });
+      expect(m.requests).toBe(1);
+      expect(m.redrawMs, "no redraw").toBe(-1);
     });
   });
 });
@@ -87,7 +98,7 @@ test.describe("budgets", () => {
       clickMetrics(page, '#side a[data-nav="runs"]', RUNS_READY)))).then((m) => m.ms));
 
   const pollHome = (b: Browser) => poll("poll-home", b, "#/home", HOME_READY, HOME_MARKER, ["**/api/your-turn"]);
-  const pollRuns = (b: Browser) => poll("poll-runs", b, "#/runs", RUNS_READY, RUNS_MARKER);
+  const pollRuns = (b: Browser) => poll("poll-runs", b, "#/runs", RUNS_READY, RUNS_MARKER, undefined, changedRuns);
   budgetTest("POLL_HOME_MS", BUDGETS.POLL_HOME_MS, async (b) => (await pollHome(b)).redrawMs);
   budgetTest("CLS_POLL home", BUDGETS.CLS_POLL, async (b) => (await pollHome(b)).cls);
   budgetTest("POLL_REQUESTS home", BUDGETS.POLL_REQUESTS, async (b) => {
