@@ -112,27 +112,36 @@ const editorFlow = () => ({
 });
 const ctx = () => ({ onChange: vi.fn(), rerender: vi.fn(), selected: 0, onSelect: vi.fn() });
 
+/** The editor draws one item at a time: the flow settings, then each step. */
+const drawAll = (flow: any = editorFlow()) =>
+  ["settings", ...flow.steps.map((_: unknown, i: number) => i)].map((selected) => editor.renderEditor(flow, { ...ctx(), selected }));
+const holder = (roots: FakeElement[]) => {
+  const box = el("div");
+  box.append(...roots);
+  return box;
+};
+
 describe("flow editor", () => {
   it("has no audit violations with one step of each type", () => {
-    expect(audit(editor.renderEditor(editorFlow(), ctx()))).toEqual([]);
+    for (const root of drawAll()) expect(audit(root)).toEqual([]);
   });
 
   it("names variable, step, route and sub-flow variable fields by row", () => {
-    const root = editor.renderEditor(editorFlow(), ctx());
+    const root = holder(drawAll());
     for (const name of ["Variable 1 name", "Variable 2 value", "Step 1 id", "Step 5 id", "Route 1 pattern", "Route 1 target", "Sub-flow variable 1 name", "Sub-flow variable 1 value", "More step types", "Default value for a", "How a shows to users"]) {
       expect(find(root, "input", { "aria-label": name }).length + find(root, "select", { "aria-label": name }).length, name).toBeGreaterThan(0);
     }
   });
 
   it("does not nest a label in a label (the parallel block is a group)", () => {
-    const root = editor.renderEditor(editorFlow(), ctx());
+    const root = holder(drawAll());
     for (const l of root.all("label")) expect(l.all("label")).toHaveLength(0);
     expect(find(root, "div", { role: "group" }).length).toBeGreaterThan(0);
   });
 
   it("still writes a variable value into the flow", () => {
     const flow = editorFlow();
-    const root = editor.renderEditor(flow, ctx());
+    const root = editor.renderEditor(flow, { ...ctx(), selected: "settings" });
     const input = one(root, "input", { "aria-label": "Variable 2 value" });
     input.value = "changed";
     input.fire("input", { target: input });
