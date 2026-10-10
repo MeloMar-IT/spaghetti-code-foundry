@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextStep } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 // The admin run page: loading, not found, no permission, offline, queued, stream loss with Reconnect, and Retry for the
@@ -440,5 +441,285 @@ describe("renderRunDetail states", () => {
     one(main, "button", { "data-tab": "steps" }).click();
     expect(main.textContent).toContain("what this step does is not saved with this run");
     expect(find(main, "select", { "data-focus": "act-retry-from" })).toHaveLength(0);
+  });
+});
+
+// ── the actions ──
+
+describe("renderRunDetail actions", () => {
+  const realFetch = globalThis.fetch;
+  const SENTINEL = "Sentinel sentence from the server record.";
+  const RUNNING = { ...RUN, status: "running" };
+  const WAITING = { ...RUN, status: "waiting", next: { ...nextStep("approval", { runId: "r1" }), text: SENTINEL } };
+  const STOPPED = { ...RUN, status: "stopped", state: { next: "a" }, flowDef: { steps: [{ id: "a" }, { id: "b" }] } };
+  let table: Record<string, { status?: number; body?: unknown }>;
+  let posted: string[];
+  let sent: Record<string, any>;
+  let sources: any[];
+  let main: FakeElement;
+  let stop: () => void;
+  const doc = () => (globalThis as any).document;
+  const modalRoot = () => doc().getElementById("modal-root") as FakeElement;
+  const dialog = () => find(modalRoot(), "div", { role: "dialog" })[0];
+  const pressed = (label: string) => find(modalRoot(), "button").find((b) => b.textContent === label)!.click();
+  const alertText = () => (find(main, "p", { role: "alert" })[0]?.textContent ?? "");
+  const toast = () => doc().getElementById("toast").textContent as string;
+  const button = (kind: string) => one(main, "button", { "data-focus": `act-${kind}` });
+  const update = (summary: any) => sources[0].handlers.update({ data: JSON.stringify({ summary }) });
+  const open = async (summary: any) => {
+    table["/api/runs/r1"] = { body: summary };
+    main = connected();
+    stop = runs.renderRunDetail(main, "r1");
+    await flush();
+    update(summary);
+  };
+  const submit = () => one(modalRoot(), "form").fire("submit", { preventDefault() {} });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    table = { "/api/queue": { body: { pending: [], active: [] } }, "/api/users": { body: [] } };
+    posted = [];
+    sent = {};
+    sources = [];
+    modalRoot().replaceChildren();
+    doc().listeners.keydown = [];
+    doc().activeElement = null;
+    doc().getElementById("toast").textContent = "";
+    (globalThis as any).fetch = (url: string, init?: any) => {
+      if (init?.method === "POST") { posted.push(url); sent[url] = JSON.parse(init.body); }
+      const t = table[url] ?? { body: {} };
+      const status = t.status ?? 200;
+      return Promise.resolve({ ok: status < 400, status, statusText: "x", json: async () => (status < 400 ? t.body : { error: (t.body as any)?.error ?? "failed" }) });
+    };
+    (globalThis as any).EventSource = class {
+      static CLOSED = 2;
+      readyState = 1;
+      handlers: Record<string, (e: { data: string }) => void> = {};
+      close = vi.fn();
+      onerror: (() => void) | null = null;
+      constructor(public url: string) { sources.push(this); }
+      addEventListener(type: string, fn: (e: { data: string }) => void) { this.handlers[type] = fn; }
+    };
+  });
+  afterEach(() => {
+    stop?.();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    globalThis.fetch = realFetch;
+    delete (globalThis as any).EventSource;
+  });
+
+  it("Cancel asks first and posts only after the yes", async () => {
+    await open(RUNNING);
+    button("cancel").click();
+    await flush();
+    expect(dialog()!.textContent).toContain("Cancel this run?");
+    expect(posted).toEqual([]);
+    pressed("Cancel the run");
+    await flush();
+    expect(posted).toEqual(["/api/runs/r1/cancel"]);
+    expect(dialog()).toBeUndefined();
+  });
+
+  it("Cancel declined, with the button or Escape, posts nothing", async () => {
+    await open(RUNNING);
+    button("cancel").click();
+    await flush();
+    pressed("Keep running");
+    await flush();
+    button("cancel").click();
+    await flush();
+    for (const fn of doc().listeners.keydown) fn({ key: "Escape" });
+    await flush();
+    expect(dialog()).toBeUndefined();
+    expect(posted).toEqual([]);
+    expect(alertText()).toBe("");
+  });
+
+  it("Cancel refused shows the sentence on the page, not in a toast; a second click clears it", async () => {
+    await open(RUNNING);
+    const opener = button("cancel");
+    table["/api/runs/r1/cancel"] = { status: 409, body: { error: "The run is not running." } };
+    opener.click();
+    await flush();
+    pressed("Cancel the run");
+    await flush();
+    expect(alertText()).toBe("The run is not running.");
+    expect(toast()).toBe("");
+    expect(button("cancel")).toBe(opener);
+    table["/api/runs/r1/cancel"] = { body: {} };
+    opener.click();
+    await flush();
+    expect(alertText()).toBe("");
+  });
+
+  it("Cancel that lost a race (cancelled: false) shows a sentence", async () => {
+    await open(RUNNING);
+    table["/api/runs/r1/cancel"] = { body: { cancelled: false } };
+    button("cancel").click();
+    await flush();
+    pressed("Cancel the run");
+    await flush();
+    expect(alertText()).toContain("could not be cancelled");
+  });
+
+  it("Approve sends the trimmed note, toasts, closes and asks the run again", async () => {
+    await open(WAITING);
+    button("approve").click();
+    await flush();
+    one(modalRoot(), "textarea").value = " ok ";
+    submit();
+    await flush();
+    expect(sent["/api/runs/r1/approve"]).toEqual({ note: "ok" });
+    expect(toast()).toBe("Approved — continuing");
+    expect(dialog()).toBeUndefined();
+  });
+
+  it("Approve refused keeps the dialog open with the note and the sentence; the page stays usable", async () => {
+    await open(WAITING);
+    const opener = button("approve");
+    table["/api/runs/r1/approve"] = { status: 409, body: { error: "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted." } };
+    opener.click();
+    await flush();
+    one(modalRoot(), "textarea").value = "my note";
+    submit();
+    await flush();
+    expect(dialog()).toBeTruthy();
+    expect(one(modalRoot(), "p", { role: "alert" }).textContent).toContain("The issue is closed");
+    expect(one(modalRoot(), "textarea").value).toBe("my note");
+    expect(alertText()).toBe("");
+    pressed("Not now");
+    await flush();
+    expect(button("approve")).toBe(opener);
+    opener.click();
+    await flush();
+    expect(dialog()).toBeTruthy();
+  });
+
+  it("Reject posts the reason and toasts", async () => {
+    await open(WAITING);
+    button("reject").click();
+    await flush();
+    one(modalRoot(), "textarea").value = "no";
+    submit();
+    await flush();
+    expect(sent["/api/runs/r1/reject"]).toEqual({ note: "no" });
+    expect(toast()).toBe("Rejected");
+  });
+
+  it("the Retry from step select asks, goes back to its first option, and re-runs only after the yes", async () => {
+    await open(STOPPED);
+    const select = one(main, "select", { "data-focus": "act-retry-from" });
+    select.value = "b";
+    select.fire("change", { target: select });
+    await flush();
+    expect(dialog()!.textContent).toContain('"b"');
+    pressed("Not now");
+    await flush();
+    expect(select.value).toBe("");
+    expect(posted).toEqual([]);
+    select.value = "b";
+    select.fire("change", { target: select });
+    await flush();
+    pressed("Re-run");
+    await flush();
+    expect(sent["/api/runs/r1/resume"]).toEqual({ from: "b" });
+    expect(toast()).toBe("Re-running from b");
+    expect(select.value).toBe("");
+  });
+
+  it("a refused Re-run and a refused Resume show the sentence on the page", async () => {
+    await open(STOPPED);
+    table["/api/runs/r1/resume"] = { status: 409, body: { error: "The run is already running." } };
+    const select = one(main, "select", { "data-focus": "act-retry-from" });
+    select.value = "b";
+    select.fire("change", { target: select });
+    await flush();
+    pressed("Re-run");
+    await flush();
+    expect(alertText()).toBe("The run is already running.");
+    expect(select.value).toBe("");
+    button("resume").click();
+    await flush();
+    expect(alertText()).toBe("The run is already running.");
+  });
+
+  it("does not replace the head while a dialog is open, and draws the newest update after it closes", async () => {
+    await open(RUNNING);
+    const opener = button("cancel");
+    opener.click();
+    await flush();
+    update({ ...RUNNING, task: "older task" });
+    update({ ...RUNNING, task: "newest task" });
+    expect(main.textContent).not.toContain("older task");
+    expect(main.textContent).not.toContain("newest task");
+    expect(button("cancel")).toBe(opener);
+    pressed("Keep running");
+    await flush();
+    expect(main.textContent).toContain("newest task");
+    expect(main.textContent).not.toContain("older task");
+  });
+
+  it("does not replace the head under a dialog when a 403 answer comes, only after it closes", async () => {
+    await open(RUNNING);
+    const opener = button("cancel");
+    opener.click();
+    await flush();
+    table["/api/runs/r1"] = { status: 403, body: { error: "no" } };
+    sources[0].readyState = 2;
+    sources[0].onerror();
+    await flush();
+    expect(button("cancel")).toBe(opener);
+    pressed("Keep running");
+    await flush();
+    expect(find(main, "button", { "data-focus": "act-cancel" })).toHaveLength(0);
+  });
+
+  it("looks again for a dialog this page did not open", async () => {
+    await open(RUNNING);
+    modalRoot().append(new FakeElement("div"));
+    update({ ...RUNNING, task: "newest task" });
+    expect(main.textContent).not.toContain("newest task");
+    modalRoot().replaceChildren();
+    vi.advanceTimersByTime(250);
+    expect(main.textContent).toContain("newest task");
+  });
+
+  it("draws the update after a Re-run although the select still has the focus", async () => {
+    await open(STOPPED);
+    const select = one(main, "select", { "data-focus": "act-retry-from" });
+    select.focus();
+    select.value = "b";
+    select.fire("change", { target: select });
+    await flush();
+    table["/api/runs/r1"] = { body: { ...STOPPED, status: "running", task: "running again" } };
+    pressed("Re-run");
+    await flush();
+    expect(main.textContent).toContain("running again");
+  });
+
+  it("draws an update held under the Re-run dialog when it is declined, although the select has the focus", async () => {
+    await open(STOPPED);
+    const select = one(main, "select", { "data-focus": "act-retry-from" });
+    select.focus();
+    select.value = "b";
+    select.fire("change", { target: select });
+    await flush();
+    update({ ...STOPPED, task: "newest task" });
+    expect(main.textContent).not.toContain("newest task");
+    pressed("Not now");
+    await flush();
+    expect(main.textContent).toContain("newest task");
+  });
+
+  it("shows the sentence of a run that now waits for you, and keeps it after another update", async () => {
+    await open(STOPPED);
+    table["/api/runs/r1"] = { body: WAITING };
+    button("resume").click();
+    await flush();
+    expect(main.textContent).toContain(SENTINEL);
+    expect(main.textContent).toContain(WAITING.next.action);
+    update(WAITING);
+    expect(main.textContent).toContain(SENTINEL);
   });
 });
