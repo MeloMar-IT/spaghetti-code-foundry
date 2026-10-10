@@ -236,6 +236,7 @@ describe("the flow page controller", () => {
   let editorOpts: any;
   let graphOpts: any;
   let drawn: number;
+  let library: Record<string, any>;
 
   function load() {
     const deps: Record<string, any> = {
@@ -252,7 +253,7 @@ describe("the flow page controller", () => {
       "./states.js": real.states,
       "./ia.js": real.ia,
       "./graph.js": { renderGraph: (_o: unknown, opts: unknown) => { graphOpts = opts; drawn++; return real.dom.h("div", {}, "graph"); } },
-      "./library.js": { insertBlock: vi.fn(), pickBlock: vi.fn(), saveStepAsBlock: vi.fn() },
+      "./library.js": library,
     };
     const src = readFileSync("ui/flow-page.js", "utf8")
       .replace(/^import (\w+) from "([^"]+)";$/gm, (_m, x, s) => `const ${x} = __deps[${JSON.stringify(s)}].default;`)
@@ -289,6 +290,7 @@ describe("the flow page controller", () => {
     mainEl = new FakeElement("main");
     sideEl = new FakeElement("aside");
     toast = vi.fn();
+    library = { insertBlock: vi.fn(), pickBlock: vi.fn(), saveStepAsBlock: vi.fn() };
     drawn = 0;
     g.location = { hash: "#/flows/a" };
     g.confirm = vi.fn(() => true);
@@ -472,6 +474,23 @@ describe("the flow page controller", () => {
     expect(text(mainEl)).toContain("not saved yet");
     expect(byText(mainEl, "Save")!.getAttribute("class")).toBe("primary");
     expect(text(sideEl)).toContain("unsaved");
+  });
+
+  it("passes the flow, selects the first inserted step and names renames in the toast", async () => {
+    library.pickBlock = vi.fn(async () => ({ block: { name: "B", steps: [] } }));
+    library.insertBlock = vi.fn(() => ({ count: 2, renamed: [["a", "a2"]] }));
+    const { s } = await open();
+    await editorOpts.onLibrary(1);
+    expect(library.pickBlock).toHaveBeenCalledWith(s.cur.obj);
+    expect(s.cur.selected).toBe(1);
+    expect(toast.mock.calls.at(-1)[0]).toBe("Inserted “B” (2 steps) — renamed a→a2");
+  });
+
+  it("inserts nothing when the dialog is closed", async () => {
+    library.pickBlock = vi.fn(async () => undefined);
+    await open();
+    await editorOpts.onLibrary(1);
+    expect(library.insertBlock).not.toHaveBeenCalled();
   });
 });
 

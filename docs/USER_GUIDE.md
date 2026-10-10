@@ -809,10 +809,12 @@ The editor keeps empty values (`issue: ""`), so a variable you have just added s
 Blocks are ready-made groups of steps: pull a GitHub issue, plan, code, run tests with a fix
 loop, code review, cross-review by Codex, commit, push, open a PR, wait for CI, secret scan,
 Jira and Linear, and more. The block **Architect (charter)** holds the architect's role as one
-text; the architect steps of Refinement take it from there. Insert one with **+ From library** in the editor. Turn any step into
+text; the architect steps of Refinement take it from there. Insert one with **+ From library** in the editor: search by text, narrow by category (each block shows its scope), and pick one. A preview shows the steps it adds (id and type), the variables it adds, and the ids that will be renamed because the flow already has them. Nothing changes until you press **Insert**; **Back** returns to the list. The first inserted step is selected. A block that is not valid is listed with its error and cannot be inserted. Turn any step into
 your own block with **☆ Save as block**. Blocks that call `gh` or the remote come with **Needs
 repository access** ticked. A flow built from blocks before this version has copies without it, so
 tick it there or insert the block again.
+
+The Library page has the same search and category filter, shows how many blocks match ("3 of 12 blocks"), and says "No blocks match." with **Clear filters** when none do. You can view the YAML of a block and delete blocks that are not built in.
 
 The Library shows a loading state, an empty state and a failure with **Retry**. A failed delete or save keeps the form with what you typed. The Models page still shows Routing when the providers cannot be checked, and a model test result stays after **Reload**.
 

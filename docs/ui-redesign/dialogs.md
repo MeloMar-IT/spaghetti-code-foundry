@@ -29,7 +29,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
 | `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
-| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; one card per block | Click a block card (closes with that block) | `modal` |
+| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; category; one card per block with its scope. Then a preview: steps, variables added, renamed ids | **Insert** in the preview (closes with that block); **Back** returns to the list. An invalid block cannot be picked | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
 | `ui/library.js` | Overwrite block | Save a step as a block under an id that exists | none | Overwrite | `confirmDialog` |
 | `ui/library.js` | Delete block | Delete on a block of the Library page | none | Delete | `confirmDialog` |

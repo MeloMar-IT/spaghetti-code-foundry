@@ -27,6 +27,11 @@ describe("block library", () => {
     expect(pull.steps.find((s) => s.id === "pull_ticket")).toMatchObject({ repo_access: true });
   });
 
+  it("rejects duplicate and reserved step ids in a block", () => {
+    expect(() => parseBlock("name: x\nsteps:\n  - {id: a, type: shell, run: x}\n  - {id: a, type: shell, run: y}")).toThrow(/duplicate step id "a"/);
+    expect(() => parseBlock("name: x\nsteps:\n  - {id: end, type: shell, run: x}")).toThrow(/"end" is a reserved word/);
+  });
+
   it("rejects jumps out of the block", () => {
     const y = "name: x\nsteps:\n  - {id: a, type: shell, run: x, on_failure: elsewhere}";
     expect(() => parseBlock(y)).toThrow(/only jump to their own steps/);

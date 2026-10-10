@@ -3,7 +3,7 @@ import { basename, extname, join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { FACTORY_HOME, flowDir, type FlowScope } from "./load.js";
-import { checkStepRefs, StepSchema } from "./schema.js";
+import { checkStepRefs, RESERVED_TARGETS, StepSchema } from "./schema.js";
 
 /**
  * A block is a reusable set of steps ("model") you can drop into any flow,
@@ -23,7 +23,12 @@ export const BlockSchema = z
   .strict()
   .superRefine((block, ctx) => {
     // Blocks must be self-contained: references may only point at the block's own steps.
-    const ids = new Set(block.steps.map((s) => s.id));
+    const ids = new Set<string>();
+    block.steps.forEach((s, i) => {
+      if (ids.has(s.id)) ctx.addIssue({ code: "custom", path: ["steps", i, "id"], message: `duplicate step id "${s.id}"` });
+      if ((RESERVED_TARGETS as readonly string[]).includes(s.id)) ctx.addIssue({ code: "custom", path: ["steps", i, "id"], message: `"${s.id}" is a reserved word` });
+      ids.add(s.id);
+    });
     checkStepRefs(block.steps, ids, (path, message) =>
       ctx.addIssue({ code: "custom", path, message: message.replace(/^unknown step/, "blocks may only jump to their own steps, got") }));
   });
