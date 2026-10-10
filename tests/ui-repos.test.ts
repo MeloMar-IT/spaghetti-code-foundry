@@ -836,8 +836,8 @@ describe("the repository filter", () => {
     expect(urls()).toEqual(["https://github.com/o/a"]);
     expect(bars()).toHaveLength(1);
     answers.push({ status: 500, error: "Could not clean up." });
-    (globalThis as any).confirm = () => true;
     press(button(main(), "Remove"));
+    await answerDialog("Remove");
     await flush();
     await flush();
     expect(main().textContent).toContain("Could not clean up.");
