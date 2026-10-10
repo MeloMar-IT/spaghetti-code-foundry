@@ -672,7 +672,8 @@ describe("internal errors give a plain 500", () => {
       try {
         const quick = Date.now();
         expect((await login(s, "ann@example.com", "not-the-password-1")).status).toBe(401);
-        expect(Date.now() - quick).toBeLessThan(1000);
+        // must not wait for the lock (that takes over 1500 ms, see below); the hash alone can take ~1 s on a busy machine
+        expect(Date.now() - quick).toBeLessThan(1400);
         expect(s.logs).toContain("auth: audit.jsonl cannot-write");
         expect(existsSync(join(s.home, "audit.jsonl"))).toBe(false);
         const started = Date.now();

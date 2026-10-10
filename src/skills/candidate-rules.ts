@@ -19,7 +19,7 @@ export interface SignalRule {
   /** Fixed text for the evidence entry. */
   reason: string;
   matches(f: RepoFinding): boolean;
-  /** Language that must have a finding in the module itself (java-build only). */
+  /** Language that must have a finding in the module itself (java-build, typescript-config). */
   needsOwnLanguage?: string;
 }
 
@@ -81,6 +81,11 @@ export const SKILL_RULES: readonly SkillRule[] = [
       {
         signal: "typescript-dependency", strength: "strong", weight: 45, reason: "typescript dependency in package.json",
         matches: (f) => inPackageJson(f) && f.name === "typescript",
+      },
+      {
+        signal: "typescript-config", strength: "medium", weight: 30, needsOwnLanguage: "typescript",
+        reason: "tsconfig.json with TypeScript sources",
+        matches: (f) => f.kind === "manifest" && f.name === "typescript",
       },
       { signal: "typescript-source", strength: "weak", weight: 15, reason: "TypeScript source files", matches: (f) => f.kind === "language" && f.name === "typescript" },
     ],

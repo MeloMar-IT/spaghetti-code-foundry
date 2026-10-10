@@ -93,6 +93,7 @@ const MANIFESTS: Record<string, [string, boolean]> = {
   Makefile: ["make", false], GNUmakefile: ["make", false], "CMakeLists.txt": ["cmake", false],
   "pubspec.yaml": ["dart", false], "pubspec.lock": ["dart", true],
   "deno.json": ["deno", false], "deno.jsonc": ["deno", false], "deno.lock": ["deno", true],
+  "tsconfig.json": ["typescript", false],
   "build.sbt": ["sbt", false], WORKSPACE: ["bazel", false], "MODULE.bazel": ["bazel", false], "BUILD.bazel": ["bazel", false],
   "nx.json": ["nx", false], "turbo.json": ["turbo", false], "lerna.json": ["lerna", false],
 };

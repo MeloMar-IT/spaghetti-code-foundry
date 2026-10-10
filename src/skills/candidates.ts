@@ -55,6 +55,15 @@ const baseOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const MODULE_FILE = /^(?:package\.json|pom\.xml|build\.gradle(?:\.kts)?)$/;
 const MODULE_MANIFEST = /^(?:package\.json|pom\.xml|(?:build|settings)\.gradle(?:\.kts)?)$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const JS_FILE = /\.(?:js|jsx|mjs|cjs)$/i;
+const TS_TASK = /\btsconfig\b/i;
+
+/** True when the work names files and every one of them is JavaScript (a folder or other file is not). */
+function onlyJavaScriptFiles(affected: readonly string[] | undefined): boolean {
+  if (!affected || affected.length === 0) return false;
+  const paths = affected.slice(0, CANDIDATE_LIMITS.affectedPaths).filter((p) => typeof p === "string" && p.length <= CANDIDATE_LIMITS.pathChars + 1 && !CONTROL.test(p));
+  return paths.length > 0 && paths.every((p) => JS_FILE.test(p));
+}
 
 /** Module roots of a profile: "" plus the folder of every package.json, pom.xml or Gradle file (named by a manifest or dependency finding), sorted. */
 export function moduleRoots(profile: RepoProfile): string[] {
@@ -112,10 +121,19 @@ export function detectSkillCandidates(profile: RepoProfile, opts: CandidateOptio
   const scoped = [...roots].filter((r) => !relevant || relevant.has(r));
 
   const task = (opts.task ?? "").slice(0, CANDIDATE_LIMITS.taskChars);
+  const jsOnly = onlyJavaScriptFiles(opts.affectedPaths);
   const out: SkillCandidate[] = [];
   for (const rule of SKILL_RULES) {
     const keyword = rule.keyword.test(task);
-    const scored = scoreModules(rule, scoped, located, keyword);
+    // JavaScript-only work gets no TypeScript candidate unless the task asks for TypeScript.
+    if (rule.skill === "typescript" && !keyword && !TS_TASK.test(task) && jsOnly) continue;
+    let scored = scoreModules(rule, scoped, located, keyword);
+    // A typescript dependency or tsconfig alone does not make a JavaScript-only module a TypeScript one:
+    // the module or a module below it needs TypeScript sources.
+    if (rule.skill === "typescript") {
+      const tsAt = located.filter((l) => l.finding.kind === "language" && l.finding.name === "typescript").map((l) => l.module);
+      scored = scored.filter((m) => tsAt.some((t) => isAncestor(m.module, t)));
+    }
     if (scored.length === 0) continue;
     scored.sort((a, b) => b.score - a.score || cmp(a.module, b.module));
     const shown = scored.slice(0, CANDIDATE_LIMITS.modules);

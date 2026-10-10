@@ -375,9 +375,9 @@ describe("gitflow pipeline", () => {
   });
 
   it("reads the skill request of a normal plan and posts the section", async () => {
-    const request = { version: 1, skills: [{ id: "typescript", reason: "The change is in src/*.ts.", evidence: ["path:src/a.ts"] }] };
+    const request = { version: 1, skills: [{ id: "python-lang", reason: "The change is in src/*.py.", evidence: ["path:src/a.py"] }] };
     process.env.FAKE_SKILL_REQUEST = JSON.stringify(request);
-    // "typescript" is not installed in the test: warn and go on instead of stopping
+    // "python-lang" is not installed in the test: warn and go on instead of stopping
     config.skills.unresolved.unknown = "warn";
     onTestFinished(() => {
       config.skills.unresolved.unknown = "stop";
@@ -390,7 +390,7 @@ describe("gitflow pipeline", () => {
     expect(run.skillPlan?.warnings).toHaveLength(1);
     expect(planSkillRequest(run)).toEqual(request);
     const comment = gh.comments().find((c) => c.body.includes("Foundry plan**"))!.body;
-    expect(comment).toContain("## Required skills\n\n- `typescript` — The change is in src/*.ts. Evidence: `path:src/a.ts`");
+    expect(comment).toContain("## Required skills\n\n- `python-lang` — The change is in src/*.py. Evidence: `path:src/a.py`");
     expect(comment).not.toMatch(/^SKILL_REQUEST:/m);
   });
 

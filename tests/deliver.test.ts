@@ -82,7 +82,7 @@ describe("deliver pipeline", () => {
   });
 
   const REQUEST_LINE = /^SKILL_REQUEST:/m;
-  const TS_REQUEST = { version: 1, skills: [{ id: "typescript", reason: "The change is in src/*.ts.", evidence: ["path:src/skills/request.ts"] }] };
+  const TS_REQUEST = { version: 1, skills: [{ id: "python-lang", reason: "The change is in src/*.py.", evidence: ["path:src/skills/request.ts"] }] };
 
   it("posts the skill section in the plan comment and ends the gate output with the checked request", async () => {
     issues([5, ["Factory_go"]]);
@@ -101,7 +101,7 @@ describe("deliver pipeline", () => {
 
   it("lists a requested skill in the plan comment and reads it back", async () => {
     process.env.FAKE_SKILL_REQUEST = JSON.stringify(TS_REQUEST);
-    // "typescript" is not installed in the test: warn and go on instead of stopping
+    // "python-lang" is not installed in the test: warn and go on instead of stopping
     config.skills.unresolved.unknown = "warn";
     onTestFinished(() => {
       config.skills.unresolved.unknown = "stop";
@@ -113,7 +113,7 @@ describe("deliver pipeline", () => {
     expect(run.status).toBe("succeeded");
     expect(run.skillPlan?.warnings).toHaveLength(1);
     const comment = gh.comments().find((c) => c.body.includes("Coding starts now"))!.body;
-    expect(comment).toContain("- `typescript` — The change is in src/*.ts. Evidence: `path:src/skills/request.ts`");
+    expect(comment).toContain("- `python-lang` — The change is in src/*.py. Evidence: `path:src/skills/request.ts`");
     expect(comment).not.toMatch(REQUEST_LINE);
     expect(planSkillRequest(run)).toEqual(TS_REQUEST);
   });
