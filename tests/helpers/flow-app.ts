@@ -90,7 +90,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { startBadge: async () => 0, startHash: () => null },
     "./flow-problems.js": await import("../../ui/flow-problems.js" as string),
-    "./run-form.js": { runForm: () => real.dom.h("div") },
+    "./run-form.js": await loadUiSource("run-form.js", { "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states }, ["runForm"]),
     "./library.js": never,
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
     "./home-admin.js": never,
