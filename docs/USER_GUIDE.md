@@ -2460,6 +2460,7 @@ skills:
 ```
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
+- **TypeScript is not guessed from JavaScript.** The built-in `typescript` skill needs TypeScript sources (plus `tsconfig.json` or a `typescript` dependency as extra evidence). Work that touches only JavaScript files does not get it, unless the issue names TypeScript or `tsconfig`.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
 - **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.

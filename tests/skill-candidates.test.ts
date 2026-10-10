@@ -72,6 +72,50 @@ describe("positive cases", () => {
   });
 });
 
+describe("typescript-config signal", () => {
+  it("adds 30 for a tsconfig.json beside TypeScript sources", () => {
+    const c = by(run({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" }), "typescript")!;
+    expect(c).toMatchObject({ score: 45, confidence: "medium" });
+    expect(c.evidence.map((e) => e.signal).sort()).toEqual(["typescript-config", "typescript-source"]);
+    const d = by(run({ "package.json": pkg({}, { typescript: "^5" }), "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" }), "typescript")!;
+    expect(d).toMatchObject({ score: 90, confidence: "high" });
+  });
+  it("needs TypeScript sources of the module itself", () => {
+    expect(run({ "tsconfig.json": "{}", "index.js": "x\n" })).toEqual([]);
+    const root = { "package.json": "{}", "tsconfig.json": "{}", "packages/web/package.json": "{}", "packages/web/a.ts": "export {};\n", "packages/legacy/package.json": "{}", "packages/legacy/i.js": "x\n" };
+    expect(by(run(root, { affectedPaths: ["packages/legacy"] }), "typescript")).toBeUndefined();
+    const web = by(run(root, { affectedPaths: ["packages/web"] }), "typescript")!;
+    expect(web.evidence.map((e) => [e.signal, e.path])).toContainEqual(["typescript-config", "tsconfig.json"]);
+  });
+});
+
+describe("typescript dependency without TypeScript sources", () => {
+  const js = { "package.json": pkg({}, { typescript: "^5" }), "tsconfig.json": "{}", "src/a.js": "x\n", "lib/b.mjs": "x\n" };
+  it("gets no candidate for the whole repository or a folder scope", () => {
+    expect(by(run(js), "typescript")).toBeUndefined();
+    expect(by(run(js, { affectedPaths: ["src"] }), "typescript")).toBeUndefined();
+    expect(by(run(js, { affectedPaths: [] }), "typescript")).toBeUndefined();
+  });
+  it("ignores the case of a JavaScript extension", () => {
+    const files = { "package.json": pkg({}, { typescript: "^5" }), "src/new.ts": "export {};\n", "src/OLD.JS": "x\n" };
+    expect(by(run(files, { affectedPaths: ["src/OLD.JS"] }), "typescript")).toBeUndefined();
+  });
+});
+
+describe("JavaScript-only work", () => {
+  const files = { "package.json": pkg({}, { typescript: "^5" }), "src/new.ts": "export {};\n", "src/old.js": "x\n" };
+  it("gets no typescript candidate when every affected file is JavaScript", () => {
+    expect(by(run(files, { affectedPaths: ["src/old.js"] }), "typescript")).toBeUndefined();
+    expect(by(run(files, { affectedPaths: ["src/old.js", "x.mjs", "y.cjs", "z.jsx"] }), "typescript")).toBeUndefined();
+  });
+  it("keeps it for folders, TypeScript files and tasks that ask for TypeScript", () => {
+    expect(by(run(files, { affectedPaths: ["src"] }), "typescript")).toBeDefined();
+    expect(by(run(files, { affectedPaths: ["src/old.js", "src/a.d.ts"] }), "typescript")).toBeDefined();
+    expect(by(run(files, { affectedPaths: ["src/old.js"], task: "add types, TypeScript please" }), "typescript")).toBeDefined();
+    expect(by(run(files, { affectedPaths: ["src/old.js"], task: "relax the tsconfig" }), "typescript")).toBeDefined();
+  });
+});
+
 describe("negative cases", () => {
   it("does not take Spring Boot from Java or from plain Spring", () => {
     const r = run({
