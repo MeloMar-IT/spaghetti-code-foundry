@@ -668,3 +668,179 @@ describe("a publish that stops half way", () => {
     expect(publishBox().textContent).toContain("Nothing is on GitHub yet");
   });
 });
+
+describe("replacing a split issue", () => {
+  const source = { issue: 7, url: "https://github.com/acme/app/issues/7", title: "T", body: "", updatedAt: "x", draft: D1 };
+  const split = () => [mk(D1, "Orig", { state: "split", splitInto: [D2, D3] }), mk(D2, "Two"), mk(D3, "Three")];
+  const pubd = (d: any, n: number) => ({ ...d, published: { issue: n, url: `https://github.com/acme/app/issues/${n}` } });
+  const rep = (extra: object = {}) => ({ issue: 7, parts: [{ issue: 101 }, { issue: 102 }], ready: true, dependants: [], ...extra });
+  const toast = () => (document as any).getElementById("toast").textContent;
+  const replaced = { issue: 7, parts: [101, 102], dependants: [] };
+  const dueDrafts = () => [split()[0], pubd(mk(D2, "Two"), 101), pubd(mk(D3, "Three"), 102)];
+  const duePlan = () => makePlan({ items: [item(1, mk(D2, "Two"), { state: "on-github", issue: 101 }), item(2, mk(D3, "Three"), { state: "on-github", issue: 102 })], willCreate: [], replaces: rep() });
+  const dueSession = () => { drafts = dueDrafts(); over = { state: "published", source: { ...source, replace: "due" } }; plan = duePlan(); };
+  const createPlan = (replaces: object) => {
+    drafts = split();
+    over = { source: { ...source, replace: "waiting" } };
+    plan = makePlan({ items: [item(1, drafts[1]), item(2, drafts[2])], willCreate: [D2, D3], replaces });
+  };
+
+  describe("pure", () => {
+    const s = (extra: object = {}) => ({ mine: true, state: "published", repoAvailable: true, drafts: [{ id: D1, state: "ready", published: { issue: 1, url: "u" } }], ...extra });
+    it("canPublish when the replacement is due, also in a published session", () => {
+      expect(pub.canPublish(s({ source: { issue: 7, replace: "due" } }))).toBe(true);
+      expect(pub.canPublish(s({ source: { issue: 7, replace: "done" } }))).toBe(false);
+      expect(pub.canPublish(s({ source: { issue: 7, replace: "waiting" } }))).toBe(false);
+      expect(pub.canPublish(s({ source: { issue: 7, replace: "due" }, mine: false }))).toBe(false);
+      expect(pub.canPublish(s({ source: { issue: 7, replace: "due" }, state: "dropped" }))).toBe(false);
+    });
+    it("confirmText", () => {
+      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [] })).toBe("Replace the issue");
+      expect(pub.confirmText({ replaces: { ready: true }, willCreate: [D2] })).toBe("Create the issues and replace the original");
+      expect(pub.confirmText({ replaces: { ready: false }, willCreate: [D2] })).toBe("Create the issues");
+    });
+    it("doneText", () => {
+      expect(pub.doneText({ created: [], replaced })).toBe("Issue #7 is replaced by its parts");
+      expect(pub.doneText({ created: [{}, {}], replaced })).toBe("2 issues are on GitHub and issue #7 is replaced by its parts");
+      expect(pub.doneText({ created: [{}], replaced })).toBe("1 issue is on GitHub and issue #7 is replaced by its parts");
+    });
+    it("replacesText", () => {
+      expect(pub.replacesText(rep())).toBe("Issue #7 is replaced by its parts: issues that depend on it are changed to depend on the parts, and a comment on #7 names them. #7 stays open.");
+      expect(pub.replacesText(rep({ ready: false }))).toBe("Issue #7 is replaced by its parts when every part is on GitHub. Nothing changes for it now.");
+    });
+    it("replaceText", () => {
+      expect(pub.replaceText({ issue: 7, replace: "waiting" })).toBe("Issue #7 is replaced by its parts when every part is on GitHub.");
+      expect(pub.replaceText({ issue: 7, replace: "due" })).toBe("Issue #7 is not replaced yet. Publish again to finish.");
+      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "open" })).toBe("Issue #7 was replaced by #101, #102. It is still open: check it and close it by hand.");
+      expect(pub.replaceText({ issue: 7, replace: "done", replacedBy: [101, 102], closed: "not_planned" })).toBe("Issue #7 was replaced by #101, #102. It is closed.");
+      expect(pub.replaceText({ issue: 7 })).toBe("");
+      expect(pub.replaceText(undefined)).toBe("");
+    });
+    it("replacesNode", async () => {
+      const { h } = await import("../ui/dom.js" as string);
+      const text = (r: any) => h("div", {}, pub.replacesNode(r)) as FakeElement;
+      const cut = "This repository has more than 1,000 open issues and pull requests. Some issues that depend on #7 may be missing.";
+      expect(text(rep({ cut: true })).textContent).toContain(cut);
+      expect(text(rep()).textContent).not.toContain("1,000");
+      const el = text(rep({ dependants: [{ issue: 20, title: "Twenty", before: "- #7", after: "- #101\n- #102" }, { issue: 21, title: "Other", byHand: true }] }));
+      expect(el.textContent).toContain("Issues that depend on #7");
+      const lis = walk(el).filter((e) => e.tag === "li");
+      expect(lis).toHaveLength(2);
+      expect(lis[0]!.textContent).toContain("#20 Twenty");
+      expect(walk(lis[0]!).filter((e) => e.tag === "pre").map((e) => e.textContent)).toEqual(["- #7", "- #101\n- #102"]);
+      expect(lis[1]!.textContent).toContain("Change by hand: it names the issue by its title.");
+      expect(walk(lis[1]!).some((e) => e.tag === "pre")).toBe(false);
+      const none = text(rep());
+      expect(none.textContent).not.toContain("Issues that depend");
+      expect(walk(none).some((e) => e.tag === "ul")).toBe(false);
+    });
+  });
+
+  it("a ready replacement that creates: dialog, button, request and toast", async () => {
+    createPlan(rep({ parts: [{ item: 1, title: "Two" }, { item: 2, title: "Three" }], dependants: [{ issue: 20, title: "Twenty", before: "B", after: "A" }] }));
+    postAnswer = () => ({ status: 200, body: { repo: "acme/app", created: [{}, {}], replaced, state: "published" } });
+    await openPlan();
+    expect(dialog()!.textContent).toContain(pub.replacesText(rep()));
+    expect(dialog()!.textContent).toContain("Issues that depend on #7");
+    expect(dialog()!.textContent).not.toContain("is not changed");
+    expect(button("Create the issues", dialog())).toBeUndefined();
+    await press(button("Create the issues and replace the original", dialog()));
+    expect(posts()[0]!.body.drafts.map((x: any) => x.draft)).toEqual([D2, D3]);
+    expect(toast()).toBe("2 issues are on GitHub and issue #7 is replaced by its parts");
+  });
+  it("a replacement that is not ready says so and keeps the plain button", async () => {
+    createPlan(rep({ ready: false }));
+    plan.willCreate = [D2];
+    await openPlan();
+    expect(dialog()!.textContent).toContain(pub.replacesText(rep({ ready: false })));
+    expect(button("Create the issues", dialog())).toBeDefined();
+  });
+  it("the dialog warns when the list is cut", async () => {
+    createPlan(rep({ cut: true }));
+    await openPlan();
+    expect(dialog()!.textContent).toContain("Some issues that depend on #7 may be missing.");
+  });
+  it("shows a dependant title and texts as text, never as HTML", async () => {
+    createPlan(rep({ dependants: [{ issue: 20, title: XSS, before: XSS, after: XSS }] }));
+    await openPlan();
+    expect(dialog()!.textContent).toContain(XSS);
+    expect(walk(dialog()!).some((e) => e.tag === "img")).toBe(false);
+  });
+  it("offers Publish in a published session while the replacement is due, and replaces with an empty list", async () => {
+    dueSession();
+    postAnswer = () => ({ status: 200, body: { repo: "acme/app", created: [], replaced, state: "published" } });
+    await show();
+    expect(publishButton()).toBeDefined();
+    expect(publishBox().textContent).toContain("Issue #7 is not replaced yet. Publish again to finish.");
+    expect(publishBox().textContent).not.toContain(pub.NO_READY_YET);
+    await press(publishButton());
+    expect(dialog()!.textContent).not.toContain(pub.NOTHING_READY);
+    await press(button("Replace the issue", dialog()));
+    expect(posts()[0]!.body).toEqual({ drafts: [] });
+    expect(toast()).toBe("Issue #7 is replaced by its parts");
+  });
+  it("says the architect is busy while the replacement is due", async () => {
+    dueSession();
+    over.architect = { state: "running" };
+    await show();
+    expect(publishButton()).toBeUndefined();
+    expect(publishBox().textContent).toContain(pub.ARCHITECT_BUSY);
+  });
+  it("a finished replacement has no Publish button and says whether the original is open", async () => {
+    dueSession();
+    over = { state: "published", source: { ...source, replace: "done", replacedBy: [101, 102], closed: "open" } };
+    await show();
+    expect(publishButton()).toBeUndefined();
+    expect(publishBox().textContent).toContain("Issue #7 was replaced by #101, #102. It is still open: check it and close it by hand.");
+    expect(publishBox().textContent).toContain(pub.ALL_PUBLISHED);
+    cleanup?.();
+    over.source.closed = "other";
+    await show();
+    expect(publishBox().textContent).toContain("It is closed.");
+  });
+  it("the waiting line comes before the not-changed line", async () => {
+    drafts = split();
+    over = { source: { ...source, replace: "waiting" } };
+    await show();
+    expect(publishBox().textContent).toContain("Issue #7 is replaced by its parts when every part is on GitHub.");
+    expect(publishBox().textContent).not.toContain("Issue #7 is not changed.");
+  });
+  it("redraws when a replacement field changes, without a new page", () => {
+    const sec = pub.publishSection({ id: "s1", save: async (f: any) => f(), read: async () => view(), saveAll: async () => ({ ok: true }), errorText: (e: any) => String(e), current: () => true });
+    const sess = (src: object) => ({ ...view(), drafts: dueDrafts(), state: "published", source: { ...source, ...src } });
+    sec.update(sess({ replace: "due" }));
+    expect(sec.node.textContent).toContain("is not replaced yet");
+    sec.update(sess({ replace: "done", replacedBy: [101], closed: "open" }));
+    expect(sec.node.textContent).toContain("was replaced by #101. It is still open");
+    sec.update(sess({ replace: "done", replacedBy: [101, 102], closed: "open" }));
+    expect(sec.node.textContent).toContain("was replaced by #101, #102.");
+    sec.update(sess({ replace: "done", replacedBy: [101, 102], closed: "other" }));
+    expect(sec.node.textContent).toContain("It is closed.");
+  });
+  it("a replacement that fails after every part is on GitHub can be retried", async () => {
+    createPlan(rep());
+    postAnswer = () => {
+      drafts = dueDrafts();
+      over = { state: "published", source: { ...source, replace: "due" } };
+      return { status: 502, body: { error: "GitHub did not change the issue: boom." } };
+    };
+    await openPlan();
+    await press(button("Create the issues and replace the original", dialog()));
+    expect(publishBox().textContent).toContain("boom");
+    expect(publishBox().textContent).toContain("Issue #7 is not replaced yet. Publish again to finish.");
+    expect(toast()).toBe("");
+    expect(publishButton()).toBeDefined();
+    expect(publishButton()!.disabled).toBeFalsy();
+    plan = duePlan();
+    postAnswer = () => {
+      over = { state: "published", source: { ...source, replace: "done", replacedBy: [101, 102], closed: "open" } };
+      return { status: 200, body: { repo: "acme/app", created: [], replaced, state: "published" } };
+    };
+    await press(publishButton());
+    await press(button("Replace the issue", dialog()));
+    expect(posts()[1]!.body).toEqual({ drafts: [] });
+    expect(toast()).toBe("Issue #7 is replaced by its parts");
+    expect(publishBox().textContent).toContain("Issue #7 was replaced by #101, #102. It is still open");
+    expect(publishButton()).toBeUndefined();
+  });
+});

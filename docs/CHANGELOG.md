@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement 9e-3c — the publish dialog and the session page show the replacement of a split issue (#419). Only `ui/refinement-publish.js`; no server change and no new route.
+  - **Button.** **Publish** also shows when `source.replace` is `"due"`, also in a `published` session.
+  - **Dialog.** When `plan.replaces` is set it says the issue is replaced by its parts (ready) or when every part is on GitHub (not ready), warns when `cut` (more than 1,000 open issues and pull requests), and lists the dependants with Before and After, or "Change by hand". The confirm button reads `Replace the issue` or `Create the issues and replace the original`, and is shown with an empty `willCreate` when `replaces.ready`. The toast names the replaced issue. All texts are set as text, never as HTML.
+  - **Session page.** The source line shows waiting, due and done (with open or closed) before the update line; the page redraws when `replace`, `replacedBy` or `closed` change.
+  - **Docs and tests.** "Replacing a split issue" under Publishing in `docs/USER_GUIDE.md`; new cases in `tests/ui-refinement-publish.test.ts`.
 - Run detail 4d — event timeline in the Steps tab with collapsible detail (#394). New `ui/run-timeline.js` replaces `stepsView`; the Steps panel of `createTabs` is now `timeline.el` with `update: timeline.update`, and both run pages no longer redraw when `history.length` changes. No server change.
   - **Timeline.** Milestones in time order: run started; each finished step (passed or failed, visit number, duration); "Waiting for approval" with its message; "Running <step>"; each answer given; run finished with its status. Sub-steps (a `parent`) are indented under their parent. Each label is the step description from `flowDef`, else the step id, never the id alone. Entries with no time keep history order.
   - **Detail.** An administrator opens a step for its error under "Details" and its output or transcript, loaded on first open with the paged transcript view; tool calls stay closed until clicked. A user sees plain rows with the one-sentence error and no output, transcript request, cost, tokens, agent or model (the `"output" in s` check, so a user-shaped record never asks for a transcript).
