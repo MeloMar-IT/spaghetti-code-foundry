@@ -7,7 +7,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
-import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -442,6 +442,8 @@ export const ConfigSchema = z
           .prefault({}),
         /** What to do with a requested skill that cannot be used. */
         unresolved: UnresolvedPolicySchema,
+        /** Which tools a skill may ask for. Decides which skills load; it never limits a session. */
+        tools: ToolPolicySchema,
       })
       .strict()
       .superRefine((s, ctx) => {
