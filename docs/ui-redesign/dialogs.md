@@ -4,9 +4,9 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 
 Three mechanisms draw a dialog:
 
-- **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:70` and `:83`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:386`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
-- **Native `confirm` and `prompt`:** 12 calls in 8 files (second table).
+- **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 18 files.
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js` and `ui/library.js`), `confirmDialog` in `ui/user/runs.js` (`:74`; a separate helper of the same name), `decisionDialog` in `ui/run-dialogs.js` (`:12`, re-exported by `ui/user/runs.js`; `adminRunActions` there also uses the shared `confirmDialog`), `withDialog` (`ui/user/runs.js:391`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Native `confirm` and `prompt`:** 8 calls in 7 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
 
@@ -54,10 +54,14 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/turn-act.js` | Show split | Button on an item that waits for split approval | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Show request | Button on an approval item | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Retry with a hint | Button on a failed item | hint | Retry | `openDetail` |
+| `ui/run-dialogs.js` | Cancel this run? | Cancel on `#/runs/:id` | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
+| `ui/run-dialogs.js` | Re-run from this step? | "Retry from step…" on `#/runs/:id` | none | Re-run | `confirmDialog` (`ui/dom.js`) |
+| `ui/run-dialogs.js` | Approve | Approve on `#/runs/:id` | note (optional) | Approve | `decisionDialog` |
+| `ui/run-dialogs.js` | Reject | Reject on `#/runs/:id` | reason (optional) | Reject | `decisionDialog` |
 | `ui/user/runs.js` | Remove this run | Remove on a queued card of `/user/#/runs` | none | Remove the run | `confirmDialog` |
 | `ui/user/runs.js` | Cancel this run | Cancel on `/user/#/runs/:id` | none | Cancel the run | `confirmDialog` through `withDialog` |
-| `ui/user/runs.js` | Approve | Approve on `/user/#/runs/:id` | note (optional) | Approve | `decisionDialog` through `withDialog` |
-| `ui/user/runs.js` | Reject | Reject on `/user/#/runs/:id` | reason (optional) | Reject | `decisionDialog` through `withDialog` |
+| `ui/user/runs.js` | Approve | Approve on `/user/#/runs/:id` | note (optional) | Approve | `decisionDialog` (`ui/run-dialogs.js`) through `withDialog` |
+| `ui/user/runs.js` | Reject | Reject on `/user/#/runs/:id` | reason (optional) | Reject | `decisionDialog` (`ui/run-dialogs.js`) through `withDialog` |
 | `ui/users.js` | Add user | Add user on `#/users` | the user form (`userForm`) | Add user | `callDialog` (`addDialog`) |
 | `ui/users.js` | New link | Row action | none | New link | `callDialog` (`linkDialog`) |
 | `ui/users.js` | Reset password | Row action | none | Reset password | `callDialog` (`resetDialog`) |
@@ -88,7 +92,3 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
 | `ui/refinement.js:422` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
-| `ui/runs.js:347` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:348` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:357` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:361` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

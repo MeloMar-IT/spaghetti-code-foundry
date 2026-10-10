@@ -303,4 +303,29 @@ describe("renderMyRun states", () => {
       stop();
     });
   });
+
+  describe("needs you", () => {
+    const SENTINEL = "Sentinel sentence from the server record.";
+    const waiting = () => summaryOf({ status: "waiting", next: { ...rec("approval"), text: SENTINEL } });
+
+    it("shows the server sentence and action after an action that leaves the run waiting for you", async () => {
+      state.summary = summaryOf({ status: "failed", next: rec("failed") });
+      a.resumeRun = vi.fn(async () => { state.summary = waiting(); return {}; });
+      const stop = await open();
+      one(main, "button", { "data-focus": "act-retry" }).click();
+      await flush();
+      emit(stream(), "update", { summary: state.summary });
+      expect(main.textContent).toContain(SENTINEL);
+      expect(main.textContent).toContain(state.summary.next.action);
+      stop();
+    });
+
+    it("shows the sentence in the read-only preview, without Approve, Reject or Cancel", async () => {
+      state.summary = waiting();
+      const stop = await open({ readOnly: true });
+      expect(main.textContent).toContain(SENTINEL);
+      expect(names().filter((n) => /Approve|Reject|Cancel/.test(n))).toEqual([]);
+      stop();
+    });
+  });
 });

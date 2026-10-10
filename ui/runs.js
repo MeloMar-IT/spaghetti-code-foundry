@@ -8,6 +8,7 @@ import { createRunHeader, firstLine } from "./run-header.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
+import { adminRunActions } from "./run-dialogs.js";
 import { isRun, loadInto, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
@@ -326,39 +327,32 @@ export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { c
 
 // ── actions ──
 
-async function act(fn, ok) {
-  try {
-    await fn();
-    if (ok) toast(ok);
-  } catch (e) {
-    toast(e.message, "error");
-  }
-}
-
 /** The line a run page shows when the flow of the run is retired. */
 export const FLOW_RETIRED = "This run's flow is retired — it cannot be resumed.";
 export const retiredLine = (s) => (s?.next?.retired ? h("p", { class: "muted flow-retired" }, FLOW_RETIRED) : null);
 
-export function actions(s) {
+/** The buttons of a run page; each calls `run(kind, from)` (see adminRunActions in ui/run-dialogs.js). */
+export function actions(s, run = () => {}) {
   const b = [];
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
   const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
-    b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
+    b.push(h("button", { "data-focus": "act-approve", onClick: () => run("approve") }, "✔ Approve"));
+    b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => run("reject") }, "✘ Reject"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
-    b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, "Retry from the failing step"));
+    b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => run("resume") }, "Retry from the failing step"));
   }
   if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length && !closed) {
-    b.push(h("select", { class: "small-select", title: "Re-run from a step", "aria-label": "Re-run from a step", "data-focus": "act-retry-from", onChange: (e) => {
-      const from = e.target.value;
-      e.target.value = "";
-      if (from && confirm(`Re-run this run from "${from}"? Earlier step outputs are kept.`)) act(() => api.resumeRun(s.runId, from), `Re-running from ${from}`);
+    b.push(h("select", { class: "small-select", title: "Re-run from a step", "aria-label": "Re-run from a step", "data-focus": "act-retry-from", onChange: async (e) => {
+      const sel = e.target;
+      const from = sel.value;
+      if (!from) return;
+      try { await run("rerun", from); } finally { sel.value = ""; }
     } }, h("option", { value: "" }, "Retry from step…"), s.flowDef.steps.map((st) => h("option", { value: st.id }, st.id))));
   }
   if (["running", "waiting"].includes(s.status)) {
-    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => confirm("Cancel this run? You can resume it later.") && act(() => api.cancelRun(s.runId)) }, "■ Cancel"));
+    b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Cancel"));
   }
   return b;
 }
@@ -377,7 +371,11 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   let updates = 0; // every event of the stream counts: an answer asked before it is older than the stream
   let tabSeq = 0;
   const BACK = { href: "#/runs", label: "Runs", focus: "back-runs" };
-  let held = null; // an update that came while a field of the head had the focus: drawn when the focus leaves
+  let held = null; // an update that came while a field of the head had the focus or a dialog was open: drawn when that ends
+  let heldView = null; // the same for a 404, 403 or queued answer: the newest one wins over a held update
+  let released = false; // after an action the head is drawn although the select still has the focus, until the focus leaves
+  let recheckTimer;
+  const alertEl = h("p", { class: "status bad", role: "alert" });
   let tab = "log";
   let names = null;
   let open = true;
@@ -401,7 +399,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
       return b;
     }));
 
-  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { picked = true; showTab("steps", i); }, backLabel: "Back to Runs" });
+  const header = createRunHeader({ admin, actions: (s) => actions(s, run), onFailedStep: (i) => { picked = true; showTab("steps", i); }, backLabel: "Back to Runs" });
   const cardBox = h("div");
   const skillsBox = h("div");
   const tabsBox = h("div", {}, tabs, tabBody);
@@ -415,14 +413,17 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     onLost: () => load(),
     onReopen: () => log.clear(),
   });
-  mount(main, head, stream.el, status.el, tabsBox);
+  mount(main, head, stream.el, alertEl, status.el, tabsBox);
   mount(tabBody, log.el);
 
   const showState = (error) => {
     const key = `${runLoadKind(error)}|${error?.message ?? ""}`;
     if (mode === "state" && key === stateKey) return;
+    if (dialogOpen()) { held = null; heldView = () => showState(error); arm(); return; }
+    heldView = null;
     mode = "state";
     stateKey = key;
+    alertEl.textContent = "";
     summary = held = job = null;
     tabsBox.hidden = true;
     stream.el.hidden = true;
@@ -431,6 +432,8 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
 
   // A queued run: a small head from the job, no actions.
   const showQueued = (found) => {
+    if (dialogOpen()) { held = null; heldView = () => showQueued(found); arm(); return; }
+    heldView = null;
     if (mode === "state") mount(head, header.el, cardBox, skillsBox);
     mode = "queued";
     job = found;
@@ -442,18 +445,46 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     stream.el.hidden = false;
   };
 
-  // The select of "Retry from step…" must not be replaced under the reader's hands. The timeout lets the next control take the focus first.
-  head.addEventListener("focusout", () => setTimeout(() => {
-    if (!open || !held || fieldFocused(head)) return;
-    const s = held;
-    held = null;
-    draw(s);
-  }, 0));
+  // The head is not replaced while a dialog is open or a field of it has the focus (the select of "Retry from step…" must
+  // not be replaced under the reader's hands). The newest update is drawn when that ends.
+  const paused = () => dialogOpen() || (!released && fieldFocused(head));
+  const release = () => {
+    if (!open || paused()) return;
+    if (heldView) {
+      const v = heldView;
+      heldView = null;
+      v();
+    } else if (held) {
+      const s = held;
+      held = null;
+      draw(s);
+    }
+  };
+  // A dialog that this page did not open (Change password) does not tell the page when it closes: look again.
+  function arm() {
+    if (recheckTimer !== undefined) return;
+    recheckTimer = setTimeout(() => {
+      recheckTimer = undefined;
+      if (!open) return;
+      if (dialogOpen()) { if (held || heldView) arm(); } else release();
+    }, 250);
+  }
+  // The timeout lets the next control take the focus first.
+  head.addEventListener("focusout", () => {
+    released = false;
+    setTimeout(release, 0);
+  });
 
   const draw = (s) => {
     status.say(s);
-    if (fieldFocused(head)) { held = s; return; }
+    if (paused()) {
+      held = s;
+      heldView = null;
+      if (dialogOpen()) arm();
+      return;
+    }
     held = null;
+    heldView = null;
     if (mode !== "page") {
       if (mode === "state") mount(head, header.el, cardBox, skillsBox);
       mode = "page";
@@ -482,7 +513,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});
 
   // The times in the header move on even when the stream sends only pings.
-  const clock = setInterval(() => { if (summary && !fieldFocused(head)) header.update(summary, { names }); }, CLOCK_MS);
+  const clock = setInterval(() => { if (summary && !paused()) header.update(summary, { names }); }, CLOCK_MS);
 
   load = async () => {
     const mine = ++loadSeq, seen = updates;
@@ -506,12 +537,20 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     if (mode === "state") showState(err); // with content on the page the content stays; the banner tells
   };
 
+  const run = adminRunActions(runId, {
+    setAlert: (t) => { alertEl.textContent = t; },
+    // The closing dialog gives the focus back to the select, which would keep the held update away: release it once anyway.
+    onDialogClosed: () => { released = true; release(); },
+    onDone: () => { released = true; release(); load(); },
+  });
+
   showState(null);
   stream.start();
   load();
   return () => {
     open = false;
     clearInterval(clock);
+    clearTimeout(recheckTimer);
     stream.close();
   };
 }

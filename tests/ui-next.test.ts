@@ -254,6 +254,14 @@ describe("plain error text in the UI", () => {
     expect(ok.textContent).not.toContain("Details");
   });
 
+  it("the run page block adds the server's sentence only for a record that waits for you", () => {
+    const n = { ...you(), text: "Sentinel sentence from the server." };
+    const p = (ui.nextBlock(n) as FakeElement).all("p");
+    expect(p.map((e) => e.textContent)).toContain("Sentinel sentence from the server.");
+    expect((ui.nextBlock(found()) as FakeElement).all("p")).toHaveLength(0);
+    expect((ui.nextBlock({ ...you(), text: "" }) as FakeElement).all("p")).toHaveLength(0);
+  });
+
   it("the run page block and the watcher card show the plain text, action first", () => {
     const n = nextStep("failed", { runId: "r1" }, { reason: 'step "a" failed: exit code 1' });
     const t = ui.nextBlock(n).textContent as string;
