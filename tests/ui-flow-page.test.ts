@@ -254,6 +254,7 @@ describe("the flow page controller", () => {
       "./ia.js": real.ia,
       "./graph.js": { renderGraph: (_o: unknown, opts: unknown) => { graphOpts = opts; drawn++; return real.dom.h("div", {}, "graph"); } },
       "./library.js": library,
+      "./run-form.js": { runForm: () => real.dom.h("div") },
     };
     const src = readFileSync("ui/flow-page.js", "utf8")
       .replace(/^import (\w+) from "([^"]+)";$/gm, (_m, x, s) => `const ${x} = __deps[${JSON.stringify(s)}].default;`)
