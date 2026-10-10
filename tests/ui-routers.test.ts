@@ -185,6 +185,16 @@ describe("admin router", () => {
     expect(main().textContent).toContain("problems page");
   });
 
+  it("opens a provider on #/models/:name", async () => {
+    setup("#/models/ollama");
+    const renderModels = vi.fn();
+    const renderModelDetail = vi.fn();
+    await loadRouter("app.js", stub({ "./models.js": { refreshModelLists: vi.fn(), renderModels, renderModelDetail } }));
+    await vi.waitFor(() => expect(renderModelDetail).toHaveBeenCalledTimes(1));
+    expect(renderModelDetail.mock.calls[0]![1]).toBe("ollama");
+    expect(renderModels).not.toHaveBeenCalled();
+  });
+
   it("keeps the generation check before the error state", () => {
     const lines = readFileSync("ui/app.js", "utf8").split("\n");
     const i = lines.findIndex((l) => l.includes("errorState(explainError(e,"));

@@ -35,6 +35,7 @@ The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:41` (`problems.js:88`) |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
+| `#/models/:name` | — | `ui/models.js` | `renderModelDetail` | `api-admin.ts` (config, providers) | admin display only | See, test, change or remove one provider | Save provider, Remove provider | Remove asks first; built-in providers are saved as an override |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
 | `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
@@ -108,6 +109,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/settings` | no empty state | errors box | none |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
 | `#/models` | none found | errors box | none |
+| `#/models/:name` | "This provider is not set up." | `errorState` with Retry | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
@@ -145,6 +147,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/settings` | Form | Probably fits |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
+| `#/models/:name` | Cards in one column | Same |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
 | `#/users` | Table not in `.table-box` | Probably overflows |
 | `#/audit` | Table not in `.table-box` | Probably overflows |

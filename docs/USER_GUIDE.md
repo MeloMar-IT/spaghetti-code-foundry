@@ -872,6 +872,8 @@ Local models cost nothing and keep your code on your machine; runs record them a
 models trained for coding and tool use (e.g. `qwen3-coder`, `gpt-oss`) — general chat models
 often fail to call tools. Use **Try a model** to check one works before you rely on it.
 
+**One provider.** Each provider in the list is a link; it opens at `#/models/<name>` (Administration › Models › name). The page shows the status, the models and the agents that use it, its settings (kind, base URL, API key env var, default model) with **Save provider**, a **Try a model** box that starts on this provider, and **Use in routing**: the default model, rules and fallbacks that use it, with a link back to the Models page, where routing is still changed. **Remove provider** is in the **Danger** group, only for providers in your config, and asks first. A built-in provider keeps its kind; saving adds an override with the same name. A name that is not a provider shows "This provider is not set up." with a link back. Saves send the same config as before.
+
 ### Routing
 
 **Rules** decide which model runs which step. The first matching rule wins — even over models

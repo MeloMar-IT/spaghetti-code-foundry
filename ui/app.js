@@ -8,7 +8,7 @@ import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
 import { renderSettings, renderWatchers } from "./admin.js";
 import { renderMaintenance } from "./maintenance.js";
-import { refreshModelLists, renderModels } from "./models.js";
+import { refreshModelLists, renderModelDetail, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderProblems } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
@@ -118,7 +118,7 @@ async function route() {
     else if (section === "problems") await renderInBox(renderProblems);
     else if (section === "settings") await renderInBox(renderSettings);
     else if (section === "maintenance") await renderMaintenance(main);
-    else if (section === "models") await renderModels(main);
+    else if (section === "models") await (arg ? renderModelDetail(main, arg) : renderModels(main));
     else if (section === "all-repos") {
       const off = await renderAllRepos(main, { query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
