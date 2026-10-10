@@ -146,8 +146,10 @@ export async function clickMetrics(page: Page, click: string, ready: Ready): Pro
 /**
  * One polling tick: jumps the fake clock by POLL_TICK_MS and times the redraw from the request of `route` to the removal of the
  * marker node. Both stamps are taken after the jump, so the jump is not in the time. `hold` patterns are kept back until the redraw.
+ * A page that draws only what changed (the poller) does not redraw an unchanged answer: `change` edits the JSON of `route`
+ * so that the answer differs, and `unchanged` waits for the request to settle instead and gives `redrawMs` -1 when nothing was redrawn.
  */
-export async function pollTick(page: Page, opts: { marker: Marker; hold?: string[]; route?: string }): Promise<{ redrawMs: number; cls: number; requests: number }> {
+export async function pollTick(page: Page, opts: { marker: Marker; hold?: string[]; route?: string; change?: (json: any) => any; unchanged?: boolean }): Promise<{ redrawMs: number; cls: number; requests: number }> {
   const route = opts.route ?? "/api/runs";
   await untilReady(page);
   await untilSettled(page);
@@ -155,7 +157,13 @@ export async function pollTick(page: Page, opts: { marker: Marker; hold?: string
   let release: () => void = () => {};
   const gate = new Promise<void>((res) => { release = res; });
   const held: { pattern: string; handler: (r: import("@playwright/test").Route) => Promise<void> }[] = [];
+  const edit = opts.change;
+  const editor = async (r: import("@playwright/test").Route) => {
+    const response = await r.fetch();
+    await r.fulfill({ response, json: edit!(await response.json()) }).catch(() => {});
+  };
   try {
+    if (edit) await page.route(`**${route}`, editor);
     for (const pattern of opts.hold ?? []) {
       const handler = async (r: import("@playwright/test").Route) => {
         await gate;
@@ -166,16 +174,18 @@ export async function pollTick(page: Page, opts: { marker: Marker; hold?: string
     }
     await page.evaluate(({ route, marker }) => (window as any).__perf.arm(route, marker.selector, marker.startsWith), { route, marker: opts.marker });
     await page.clock.fastForward(POLL_TICK_MS);
-    await within(page.evaluate(() => (window as any).__perf.redrawn), "the marker was not redrawn");
+    if (opts.unchanged) await untilSettled(page);
+    else await within(page.evaluate(() => (window as any).__perf.redrawn), "the marker was not redrawn");
   } finally {
     release();
+    if (edit) await page.unroute(`**${route}`, editor).catch(() => {});
     for (const h of held) await page.unroute(h.pattern, h.handler).catch(() => {});
   }
   await untilSettled(page);
   return page.evaluate(() => {
     const P = (window as any).__perf;
     if (P.clsError) throw new Error(P.clsError);
-    return { redrawMs: (P.redrawAt - P.polledAt) as number, cls: (P.cls - P.clsAt) as number, requests: P.requests as number };
+    return { redrawMs: (P.redrawAt === null ? -1 : P.redrawAt - P.polledAt) as number, cls: (P.cls - P.clsAt) as number, requests: P.requests as number };
   });
 }
 
