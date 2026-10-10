@@ -105,6 +105,7 @@ export const SkillManifestSchema = z
     roles: z.array(z.enum(SKILL_ROLES)).max(SKILL_ROLES.length).default([]),
     dependencies: z.array(dependency).max(32).default([]),
     conflicts: z.array(SkillIdSchema).max(32).default([]),
+    connectors: z.array(slug).max(16).default([]),
     tool_profile: SkillToolProfileSchema,
     risk: z.enum(SKILL_RISKS).default("low"),
   })
@@ -113,6 +114,7 @@ export const SkillManifestSchema = z
     duplicates(ctx, "capabilities", m.capabilities);
     duplicates(ctx, "roles", m.roles);
     duplicates(ctx, "conflicts", m.conflicts);
+    duplicates(ctx, "connectors", m.connectors);
     duplicates(ctx, "dependencies", m.dependencies.map((d) => d.id));
     duplicates(ctx, "detectors", m.detectors.map((d) => JSON.stringify([d.type, d.glob, "contains" in d ? d.contains : ""])));
     m.dependencies.forEach((d, i) => {

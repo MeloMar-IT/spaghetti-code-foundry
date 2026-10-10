@@ -53,9 +53,15 @@ describe("SkillManifestSchema", () => {
       roles: [],
       dependencies: [],
       conflicts: [],
+      connectors: [],
       tool_profile: { shell: false, network: false, filesystem: "read" },
       risk: "low",
     });
+  });
+  it("rejects bad connectors", () => {
+    expect(paths({ ...base, connectors: ["Kafka"] })).toEqual(["connectors.0"]);
+    expect(paths({ ...base, connectors: ["kafka://x.corp:9092"] })).toEqual(["connectors.0"]);
+    expect(paths({ ...base, connectors: Array.from({ length: 17 }, (_, i) => `c${i}`) })).toEqual(["connectors"]);
   });
   it("rejects unknown keys", () => {
     for (const k of ["description", "model", "allowed_tools"]) expect(paths({ ...base, [k]: "x" })).toEqual([""]);
@@ -65,6 +71,7 @@ describe("SkillManifestSchema", () => {
     expect(paths({ ...base, capabilities: ["a", "b", "a"] })).toEqual(["capabilities.2"]);
     expect(paths({ ...base, roles: ["coder", "coder"] })).toEqual(["roles.1"]);
     expect(paths({ ...base, conflicts: ["x", "x"] })).toEqual(["conflicts.1"]);
+    expect(paths({ ...base, connectors: ["a", "a"] })).toEqual(["connectors.1"]);
     expect(paths({ ...base, dependencies: [{ id: "x" }, { id: "x" }] })).toEqual(["dependencies.1"]);
     const d = { type: "content", glob: "a", contains: "b" };
     expect(paths({ ...base, detectors: [d, { type: "file", glob: "a" }, { ...d }] })).toEqual(["detectors.2"]);

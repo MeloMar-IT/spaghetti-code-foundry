@@ -164,6 +164,18 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - Built-in skills are pinned at server start without a person, because they ship with the release.
 - Whoever can write the data folder can rewrite the lock.
 
+## Skill tools and connectors
+
+**Protected by.**
+- A skill package is scanned when it is loaded, before any file is parsed, for credentials, credential files and live connection endpoints. A hit stops the parse, so no later message repeats a value.
+- Findings name the rule only. File names, the folder name and the registry problem are covered too (a credential-looking folder shows as `(name not shown)`).
+- `connectors` are slugs, not endpoints, and a package that names them needs `risk: medium` or `high`.
+
+**Limits.**
+- The scan is pattern matching. Encoded or split secrets and unusual formats pass, also a YAML escape that only becomes a token after parsing.
+- An Oracle TNS descriptor (`@(DESCRIPTION=…)`) and `http(s)` endpoints are not seen. A single-label host such as `kafka` counts as real.
+- Connectors are declared but not enforced until later parts.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

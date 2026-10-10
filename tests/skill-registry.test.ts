@@ -149,6 +149,24 @@ describe("administrator sources", () => {
     expect(reg.problems[0]).toMatchObject({ kind: "invalid-package", package: "linked", reason: "symbolic link, not scanned" });
   });
 
+  it("a folder name that looks like a credential is not shown in the problem", () => {
+    const e = setup();
+    const root = join(e.home, "skills");
+    const token = "sk-" + "ant-" + "abcdefghij" + "0123456789";
+    pkg(root, "safe", "1.0.0", token);
+    symlinkSync(pkg(tmp(), "linked"), join(root, token + "b"));
+    const reg = run(e, { builtin: false });
+    expect(reg.skills).toEqual([]);
+    expect(reg.problems).toHaveLength(2);
+    expect(reg.problems[0]).toMatchObject({
+      kind: "invalid-package",
+      package: "(name not shown)",
+      issues: [{ path: "(package)", reason: "the folder name looks like a credential (Anthropic key)" }],
+    });
+    expect(reg.problems[1]).toMatchObject({ package: "(name not shown)", reason: "symbolic link, not scanned" });
+    expect(JSON.stringify(reg.problems)).not.toContain("abcdefghij");
+  });
+
   it("skips stray files and hidden folders silently", () => {
     const e = setup();
     const root = join(e.home, "skills");
