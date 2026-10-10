@@ -4,6 +4,7 @@ import { acceptAnyway, acceptedLines, acceptedView, checkReady, clearChanged, is
 import { newDraft, preview, saveTyped } from "../src/refinement/draft.js";
 import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -23,7 +24,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 const reload = vi.fn();
 let state: { drafts: any[]; epic: number | undefined };
 let over: any;
@@ -69,10 +70,10 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).activeElement = null;
   (globalThis as any).location = { hash: "#/refinement/s1", reload };
-  (globalThis as any).confirm = () => {
+  stopDialog = autoDialog(() => {
     confirms++;
     return confirmAnswer;
-  };
+  });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") return reply(view());
     sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });
@@ -106,7 +107,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const apply = (c: any) => {
@@ -264,7 +265,7 @@ describe("Check readiness", () => {
     expect(post().length).toBe(1);
     expect(box().textContent).toContain("The architect is judging the readiness of your draft.");
     expect(button("Check readiness")).toBeUndefined();
-    expect(main().textContent.split("The architect is judging the readiness").length).toBe(2); // only once: not in the Context brief part
+    expect(main().textContent.split("The architect is judging the readiness").length).toBe(3); // the card and the hidden announcement for a screen reader; not in the Context brief part
   });
   it("asks nothing when the save fails", async () => {
     await withDraft({ title: { text: "T", from: "typed" } });

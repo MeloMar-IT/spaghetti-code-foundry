@@ -1,4 +1,4 @@
-import { h, modal } from "./dom.js";
+import { confirmDialog, h, modal } from "./dom.js";
 import { REASON_MAX } from "./refinement-suggest.js";
 
 // The Definition of Ready on the draft page: the check, the results and "Accept anyway". Every text is set as text, never as HTML.
@@ -101,9 +101,10 @@ function rowNode(row, act) {
     h("b", {}, row.text),
     checked ? [h("span", { class: "said" }, row.reason), h("small", { class: "muted" }, BY_WORDS[row.by] ?? row.by ?? "")] : null,
     row.accepted ? h("p", { class: "said" }, h("b", {}, `${ACCEPTED}${row.accepted.notNeeded ? ` (${NOT_NEEDED})` : ""}: `), row.accepted.reason) : null,
-    row.accepted && act ? h("button", { class: "small", "data-focus": `ready-remove-${row.id}`, onClick: (e) => {
-      if (!confirm(REMOVE_ASK)) return undefined;
-      return act.remove(e.currentTarget, row);
+    row.accepted && act ? h("button", { class: "small", "data-focus": `ready-remove-${row.id}`, onClick: async (e) => {
+      const btn = e.currentTarget;
+      if (!(await confirmDialog({ title: "Remove reason", text: REMOVE_ASK, confirm: REMOVE }))) return undefined;
+      return act.remove(btn, row);
     } }, REMOVE) : null,
     row.plan && (row.result === "not-met" || row.result === "unsure") ? h("small", { class: "muted" }, PLAN_NOTE) : null,
     row.canAccept && act ? h("button", { class: "small", "data-focus": `ready-accept-${row.id}`, "aria-label": `${ACCEPT}: ${row.text}`, onClick: async () => {

@@ -5,8 +5,8 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js` and `ui/library.js`), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:72` and `:85`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:416`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
-- **Native `confirm` and `prompt`:** 12 calls in 8 files (second table).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js` and the refinement pages), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:72` and `:85`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:416`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Native `confirm` and `prompt`:** 4 calls in 1 file (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
 
@@ -36,6 +36,14 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
 | `ui/monitor.js` | Mute a finding | Button on a finding | reason, duration | Mute | `modal` |
 | `ui/monitor.js` | Mute a detector | Button on a detector | detector (when picked here), reason, duration | Mute | `modal` |
+| `ui/refinement-draft.js` | Remove draft | Remove draft on a story draft | none | Remove draft | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-draft.js` | Move to notes | Move to notes on a remark | none | Move | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-parts.js` | Merge drafts | Merge on a story draft | none | Merge | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-publish.js` | Publish anyway | Publish while some text has no place on the page | none | Publish anyway | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-ready.js` | Remove reason | Remove reason on an accepted item | none | Remove reason | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-suggest.js` | Replace text | Accept on a suggestion for a field that has text | none | Replace | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-talk.js` | Remove entry | Remove on a map entry | none | Remove | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement.js` | Drop this session | Drop on the session page | none | Drop | `confirmDialog` (`ui/dom.js`) |
 | `ui/refinement-import.js` | Refine an existing issue | Refine an existing issue on `#/refinement` | repository, issue number; with no repository it shows a link to `#/repos` | Refine issue | `modal` |
 | `ui/refinement-publish.js` | Publish to GitHub | Publish on the session page | per ready draft: labels, "Start building this story" | Create the issues | `modal` |
 | `ui/refinement-ready.js` | Accept anyway | Button on a failed ready check | reason (required) | Accept | `modal` |
@@ -80,14 +88,6 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/refinement-draft.js:458` | confirm | Remove this story draft? | Remove a draft |
-| `ui/refinement-draft.js:585` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
-| `ui/refinement-parts.js:133` | confirm | Merge "<B>" into "<A>"? ... | Merge two drafts |
-| `ui/refinement-publish.js:306` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
-| `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
-| `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
-| `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
-| `ui/refinement.js:425` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
 | `ui/runs.js:347` | prompt | Approve — note (optional) | Approve a run (admin) |
 | `ui/runs.js:348` | prompt | Why reject? (optional) | Reject a run (admin) |
 | `ui/runs.js:357` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |

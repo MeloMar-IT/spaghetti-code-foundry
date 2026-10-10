@@ -475,3 +475,93 @@ describe("the Runs list", () => {
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/a%20b/architect", body: {} }]);
   });
 });
+
+describe("states of the poll", () => {
+  const classes = (e: FakeElement) => (e.attrs.class ?? "").split(" ");
+  const notes = () => walk(main()).filter((e) => classes(e).includes("stale-note"));
+  const failedNotes = () => notes().filter((e) => classes(e).includes("failed"));
+  const retry = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Retry");
+  const said = () => walk(main()).find((e) => e.attrs["aria-live"] === "polite")!.textContent;
+  const modalRoot = () => (document as any).getElementById("modal-root") as FakeElement;
+  afterEach(() => modalRoot().replaceChildren());
+
+  it("an unchanged answer keeps every node of the upper part", async () => {
+    page = session({ architect: running });
+    await show();
+    const before = [...upper().children];
+    const inner = walk(upper());
+    gets = [];
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(gets.length).toBe(1);
+    expect(upper().children).toHaveLength(before.length);
+    upper().children.forEach((c, i) => expect(c).toBe(before[i]));
+    expect(walk(upper())).toEqual(inner);
+  });
+  it("a failed poll shows one note, also after a second failure; Retry asks at once and a good answer removes it", async () => {
+    page = session({ architect: running });
+    await show();
+    getMode = 500;
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(failedNotes()).toHaveLength(1);
+    expect(failedNotes()[0]!.textContent).toContain("Could not refresh.");
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(failedNotes()).toHaveLength(1);
+    expect(text()).toContain("The architect is at work."); // the page stays
+    gets = [];
+    getMode = "ok";
+    press(retry());
+    await flush();
+    expect(gets).toHaveLength(1);
+    expect(notes()).toHaveLength(0);
+  });
+  it("Retry while a request runs does not start another", async () => {
+    page = session({ architect: running });
+    await show();
+    getMode = 500;
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    gets = [];
+    getMode = "hold";
+    press(retry());
+    await flush();
+    press(retry());
+    await flush();
+    expect(gets).toHaveLength(1);
+    getHold!(undefined);
+    getMode = "ok";
+    await flush();
+  });
+  it("a 404 on a poll shows the missing state and stops", async () => {
+    page = session({ architect: running });
+    await show();
+    getMode = 404;
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(walk(main()).find((e) => e.attrs["data-kind"])?.attrs["data-kind"]).toBe("missing");
+    expect(retry()).toBeUndefined();
+    gets = [];
+    await vi.advanceTimersByTimeAsync(3 * ui.POLL_MS);
+    expect(gets).toEqual([]);
+  });
+  it("announces that the architect works once, and clears it when it is done", async () => {
+    page = session({ architect: running });
+    await show();
+    expect(said()).toBe("The architect is at work.");
+    page = session({ architect: { ...running, doing: "Reading the code" } });
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(said()).toBe("The architect is at work.");
+    page = session({ architect: { state: "idle" } });
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    expect(said()).toBe("");
+  });
+  it("waits with a changed answer while a dialog is open, then draws it", async () => {
+    page = session({ architect: running });
+    await show();
+    const first = [...upper().children];
+    modalRoot().replaceChildren(new FakeElement("div"));
+    page = session({ architect: { ...running, doing: "Reading the code" } });
+    await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+    upper().children.forEach((c, i) => expect(c).toBe(first[i]));
+    modalRoot().replaceChildren();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(upper().children.some((c, i) => c !== first[i])).toBe(true);
+  });
+});

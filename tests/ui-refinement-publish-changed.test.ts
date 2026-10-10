@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -17,7 +18,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 const D1 = "11111111-1111-4111-8111-111111111111";
 const D2 = "22222222-2222-4222-8222-222222222222";
 const XSS = "<img src=x onerror=1>";
@@ -59,7 +60,7 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).activeElement = null;
   (globalThis as any).location = { hash: "#/refinement/s1", reload: vi.fn() };
-  (globalThis as any).confirm = () => true;
+  stopDialog = autoDialog(() => true);
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     const body = init.body ? JSON.parse(init.body) : undefined;
     sent.push({ method: init.method, url, body });
@@ -76,7 +77,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);

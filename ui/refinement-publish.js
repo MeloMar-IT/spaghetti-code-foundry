@@ -1,6 +1,8 @@
 import { api } from "./api.js";
-import { h, modal, toast } from "./dom.js";
+import { confirmDialog, h, modal, toast } from "./dom.js";
 import { mayChange, unsaved } from "./refinement-draft.js";
+import { issueLink } from "./refinement-states.js";
+import { banner } from "./states.js";
 
 // Publishing on the session page: the plan, the labels, the confirmation. Every text is set as text, never as HTML.
 
@@ -115,6 +117,23 @@ export function onGithubText(s) {
   return on.length ? `On GitHub already: ${on.map((x) => `#${x.issue}`).join(", ")}.` : "Nothing is on GitHub yet.";
 }
 
+/** A publish that stopped half way, by session: { made, rest, error } (draft ids). It stays until every draft of `rest` is on GitHub or gone. */
+export const partials = new Map();
+
+/** What a failed publish left: `before` the draft ids that were on GitHub, `wanted` the draft ids sent, `s` the session read back. */
+export function partialOf(before, wanted, s) {
+  const on = new Set(onGithub(s).map((x) => x.id));
+  return { made: wanted.filter((id) => on.has(id) && !before.has(id)), rest: wanted.filter((id) => !on.has(id)) };
+}
+
+/** The banner text: "2 of 3 issues are on GitHub: #101 One, #102 Two. Not published: Three. <error>" */
+export function partialText(p, s) {
+  const title = (id) => { const d = (s?.drafts ?? []).find((x) => x.id === id); return d?.preview?.title || d?.title?.text || "Untitled draft"; };
+  const issue = (id) => (s?.drafts ?? []).find((x) => x.id === id)?.published?.issue;
+  const made = p.made.filter((id) => issue(id) !== undefined);
+  return `${made.length} of ${made.length + p.rest.length} issues are on GitHub${made.length ? `: ${made.map((id) => `#${issue(id)} ${title(id)}`).join(", ")}` : ""}. Not published: ${p.rest.map(title).join(", ")}.${p.error ? ` ${p.error}` : ""}`;
+}
+
 const nodes = (v) => [v].flat(Infinity).filter(Boolean);
 const checkRow = (input, text) => h("label", { class: "check check-row" }, input, text);
 const box = (props) => {
@@ -220,19 +239,25 @@ export function publishSection(ctx) {
     if (!s.source) return null;
     const u = updatesOf(s);
     if (!u) return h("p", { class: "muted" }, `Issue #${s.source.issue} is not changed.`);
-    if (u.published) {
-      const url = String(u.published.url ?? "");
-      const text = `#${u.published.issue}`;
-      return h("p", { class: "muted" }, "Updated ", url.startsWith("https://github.com/") ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, text) : text);
-    }
+    if (u.published) return h("p", { class: "muted" }, "Updated ", issueLink(u));
     return h("p", { class: "muted" }, `Updates #${u.issue}: ${u.draft.preview?.title || u.draft.title?.text || ""}`);
   };
 
+  /** The unfinished publish of this session, reduced to the drafts that still exist and are not on GitHub; gone when none is left. */
+  const partialNow = () => {
+    const p = partials.get(ctx.id);
+    if (!p) return null;
+    const rest = p.rest.filter((id) => { const d = (sess?.drafts ?? []).find((x) => x.id === id); return d && !d.published; });
+    if (!rest.length) partials.delete(ctx.id);
+    return rest.length ? { ...p, rest } : null;
+  };
   const draw = () => {
     const s = sess;
+    const partial = partialNow();
     node.replaceChildren(...nodes(!mayChange(s) ? null : [
       h("h2", {}, PUBLISH),
       sourceLine(s),
+      partial ? banner("warn", partialText(partial, s), [{ label: "Retry", focus: "publish-retry", onClick: (e) => start(e.currentTarget) }]) : null,
       failure ? [h("p", { class: "status bad" }, failure), unknown ? h("p", { class: "muted" }, UNKNOWN) : h("p", { class: "muted" }, onGithubText(s))] : null,
       s.state === "published" ? h("p", { class: "muted" }, ALL_PUBLISHED) : null,
       s.state !== "published" && canPublish(s) && ["queued", "running"].includes(s.architect?.state) ? h("p", { class: "muted" }, ARCHITECT_BUSY) : null,
@@ -244,7 +269,7 @@ export function publishSection(ctx) {
   const update = (s) => {
     sess = s;
     const u = updatesOf(s);
-    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown, s.source?.issue, s.source?.draft, u?.draft.preview?.title || u?.draft.title?.text, u?.published?.issue]);
+    const key = JSON.stringify([canPublish(s), mayChange(s), s.state, s.architect?.state, onGithub(s), failure, unknown, partialNow(), s.source?.issue, s.source?.draft, u?.draft.preview?.title || u?.draft.title?.text, u?.published?.issue]);
     if (key === shown) return;
     shown = key;
     draw();
@@ -255,6 +280,8 @@ export function publishSection(ctx) {
     let made;
     let stale = false;
     let fresh = false;
+    const before = new Set(onGithub(sess).map((x) => x.id));
+    const wanted = (body.drafts ?? []).map((x) => x.draft);
     try {
       await ctx.save(async () => {
         try {
@@ -286,6 +313,16 @@ export function publishSection(ctx) {
     }
     failure = error ? ctx.errorText(error) : stale ? "The issues are on GitHub, but the page could not be refreshed. Reload the page to see the links." : "";
     unknown = Boolean(failure) && !fresh;
+    // Some issues were created and the rest failed: a banner lists both and stays until the rest is published or removed.
+    if (error && fresh && ctx.current()) {
+      const now = partialOf(before, wanted, sess);
+      const old = partials.get(ctx.id);
+      if (now.rest.length && (now.made.length || old)) {
+        partials.set(ctx.id, { made: [...new Set([...(old?.made ?? []), ...now.made])], rest: [...new Set([...(old?.rest ?? []), ...now.rest])], error: failure }); // drafts of the last attempt that are not sent now stay until published or removed
+        failure = "";
+        if (now.made.length) toast(`${now.made.length} of ${wanted.length} issues are on GitHub`);
+      }
+    }
     if (!error && !asksAgain) toast(doneText(made));
     if (ctx.current()) update(sess); // the failure line is drawn also when the session did not change
   };
@@ -303,7 +340,7 @@ export function publishSection(ctx) {
         failure = NOT_SAVED;
         return;
       }
-      if (saved.lost && !confirm(LOST_ASK)) return;
+      if (saved.lost && !(await confirmDialog({ title: PUBLISH_TITLE, text: LOST_ASK, confirm: "Publish anyway", danger: false }))) return;
       if (!canPublish(sess)) {
         failure = NOT_READY_NOW;
         return;
