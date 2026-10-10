@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CODEX_HOME_CHANGED, CODEX_HOME_UNKNOWN, codexHomeId, codexResumeRefusal } from "../src/agents/codex-home.js";
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CODEX_HOME_CHANGED, CODEX_HOME_REFUSED, CODEX_HOME_UNKNOWN, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome } from "../src/agents/codex-home.js";
 
 describe("codexHomeId", () => {
   it("is 'run' for the run's own folder, whatever the folders are", () => {
@@ -43,5 +46,62 @@ describe("codexResumeRefusal", () => {
 
   it("refuses a folder that is not known", () => {
     for (const v of [undefined, "", 7, null]) expect(codexResumeRefusal(v, "run")).toBe(CODEX_HOME_UNKNOWN);
+  });
+});
+
+describe("codexIsolationMode", () => {
+  it.each([
+    [false, true, true, "off"],
+    [false, false, false, "off"],
+    [true, true, false, "private"],
+    [true, false, true, "private"],
+    [true, false, false, "ignore-config"],
+  ] as const)("isolate=%s local=%s key=%s gives %s", (isolate, local, hasKey, want) => {
+    expect(codexIsolationMode({ isolate, local, hasKey })).toBe(want);
+  });
+});
+
+describe("privateCodexHome", () => {
+  const tmpDir = () => mkdtempSync(join(tmpdir(), "pch-"));
+
+  it("makes a 0700 folder under the run folder", () => {
+    const dir = tmpDir();
+    try {
+      expect(privateCodexHome(dir)).toEqual({ CODEX_HOME: join(dir, "home", ".codex") });
+      expect(statSync(join(dir, "home", ".codex")).mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a symlink at the path and leaves its target alone", () => {
+    const dir = tmpDir();
+    try {
+      const target = join(dir, "elsewhere");
+      mkdirSync(target);
+      mkdirSync(join(dir, "home"));
+      symlinkSync(target, join(dir, "home", ".codex"));
+      expect("CODEX_HOME" in privateCodexHome(dir)).toBe(true);
+      expect(lstatSync(join(dir, "home", ".codex")).isSymbolicLink()).toBe(false);
+      expect(lstatSync(target).isDirectory()).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses when the folder cannot be made, with no CODEX_HOME", () => {
+    const r = privateCodexHome("/x", () => {
+      throw new Error("no");
+    });
+    expect("refused" in r && r.refused.startsWith(CODEX_HOME_REFUSED)).toBe(true);
+    expect("CODEX_HOME" in r).toBe(false);
+  });
+});
+
+describe("codexIsolationLine", () => {
+  it("has no line for off and a Codex: line for the others", () => {
+    expect(codexIsolationLine("off")).toBeUndefined();
+    for (const m of ["private", "ignore-config", "unsupported"] as const) expect(codexIsolationLine(m)).toMatch(/^Codex: /);
+    expect(codexIsolationLine("ignore-config")).toContain("personal skills, AGENTS.md and command rules still apply");
   });
 });

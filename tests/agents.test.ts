@@ -12,7 +12,7 @@ import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { ClaudeStep } from "../src/flow/schema.js";
 import { buildClaudeArgs, FACTORY_AGENT_NOTE } from "../src/steps/claude.js";
-import { buildCodexArgs } from "../src/steps/codex.js";
+import { buildCodexArgs, CODEX_AGENT_NOTE, codexExecFlags, resetCodexFlagsCache } from "../src/steps/codex.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 const cfg = (over: Record<string, unknown> = {}): Config => ConfigSchema.parse({ protected_branches: [], ...over });
@@ -402,5 +402,98 @@ steps:
     expect(f.name).toBe("f@ollama:qwen3-coder");
     const s = f.steps[0] as ClaudeStep;
     expect([s.agent, s.provider, s.model, f.defaults.agent]).toEqual([undefined, undefined, "ollama:qwen3-coder", undefined]);
+  });
+});
+
+describe("Codex isolation arguments", () => {
+  const base = { prompt: "p", cwd: "/w", logFile: "/l", sandbox: "workspace-write" as const };
+  const withFlag = (a: string[], at: number) => [...a.slice(0, at), "--ignore-user-config", ...a.slice(at)];
+  const only = (a: string[], p: string) => a.filter((x) => x.startsWith(p));
+
+  it("ignoreUserConfig adds only the flag, right after --skip-git-repo-check", () => {
+    const plain = buildCodexArgs(base);
+    const on = buildCodexArgs({ ...base, ignoreUserConfig: true });
+    expect(on).toEqual(withFlag(plain, 3));
+    expect(on[2]).toBe("--skip-git-repo-check");
+    const rPlain = buildCodexArgs({ ...base, resumeSessionId: "T1" });
+    const rOn = buildCodexArgs({ ...base, resumeSessionId: "T1", ignoreUserConfig: true });
+    expect(rOn).toEqual(withFlag(rPlain, 4));
+    for (const a of [on, rOn]) {
+      expect(only(a, "sandbox_mode=")).toEqual(only(plain, "sandbox_mode="));
+      expect(only(a, "approval_policy=")).toEqual(only(plain, "approval_policy="));
+    }
+  });
+
+  it("a reviewer has the flag once, unless ignoreUserConfig is false", () => {
+    for (const ignoreUserConfig of [undefined, true]) {
+      expect(buildCodexArgs({ ...base, reviewer: true, ignoreUserConfig }).filter((x) => x === "--ignore-user-config")).toHaveLength(1);
+    }
+    const off = buildCodexArgs({ ...base, reviewer: true, ignoreUserConfig: false });
+    expect(off).not.toContain("--ignore-user-config");
+    expect(off).toContain("mcp_servers={}");
+    expect(off).toContain("features.codex_hooks=false");
+  });
+
+  it("no combination passes --ignore-rules", () => {
+    for (const reviewer of [false, true]) for (const ignoreUserConfig of [undefined, false, true]) for (const agentNote of [false, true]) for (const resumeSessionId of [undefined, "T"]) for (const localProvider of [undefined, "ollama"]) {
+      expect(buildCodexArgs({ ...base, reviewer, ignoreUserConfig, agentNote, resumeSessionId, localProvider })).not.toContain("--ignore-rules");
+    }
+  });
+
+  it("CODEX_AGENT_NOTE names the setup and the skills block, and is about Codex", () => {
+    expect(CODEX_AGENT_NOTE).toContain("unattended");
+    expect(CODEX_AGENT_NOTE).toContain("<foundry-skills>");
+    expect(CODEX_AGENT_NOTE).toContain("~/.codex");
+    expect(CODEX_AGENT_NOTE).not.toContain("~/.claude");
+  });
+});
+
+describe("codexExecFlags", () => {
+  const calls: string[][] = [];
+  const run = (_b: string, a: string[]) => {
+    calls.push(a);
+    return "  --json\n  --ignore-user-config  Skip\n -m";
+  };
+  beforeEach(() => {
+    resetCodexFlagsCache();
+    calls.length = 0;
+  });
+
+  it("parses the help text", () => {
+    const f = codexExecFlags("c1", { run });
+    expect(f.has("--json")).toBe(true);
+    expect(f.has("--ignore-user-config")).toBe(true);
+    expect(f.has("-m")).toBe(false);
+  });
+
+  it("gives an empty set on a throw and caches it", () => {
+    let n = 0;
+    const bad = () => {
+      n++;
+      throw new Error("x");
+    };
+    expect(codexExecFlags("c2", { run: bad }).size).toBe(0);
+    expect(codexExecFlags("c2", { run: bad }).size).toBe(0);
+    expect(n).toBe(1);
+  });
+
+  it("reads each form once and keeps them apart", () => {
+    codexExecFlags("c3", { run });
+    codexExecFlags("c3", { run });
+    codexExecFlags("c3", { run, resume: true });
+    codexExecFlags("c3", { run, resume: true });
+    expect(calls).toEqual([["exec", "--help"], ["exec", "resume", "--help"]]);
+  });
+
+  it("reads again after a reset or after 10 minutes", () => {
+    const t0 = 1_000_000;
+    codexExecFlags("c4", { run, now: t0 });
+    codexExecFlags("c4", { run, now: t0 + 599_999 });
+    expect(calls).toHaveLength(1);
+    codexExecFlags("c4", { run, now: t0 + 600_000 });
+    expect(calls).toHaveLength(2);
+    resetCodexFlagsCache();
+    codexExecFlags("c4", { run, now: t0 + 600_000 });
+    expect(calls).toHaveLength(3);
   });
 });

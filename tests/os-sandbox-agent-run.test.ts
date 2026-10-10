@@ -88,6 +88,10 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "c1")).not.toContain("--settings");
     expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("own sandbox is off");
     expect(out(s, "x1")).toContain('sandbox_mode="danger-full-access"');
+    // a boxed step keeps its path: no isolation flag, no agent note, no "Codex:" line
+    expect(out(s, "x1")).not.toContain("--ignore-user-config");
+    expect(out(s, "x1")).not.toContain("<instructions>");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
     for (const id of ["c2", "x2"]) {
       const o = out(s, id);
       expect(o).toContain(`HOME=${s.runDir}/home`);
