@@ -190,13 +190,13 @@ A click outside also closes it.
 
 ### dialog
 
-`dialog({ title, build, busy, dismissOnBackdrop })` returns a promise, like `modal` in `ui/dom.js`.
+`dialog({ title, build, busy, initialFocus, dismissOnBackdrop })` returns a promise, like `modal` in `ui/dom.js`.
 
 - `build(close)` returns the content; `close(value)` closes the dialog and resolves the promise with `value`. A second `close` call does nothing. A dismissal (Escape, the Close button, a backdrop click) resolves with `undefined`.
 - `busy()` returns `true` while work runs. Then Escape, the Close button and the backdrop do not close it.
 - `dismissOnBackdrop` defaults to `true`.
 - **Element:** mounts into `#modal-root` (in `ui/index.html`, `ui/user/index.html` and the gallery page) with `role="dialog"`, `aria-modal="true"` and `aria-labelledby` pointing at its heading.
-- **Focus:** the first text field gets focus, or the box when there is none. Tab and Shift+Tab stay inside (the same `tabStops` and `trapTarget` as `modal`). On close, focus returns to the opener.
+- **Focus:** `initialFocus()` may return an element inside the dialog to focus first (`confirmDestructive` uses it for Cancel). Otherwise the first text field gets focus, or the box when there is none. Tab and Shift+Tab stay inside (the same `tabStops` and `trapTarget` as `modal`). On close, focus returns to the opener.
 - **Stacking:** a dialog or drawer can open on top of another. Only the top layer gets keys; the layers below are `inert`. Closing the top layer returns focus to the layer below.
 
 | Key | Action |
@@ -270,6 +270,62 @@ All in `ui/kit/records.js`. They show what a run did and draw without error when
 - **Element:** the `stat` in a `<pre>`, then the patch in a focusable `<pre role="region">` named by `label` (default "Diff"). Each line is a `<span>` marked by class as file, hunk, added or removed. The `+` and `-` characters are kept, so the meaning is not in colour only.
 - `truncated` shows "Diff truncated (very large)." The kit does not cut the patch itself.
 - A patch with only a header draws as file and hunk lines, with no added or removed lines.
+
+## Product components
+
+In `ui/kit/product.js`, styled in `ui/kit/product.css`. They are built only from the primitives above, so the top of a page, its next step and its dangerous actions look and work the same everywhere. They show the data they are given; permissions and status stay on the server.
+
+### pageHeader
+
+`pageHeader({ title, back, meta, actions })`
+
+- Returns a `<header>` with the page's one `<h1>`. `title` is required.
+- `back` is `{ label, href }` and draws a link above the title. `meta` (a node) goes under the title. `actions` (a node) is the actions area.
+- An unsafe or missing back `href` throws.
+
+### statusSummary
+
+`statusSummary({ items: [{ label, value, tone, href }], label })`
+
+- Returns a `<dl>`; each item is a `<dt>` label and a `<dd>` value. `label` names the list for screen readers.
+- `tone` (`neutral | ok | fail | run | warn | accent`) draws a text or number value as a badge, so status is never colour alone. An item with `href` is a link.
+
+### nextAction
+
+`nextAction({ who, text, where, action, tone, heading, level })`
+
+- The kit form of `nextBlock` in `ui/next.js`. It shows who must act (`who`, as a badge), what (`text`) and where (`where: { label, url }`, a link when `url` is `https://…` or `#/…`, else text). It does not work out status; pass the server record as it is.
+- `action: { label, onClick }` adds at most one primary button. `heading` defaults to "What happens next".
+
+### filters
+
+`filters({ label, fields, value, onChange, onClear, clearLabel })`
+
+- Returns a `<form role="search">` named by `label`. Each field is `{ name, label, type, options, placeholder, emptyLabel, error }`; `type` is `text` (default), `select` or `checkbox`. Every control has a visible label.
+- The form keeps its own values. `onChange(values, name)` runs on each change. **Clear** is shown only while a filter is set; it resets the fields, moves focus to the first one and calls `onClear()` (or `onChange(values)` when there is no `onClear`).
+- Enter does not submit the page.
+
+### entityLink
+
+`entityLink({ kind, id, label, href, showKind })`
+
+- `kind`: `run | repo | issue | pr | flow | user`. The kind is visually hidden text ("Run 12 fix login"); `showKind: true` shows it.
+- With `href` it is a link (`http(s)://`, a path, `?query` or `#hash`; other schemes are refused). Without `href`, or with an unsafe one, it is plain text. Leave `href` out for something the user may not open; the component checks no permission.
+
+### confirmDestructive
+
+`confirmDestructive({ title, text, confirmLabel, cancelLabel, typeToConfirm, send })` returns a promise.
+
+- Resolves `true` only after `send()` succeeded and the user confirmed. Cancel, Escape, the Close button and the backdrop resolve `false`.
+- Built on `dialog`. Focus starts on **Cancel**, not on the danger button. `confirmLabel` defaults to "Delete".
+- With `typeToConfirm`, the user must type that exact text; the danger button stays disabled until it matches.
+- While `send()` runs, nothing closes the dialog and the buttons are `aria-disabled`. If `send()` throws, its message shows in the dialog, which stays open so the user can try again or cancel.
+- `confirmDialog` and `decisionDialog` are unchanged.
+
+| Key | Action |
+|---|---|
+| Escape | Cancel (not while `send()` runs) |
+| Enter | Confirm, when the danger button is enabled |
 
 ## The gallery
 

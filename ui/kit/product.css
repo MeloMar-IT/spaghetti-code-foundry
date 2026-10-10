@@ -1,0 +1,38 @@
+/* ui/kit/product.css — page header, status summary, next action, filters, entity link and destructive confirmation of the component kit.
+   Belongs here: .scf-page-header, .scf-status-summary, .scf-next-action, .scf-filters, .scf-entity-link and .scf-confirm layout rules, with token variables only.
+   Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules, new visual primitives (those go in the primitive files). */
+
+.scf-page-header { display: flex; flex-wrap: wrap; gap: var(--space-lg); align-items: flex-start; justify-content: space-between; min-width: 0; }
+.scf-page-header__back { flex-basis: 100%; overflow-wrap: anywhere; }
+.scf-page-header__main { flex: 1; min-width: 0; display: grid; gap: var(--space-sm); }
+.scf-page-header__title {
+  margin: 0;
+  font-size: var(--text-page);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.scf-page-header__meta, .scf-page-header__actions { display: flex; flex-wrap: wrap; gap: var(--space-md); min-width: 0; }
+
+.scf-status-summary { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-lg); }
+.scf-status-summary__item { display: grid; gap: var(--space-xs); min-width: 0; }
+.scf-status-summary__label { font-size: var(--text-meta); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.scf-status-summary__value { margin: 0; overflow-wrap: anywhere; }
+
+.scf-next-action__text, .scf-next-action__where { margin: 0; overflow-wrap: anywhere; }
+.scf-next-action__action { display: flex; flex-wrap: wrap; min-width: 0; }
+
+.scf-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-lg); min-width: 0; }
+.scf-filters__fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-lg); flex: 1; min-width: 0; }
+.scf-filters__field { flex: 1 1 var(--size-sidebar); min-width: 0; max-width: 100%; }
+.scf-filters__clear[hidden] { display: none; }
+
+.scf-entity-link { overflow-wrap: anywhere; }
+.scf-entity-link--plain { color: var(--color-text); }
+.scf-entity-link__kind { color: var(--color-text-muted); }
+.scf-entity-link__id { font-family: var(--font-mono); font-size: var(--text-code); }
+
+.scf-confirm { display: grid; gap: var(--space-lg); min-width: 0; }
+.scf-confirm__text { margin: 0; overflow-wrap: anywhere; }
+.scf-confirm__actions { display: flex; flex-wrap: wrap; gap: var(--space-md); justify-content: flex-end; }

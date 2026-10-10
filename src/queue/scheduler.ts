@@ -66,6 +66,8 @@ export interface SchedulerOptions {
   runsDir: string;
   config: () => Config;
   claudeBin?: string;
+  /** Test hook: the Codex binary agent steps call. */
+  codexBin?: string;
   /** Where pending jobs are saved so they survive restarts. */
   queueFile?: string;
   /** False when the account is blocked or gone: the jobs it queued wait. Without it, no job is held. */
@@ -699,6 +701,7 @@ export class Scheduler {
     const common = {
       runsDir: this.o.runsDir,
       claudeBin: this.o.claudeBin,
+      codexBin: this.o.codexBin,
       signal: a.controller.signal,
       config: this.o.config(),
       log: (raw: string) => {

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { RefinementError } from "../src/refinement/errors.js";
 import { acceptSuggestion, rejectSuggestion, newDraft, preview, saveTyped } from "../src/refinement/draft.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -19,7 +20,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 const reload = vi.fn();
 let state: { drafts: any[]; epic: number | undefined };
 let over: any;
@@ -65,10 +66,10 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).activeElement = null;
   (globalThis as any).location = { hash: "#/refinement/s1", reload };
-  (globalThis as any).confirm = () => {
+  stopDialog = autoDialog(() => {
     confirms++;
     return confirmAnswer;
-  };
+  });
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
       gets++;
@@ -99,7 +100,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const apply = (c: any) => {

@@ -3,7 +3,7 @@ import { ConfigSchema } from "../src/config.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
 import { resolveOptionsFrom, resolveSkills, type SkillResolution } from "../src/skills/resolve.js";
 import { RESOLVE_REJECT_CODES, UNRESOLVED_KIND, UNRESOLVED_KINDS } from "../src/skills/resolve-rules.js";
-import { assessSkills, skillRisk, unresolvedMessage, type UnresolvedSkill } from "../src/skills/unresolved.js";
+import { SkillPlanSchema, assessSkills, skillRisk, unresolvedMessage, type UnresolvedSkill } from "../src/skills/unresolved.js";
 
 interface Over {
   version?: string;
@@ -200,7 +200,25 @@ describe("policy", () => {
     const p = plan(reg(sk("a")), ["a"]);
     expect(p).toMatchObject({ action: "continue", unresolved: [], warnings: [] });
     expect(p.reason).toBeUndefined();
-    expect(p.selected).toEqual([{ id: "a", version: "1.0.0", digest: `sha256:${"a".repeat(64)}` }]);
+    expect(p.selected).toEqual([{
+      id: "a", version: "1.0.0", digest: `sha256:${"a".repeat(64)}`, selection: "requested", requiredBy: [], estimatedTokens: expect.any(Number), category: "general",
+    }]);
+  });
+
+  it("says why each skill is selected: mandatory, requested or a dependency", () => {
+    const dep = { id: "b" };
+    const p = plan(reg(sk("a", { dependencies: [dep] }), sk("b", { category: "base" }), sk("m")), ["a"], policy(), { include: ["m"] });
+    const by = (id: string) => p.selected.find((s) => s.id === id)!;
+    expect(by("m")).toMatchObject({ selection: "mandatory", requiredBy: [] });
+    expect(by("a")).toMatchObject({ selection: "requested", category: "general" });
+    expect(by("b")).toMatchObject({ selection: "dependency", requiredBy: ["a"], category: "base" });
+    expect(typeof by("b").estimatedTokens).toBe("number");
+  });
+
+  it("still accepts a plan of an older version, with the bare selected entries", () => {
+    const old = { version: 1, role: "coder", action: "continue", selected: [{ id: "a", version: "1.0.0", digest: `sha256:${"a".repeat(64)}` }], unresolved: [], warnings: [] };
+    expect(SkillPlanSchema.parse(old)).toEqual(old);
+    expect(SkillPlanSchema.safeParse({ ...old, selected: [{ ...old.selected[0], extra: 1 }] }).success).toBe(false);
   });
 
   it("lists at most three items in the reason", () => {

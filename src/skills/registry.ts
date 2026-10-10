@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
+import { credentialProblem } from "./credential-scan.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
@@ -204,8 +205,10 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     for (const name of names) {
       const dir = join(src.root, name);
+      // A folder name that looks like a credential is not repeated in the problem list.
+      const shown = credentialProblem(name) ? "(name not shown)" : name;
       const bad = (reason: string, issues?: SkillIssue[]) =>
-        problems.push({ kind: "invalid-package", ...base, package: name, reason: cut(reason), ...(issues ? { issues } : {}) });
+        problems.push({ kind: "invalid-package", ...base, package: shown, reason: cut(reason), ...(issues ? { issues } : {}) });
       if (dirs.get(name)) {
         bad("symbolic link, not scanned");
         continue;
@@ -386,11 +389,16 @@ let cache: { key: string; at: number; reg: SkillRegistry } | undefined;
 
 /** Like discoverSkills, kept for a minute: health asks every 30 seconds. */
 export function cachedSkillRegistry(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): SkillRegistry {
+  return cachedSkillRegistryAt(skills, now, maxAgeMs, opts).registry;
+}
+
+/** Like cachedSkillRegistry, and says when the registry was really read (ms since the epoch). */
+export function cachedSkillRegistryAt(skills: Config["skills"], now = Date.now(), maxAgeMs = 60_000, opts: DiscoverOptions = {}): { registry: SkillRegistry; at: number } {
   const key = JSON.stringify(skills) + "\0" + (opts.home ?? dataHome()) + "\0" + (opts.repo ?? "");
-  if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return cache.reg;
+  if (cache && cache.key === key && now - cache.at >= 0 && now - cache.at < maxAgeMs) return { registry: cache.reg, at: cache.at };
   const reg = discoverSkills(skills, opts);
   cache = { key, at: now, reg };
-  return reg;
+  return { registry: reg, at: now };
 }
 
 export function clearSkillRegistryCache(): void {

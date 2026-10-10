@@ -17,6 +17,8 @@ let log: string[];
 let sent: { method: string; path: string; body?: string }[];
 beforeEach(() => {
   vi.useFakeTimers();
+  (document as any).visibilityState = "visible";
+  (document as any).activeElement = null;
   log = [];
   answers = {};
   sent = [];
@@ -30,6 +32,8 @@ beforeEach(() => {
   };
 });
 afterEach(() => {
+  (document as any).visibilityState = "visible";
+  (document as any).activeElement = null;
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
@@ -56,6 +60,10 @@ const open = async (since: FakeElement | null = null) => {
   return { main, off };
 };
 const h2 = (root: FakeElement) => root.all("h2").map((e) => e.textContent);
+const named = (root: FakeElement, name: string) => root.all("button").filter((b) => b.attrs["data-focus"] === name);
+const STALE = "Problems could not be refreshed. Showing the last answer.";
+const status = (root: FakeElement) => root.all("p").filter((p) => p.attrs.role === "status");
+const approval = () => nextStep("approval", { repo: "o/a", issue: 5, runId: "r9" }, { watched: true, issueUrl: "https://github.com/o/a/issues/5" });
 
 describe("renderAdminHome", () => {
   it("draws Needs you from Your turn with its count, and the item's button", async () => {
@@ -167,6 +175,7 @@ describe("renderAdminHome", () => {
     answers["/api/health"] = new Error("down");
     const { main, off } = await open();
     expect(main.textContent).toContain("task a");
+    expect(main.textContent).toContain("Problems could not be loaded.");
     off();
   });
 
@@ -249,11 +258,13 @@ describe("renderAdminHome", () => {
     answers["/api/runs"] = new Error("down");
     const { main, off } = await open();
     expect(main.textContent).toContain("Active work could not be loaded");
+    expect(named(main, "home-active-retry")).toHaveLength(1);
+    expect(main.all("h1").map((e) => e.textContent)).toEqual(["Home"]);
     expect(main.all("a").some((a) => a.attrs.href === "#/start")).toBe(false);
     off();
   });
 
-  it("cleanup stops both timers", async () => {
+  it("cleanup stops both pollers", async () => {
     set({ runs: [run("a", "running")] });
     const { off } = await open();
     off();
@@ -277,5 +288,167 @@ describe("renderAdminHome", () => {
     release([run("late", "running")]);
     await flush();
     expect(main.textContent).not.toContain("task late");
+  });
+
+  it("keeps Problems with one line when health fails; a later success removes it", async () => {
+    const problem = nextStep("watcher_error", { repo: "o/b" }, { error: "x" } as any);
+    set({ runs: [run("a", "running")], health: { ok: false, summary: "1", problems: [problem] } });
+    const { main, off } = await open();
+    expect(h2(main)).toContain("Problems");
+    expect(status(main)).toHaveLength(0);
+    answers["/api/health"] = new Error("down");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h2(main)).toContain("Problems");
+    expect(main.all("section").find((s) => s.all("h2")[0]?.textContent === "Problems")!.all("li")).toHaveLength(1);
+    expect(status(main).map((p) => p.textContent)).toEqual([STALE]);
+    expect(named(main, "home-active-refresh-retry")).toHaveLength(0);
+    const holder = main.all("p").find((p) => p.attrs.class?.includes("stale-note") && p.textContent.includes("Updated"))?.parent as FakeElement | undefined;
+    expect(holder?.hidden).toBe(true);
+    const line = status(main)[0];
+    answers["/api/runs"] = [run("a", "running"), run("b", "running")];
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(main.textContent).toContain("task b");
+    expect(status(main)[0]).toBe(line);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(status(main)[0]).toBe(line);
+    answers["/api/health"] = { ok: true, summary: "ok", problems: [] };
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(status(main)).toHaveLength(0);
+    expect(h2(main)).not.toContain("Problems");
+    expect(holder?.hidden).toBe(false);
+    off();
+  });
+
+  it("with no good health answer the line says so, there is no list and no empty claim", async () => {
+    set({});
+    answers["/api/health"] = new Error("down");
+    const { main, off } = await open();
+    expect(h2(main)).toContain("Problems");
+    expect(status(main).map((p) => p.textContent)).toEqual(["Problems could not be loaded."]);
+    const section = main.all("section").find((s) => s.all("h2")[0]?.textContent === "Problems")!;
+    expect(section.all("ul")).toHaveLength(0);
+    expect(main.textContent).not.toContain("Nothing here yet");
+    off();
+  });
+
+  it("both feeds failing at once give unique Retry names", async () => {
+    set({});
+    answers["/api/your-turn"] = new Error("down");
+    answers["/api/runs"] = new Error("down");
+    const first = await open();
+    expect(named(first.main, "home-needs-retry")).toHaveLength(1);
+    expect(named(first.main, "home-active-retry")).toHaveLength(1);
+    expect(first.main.all("h1").map((e) => e.textContent)).toEqual(["Home"]);
+    first.off();
+
+    set({ runs: [run("a", "running")] });
+    const second = await open();
+    answers["/api/your-turn"] = new Error("down");
+    answers["/api/runs"] = new Error("down");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(named(second.main, "home-needs-refresh-retry")).toHaveLength(1);
+    expect(named(second.main, "home-active-refresh-retry")).toHaveLength(1);
+    expect(second.main.textContent).toContain("task a");
+    second.off();
+  });
+
+  it("keeps scroll and focus when a Your turn answer redraws the parent sections", async () => {
+    const problem = nextStep("watcher_error", { repo: "o/b" }, { error: "x" } as any);
+    set({ runs: [run("a", "running"), run("d", "done", { finishedAt: iso(1) })], health: { ok: false, summary: "1", problems: [problem] } });
+    const { main, off } = await open();
+    const link = main.all("a").find((a) => a.attrs["data-focus"] === "home-open-a")!;
+    link.focus();
+    const root = (document as any).documentElement;
+    root.scrollTop = 120;
+    const page = main.children[0] as FakeElement;
+    for (const part of page.children as FakeElement[]) {
+      const own = part.replaceChildren.bind(part);
+      part.replaceChildren = (...nodes: any[]) => { root.scrollTop = 0; own(...nodes); };
+    }
+    answers["/api/your-turn"] = turn([turnItem(approval())]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(main.textContent).toContain("1 needs you · 1 active");
+    expect(root.scrollTop).toBe(120);
+    expect((document as any).activeElement?.attrs["data-focus"]).toBe("home-open-a");
+    root.scrollTop = 0;
+    off();
+  });
+
+  it("Retry in Active loads it", async () => {
+    set({});
+    answers["/api/runs"] = new Error("down");
+    const { main, off } = await open();
+    answers["/api/runs"] = [run("a", "running")];
+    named(main, "home-active-retry")[0]!.click();
+    await flush();
+    expect(main.textContent).toContain("task a");
+    expect(main.textContent).not.toContain("Active work could not be loaded");
+    expect(h2(main).some((t) => t.startsWith("Needs you"))).toBe(true);
+    off();
+  });
+
+  it("a Your turn failure keeps Active polling; a later success draws Needs you", async () => {
+    set({ runs: [run("a", "running")] });
+    answers["/api/your-turn"] = new Error("down");
+    const { main, off } = await open();
+    expect(main.textContent).toContain("task a");
+    answers["/api/your-turn"] = turn([turnItem(approval())]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h2(main)).toContain("Needs you (1)");
+    log.length = 0;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(log).toContain("/api/runs");
+    off();
+  });
+
+  it("cleanup right after a slow first load leaves no request and no listener", async () => {
+    set({ runs: [run("a", "running")] });
+    const before = (document as any).listeners.visibilitychange?.length ?? 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const inner = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => { await gate; return inner(url, init); };
+    const pending = ui.renderAdminHome(new FakeElement("main"), {});
+    await flush();
+    release();
+    const off = await pending;
+    off();
+    log.length = 0;
+    for (const fn of [...((document as any).listeners.visibilitychange ?? [])]) fn();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(log).toEqual([]);
+    expect((document as any).listeners.visibilitychange?.length ?? 0).toBe(before);
+  });
+
+  it("a hidden tab makes no requests", async () => {
+    set({ runs: [run("a", "running")] });
+    (document as any).visibilityState = "hidden";
+    const { main, off } = await open();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(log).toEqual([]);
+    expect(main.all("div").some((d) => d.attrs.class?.startsWith("skeleton"))).toBe(true);
+    off();
+  });
+
+  it("gives every Tab stop a unique data-focus, also for records with the same key", async () => {
+    const dup = (text: string) => nextStep("watcher_error", { repo: "o/b" }, { error: text } as any);
+    set({
+      turn: turn([turnItem(approval())]),
+      runs: [...["a", "b", "c", "d", "e", "f", "g"].map((id) => run(id, "running")), run("z", "done", { finishedAt: iso(1) })],
+      health: { ok: false, summary: "3", problems: [nextStep("failed", { repo: "o/a", issue: 7, runId: "r7" }), dup("x"), dup("y")], monitorFindings: { open: 1 } },
+      clarity: { sampled: false },
+    });
+    const { main, off } = await open(new FakeElement("div"));
+    const d = main.all("details").find((x) => x.all("summary")[0]?.textContent === "Metrics")!;
+    d.setAttribute("open", "");
+    d.fire("toggle");
+    await flush();
+    const stops = [...main.all("a").filter((a) => a.attrs.href), ...main.all("button"), ...main.all("summary")];
+    const names = stops.map((e) => e.attrs["data-focus"]);
+    expect(names.every((n) => !!n)).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+    for (const n of ["home-findings", "home-metrics", "home-all-metrics"]) expect(names).toContain(n);
+    expect(names.some((n) => n?.startsWith("home-problem-"))).toBe(true);
+    off();
   });
 });

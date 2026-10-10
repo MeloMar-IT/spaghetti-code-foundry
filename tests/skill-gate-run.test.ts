@@ -6,8 +6,10 @@ import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { liveLogFile, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
+import { readPlanRecords } from "../src/skills/plan-record.js";
 import { discoverSkills, pinSkill } from "../src/skills/registry.js";
-import { planRunSkills, recheckRunSkills } from "../src/skills/run-plan.js";
+import { planHashOf } from "../src/skills/run-lock.js";
+import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../src/skills/run-plan.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 let tmp: string;
@@ -42,6 +44,64 @@ const pin = (c: Config, id: string) => {
 const line = (ids: string[]) =>
   `SKILL_REQUEST: ${JSON.stringify({ version: 1, skills: ids.map((id) => ({ id, reason: "needed", evidence: ["issue:asks for it"] })) })}`;
 
+describe("flow skill modes (run plan)", () => {
+  const steps = [{ id: "risk_gate", type: "shell", run: "echo # $FACTORY_TOOLS/skill-request" }, { id: "impl", type: "claude", prompt: "x" }];
+  const mk = (skills: unknown, over: Record<string, unknown> = {}): RunSummary =>
+    ({ flowDef: { steps, ...(skills ? { skills } : {}) }, repo, workdir: repo, history: [{ id: "risk_gate", type: "shell", ok: true, visit: 1, output: line(["nope-skill"]) + "\n" }], ...over }) as unknown as RunSummary;
+  const noop = () => {};
+
+  it("reads the mode and falls back to planned", () => {
+    expect(flowSkillSource(undefined)).toEqual({ mode: "planned" });
+    expect(flowSkillSource({})).toEqual({ mode: "planned" });
+    expect(flowSkillSource({ skills: { mode: "recorded" } })).toEqual({ mode: "planned" });
+    expect(flowSkillSource({ skills: { mode: "explicit" } })).toEqual({ mode: "planned" });
+    expect(flowSkillSource({ skills: { mode: "off" } })).toEqual({ mode: "off" });
+    const a = flowSkillSource({ skills: { mode: "explicit", ids: ["a", "b"] } });
+    expect(a).toMatchObject({ mode: "explicit", request: { skills: [{ id: "a", reason: "named by the flow", evidence: [] }, { id: "b" }] } });
+    const same = flowSkillSource({ skills: { mode: "explicit", ids: ["a", "b"] } });
+    const other = flowSkillSource({ skills: { mode: "explicit", ids: ["b", "a"] } });
+    expect((same as { planHash: string }).planHash).toBe((a as { planHash: string }).planHash);
+    expect((other as { planHash: string }).planHash).not.toBe((a as { planHash: string }).planHash);
+  });
+
+  it("off: no check, no registry read, even after a stored stop", () => {
+    const discover = vi.fn(() => discoverSkills(cfg().skills));
+    const run = mk({ mode: "off" }, { skillPlan: { action: "stop", gate: "risk_gate", checks: 1 } });
+    expect(planRunSkills(run, cfg({}, ["x"]), "risk_gate", noop, { discover })).toBeUndefined();
+    expect(recheckRunSkills(run, cfg(), "impl", noop, { discover })).toBeUndefined();
+    expect(startRunSkills(run, cfg(), noop, { discover })).toBeUndefined();
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("explicit: checks at the start, ignores a plan gate, checks again on resume", () => {
+    const id = uid("exp");
+    const c = cfg();
+    const run = mk({ mode: "explicit", ids: [id] });
+    const reason = startRunSkills(run, c, noop);
+    expect(reason).toMatch(/^skills not resolved:/);
+    const planned = mk(undefined, { history: [{ id: "risk_gate", type: "shell", ok: true, visit: 1, output: line([id]) + "\n" }] });
+    expect(planRunSkills(planned, c, "risk_gate", noop)).toBe(reason);
+    expect(planRunSkills(run, c, "risk_gate", noop)).toBeUndefined();
+    expect(run.skillPlan).toMatchObject({ gate: "(flow)", action: "stop", checks: 1 });
+    install(id);
+    pin(c, id);
+    expect(recheckRunSkills(run, c, "risk_gate", noop)).toBeUndefined();
+    expect(run.skillPlan).toMatchObject({ gate: "(flow)", checks: 2 });
+    expect(run.skillPlan!.action).not.toBe("stop");
+    expect(recheckRunSkills(run, c, "impl", noop)).toBeUndefined();
+    expect(run.skillPlan!.checks).toBe(2);
+  });
+
+  it("explicit: warn policy goes on; other modes do nothing at the start", () => {
+    const logs: string[] = [];
+    const run = mk({ mode: "explicit", ids: ["some-style"] });
+    expect(startRunSkills(run, cfg({ unknown: "warn" }), (m) => logs.push(m))).toBeUndefined();
+    expect(logs[0]).toMatch(/^⚠ skill some-style \[unknown\]/);
+    expect(startRunSkills(mk(undefined), cfg(), noop)).toBeUndefined();
+    expect(startRunSkills(mk({ mode: "off" }), cfg(), noop)).toBeUndefined();
+  });
+});
+
 describe("planRunSkills and recheckRunSkills", () => {
   const flowDef = { steps: [{ id: "risk_gate", type: "shell", run: "echo # $FACTORY_TOOLS/skill-request" }, { id: "implement", type: "shell", run: "true" }] };
   const mk = (ids: string[] | null, over: Record<string, unknown> = {}): RunSummary =>
@@ -57,6 +117,51 @@ describe("planRunSkills and recheckRunSkills", () => {
     const discover = vi.fn(registry);
     expect(planRunSkills(mk(["a"]), cfg(), "implement", noop, { discover })).toBeUndefined();
     expect(discover).not.toHaveBeenCalled();
+  });
+
+  describe("at plan_check", () => {
+    const withCarry = (ids: string[], over: Record<string, unknown> = {}) =>
+      mk(null, {
+        flowDef: { steps: [{ id: "plan_check", type: "shell", run: "x" }, { id: "implement", type: "shell", run: "true" }] },
+        skillCarry: { request: { version: 1, skills: ids.map((id) => ({ id, reason: "needed", evidence: [] })) }, planHash: "p", lockHash: "p", commentId: "1", changes: [], at: "" },
+        ...over,
+      });
+
+    it("resolves the ids of the carry", () => {
+      const id = uid();
+      install(id);
+      pin(cfg(), id);
+      const run = withCarry([id]);
+      expect(planRunSkills(run, cfg(), "plan_check", noop)).toBeUndefined();
+      expect(run.skillPlan).toMatchObject({ gate: "plan_check", checks: 1, action: "continue" });
+      expect(run.skillPlan?.planHash).toBeUndefined();
+    });
+
+    it("stops for an unknown skill under unknown: stop", () => {
+      const run = withCarry(["nope-skill"]);
+      expect(planRunSkills(run, cfg({ unknown: "stop" }), "plan_check", noop)).toMatch(/^skills not resolved/);
+      expect(run.skillPlan).toMatchObject({ action: "stop", gate: "plan_check" });
+    });
+
+    it("without a carry it clears a stale plan", () => {
+      const run = withCarry([], { skillPlan: { action: "go", checks: 1 } });
+      delete (run as { skillCarry?: unknown }).skillCarry;
+      expect(planRunSkills(run, cfg(), "plan_check", noop)).toBeUndefined();
+      expect("skillPlan" in run).toBe(false);
+    });
+
+    it("recheck: runs the check again at plan_check, and after it with and without a carry", () => {
+      const stopped = (carry: boolean) => {
+        const run = withCarry(["nope-skill"], { skillPlan: { action: "stop", gate: "plan_check", checks: 1, selected: [], unresolved: [], warnings: [], reason: "r", version: 1, role: "coder", at: "" } });
+        if (!carry) delete (run as { skillCarry?: unknown }).skillCarry;
+        return run;
+      };
+      expect(recheckRunSkills(stopped(true), cfg(), "plan_check", noop)).toBeUndefined();
+      const again = stopped(true);
+      expect(recheckRunSkills(again, cfg({ unknown: "stop" }), "implement", noop)).toMatch(/^skills not resolved/);
+      expect(again.skillPlan?.checks).toBe(2);
+      expect(recheckRunSkills(stopped(false), cfg(), "implement", noop)).toMatch(/could not be read again/);
+    });
   });
 
   it("an empty request without include does not read the registry and clears a stale plan", () => {
@@ -78,6 +183,13 @@ describe("planRunSkills and recheckRunSkills", () => {
     const reason = planRunSkills(run, cfg(), "risk_gate", noop, { discover: () => { throw new Error("boom"); } });
     expect(reason).toBe("skills not resolved: the skills could not be checked");
     expect(run.skillPlan).toMatchObject({ action: "stop", gate: "risk_gate", checks: 1 });
+  });
+
+  it("keeps the hash of the gate output it checked", () => {
+    const run = mk(["a"]);
+    planRunSkills(run, cfg(), "risk_gate", noop, { discover: () => { throw new Error("boom"); } });
+    const gate = run.history.find((h) => h.id === "risk_gate")!;
+    expect(run.skillPlan!.planHash).toBe(planHashOf(gate.output));
   });
 
   it("counts the checks and logs warnings and the stop", () => {
@@ -244,5 +356,46 @@ describe("a run with skills in its plan", () => {
     expect(done.status).toBe("succeeded");
     expect(done.skillPlan).toMatchObject({ action: "continue" });
     expect(count(done, "post_plan")).toBe(2);
+  });
+});
+
+describe("a run that posts a plan record", () => {
+  const issueOf = () => String(100000 + ++n);
+  const flow = (ids: string[]) =>
+    parseFlow(
+      [
+        "name: t", "workspace: empty", "steps:",
+        "  - id: post_plan", "    type: shell", "    run: |",
+        "      echo 'https://github.com/acme/app/issues/5#issuecomment-9'",
+        `      echo 'PLAN_COMMENT_SHA256: sha256:${"d".repeat(64)}'`,
+        `      echo '${line(ids)}'`, "      # $FACTORY_TOOLS/skill-request $FACTORY_TOOLS/plan-comment",
+        "    on_success: end",
+        "  - id: implement", "    type: shell", "    run: echo done > marker.txt",
+      ].join("\n"),
+    );
+  const start = (ids: string[], c: Config, vars: Record<string, string>) => runFlow(flow(ids), { task: "t", repo, runsDir, claudeBin, config: c, vars });
+
+  it("writes the record even when the skills of the plan then stop the run", async () => {
+    const issue = issueOf();
+    const r = await start(["db-migrations"], cfg(), { github_repo: "acme/app", issue });
+    expect(r.status).toBe("stopped");
+    expect(r.reason).toMatch(/^skills not resolved: /);
+    expect(r.reason).not.toContain("plan record");
+    const rec = readPlanRecords("acme/app", issue);
+    expect(rec !== "invalid" && rec.records.map((x) => [x.runId, x.commentId])).toEqual([[r.runId, "9"]]);
+  });
+
+  it("stops at post_plan when the record cannot be written, with skills in play", async () => {
+    const r = await start(["db-migrations"], cfg(), { github_repo: "owner/repo/x", issue: issueOf() });
+    expect(r.status).toBe("stopped");
+    expect(r.reason).toMatch(/^skills not resolved: the plan record could not be written \(/);
+    expect(r.state.next).toBe("post_plan");
+    expect(r.skillPlan).toMatchObject({ action: "stop", gate: "post_plan" });
+  });
+
+  it("only warns when the record cannot be written and no skills are in play", async () => {
+    const r = await start([], cfg(), { github_repo: "owner/repo/x", issue: issueOf() });
+    expect(r.status).toBe("succeeded");
+    expect(readFileSync(liveLogFile(r.runDir), "utf8")).toContain("⚠ plan record not written: ");
   });
 });

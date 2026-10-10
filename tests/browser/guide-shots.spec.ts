@@ -72,7 +72,7 @@ for (const shot of GUIDE ? SHOTS : []) {
       await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|system)$/);
       if (shot.path.startsWith("/#/flows/")) {
         // the flow page validates after it renders, and a first render can be replaced before its check ends: reload once if the chip is missing
-        const chip = page.locator("#main .status.ok", { hasText: "✓ valid" });
+        const chip = page.locator("#main .flow-validation.ok", { hasText: "Valid" });
         if (!(await chip.waitFor({ timeout: 5_000 }).then(() => true, () => false))) await page.reload({ waitUntil: "domcontentloaded" });
         await chip.waitFor({ timeout: 15_000 });
       }

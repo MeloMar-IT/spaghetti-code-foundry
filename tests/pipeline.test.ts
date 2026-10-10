@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dataHome } from "../src/auth/store.js";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
@@ -7,6 +8,7 @@ import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { explainError } from "../src/errors.js";
 import { commentFirst, commentText, firstLine, nextStep, reportFirst } from "../src/next-step.js";
+import { planBodyHashOf, readPlanRecords } from "../src/skills/plan-record.js";
 import { planSkillRequest } from "../src/skills/request.js";
 import { userRun } from "../src/server/user-view.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -30,6 +32,7 @@ describe("label-driven issue pipeline", () => {
   const runsDir = () => join(gh.tmp, "runs");
 
   beforeEach(() => {
+    rmSync(join(dataHome(), "skill-plans"), { recursive: true, force: true }); // plan records of earlier cases
     gh = fakeGithub();
     scheduler = new Scheduler({ runsDir: runsDir(), config: () => config, claudeBin });
     for (const k of ["FAKE_IMPL_BUG", "FAKE_FIX_NOOP", "FAKE_CODEX_VERDICT", "FAKE_ISSUE_PLAN", "FAKE_REVISE", "FAKE_REVISE_COST", "FAKE_SKILL_REQUEST"]) delete process.env[k];
@@ -132,6 +135,25 @@ describe("label-driven issue pipeline", () => {
     };
     const markers = (text: string) => text.split("\n").filter((l) => l.startsWith("SKILL_REQUEST:"));
 
+    it("carries the plan's request into the coding run, from the Foundry's record", async () => {
+      process.env.FAKE_ISSUE_PLAN = DRAFT("a-skill");
+      const { comment, out } = await planned();
+      const link = out.split("\n").find((l) => /#issuecomment-\d+$/.test(l.trim()))!.trim();
+      process.env.FAKE_GH_COMMENTS_BY_ISSUE = JSON.stringify({ "acme/app#5": { comments: [{ body: comment, url: link, viewerDidAuthor: true }] } });
+      try {
+        issues([5, ["Factory_code", "Factory_planned"]]);
+        await codeWatcher().tick();
+        await settle();
+      } finally {
+        delete process.env.FAKE_GH_COMMENTS_BY_ISSUE;
+      }
+      const run = runOf("issue-code-daily", "5")!;
+      expect(run.reason).toBeUndefined();
+      expect(run.status).toBe("succeeded");
+      expect(run.skillCarry?.request.skills.map((s) => s.id)).toEqual(["a-skill"]);
+      expect(run.skillLock?.planHash).toBe(run.skillCarry?.lockHash);
+    });
+
     it("replaces the draft's request with the revision's", async () => {
       process.env.FAKE_CODEX_VERDICT = "Needs work.\nVERDICT: CHANGES";
       process.env.FAKE_ISSUE_PLAN = DRAFT("a-skill");
@@ -143,6 +165,13 @@ describe("label-driven issue pipeline", () => {
       expect(markers(out)).toEqual([`SKILL_REQUEST: ${REQ("b-skill")}`]);
       expect(out).not.toContain("a-skill");
       expect(planSkillRequest(run)?.skills.map((s) => s.id)).toEqual(["b-skill"]);
+      expect(out).toMatch(/^PLAN_COMMENT_SHA256: sha256:[0-9a-f]{64}$/m);
+      expect(out.trimEnd().split("\n").at(-1)).toMatch(/^SKILL_REQUEST: /);
+      const stored = readPlanRecords("acme/app", "5");
+      if (stored === "invalid") throw new Error("the plan records are invalid");
+      const record = stored.records.find((r) => r.runId === run.runId);
+      expect(record?.request.skills[0]?.id).toBe("b-skill");
+      expect(record?.commentSha256).toBe(planBodyHashOf(comment));
     });
 
     it("uses the empty request when a finished revision has no line, not the draft's", async () => {
@@ -242,7 +271,7 @@ describe("label-driven issue pipeline", () => {
     expect(run.reason).toBeUndefined();
     expect(run.status).toBe("succeeded");
     const ids = run.history.map((h) => h.id);
-    expect(ids).toEqual(["pull_ticket", "daily_branch", "baseline_tests", "implement", "guard", "run_tests", "review_1", "address_review_1",
+    expect(ids).toEqual(["pull_ticket", "daily_branch", "plan_check", "baseline_tests", "implement", "guard", "run_tests", "review_1", "address_review_1",
       "run_tests_1", "review_2", "address_review_2", "run_tests_2", "docs", "final_guard", "commit", "push", "report"]);
     expect(run.history.find((h) => h.id === "review_1")!.agent).toBe("codex:openai");
     expect(run.history.find((h) => h.id === "implement")!.agent).toBe("claude:anthropic:claude-sonnet-5-5");

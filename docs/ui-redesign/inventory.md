@@ -21,8 +21,8 @@ The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 
 | `#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | both displays | Find or start a refinement session | New session | Shares the renderer with the user display via `{ admin }`; 9 buttons in one module |
 | `#/refinement/:id` | — | `ui/refinement.js`, `refinement-draft.js` (709 lines), `-talk.js`, `-suggest.js`, `-ready.js`, `-impact.js`, `-remarks.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | both displays | Turn an idea into story drafts and publish them | Ask the architect, answer, edit drafts | Longest page: 7 modules, 6 modal call sites, 6 native confirms; `refinement-draft.js` alone is 709 lines |
 | `#/flows` | Flows | `ui/app.js` | `welcome()` | `api-flows.ts` (list), `api-admin.ts` (info) | admin display only | Start a flow: draft with Claude or blank; also the default page | Draft flow with Claude / Blank flow | The same two buttons are in the sidebar on every admin page (`app.js:78-79`) |
-| `#/flows/:name` | — | `ui/app.js`, `ui/editor.js`, `ui/graph.js`, `ui/step-types.js`, `ui/fields.js` | `openFlow` | `api-flows.ts`, `api-runs.ts` (run), `api-admin.ts` (info) | admin display only | Edit, validate, save and run one flow | Save (also Ctrl/Cmd+S, `app.js:432`) | `editor.js` 18 and `step-types.js` 5 inline styles; leaving with unsaved changes asks by native `confirm` (`app.js:90`) |
-| `#/new` | — | `ui/app.js` | `openNew` | `api-flows.ts` | admin display only | Write a new flow | Save | Nav highlights Flows (`app.js:390`); same editor as `#/flows/:name` |
+| `#/flows/:name` | — | `ui/app.js` (route), `ui/flow-page.js`, `ui/flow-shell.js`, `ui/flow-state.js`, `ui/editor.js`, `ui/graph.js`, `ui/step-types.js`, `ui/fields.js` | `openFlow` | `api-flows.ts`, `api-runs.ts` (run), `api-admin.ts` (info) | admin display only | Edit, validate, save and run one flow | Save (also Ctrl/Cmd+S, `app.js:432`) | `editor.js` 18 and `step-types.js` 5 inline styles; leaving with unsaved changes asks by native `confirm` (`app.js:90`) |
+| `#/new` | — | `ui/app.js` (route), `ui/flow-page.js`, `ui/flow-shell.js`, `ui/flow-state.js` | `openNew` | `api-flows.ts` | admin display only | Write a new flow | Save | Nav highlights Flows (`app.js:390`); same editor as `#/flows/:name` |
 | `#/library` | Library | `ui/library.js` | `renderLibrary` | `api-flows.ts` (blocks) | admin display only | Browse, save and delete reusable step blocks | Insert from library / Save step as block | A third entry point to flow editing (F8); 2 native confirms |
 | `#/start` | Start work | `ui/user/start.js` | `renderStart` with `admin: true` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | both displays | Start a run of a published flow on a repository | Start | The user page drawn for the admin (`app.js:410-417`); needs a published flow (`NO_FLOWS_ADMIN`) |
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
@@ -35,6 +35,7 @@ The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:41` (`problems.js:88`) |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
+| `#/models/:name` | — | `ui/models.js` | `renderModelDetail` | `api-admin.ts` (config, providers) | admin display only | See, test, change or remove one provider | Save provider, Remove provider | Remove asks first; built-in providers are saved as an override |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
 | `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
@@ -97,9 +98,9 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/flows/:name` | "No steps yet" in the graph (`graph.js:37`) | errors box; validation errors in `ui.errors` | none |
 | `#/new` | blank editor | errors box | none |
 | `#/library` | none found | errors box | none |
-| `#/start` | `NO_FLOWS_ADMIN`, `NO_REPOS` | errors box | none |
+| `#/start` | `NO_FLOWS_ADMIN` with a flow-editor link, `NO_REPOS` (`user/start.js`, #436) | skeleton, then `errorState` with Retry, `permissionState` on 403; a failing repository list only in step 2; a failed Start is an alert under the form | none |
 | `#/runs` | "No runs yet. Open a flow and press ▶ Run." (`runs.js:90`) | errors box | poll 30 s (`runs.js:93`) |
-| `#/runs/:id` | "No steps" in the graph | errors box; stream loss gives a toast (`runs.js:345`) | event stream |
+| `#/runs/:id` | "No steps" in the graph | skeleton, `NOT_FOUND`, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; transcript and diff failures give an inline `errorState` with Retry | event stream |
 | `#/repos` | "No repositories yet..." (`repos.js:395`) | errors box | none |
 | `#/all-repos` | "No repositories yet." (`admin-repos.js:222`) | errors box | cleanup returned |
 | `#/credentials` | "No stored credentials yet." (`admin-credentials.js:36`) | errors box | cleanup returned |
@@ -108,13 +109,14 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/settings` | no empty state | errors box | none |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
 | `#/models` | none found | errors box | none |
+| `#/models/:name` | "This provider is not set up." | `errorState` with Retry | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
-| `/user/#/start` | `NO_FLOWS` and `NO_REPOS` | errors box | none |
+| `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
-| `/user/#/runs/:id` | `NOT_FOUND` card, `NO_STEPS`, `NO_CHANGES` | card with the error and a link back (`user/runs.js:339`) | stream and poll 30 s (`user/runs.js:487`) |
+| `/user/#/runs/:id` | `NOT_FOUND` with a link back, `NO_STEPS`, `NO_CHANGES` | skeleton, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; a diff failure gives an inline `errorState` with Retry | stream and poll 30 s |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
 | `/user/#/refinement` | as admin | errors box | none found |
 | `/user/#/refinement/:id` | as admin | errors box | none found |
@@ -145,6 +147,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/settings` | Form | Probably fits |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
+| `#/models/:name` | Cards in one column | Same |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
 | `#/users` | Table not in `.table-box` | Probably overflows |
 | `#/audit` | Table not in `.table-box` | Probably overflows |

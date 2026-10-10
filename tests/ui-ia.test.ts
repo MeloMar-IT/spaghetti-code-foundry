@@ -117,6 +117,10 @@ describe("resolve for an admin", () => {
     expect(crumbs("#/credentials")).toEqual([["Administration", "#/users"], ["Credentials", null]]);
     expect(crumbs("#/maintenance")).toEqual([["Administration", "#/users"], ["Maintenance", null]]);
     expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
+    expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/users"], ["Models", "#/models"], ["ollama", null]]);
+    expect(r("#/models/ollama")).toMatchObject({ back: "#/models", title: "ollama", dest: "administration" });
+    expect(r("#/models/ollama").page.id).toBe("model");
+    expect(r("#/models/my%2Dproxy")).toMatchObject({ hash: "#/models/my%2Dproxy", arg: "my-proxy" });
     expect(crumbs("#/flows")).toEqual([]);
     expect(crumbs("#/flows/x")).toEqual([["Flows", "#/flows"], ["x", null]]);
     expect(crumbs("#/library")).toEqual([["Flows", "#/flows"], ["Library", null]]);
@@ -157,7 +161,8 @@ describe("resolve for a user", () => {
   });
 
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    expect(auth.isUserHash("#/models/ollama")).toBe(false);
   });
 
   it("has no link to the admin-only pages in the user HTML", () => {

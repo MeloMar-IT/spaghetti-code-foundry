@@ -2,26 +2,28 @@
 // answers and show its sentences when it refuses. Relative imports, so a test can load them.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
-import { aiProps, h, modal, mount, timeAgo, toast } from "../dom.js";
-import { nextBlock, nextStatus, whenParts, whoClass } from "../next.js";
+import { h, modal, mount, timeAgo, toast } from "../dom.js";
+import { nextStatus, whenParts, whoClass } from "../next.js";
+import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { createLog } from "../run-output.js";
-import { CAP_NOTE, RUNS_CAP, aheadText, diffView, failedStepIndex, failureCard, refinementMark, retiredLine, statusAnnouncer, stepEntry, stepRow, versionRow } from "../runs.js";
+import { skillsCard } from "../run-skills.js";
+import { dialogOpen, keepScroll, poller } from "../live.js";
+import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
+import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
+import { createTimeline } from "../run-timeline.js";
+import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer } from "../runs.js";
 
-export const NO_RUNS = "No runs yet. Start work to begin.";
-export const NOT_FOUND = "This run was not found. It may have been removed.";
-export const NO_STEPS = "No steps finished yet.";
+export { NO_RUNS, NOT_FOUND } from "../run-states.js";
+export { NO_STEPS } from "../run-tabs.js";
 export const NO_CHANGES = "No changes yet.";
 const REFRESH_MS = 30_000;
 export const NO_ANSWER = "Write your answer first.";
 export const ANSWER_SENT = "Answer sent — continuing";
 const NOT_CANCELLED = "The run could not be cancelled. It may have just finished.";
 
-/** The first line of a task. */
-export const firstLine = (text) => String(text ?? "").split(/\r?\n/)[0].trim();
-
-/** "owner/name#7", "owner/name", or "" when there is no repository. */
-export const workText = (repo, issue) => (repo ? (issue ? `${repo}#${issue}` : repo) : "");
+// The header of the run page lives in ui/run-header.js; the admin page shares it.
+export { firstLine, workText, runActions };
 
 const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
 const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
@@ -41,18 +43,6 @@ export function myRunsEntries(runs, pending) {
   const alone = [...jobs.values()].filter((p) => !listed.has(p.runId)).map((job) => ({ run: null, job }));
   const all = [...byRun, ...alone].sort((x, y) => when(y) - when(x));
   return [...all.filter(isYou), ...all.filter((e) => !isYou(e))];
-}
-
-/** The buttons of a run page, in order: "approve", "reject", "retry", "cancel". A refinement run is continued from its session. */
-export function runActions(s, queued = false) {
-  const out = [];
-  const own = !s.refinement && s.next?.kind !== "issue_closed" && !s.next?.retired;
-  // A run that is queued again can only be cancelled: the server refuses the rest.
-  if (queued || s.status === "queued") return ["cancel"];
-  if (s.status === "waiting" && own) out.push("approve", "reject");
-  if (["failed", "stopped", "cancelled"].includes(s.status) && own) out.push("retry");
-  if (s.status === "running" || s.status === "waiting") out.push("cancel");
-  return out;
 }
 
 /** One card of the list: a link to the run, its status, what happens next, and Remove for a queued run. */
@@ -133,85 +123,78 @@ export async function decisionDialog(kind, send) {
 
 // ── My runs ──
 
-/** The My runs page; refreshes every 30 seconds. Returns a cleanup. */
+/** The My runs page; refreshes every 30 seconds through the poller and never rejects. Returns a cleanup. */
 export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo } = {}) {
-  let gone = false;
-  let entries = [];
-  let capped = false;
-  let seq = 0;
+  let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
+  let data = null;
+  let asking = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
+  let live;
   // Only the repository filter counts here: a user never filters by owner.
   let filters = query.repo ? { repo: query.repo } : {};
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
-  let dialogOpen = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
+  const refresh = () => live.refresh();
+  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
+  const states = runsLiveStates({ body: list, label: "Loading your runs", rows: 4, shape: "cards", what: "Could not load your runs.", denied: "You are not allowed to see your runs.", retry: refresh, focus: "my-runs" });
 
   const setFilters = (next) => {
     filters = next;
     go(withQuery("#/runs", filters));
-    draw();
+    render();
   };
   const clear = () => setFilters({});
-  const draw = () => {
-    if (dialogOpen) return;
+  const render = () => {
+    if (asking || !data) return;
+    const { runs, queue } = data;
+    const entries = myRunsEntries(runs, queue.ok ? queue.value?.pending : []);
     const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
-    const note = filters.repo && capped ? CAP_NOTE : null;
+    const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
     mount(list,
+      states.alert,
       filterBar(filters, { onRemove: () => setFilters({}), onClear: clear }),
+      queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." }),
       shown.length
         ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
-        : filters.repo
-          ? filterEmpty("runs", filters, { note, onClear: clear })
-          : h("div", { class: "empty" }, h("p", {}, NO_RUNS), h("a", { class: "btn primary", "data-focus": "start", href: "#/start" }, "Start work")));
+        : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns(),
+      states.note);
   };
-  async function load() {
-    const mine = ++seq;
-    const [runs, queue] = await Promise.all([a.runs(), a.queue()]);
-    if (gone || mine !== seq) return;
-    entries = myRunsEntries(runs, queue?.pending);
-    capped = Array.isArray(runs) && runs.length >= RUNS_CAP;
-    draw();
-  }
   async function remove(job) {
     alertEl.textContent = "";
-    dialogOpen = true;
+    asking = true;
     let yes;
-    try {
-      yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it");
-    } finally {
-      dialogOpen = false;
-    }
-    if (!yes) return draw(); // the newest answer that came while the dialog was open
+    try { yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it"); } finally { asking = false; }
+    if (!yes) return render(); // an answer that came while the dialog was open is drawn by the poller
     try {
       const r = await a.cancelRun(job.runId);
       if (r?.cancelled === false) alertEl.textContent = NOT_CANCELLED;
       else toast("Removed");
     } catch (e) {
       alertEl.textContent = errorText(e);
-      return draw();
+      return render();
     }
-    await load().catch((e) => { alertEl.textContent = errorText(e); });
+    gen++; // an answer asked before the cancel still shows the job
+    await refresh();
   }
 
-  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
-  await load();
-  const timer = setInterval(() => load().catch(() => {}), REFRESH_MS);
-  return () => {
-    gone = true;
-    clearInterval(timer);
-  };
+  live = poller({
+    load: async () => {
+      const mine = ++gen;
+      const [runs, queue] = await Promise.all([a.runs(), part(a.queue())]).catch((e) => { if (mine === gen) throw e; return []; });
+      return mine === gen ? { runs, queue } : undefined;
+    },
+    draw: (next) => { data = next; keepScroll(list, render); },
+    every: REFRESH_MS,
+    onState: states.onState,
+    hold: () => asking || dialogOpen(),
+  });
+  await live.ready;
+  return () => live.stop();
 }
 
 // ── The run page ──
 
 /** A step as the user page draws it: no output, never a model name. */
-const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, type: s.type === "claude" ? "agent" : s.type });
-
-const LABELS = {
-  approve: { text: "Approve", cls: "primary" },
-  reject: { text: "Reject", cls: "danger" },
-  retry: { text: "Retry", cls: "primary", title: "Continue at the step where it stopped" },
-  cancel: { text: "Cancel", cls: "danger" },
-};
+const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, startedAt: s.startedAt, parent: s.parent, type: s.type === "claude" ? "agent" : s.type });
 
 /** The run page. Returns a cleanup that stops the stream and the timer. */
 export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {
@@ -219,51 +202,28 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let job = null;
   let runError = null;
   let queueError = null;
+  let starting = false; // the queue lists the run as active: it has no record yet, the stream sends it
   let gone = false;
   let busy = false;
   let acting = false;
   let dialogOpen = false;
-  let tab = "log";
+  let drawn = null; // the summary the tabs last saw
   let runSeq = 0;
   let queueSeq = 0;
-  let tabSeq = 0;
 
   const head = h("div");
+  // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to My runs" });
+  const taskBox = h("div");
+  const skillsBox = h("div");
+  let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
+  let stateKey = null; // the state drawn in `head`: an unchanged one is not drawn again
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const log = createLog();
   const status = statusAnnouncer();
-  const tabBody = h("div");
-  const tabButtons = [];
   const tabsBox = h("div");
 
   const setAlert = (text) => { alertEl.textContent = text; };
-
-  async function showTab(t) {
-    tab = t;
-    const mine = ++tabSeq;
-    for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, log.el);
-    if (t === "steps") {
-      const steps = summary?.history ?? [];
-      return mount(tabBody, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, NO_STEPS));
-    }
-    if (!summary) return mount(tabBody, h("p", { class: "muted" }, NO_CHANGES));
-    mount(tabBody, h("p", { class: "muted" }, "Loading the changes…"));
-    let view;
-    try {
-      view = diffView(await a.diff(runId), { none: NO_CHANGES });
-    } catch (e) {
-      view = h("p", { class: "status bad", role: "alert" }, errorText(e));
-    }
-    if (!gone && tab === t && mine === tabSeq) mount(tabBody, view);
-  }
-
-  for (const [k, label] of [["log", "Log"], ["steps", "Steps"], ["diff", "Changes"]]) {
-    const b = h("button", { type: "button", "data-tab": k, class: k === tab ? "on" : null, onClick: () => showTab(k) }, label);
-    tabButtons.push([k, b]);
-  }
-  mount(tabsBox, h("div", { class: "seg tabs mb-12" }, tabButtons.map(([, b]) => b)), tabBody);
-  mount(tabBody, log.el);
 
   // The answer form is built once and lives outside `head`, so a redraw keeps the text, the caret and the focus.
   let sending = false;
@@ -284,30 +244,64 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
-  mount(main, head, alertEl, status.el, answerBox, tabsBox);
+  const timeline = createTimeline({ runId, admin: false, a });
+  const tabs = createTabs([
+    { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
+    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update({ ...s, history: (s.history ?? []).map(plain) }) },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
+    { id: "evidence", label: "Evidence", ...evidencePanel() },
+    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+  ], { initial: "overview" });
+  mount(tabsBox, tabs.el);
+  // The stream is made here, started below. A closed stream asks the server: a refusal or a missing run ends the view.
+  const stream = runStream({
+    open: () => a.events(runId),
+    on: {
+      update: (e) => {
+        let s;
+        try {
+          s = JSON.parse(e.data).summary;
+        } catch {
+          return;
+        }
+        if (!s || typeof s !== "object") return;
+        if (staleAfterSend(s)) return;
+        runSeq++;
+        summary = s;
+        runError = null;
+        draw();
+        if (job !== null) refresh();
+      },
+      log: (e) => {
+        let line;
+        try {
+          line = JSON.parse(e.data).line;
+        } catch {
+          return;
+        }
+        log.add(String(line ?? ""));
+      },
+    },
+    onLost: () => refresh(),
+    onReopen: () => log.clear(),
+  });
+  mount(main, head, stream.el, alertEl, status.el, tabsBox);
 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
 
-  const row = (k, v) => [h("dt", {}, k), h("dd", {}, v)];
-  const back = () => h("a", { class: "btn ghost", href: "#/runs", "data-focus": "back", "aria-label": "Back to My runs" }, "←");
-
-  function actionButtons(kinds) {
-    if (readOnly) return null;
-    return h("div", { class: "run-actions" }, kinds.map((k) => {
-      const l = LABELS[k];
-      const b = h("button", { type: "button", class: l.cls, title: l.title, "data-focus": `act-${k}`, onClick: () => onAction(k) }, l.text);
-      // aria-disabled, not disabled: the button keeps the focus while a call is out.
-      if (busy) b.setAttribute("aria-disabled", "true");
-      return b;
-    }));
-  }
 
   function draw() {
     if (dialogOpen) return;
     status.say(summary ?? (job ? { next: job.next } : null));
     drawHead();
     drawAnswer();
+    if (summary && summary !== drawn) {
+      const prev = drawn;
+      drawn = summary;
+      showFailedOnce(tabs, summary, prev);
+      tabs.update(summary, prev);
+    }
   }
 
   function drawAnswer() {
@@ -316,7 +310,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     mount(givenBox, given.length
       ? h("section", { class: "card run-answers", "aria-label": "Answers given" }, h("h2", {}, "Answers given"), h("ol", {}, given.map((x) => h("li", {}, String(x?.text ?? "")))))
       : null);
-    const show = !readOnly && !!s &&!!s.questions && s.canAnswer === true && job === null && s.status !== "queued";
+    const show = !readOnly && answerable(s, job);
     if (answerForm.hidden === !show) return;
     answerForm.hidden = !show;
     if (!show) answerErr.textContent = "";
@@ -356,44 +350,29 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const hasTabs = !!summary;
     tabsBox.hidden = !hasTabs;
     if (!summary && !job) {
-      const missing = runError?.status === 404 && !queueError;
-      const err = !missing && (queueError || runError);
-      return mount(head, missing
-        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
-        : err
-          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
-          : h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
+      // The error to show: none while nothing failed; a 404 of the run alone is "not found"; else the queue's failure comes first.
+      const starts = starting && runError?.status === 404; // no record yet: keep the skeleton until the stream sends the summary
+      const err = starts ? null : runError?.status === 403 || (runError?.status === 404 && !queueError) ? runError : queueError || runError;
+      mode = "state";
+      stream.el.hidden = true;
+      const key = `${runLoadKind(err)}|${err?.message ?? ""}`;
+      if (key !== stateKey) {
+        stateKey = key;
+        mount(head, runLoadState(err, { back: { href: "#/runs", label: "My runs", focus: "my-runs" }, onRetry: refresh }));
+      }
+      return;
     }
-    if (!summary) {
-      return mount(head,
-        h("div", { class: "toolbar" }, back(), h("h1", {}, "Queued run"), nextStatus(job.next, "status-help")),
-        actionButtons(runActions({ status: "queued" }, true)),
-        h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), nextBlock(job.next), job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null),
-        h("div", { class: "card mb-16" },
-          job.task ? h("p", { class: "flush pre-wrap" }, job.task) : null,
-          h("dl", { class: "meta" }, job.flow ? row("Flow", job.flow) : null, workText(job.githubRepo, job.issue) ? row("Repository", workText(job.githubRepo, job.issue)) : null)));
+    stateKey = null;
+    stream.el.hidden = false;
+    // `head` is mounted again only when it changes from one mode to the other, so the header nodes stay in the page.
+    if (mode !== "header") {
+      mode = "header";
+      mount(head, header.el, taskBox, skillsBox);
     }
-    const s = summary;
-    const failed = s.status === "failed" && s.next?.failure;
-    const queued = s.status === "queued" || job !== null;
-    const steprow = stepRow(s);
-    const work = workText(s.vars?.github_repo, s.vars?.issue);
-    mount(head,
-      h("div", { class: "toolbar" }, back(), h("h1", {}, s.flow), s.next ? nextStatus(s.next, "status-help") : null, s.refinement ? refinementMark(s.refinement, "refinement") : null),
-      actionButtons(runActions(s, job !== null)),
-      h("section", { class: "run-now", "aria-label": "Now" },
-        h("h2", {}, "Now"),
-        failed ? failureCard({ ...s, reason: undefined }, failedStepIndex(s) >= 0 ? { onStep: () => showTab("steps") } : {}) : s.next ? nextBlock(s.next) : null,
-        retiredLine(s),
-        queued && job && job.ahead > 0 ? h("p", { class: "muted" }, aheadText(job.ahead)) : null,
-        steprow ? h("dl", { class: "meta" }, steprow) : null),
-      h("div", { class: "card mb-16" },
-        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-        s.questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", s.questions) : null,
-        h("dl", { class: "meta" },
-          work ? row("Repository", work) : null,
-          s.branch ? row("Branch", s.branch) : null,
-          versionRow(s))));
+    header.update(summary, { job, busy });
+    // With a run, the task and the questions are in the Overview tab; a queued job has only its task.
+    mount(taskBox, summary || !job.task?.trim() ? null : h("div", { class: "card mb-16" }, h("p", { class: "flush pre-wrap" }, job.task)));
+    mount(skillsBox, skillsCard(summary?.skillView, { repo: summary?.vars?.github_repo }));
   }
 
   async function refresh() {
@@ -401,26 +380,33 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const mineQueue = ++queueSeq;
     const [runP, queueP] = await Promise.allSettled([a.run(runId), a.queue()]);
     if (gone) return;
+    let lostRun = false;
+    let denied = false;
     if (mineRun === runSeq) {
       if (runP.status === "fulfilled" && staleAfterSend(runP.value)) {
         // older than the answer just sent: keep what we have
       } else if (runP.status === "fulfilled") {
-        const had = summary?.history?.length;
         summary = runP.value;
         runError = null;
-        if (tab === "steps" && had !== summary?.history?.length) showTab("steps");
       } else {
         runError = runP.reason;
+        const status = Number(runError?.status) || 0;
+        // A refusal is the answer: the run is not shown any more (a 404 only when the stream was lost, as a queued run has no record).
+        if (status === 403) { summary = null; job = null; denied = true; }
+        else if (status === 404 && stream.down()) lostRun = true;
       }
     }
     if (mineQueue === queueSeq) {
       if (queueP.status === "fulfilled") {
         job = (queueP.value?.pending ?? []).find((p) => p.runId === runId) ?? null;
+        starting = (queueP.value?.active ?? []).some((p) => p?.runId === runId);
         queueError = null;
       } else {
         queueError = queueP.reason;
       }
     }
+    if (denied && mineRun === runSeq) { summary = null; job = null; }
+    else if (lostRun && !job && !queueError && !starting) summary = null;
     draw();
   }
 
@@ -473,45 +459,16 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     }
   }
 
-  const es = a.events(runId);
-  es.addEventListener("update", (e) => {
-    let s;
-    try {
-      s = JSON.parse(e.data).summary;
-    } catch {
-      return;
-    }
-    if (!s || typeof s !== "object") return;
-    if (staleAfterSend(s)) return;
-    runSeq++;
-    const had = summary?.history?.length;
-    summary = s;
-    runError = null;
-    draw();
-    if (tab === "steps" && had !== s.history?.length) showTab("steps");
-    if (job !== null) refresh();
-  });
-  es.addEventListener("log", (e) => {
-    let line;
-    try {
-      line = JSON.parse(e.data).line;
-    } catch {
-      return;
-    }
-    log.add(String(line ?? ""));
-  });
-  es.onerror = () => {
-    // A stream is not a fetch: in a preview a closed stream is checked with a GET, which shows a 403 when the view has ended.
-    if (es.readyState === 2 && readOnly) return void refresh();
-    if (es.readyState === 2 && summary) toast("Lost connection to the run stream", "error");
-  };
-
   draw();
+  stream.start();
   refresh();
   const timer = setInterval(() => { if (job) refresh(); }, REFRESH_MS);
+  // The times in the header move on even when the stream sends only pings.
+  const clock = setInterval(() => { if (mode === "header" && !dialogOpen) header.update(summary, { job, busy }); }, 60_000);
   return () => {
     gone = true;
     clearInterval(timer);
-    es.close();
+    clearInterval(clock);
+    stream.close();
   };
 }

@@ -210,8 +210,8 @@ export function showError(line, message, { fields = [], field } = {}) {
 /** The key of the first [RegExp, key] pair that matches the message; undefined when none does. */
 export const fieldFor = (message, pairs) => pairs.find(([re]) => re.test(String(message ?? "")))?.[1];
 
-export function timeAgo(iso) {
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+export function timeAgo(iso, now = Date.now()) {
+  const s = (now -new Date(iso).getTime()) / 1000;
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;

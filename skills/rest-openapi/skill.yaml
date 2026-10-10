@@ -1,0 +1,6 @@
+id: rest-openapi
+version: 1.0.0
+category: interface
+capabilities: [rest-api, openapi, http-api, rest-contract, swagger]
+roles: [coder, reviewer]
+risk: low

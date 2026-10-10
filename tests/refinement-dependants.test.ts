@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dependantComment, findDependants, originalComment, rangeHash, replaceMarker, rewriteDependsOn } from "../src/refinement/dependants.js";
+import { dependantComment, dependsOnText, findDependants, originalComment, rangeHash, replaceMarker, rewriteDependsOn } from "../src/refinement/dependants.js";
 
 describe("Windows line ends", () => {
   const body = "Intro #12\r\n### Depends on\r\n#12\r\n- #13 and #12\r\n\r\n### Notes\r\n#12";
@@ -156,5 +156,37 @@ describe("comments", () => {
       expect(t).toContain("#31, #32");
       expect(t).toContain("alice");
     }
+  });
+  it("originalComment: the three endings", () => {
+    const o = { parts: [31, 32], by: "alice", marker };
+    const open = originalComment({ ...o, ending: "staysOpen" });
+    expect(open).toContain("close it by hand");
+    expect(open).not.toContain("closed");
+    const already = originalComment({ ...o, ending: "closedAlready" });
+    expect(already).toContain("closed already");
+    expect(originalComment({ ...o, ending: "closes" })).toContain("will be closed as not planned");
+  });
+  it("originalComment: the 1,000 issue warning, the labels, the list left behind", () => {
+    const o = { ending: "staysOpen" as const, parts: [31], by: "alice", marker };
+    expect(originalComment(o)).not.toContain("1,000");
+    expect(originalComment({ ...o, cut: true })).toContain("1,000");
+    expect(originalComment({ ...o, labels: ["Factory_go"] })).toContain("The label `Factory_go` was taken off");
+    expect(originalComment({ ...o, labels: ["A", "B"] })).toContain("The labels `A`, `B` were taken off");
+    const list = originalComment({ ...o, leftBehind: ["It prints", "Line one\nline two"] });
+    expect(list).toContain("- It prints");
+    expect(list).toContain("- Line one line two");
+    expect(list.split("\n").at(-1)).toBe(marker);
+  });
+  it("originalComment: one fixed sentence replaces a list that is too long", () => {
+    const o = { ending: "staysOpen" as const, parts: [31], by: "alice", marker };
+    const long = originalComment({ ...o, leftBehind: ["a criterion", "another criterion"], max: 100 });
+    expect(long).not.toContain("- a criterion");
+    expect(long).toContain("Some acceptance criteria were left on this issue");
+    expect(long.split("\n").at(-1)).toBe(marker);
+  });
+  it("dependsOnText is the text rewriteDependsOn works on", () => {
+    const body = "Intro\n### Depends on\n#12\n\n### Notes";
+    expect(dependsOnText(body)).toBe(rewriteDependsOn(body, 12, [31])!.before);
+    expect(dependsOnText("no section")).toBeUndefined();
   });
 });

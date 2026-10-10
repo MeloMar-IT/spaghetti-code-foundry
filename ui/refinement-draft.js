@@ -1,10 +1,11 @@
 import { api } from "./api.js";
-import { aiProps, h, mount, toast } from "./dom.js";
+import { aiProps, confirmDialog, h, mount, toast } from "./dom.js";
 import { impactKey, impactNodes } from "./refinement-impact.js";
 import { draftStateText, readyKey, readyNodes } from "./refinement-ready.js";
 import { REMARK_FIELDS, MOVE_ASK, remarkKey, remarkNodes, orphanRemarks, reviewKey, reviewNodes } from "./refinement-remarks.js";
 import { mayDependOn, mergeNodes, moveNodes, partsKey, partsNodes } from "./refinement-parts.js";
 import { splitKey, splitNodes } from "./refinement-split.js";
+import { emptyState, isSplitConflict, issueLink, lostCard, saveStates, splitConflict } from "./refinement-states.js";
 import { FIELD_LABELS as LABELS, SUGGEST_FIELDS, TEXT_FIELDS, NO_BRIEF, boxKey, fromText, shownFrom, suggestNodes } from "./refinement-suggest.js";
 
 // The story drafts of a refinement session: write, save as you type, preview. Every text is set as text, never as HTML.
@@ -121,13 +122,6 @@ function readOnlyNodes(s, d) {
     from.length ? [h("b", {}, "Where the text came from"), h("ul", {}, from.map((t) => h("li", {}, t)))] : null);
 }
 
-/** The link to the issue of a published draft; plain text when the address is not on github.com. */
-function issueLink(d) {
-  const text = `#${d.published.issue}`;
-  const url = String(d.published.url ?? "");
-  return url.startsWith("https://github.com/") ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, text) : text;
-}
-
 const dependsItem = (x) => (x.issue !== undefined ? { id: x.id, issue: x.issue } : { id: x.id, draft: x.draft });
 /** Marks `el` as AI-written while the visible value came from a suggestion (`from` "accepted" or "accepted, then edited"); clears it otherwise. */
 function markAi(el, from, what) {
@@ -158,6 +152,7 @@ export function draftSection(ctx) {
   let markdown = false;
   let focusTitle = false;
   let ed = null; // the open editor
+  const saves = saveStates(); let conflict = null; // the state of each save; the draft a save was refused for because it was split
   const root = h("section", { class: "drafts" });
   const boxes = { top: h("div"), epic: h("div"), list: h("div"), editor: h("div"), lost: h("div") };
   root.append(h("h2", {}, "Story drafts"), ...Object.values(boxes));
@@ -211,6 +206,7 @@ export function draftSection(ctx) {
     if (live) ed.rows.delete(old);
     row.id = id;
     row.key = K(row.did, `crit:${id}`);
+    saves.rekey(old, row.key);
     if (newer !== undefined && newer !== sent) {
       unsaved.set(row.key, newer);
       if (timer) plan(row.key);
@@ -260,6 +256,7 @@ export function draftSection(ctx) {
       (next) => {
         if (next === undefined) return true;
         failed.delete(keyNow());
+        if (p.li && !p.ta.value.trim()) saves.clear(keyNow()); else saves.set(keyNow(), unsaved.has(keyNow()) ? "saving" : "saved"); // newer text is still waiting; an emptied row is not sent
         if (pending()) setStatus("Saving…");
         else if ([...failed].some((k) => unsaved.has(k) && placeOf(k))) setStatus(lastError, true); // another field is still not saved: keep saying so
         else setStatus("Saved");
@@ -269,6 +266,8 @@ export function draftSection(ctx) {
         lastError = ctx.errorText(e);
         lastStatus = e?.status;
         failed.add(keyNow());
+        saves.set(keyNow(), "failed", { text: lastError, onRetry: () => { failed.delete(keyNow()); setStatus("Saving…"); saves.set(keyNow(), "saving"); flush(key); } });
+        if (isSplitConflict(e)) { conflict = did; ctx.save(ctx.read).catch(() => {}); } // the page then shows the split original
         setStatus(lastError, true);
         return false;
       });
@@ -303,11 +302,12 @@ export function draftSection(ctx) {
         const text = row.ta.value;
         if (!text.trim()) {
           forget(row.key); // an emptied one is not sent; it gets its text back when left
+          saves.clear(row.key);
           return markRow(row);
         }
         unsaved.set(row.key, text);
         markRow(row);
-        setStatus("Saving…");
+        setStatus("Saving…"); saves.set(row.key, "saving");
         plan(row.key);
       },
       onBlur: () => {
@@ -319,7 +319,7 @@ export function draftSection(ctx) {
     row.remKey = "";
     row.mv = h("span", { "data-move": "" });
     row.mvKey = "";
-    row.li = h("li", { class: "entry" }, row.ta, row.mark, c ? removeButton(row) : null, row.mv, row.rem);
+    row.li = h("li", { class: "entry" }, row.ta, row.mark, saves.node(row.key), c ? removeButton(row) : null, row.mv, row.rem);
     return row;
   }
   const savedText = (row, d) => d?.criteria.find((c) => c.id === row.id)?.text ?? "";
@@ -330,8 +330,8 @@ export function draftSection(ctx) {
     markAi(row.li, from, "accepted acceptance criterion");
   };
   const syncRow = (row, d) => {
-    if (!unsaved.has(row.key) && row.ta !== document.activeElement) {
-      const v = savedText(row, d);
+    if (row.ta !== document.activeElement) {
+      const v = unsaved.get(row.key) ?? savedText(row, d); // text that waits for a save stays in the field
       if (row.ta.value !== v) row.ta.value = v;
     }
     markRow(row, d);
@@ -390,7 +390,7 @@ export function draftSection(ctx) {
       onInput: () => {
         unsaved.set(key, el.value);
         markField(f);
-        setStatus("Saving…");
+        setStatus("Saving…"); saves.set(key, "saving");
         plan(key);
       },
       onBlur: () => {
@@ -407,10 +407,10 @@ export function draftSection(ctx) {
     markField(f);
     const box = h("div", { class: "suggest", "data-suggest": f });
     ed.sug.set(f, box);
-    if (!REMARK_FIELDS.includes(f)) return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), box]; // buttons must not sit inside the label
+    if (!REMARK_FIELDS.includes(f)) return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), saves.node(key), box]; // buttons must not sit inside the label
     const rem = h("div", { class: "remarks", "data-remarks": f });
     ed.rem.set(f, rem);
-    return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), rem, box];
+    return [h("label", { class: "field" }, h("span", {}, LABELS[f]), el, mark), saves.node(key), rem, box];
   };
   const markField = (f) => {
     const el = ed.fields.get(f);
@@ -454,15 +454,16 @@ export function draftSection(ctx) {
   };
 
   /** The button that removes a draft (also a split original) after a confirmation. */
-  const removeDraftButton = (did) => h("button", { class: "danger", onClick: (e) => {
-    if (!confirm("Remove this story draft?")) return undefined;
+  const removeDraftButton = (did) => h("button", { class: "danger", onClick: async (e) => {
+    const btn = e.currentTarget;
+    if (!(await confirmDialog({ title: "Remove draft", text: "Remove this story draft?", confirm: "Remove draft" }))) return undefined;
     // The typed text stays until the draft is really gone; a refused or failed request gives it its timer back.
     const keys = keysOf(did);
     keys.forEach((k) => {
       clearTimeout(timers.get(k));
       timers.delete(k);
     });
-    return ctx.send(e.currentTarget, () => api.removeDraft(sid, did).then((next) => {
+    return ctx.send(btn, () => api.removeDraft(sid, did).then((next) => {
       opened.delete(sid);
       keysOf(did).forEach(forget);
       return next;
@@ -485,7 +486,7 @@ export function draftSection(ctx) {
     ed.orphans = h("div", { class: "remarks", "data-remarks": "criteria" });
     ed.orphanKey = "";
     for (const f of ["criteria", "dependsOn"]) ed.sug.set(f, h("div", { class: "suggest", "data-suggest": f }));
-    ed.statusEl = h("p", { class: status.bad ? "status bad" : "status" }, status.text);
+    status = { text: "", bad: false }; ed.statusEl = h("p", { class: "status" }); // about this editor only
     ed.critList = h("ul", {});
     ed.newRow = makeRow(null);
     ed.rows.set(ed.newRow.key, ed.newRow);
@@ -581,8 +582,8 @@ export function draftSection(ctx) {
 
   /** Moves the text of a field or a criterion to the notes, after a confirmation and after the typed texts are saved. */
   const moveAct = (did, f, row) => ({
-    move: (btn) => {
-      if (!confirm(MOVE_ASK)) return undefined;
+    move: async (btn) => {
+      if (!(await confirmDialog({ title: "Move to notes", text: MOVE_ASK, confirm: "Move", danger: false }))) return undefined;
       const keyNow = () => (row ? row.key : K(did, f));
       clearTimeout(timers.get(keyNow()));
       timers.delete(keyNow());
@@ -684,7 +685,7 @@ export function draftSection(ctx) {
     update(sess);
   };
   const listNodes = (drafts, mine) => {
-    if (!drafts.length) return h("p", { class: "muted" }, "No story drafts yet.");
+    if (!drafts.length) return emptyState("No story drafts yet.");
     const openId = opened.get(sid);
     return h("ul", {}, drafts.map((d) => h("li", { class: "entry" }, h("span", {}, draftTitle(d)), h("span", { class: `pill state-${d.state}` }, draftStateText(d)),
       d.published ? h("span", { class: "muted" }, "On GitHub: ", issueLink(d)) : null,
@@ -755,7 +756,9 @@ export function draftSection(ctx) {
       } else if (d.published || d.splitInto) {
         // On GitHub, or split: shown as text only, no fields; the saved texts are the record. A split original is read-only on the server.
         ed = null;
-        fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}|${partsKey(s, d)}`, () => h("div", { class: "card" },
+        const clash = Boolean(d.splitInto) && (conflict === d.id || keysOf(d.id).length > 0);
+        fill("editor", `pub|${JSON.stringify([d, s.readyList, s.talk?.map])}|${partsKey(s, d)}|${clash}`, () => h("div", { class: "card" },
+          clash ? splitConflict(d.splitInto.map((id, i) => ({ id, label: `Part ${i + 1}: ${draftTitle(draftOf(id))}` })), open) : null,
           d.published ? h("p", {}, "This story is on GitHub as ", issueLink(d), ". It cannot be changed here.")
             : h("p", {}, "This draft was split. It is kept as a record and cannot be changed; its parts are worked on instead."),
           partsNodes(s, d, partsAct(d.id)).length ? h("div", { class: "parts" }, partsNodes(s, d, partsAct(d.id))) : null,
@@ -775,17 +778,14 @@ export function draftSection(ctx) {
       }
     }
     const lost = [...unsaved].filter(([k]) => k.startsWith(`${sid}${SEP}`) && !placeOf(k));
-    fill("lost", `${mine}|${JSON.stringify(lost)}`, () => (lost.length ? h("div", { class: "card" },
-      h("b", {}, "Not saved"),
-      h("p", { class: "muted" }, "This text could not be saved: its place is gone or the session can no longer be changed. Copy it if you need it."),
-      lost.map(([k, text]) => {
-        const f = k.split(SEP)[2] ?? "";
-        return h("p", { class: "said" }, h("b", {}, `${LABELS[f] ?? (f === "crit:new" ? "New acceptance criterion" : "Acceptance criterion")}: `), text);
-      }),
-      mine ? h("button", { onClick: () => {
-        lost.forEach(([k]) => forget(k));
-        update(sess);
-      } }, "Discard") : null) : null));
+    fill("lost", `${mine}|${JSON.stringify(lost)}`, () => (lost.length ? lostCard(lost.map(([k, text]) => {
+      const f = k.split(SEP)[2] ?? "";
+      return [LABELS[f] ?? (f === "crit:new" ? "New acceptance criterion" : "Acceptance criterion"), text];
+    }), mine ? () => {
+      conflict = null;
+      lost.forEach(([k]) => forget(k));
+      update(sess);
+    } : null) : null));
   };
 
   /** Sends every typed text now, until nothing that has a place is waiting. { ok: false } when a save failed; `lost`: texts of this session with no place on the page. */

@@ -30,7 +30,11 @@ export function createLog({ max = LOG_MAX } = {}) {
   let follow = true;
   let scheduled = false;
 
+  let lastTop = 0;
   el.addEventListener("scroll", () => {
+    // A hidden log reports no height: its position stays the one it had.
+    if (el.clientHeight === 0) return;
+    lastTop = el.scrollTop;
     follow = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
   });
 
@@ -73,7 +77,23 @@ export function createLog({ max = LOG_MAX } = {}) {
     } else flush();
   }
 
-  return { el, add, count: () => total };
+  /** Empties the log (a replayed stream sends the lines again). */
+  function clear() {
+    for (const n of lines) n.remove();
+    note.remove();
+    lines = [];
+    pending = [];
+    dropped = 0;
+    total = 0;
+    follow = true;
+  }
+
+  /** Puts the scroll position back after the log was hidden (a browser may reset it): the end while following. */
+  function restore() {
+    el.scrollTop = follow ? el.scrollHeight : lastTop;
+  }
+
+  return { el, add, clear, count: () => total, restore };
 }
 
 // ── diff ──

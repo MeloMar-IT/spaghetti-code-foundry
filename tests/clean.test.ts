@@ -8,6 +8,7 @@ import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadRun, saveRun } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
+import { prunePlanRecords, readPlanRecords, writePlanRecord, type PlanRecord } from "../src/skills/plan-record.js";
 
 let tmp: string;
 let repo: string;
@@ -58,6 +59,79 @@ describe("clean", () => {
     const purged = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true, includePaused: true });
     expect(purged.runs.sort()).toEqual([old.runId, paused.runId].sort());
     expect(existsSync(paused.runDir)).toBe(false);
+  });
+
+  describe("plan records", () => {
+    const DAY = 86_400_000;
+    const rec = (days: number, id: string): PlanRecord => ({
+      version: 1, repo: "acme/app", issue: "5", runId: `run-${id}`, planHash: "sha256:" + id.repeat(64), commentId: id === "a" ? "1" : "2",
+      commentSha256: "sha256:" + "c".repeat(64), request: { version: 1, skills: [] }, createdAt: new Date(Date.now() - days * DAY).toISOString(),
+    });
+    const count = (home: string) => {
+      const r = readPlanRecords("acme/app", "5", { home });
+      return r === "invalid" ? -1 : r.records.length;
+    };
+    const seed = (home: string) => {
+      writePlanRecord(rec(100, "a"), { home });
+      writePlanRecord(rec(10, "b"), { home });
+    };
+
+    it("purge removes records older than 90 days, even with a shorter cut-off", () => {
+      seed(tmp);
+      const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true, planRecordsHome: tmp });
+      expect(r.planRecords).toBe(1);
+      expect(count(tmp)).toBe(1);
+    });
+
+    it("keeps records younger than a longer cut-off", () => {
+      seed(tmp);
+      const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 120, purge: true, planRecordsHome: tmp });
+      expect(r.planRecords).toBe(0);
+      expect(count(tmp)).toBe(2);
+    });
+
+    it("a dry run only counts", () => {
+      seed(tmp);
+      const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true, dryRun: true, planRecordsHome: tmp });
+      expect(r.planRecords).toBe(1);
+      expect(count(tmp)).toBe(2);
+    });
+
+    it("does nothing without purge", () => {
+      seed(tmp);
+      const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, planRecordsHome: tmp });
+      expect(r.planRecords).toBeUndefined();
+      expect(count(tmp)).toBe(2);
+    });
+
+    it("leaves the records of the data folder alone for a foreign runs folder", () => {
+      const home = process.env.FACTORY_HOME!;
+      writePlanRecord(rec(100, "a"), { home });
+      try {
+        const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true });
+        expect(r.planRecords).toBeUndefined();
+        expect(count(home)).toBe(1);
+      } finally {
+        prunePlanRecords({ olderThanMs: 0, home });
+      }
+    });
+
+    it("cleans the data folder by default when the runs folder is its own", () => {
+      const home = process.env.FACTORY_HOME!;
+      writePlanRecord(rec(100, "a"), { home });
+      const r = cleanRuns({ runsDir: join(home, "runs"), olderThanDays: 7, purge: true });
+      expect(r.planRecords).toBe(1);
+      expect(count(home)).toBe(0);
+    });
+
+
+    it("reports when the store cannot be written, and does not fail the clean-up", () => {
+      const notAFolder = join(tmp, "home-file");
+      writeFileSync(notAFolder, "x");
+      const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true, planRecordsHome: notAFolder });
+      expect(r.planRecordsFailed).toBe(true);
+      expect(r.planRecords).toBeUndefined();
+    });
   });
 
   it("never touches in-place workspaces", async () => {

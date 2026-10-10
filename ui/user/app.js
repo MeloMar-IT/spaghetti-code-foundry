@@ -39,8 +39,8 @@ async function route() {
   try {
     if (page.section === "home") done = await renderHome(box, { readOnly });
     else if (page.section === "start") done = await renderStart(box, { readOnly });
-    else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly });
-    else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly });
+    else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query });
+    else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query });
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
     else done = await renderMyRuns(box, { readOnly, query: to.query });
   } catch (e) {

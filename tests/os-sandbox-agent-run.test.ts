@@ -78,6 +78,7 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
         step("c2", "claude", "SHOWVARS HOME TMPDIR CLAUDE_CONFIG_DIR CODEX_HOME"),
         step("c3", "claude", "SHOWALLENV"),
         step("x1", "codex", "hello"),
+        step("xr", "codex", "hello", "    skill_role: reviewer\n    permission_mode: plan\n"),
         step("x2", "codex", "SHOWVARS HOME TMPDIR CLAUDE_CONFIG_DIR CODEX_HOME"),
         step("x3", "codex", "SHOWALLENV"),
       ),
@@ -88,6 +89,14 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "c1")).not.toContain("--settings");
     expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("own sandbox is off");
     expect(out(s, "x1")).toContain('sandbox_mode="danger-full-access"');
+    // a boxed step keeps its path: no isolation flag, no agent note, no "Codex:" line
+    expect(out(s, "x1")).not.toContain("--ignore-user-config");
+    expect(out(s, "x1")).not.toContain("<instructions>");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
+    // a boxed reviewer keeps the MCP and hook overrides, but gets no flag or note
+    expect(out(s, "xr")).toContain("-c mcp_servers={} -c features.codex_hooks=false");
+    expect(out(s, "xr")).not.toContain("--ignore-user-config");
+    expect(out(s, "xr")).not.toContain("<instructions>");
     for (const id of ["c2", "x2"]) {
       const o = out(s, id);
       expect(o).toContain(`HOME=${s.runDir}/home`);
@@ -162,6 +171,10 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
       expect(sessionId).toBeTruthy();
       expect(out(s, "b")).toContain(sessionId!);
       expect(out(s, "a")).toContain(`${s.runDir}/home/.`);
+      if (agent === "codex") {
+        expect(s.history.filter((h) => h.codexHome !== "run")).toHaveLength(0);
+        expect(s.history.map((h) => h.codexHome)).toEqual(["run", "run"]);
+      }
     });
   }
 

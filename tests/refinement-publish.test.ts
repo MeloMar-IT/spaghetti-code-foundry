@@ -203,7 +203,7 @@ describe("planOf replaces", () => {
   it("names the leaves when all are ready", () => {
     const r = plan(split([ready(2), ready(3)]), { source });
     expect(r.replaces).toEqual({ issue: 12, parts: [{ item: 1, title: "Story 2" }, { item: 2, title: "Story 3" }], ready: true });
-    expect(r.notChanged).toBe(12);
+    expect(r).not.toHaveProperty("notChanged");
   });
   it("shows a part on GitHub as its issue", () => {
     const r = plan(split([ready(2), ready(3)]), { source, onGithub: new Map([[uid(2), 101]]) });
@@ -489,7 +489,9 @@ describe("planOf with the issue a session came from", () => {
     expect(gone.willUpdate).toEqual([]);
     expect(gone.willCreate).toEqual([uid(2)]);
     const split = plan([mk(1, { splitInto: [uid(3)] }), mk(3, { ready: true })], src(uid(1)));
-    expect(split.notChanged).toBe(12);
+    // A split mark is replaced by its parts, so it is not "not changed".
+    expect(split.notChanged).toBeUndefined();
+    expect(split.replaces?.issue).toBe(12);
     expect(split.items.some((i) => i.updates !== undefined)).toBe(false);
     expect(plan([mk(2, { ready: true })], src()).notChanged).toBe(12);
   });

@@ -63,9 +63,13 @@ describe("built-in skills", () => {
     const reg = discoverSkills(cfg(), { home: tmp(), env: {}, userHome: tmp() });
     expect(reg.problems).toEqual([]);
     expect(findSkill(reg, "small-changes")?.label).toBe("built-in");
+    expect(findSkill(reg, "java")?.label).toBe("built-in");
+    expect(findSkill(reg, "typescript")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "typescript", "REVIEW.md"))).toBe(true);
     expect(BUILTIN_SKILLS.endsWith("skills")).toBe(true);
     expect(JSON.parse(readFileSync("package.json", "utf8")).files).toContain("skills");
     expect(existsSync(join(BUILTIN_SKILLS, "small-changes", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(BUILTIN_SKILLS, "java", "SKILL.md"))).toBe(true);
   });
 
   it("builtin: false leaves the source out without a problem", () => {
@@ -143,6 +147,24 @@ describe("administrator sources", () => {
     const reg = run(e, { builtin: false });
     expect(reg.skills).toEqual([]);
     expect(reg.problems[0]).toMatchObject({ kind: "invalid-package", package: "linked", reason: "symbolic link, not scanned" });
+  });
+
+  it("a folder name that looks like a credential is not shown in the problem", () => {
+    const e = setup();
+    const root = join(e.home, "skills");
+    const token = "sk-" + "ant-" + "abcdefghij" + "0123456789";
+    pkg(root, "safe", "1.0.0", token);
+    symlinkSync(pkg(tmp(), "linked"), join(root, token + "b"));
+    const reg = run(e, { builtin: false });
+    expect(reg.skills).toEqual([]);
+    expect(reg.problems).toHaveLength(2);
+    expect(reg.problems[0]).toMatchObject({
+      kind: "invalid-package",
+      package: "(name not shown)",
+      issues: [{ path: "(package)", reason: "the folder name looks like a credential (Anthropic key)" }],
+    });
+    expect(reg.problems[1]).toMatchObject({ package: "(name not shown)", reason: "symbolic link, not scanned" });
+    expect(JSON.stringify(reg.problems)).not.toContain("abcdefghij");
   });
 
   it("skips stray files and hidden folders silently", () => {
@@ -337,6 +359,7 @@ describe("cache and config", () => {
         unknown: "stop", missing: "stop", untrusted: "stop", conflict: "stop", oversized: "stop",
         high_risk: ["migration", "migrations", "security", "messaging", "kafka", "rabbitmq", "amqp", "queue", "outbox"],
       },
+      tools: { shell: true, network: false, filesystem: "write", missing: "stop" },
     });
     expect(ConfigSchema.safeParse({ skills: { nope: 1 } }).success).toBe(false);
   });

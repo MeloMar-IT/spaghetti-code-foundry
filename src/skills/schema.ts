@@ -19,6 +19,12 @@ export const REVIEW_RANGE = { maxTokens: [100, 20000], maxSkillTokens: [50, 5000
 /** What a claude step may declare as `skill_role`: the coder is the default and needs no field. */
 export const STEP_SKILL_ROLES = ["coder", "reviewer"] as const;
 export type StepSkillRole = (typeof STEP_SKILL_ROLES)[number];
+/** How a flow gets its skills. `recorded` is reserved (#439) and runs as `planned` for now. */
+export const FLOW_SKILL_MODES = ["planned", "explicit", "off", "recorded"] as const;
+export type FlowSkillMode = (typeof FLOW_SKILL_MODES)[number];
+/** What a claude step may declare as `skills`. `selected` is the default and needs no field. */
+export const STEP_SKILL_MODES = ["catalog", "selected", "off"] as const;
+export type StepSkillMode = (typeof STEP_SKILL_MODES)[number];
 export const SKILL_RISKS = ["low", "medium", "high"] as const;
 export const SKILL_FOLDERS = ["references", "scripts", "assets", "evals"] as const;
 export const SKILL_LIMITS = {
@@ -99,6 +105,7 @@ export const SkillManifestSchema = z
     roles: z.array(z.enum(SKILL_ROLES)).max(SKILL_ROLES.length).default([]),
     dependencies: z.array(dependency).max(32).default([]),
     conflicts: z.array(SkillIdSchema).max(32).default([]),
+    connectors: z.array(slug).max(16).default([]),
     tool_profile: SkillToolProfileSchema,
     risk: z.enum(SKILL_RISKS).default("low"),
   })
@@ -107,6 +114,7 @@ export const SkillManifestSchema = z
     duplicates(ctx, "capabilities", m.capabilities);
     duplicates(ctx, "roles", m.roles);
     duplicates(ctx, "conflicts", m.conflicts);
+    duplicates(ctx, "connectors", m.connectors);
     duplicates(ctx, "dependencies", m.dependencies.map((d) => d.id));
     duplicates(ctx, "detectors", m.detectors.map((d) => JSON.stringify([d.type, d.glob, "contains" in d ? d.contains : ""])));
     m.dependencies.forEach((d, i) => {
@@ -132,6 +140,18 @@ export const UnresolvedPolicySchema = z
   .strict()
   .prefault({});
 export type UnresolvedPolicy = z.infer<typeof UnresolvedPolicySchema>;
+
+/** Which tools a skill may ask for (config key skills.tools). A loading rule, not a tool allowlist for sessions. */
+export const ToolPolicySchema = z
+  .object({
+    shell: z.boolean().default(true),
+    network: z.boolean().default(false),
+    filesystem: z.enum(["read", "write"]).default("write"),
+    missing: z.enum(["stop", "degrade"]).default("stop"),
+  })
+  .strict()
+  .prefault({});
+export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
 export type SkillRole = (typeof SKILL_ROLES)[number];
 export type SkillRisk = (typeof SKILL_RISKS)[number];

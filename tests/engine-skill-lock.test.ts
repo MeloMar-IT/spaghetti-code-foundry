@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { SKILL_LOCK_CHANGED, ensureSkillLock, skillSession } from "../src/engine/skill-lock.js";
+import type { RunSkillCarry } from "../src/engine/plan-carry.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
+import type { SkillRequest } from "../src/skills/request.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
 import { RUN_SKILL_LOCK_FILE, readRunSkillLock } from "../src/skills/run-lock.js";
 
@@ -43,6 +45,45 @@ function setup(output: string | undefined, over: Record<string, unknown> = {}) {
 }
 const file = (runDir: string) => join(runDir, RUN_SKILL_LOCK_FILE);
 const commitOf = () => "f".repeat(40);
+
+describe("ensureSkillLock with a carry", () => {
+  const request: SkillRequest = { version: 1, skills: [{ id: "a", reason: "Needed", evidence: ["catalogue:a"] }] };
+  const carry = (lockHash = digestOf("1")): RunSkillCarry => ({ request, planHash: digestOf("1"), lockHash, commentId: "7", changes: [], at: "2026-01-01T00:00:00.000Z" });
+
+  it("makes the lock from the carry and verifies on the second call", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock).toMatchObject({ planHash: digestOf("1"), skills: [{ id: "a", version: "1.0.0" }] });
+    const bytes = readFileSync(file(t.runDir));
+    const discover = vi.fn(() => reg(sk("a")));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    expect(Buffer.compare(readFileSync(file(t.runDir)), bytes)).toBe(0);
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(t.logs.at(-1)).toMatch(/verified 1 skill$/);
+  });
+
+  it("a plan gate wins over a carry", () => {
+    const t = setup(gateOutput(["a"]), { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock!.planHash).not.toBe(digestOf("1"));
+  });
+
+  it("a changed carry makes a new lock with the new registry version", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    t.summary.skillCarry = carry(digestOf("2"));
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a", { version: "1.1.0", digest: digestOf("b") }), sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock).toMatchObject({ planHash: digestOf("2"), skills: [{ id: "a", version: "1.1.0" }] });
+  });
+
+  it("a changed carry with a tampered summary is refused", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    t.summary.skillCarry = carry(digestOf("2"));
+    t.summary.skillLock = { ...t.summary.skillLock!, lockDigest: digestOf("9") };
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBe(SKILL_LOCK_CHANGED);
+  });
+});
 
 describe("ensureSkillLock", () => {
   it("does nothing for a run without a checked plan gate", () => {
@@ -309,5 +350,56 @@ describe("skillSession", () => {
       const r = skillSession(t.engine, agent, { discover: changed }) as { refused: string };
       expect(r.refused).toMatch(/^skill integrity: a@1\.0\.0 changed/);
     }
+  });
+});
+
+describe("flow skill modes", () => {
+  const explicit = (ids: string[]) => ({ flowDef: { steps: [{ id: "impl", type: "claude", prompt: "x" }], skills: { mode: "explicit", ids } } });
+  const off = { flowDef: { steps: [{ id: "risk_gate", type: "shell", run: "# /skill-request" }], skills: { mode: "off" } } };
+
+  it("off: no lock, no payload, even with include and a valid request", () => {
+    const t = setup(gateOutput(["a"]), off);
+    t.engine.config.skills.selection.include = ["a"];
+    const discover = vi.fn(() => reg(sk("a")));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    for (const [agent, role] of [["claude", "coder"], ["codex", "coder"], ["claude", "reviewer"]] as const) {
+      expect(skillSession(t.engine, agent, { discover }, role)).toEqual({});
+    }
+    expect(existsSync(file(t.runDir))).toBe(false);
+    expect(t.summary.skillLock).toBeUndefined();
+    expect(discover).not.toHaveBeenCalled();
+    expect(t.save).not.toHaveBeenCalled();
+  });
+
+  it("explicit: locks the named ids without evidence and verifies afterwards", () => {
+    const t = setup(undefined, explicit(["a"]));
+    const discover = () => reg(sk("a"));
+    expect(ensureSkillLock(t.engine, { discover, commitOf })).toBeUndefined();
+    const lock = JSON.parse(readFileSync(file(t.runDir), "utf8"));
+    expect(lock.version).toBe(1);
+    expect(lock.skills[0]).toMatchObject({ id: "a", selection: "requested", reason: "named by the flow" });
+    expect(lock.skills[0]).not.toHaveProperty("evidence");
+    const bytes = readFileSync(file(t.runDir));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    expect(readFileSync(file(t.runDir)).equals(bytes)).toBe(true);
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(skillSession(t.engine, "claude", { discover })).toMatchObject({ payload: { loaded: ["a@1.0.0"] } });
+    rmSync(file(t.runDir));
+    expect(ensureSkillLock(t.engine, { discover })).toBe(SKILL_LOCK_CHANGED);
+  });
+
+  it("explicit: a skill that went away before the lock stops the run under the unresolved policy", () => {
+    const t = setup(undefined, explicit(["a"]));
+    const r = ensureSkillLock(t.engine, { discover: () => reg() });
+    expect(r).toMatch(/\ba\b/);
+    expect(existsSync(file(t.runDir))).toBe(false);
+  });
+
+  it("block = false: lock still made, no payload; a changed skill is refused", () => {
+    const t = setup(gateOutput(["a"]));
+    expect(skillSession(t.engine, "claude", { discover: () => reg(sk("a")), commitOf }, "coder", false)).toEqual({});
+    expect(existsSync(file(t.runDir))).toBe(true);
+    const changed = () => reg(sk("a", { digest: digestOf("b") }));
+    expect(skillSession(t.engine, "claude", { discover: changed }, "coder", false)).toHaveProperty("refused");
   });
 });

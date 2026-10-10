@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { ConfigSchema } from "../src/config.js";
 import {
   SkillFrontmatterSchema,
   SkillIdSchema,
   SkillManifestSchema,
   SkillVersionSchema,
+  ToolPolicySchema,
   compareSkillVersions,
   relativePathProblem,
 } from "../src/skills/schema.js";
@@ -53,9 +55,15 @@ describe("SkillManifestSchema", () => {
       roles: [],
       dependencies: [],
       conflicts: [],
+      connectors: [],
       tool_profile: { shell: false, network: false, filesystem: "read" },
       risk: "low",
     });
+  });
+  it("rejects bad connectors", () => {
+    expect(paths({ ...base, connectors: ["Kafka"] })).toEqual(["connectors.0"]);
+    expect(paths({ ...base, connectors: ["kafka://x.corp:9092"] })).toEqual(["connectors.0"]);
+    expect(paths({ ...base, connectors: Array.from({ length: 17 }, (_, i) => `c${i}`) })).toEqual(["connectors"]);
   });
   it("rejects unknown keys", () => {
     for (const k of ["description", "model", "allowed_tools"]) expect(paths({ ...base, [k]: "x" })).toEqual([""]);
@@ -65,6 +73,7 @@ describe("SkillManifestSchema", () => {
     expect(paths({ ...base, capabilities: ["a", "b", "a"] })).toEqual(["capabilities.2"]);
     expect(paths({ ...base, roles: ["coder", "coder"] })).toEqual(["roles.1"]);
     expect(paths({ ...base, conflicts: ["x", "x"] })).toEqual(["conflicts.1"]);
+    expect(paths({ ...base, connectors: ["a", "a"] })).toEqual(["connectors.1"]);
     expect(paths({ ...base, dependencies: [{ id: "x" }, { id: "x" }] })).toEqual(["dependencies.1"]);
     const d = { type: "content", glob: "a", contains: "b" };
     expect(paths({ ...base, detectors: [d, { type: "file", glob: "a" }, { ...d }] })).toEqual(["detectors.2"]);
@@ -124,4 +133,24 @@ describe("compareSkillVersions", () => {
     expect(compareSkillVersions("1.0.9007199254740993", "1.0.9007199254740992")).toBeGreaterThan(0);
   });
   it("gives 0 for equal versions", () => expect(compareSkillVersions("1.2.3-rc.1", "1.2.3-rc.1")).toBe(0));
+});
+
+describe("ToolPolicySchema", () => {
+  const defaults = { shell: true, network: false, filesystem: "write", missing: "stop" };
+  it("gives the defaults, also for a partial object", () => {
+    expect(ToolPolicySchema.parse(undefined)).toEqual(defaults);
+    expect(ToolPolicySchema.parse({})).toEqual(defaults);
+    expect(ToolPolicySchema.parse({ network: true })).toEqual({ ...defaults, network: true });
+    expect(ConfigSchema.parse({}).skills.tools).toEqual(defaults);
+  });
+  it.each([
+    ["an unknown key", { other: 1 }],
+    ["filesystem none", { filesystem: "none" }],
+    ["missing warn", { missing: "warn" }],
+    ["a string shell", { shell: "yes" }],
+  ])("refuses %s", (_n, v) => expect(ToolPolicySchema.safeParse(v).success).toBe(false));
+  it("is strict inside the config", () => {
+    expect(ConfigSchema.safeParse({ skills: { tools: { other: 1 } } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ skills: { tools: { filesystem: "none" } } }).success).toBe(false);
+  });
 });

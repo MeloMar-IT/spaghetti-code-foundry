@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { answerDialog, autoDialog, dialogText } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -22,7 +23,7 @@ let answers: Answer[];
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 let confirmAnswer = true;
 
 const session = (over: object = {}) => ({
@@ -51,7 +52,7 @@ beforeEach(async () => {
   holdNext = false;
   confirmAnswer = true;
   (globalThis as any).location = { hash: "#/refinement" };
-  (globalThis as any).confirm = () => confirmAnswer;
+  stopDialog = autoDialog(() => confirmAnswer);
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
@@ -83,7 +84,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -131,6 +132,167 @@ describe("pure functions", () => {
     expect(ui.errorText(new TypeError("x"))).toBe("Could not reach the server.");
     expect(ui.errorText(new Error("sentence"))).toBe("sentence");
     expect(ui.errorText({})).toBe("Something went wrong.");
+  });
+});
+
+describe("the repository filter", () => {
+  const titles = () => walk(main()).filter((e) => e.tag === "a" && (e.attrs.href ?? "").startsWith("#/refinement/s")).map((e) => e.textContent);
+  const bars = () => walk(main()).filter((e) => (e.attrs.class ?? "").split(" ").includes("filter-bar"));
+  const setup = () => {
+    repos = ["acme/app", "acme/other"];
+    sessions = [
+      session({ id: "s1", title: "App open", repo: "acme/app" }),
+      session({ id: "s2", title: "Other open", repo: "acme/other" }),
+      dropped({ id: "s3", title: "App dropped", repo: "acme/app" }),
+      dropped({ id: "s4", title: "Other dropped", repo: "acme/other" }),
+    ];
+  };
+  const show = async (repo: string, go: (h: string) => void = () => {}) => {
+    (globalThis as any).location = { hash: `#/refinement?repo=${encodeURIComponent(repo)}` };
+    await ui.renderRefinement(main(), { query: { repo }, go });
+  };
+  const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
+
+  it("lists only that repository, open and dropped, and keeps the filter on reload", async () => {
+    setup();
+    await show("acme/app");
+    expect(titles()).toEqual(["App open"]);
+    expect(main().textContent).toContain("Repository: acme/app");
+    gets = [];
+    press(button(main(), "Dropped")); // reloads
+    await flush();
+    expect(gets).toEqual(["/api/refinement"]);
+    expect(titles()).toEqual(["App dropped"]);
+    expect(bars()).toHaveLength(1);
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("draws the same page without a filter", async () => {
+    setup();
+    await showList();
+    expect(bars()).toHaveLength(0);
+    expect(titles()).toEqual(["App open", "Other open"]);
+  });
+
+  it("names the filter when the repository is known but the view is empty", async () => {
+    repos = ["acme/app"];
+    sessions = [];
+    await show("acme/app");
+    expect(main().textContent).toContain("No refinement sessions match Repository: acme/app.");
+    press(button(main(), "Dropped"));
+    await flush();
+    expect(main().textContent).toContain("No dropped sessions match Repository: acme/app.");
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("says the repository is not in the list, and clears without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await show("gone/repo", go);
+    expect(main().textContent).toContain(NOT_IN_LIST);
+    expect(titles()).toEqual([]);
+    gets = [];
+    press(button(main(), "Clear filters"));
+    expect(go).toHaveBeenCalledWith("#/refinement");
+    expect(titles()).toEqual(["App open", "Other open"]);
+    expect(bars()).toHaveLength(0);
+    expect(gets).toEqual([]);
+  });
+
+  it("removes the filter with the chip's ×", async () => {
+    setup();
+    const go = vi.fn();
+    await show("acme/app", go);
+    gets = [];
+    press(button(main(), "×"));
+    expect(go).toHaveBeenCalledWith("#/refinement");
+    expect(titles()).toEqual(["App open", "Other open"]);
+    expect(gets).toEqual([]);
+  });
+
+  it("lists a repository an admin does not own when a session has it", async () => {
+    setup();
+    repos = ["acme/mine"];
+    await show("acme/other");
+    expect(titles()).toEqual(["Other open"]);
+    expect(main().textContent).not.toContain(NOT_IN_LIST);
+  });
+
+  it("a filter removed while a reload runs stays removed", async () => {
+    setup();
+    await show("acme/app");
+    const gate = (() => {
+      const g: { release?: () => void; wait: Promise<void> } = { wait: Promise.resolve() };
+      g.wait = new Promise<void>((r) => (g.release = r));
+      return g;
+    })();
+    const base = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      await gate.wait;
+      return base(url, init);
+    };
+    press(button(main(), "Dropped")); // reload starts and waits
+    await flush();
+    press(button(main(), "×"));
+    gate.release!();
+    await flush();
+    await flush();
+    expect(bars()).toHaveLength(0);
+    expect(titles()).toEqual(["App dropped", "Other dropped"]);
+    expect(main().textContent).not.toContain("Repository:");
+    (globalThis as any).fetch = base;
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("preselects the repository in the new session dialog", async () => {
+    setup();
+    await show("Acme/Other");
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/other");
+  });
+
+  it("starts with the first repository when the filtered one is not in the list, or without a filter", async () => {
+    setup();
+    await show("gone/repo");
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/app");
+    root().replaceChildren();
+    await showList();
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/app");
+  });
+
+  it("does not filter a session page", async () => {
+    setup();
+    (globalThis as any).location = { hash: "#/refinement/s2?repo=acme%2Fapp" };
+    await ui.renderRefinement(main(), { id: "s2", query: { repo: "acme/app" } });
+    expect(main().textContent).toContain("Other open");
+    expect(bars()).toHaveLength(0);
+  });
+
+  it("accepts an address with a query and drops a late answer after leaving", async () => {
+    setup();
+    main().textContent = "old";
+    await show("acme/app");
+    expect(main().textContent).not.toBe("old");
+    const base = (globalThis as any).fetch;
+    let release!: () => void;
+    const wait = new Promise<void>((r) => (release = r));
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      await wait;
+      return base(url, init);
+    };
+    const loading = ui.renderRefinement(main(), { query: { repo: "acme/app" }, go: () => {} });
+    await flush();
+    (globalThis as any).location = { hash: "#/runs?repo=acme%2Fapp" };
+    main().textContent = "Runs page";
+    release();
+    await loading;
+    expect(main().textContent).toBe("Runs page");
+    (globalThis as any).fetch = base;
   });
 });
 
@@ -579,5 +741,160 @@ describe("wiring", () => {
       "POST /api/refinement/x/drop",
       "POST /api/refinement/x/restore",
     ]);
+  });
+});
+
+describe("states of the list and the session", () => {
+  const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+  const classes = (e: FakeElement) => (e.attrs.class ?? "").split(" ");
+  const withClass = (c: string) => walk(main()).filter((e) => classes(e).includes(c));
+  const kind = () => walk(main()).find((e) => e.attrs["data-kind"])?.attrs["data-kind"];
+  const retry = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Retry");
+  const table = () => walk(main()).find((e) => e.tag === "table");
+  const asGet = (list: (n: number) => Promise<ReturnType<typeof reply>>) => {
+    const real = (globalThis as any).fetch;
+    let n = 0;
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" && url === "/api/refinement" ? list(++n) : real(url, init));
+    return real;
+  };
+
+  it("draws a skeleton in the list while the first read runs", async () => {
+    let release!: () => void;
+    asGet(async () => {
+      await new Promise<void>((r) => (release = r));
+      return reply({ sessions: [session()], repos });
+    });
+    const shown = ui.renderRefinement(main(), {});
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(1);
+    release();
+    await shown;
+    expect(withClass("skeleton")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("shows an error state with Retry when the first read fails, and Retry loads the list", async () => {
+    let fails = true;
+    asGet(async () => (fails ? reply({ error: "boom" }, 500) : reply({ sessions: [session()], repos })));
+    await ui.renderRefinement(main(), {});
+    expect(withClass("state-error")).toHaveLength(1);
+    expect(main().textContent).toContain("boom");
+    expect(table()).toBeUndefined();
+    fails = false;
+    press(retry());
+    await flush();
+    expect(withClass("state-error")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("shows no permission as its own state, without Retry", async () => {
+    asGet(async () => reply({ error: "you may not see this" }, 403));
+    await ui.renderRefinement(main(), {});
+    expect(kind()).toBe("permission");
+    expect(retry()).toBeUndefined();
+  });
+  it("keeps the rows and says so when a reload fails; Retry clears the note", async () => {
+    sessions = [session()];
+    let fails = false;
+    asGet(async () => (fails ? reply({ error: "boom" }, 500) : reply({ sessions: [session()], repos })));
+    await ui.renderRefinement(main(), {});
+    fails = true;
+    press(button(main(), "Open sessions"));
+    await flush();
+    expect(table()).toBeDefined();
+    expect(withClass("stale-note").filter((e) => classes(e).includes("failed"))).toHaveLength(1);
+    fails = false;
+    press(retry());
+    await flush();
+    expect(withClass("stale-note")).toHaveLength(0);
+    expect(table()).toBeDefined();
+  });
+  it("draws the newest read when two reads answer out of order", async () => {
+    const pending: ((b: unknown) => void)[] = [];
+    asGet(() => new Promise((r) => pending.push((b) => r(reply(b)))));
+    const shown = ui.renderRefinement(main(), {});
+    await flush();
+    pending[0]!({ sessions: [], repos });
+    await shown;
+    press(button(main(), "Open sessions"));
+    await flush();
+    press(button(main(), "Open sessions"));
+    await flush();
+    expect(pending).toHaveLength(3);
+    pending[2]!({ sessions: [session({ id: "b", title: "Newer" })], repos });
+    await flush();
+    pending[1]!({ sessions: [session({ id: "a", title: "Older" })], repos });
+    await flush();
+    expect(main().textContent).toContain("Newer");
+    expect(main().textContent).not.toContain("Older");
+  });
+  it("says it with emptyState when there is nothing", async () => {
+    sessions = [];
+    await ui.renderRefinement(main(), {});
+    expect(withClass("empty")).toHaveLength(1);
+    expect(main().textContent).toContain("No refinement sessions yet. Start one with a rough idea.");
+  });
+
+  it("draws a skeleton on the first load of a session, not on a quiet reload", async () => {
+    sessions = [session()];
+    let release!: () => void;
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (init.method === "GET") await new Promise<void>((r) => (release = r));
+      return real(url, init);
+    };
+    (globalThis as any).location.hash = "#/refinement/s1";
+    const first = ui.renderRefinement(main(), { id: "s1" });
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(1);
+    release();
+    await first;
+    expect(withClass("skeleton")).toHaveLength(0);
+    const again = ui.renderRefinement(main(), { id: "s1", quiet: true });
+    await flush();
+    expect(withClass("skeleton")).toHaveLength(0);
+    expect(main().textContent).toContain("My idea");
+    release();
+    await again;
+  });
+  it("shows a session that is not there as missing, without Retry, with a way back", async () => {
+    sessions = [];
+    await showPage("nope");
+    expect(kind()).toBe("missing");
+    expect(retry()).toBeUndefined();
+    expect(walk(main()).some((e) => e.tag === "a" && e.attrs.href === "#/refinement")).toBe(true);
+  });
+  it("shows no permission for a session as its own state", async () => {
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" ? reply({ error: "not yours" }, 403) : real(url, init));
+    await showPage("s1");
+    expect(kind()).toBe("permission");
+    expect(retry()).toBeUndefined();
+  });
+  it("offers Retry after a server failure, and Retry draws the session", async () => {
+    const real = (globalThis as any).fetch;
+    let fails = true;
+    sessions = [session()];
+    (globalThis as any).fetch = async (url: string, init: any) => (init.method === "GET" && fails ? reply({ error: "boom" }, 500) : real(url, init));
+    await showPage("s1");
+    expect(kind()).toBe("server");
+    fails = false;
+    press(retry());
+    await flush();
+    expect(main().textContent).toContain("My idea");
+  });
+  it("asks in the dialog before it drops; Cancel sends nothing", async () => {
+    sessions = [session()];
+    await showPage();
+    stopDialog?.();
+    press(button(main(), "Drop"));
+    await flush();
+    expect(dialogText()).toContain('Drop "My idea"');
+    await answerDialog(false);
+    expect(sent).toEqual([]);
+    expect(dialogText()).toBeUndefined();
+    press(button(main(), "Drop"));
+    await flush();
+    await answerDialog(true);
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drop", body: {} }]);
   });
 });

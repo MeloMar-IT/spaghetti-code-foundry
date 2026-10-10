@@ -323,6 +323,7 @@ describe("renderers with readOnly", () => {
       const on = make({ ...base, status: "failed" }, true);
       await flush();
       expect(texts(on.main)).not.toContain("Retry");
+      expect(texts(on.main)).not.toContain("Retry from the failing step");
       on.cleanup();
     });
 

@@ -97,9 +97,42 @@ export function dependantComment(o: { kind: DependantKind; original: number; par
   return [...lines, "", o.marker].join("\n");
 }
 
-/** The comment on the split issue itself. The last line is the marker. */
-export function originalComment(o: { ending: "closes" | "staysOpen"; parts: readonly number[]; by: string; marker: string }): string {
+/** The "Depends on" text of a body (as `rewriteDependsOn` sees it), or undefined without one. */
+export function dependsOnText(body: string): string | undefined {
+  const range = dependencyRange(body);
+  return range ? body.slice(range.start, range.end) : undefined;
+}
+
+/** A comment on GitHub holds at most 65,536 characters; the list of criteria stays well below that. */
+const COMMENT_MAX = 60_000;
+const oneLine = (t: string) => t.replace(/\s*[\r\n]+\s*/g, " ").trim();
+
+/**
+ * The comment on the split issue itself. The last line is the marker. `labels` are the trigger labels that were taken off. `leftBehind` are
+ * the acceptance criteria that stay on the original; when the comment would be longer than `max`, one fixed sentence replaces the list.
+ */
+export function originalComment(o: {
+  ending: "closes" | "staysOpen" | "closedAlready";
+  parts: readonly number[];
+  by: string;
+  marker: string;
+  cut?: boolean;
+  labels?: readonly string[];
+  leftBehind?: readonly string[];
+  max?: number;
+}): string {
   const lines = [`**Spaghetti Code Foundry:** This issue was split into ${refs(o.parts)} by ${o.by}. The work continues there.`];
-  lines.push(o.ending === "closes" ? "This issue will be closed as not planned." : "This issue stays open.");
-  return [...lines, "", o.marker].join("\n");
+  if (o.ending === "closes") lines.push("This issue will be closed as not planned.");
+  else if (o.ending === "staysOpen") lines.push("This issue stays open. Please check it, and close it by hand when nothing is left to do here.");
+  else lines.push("This issue was closed already, so it was left as it is.");
+  if (o.labels?.length) lines.push(`The ${o.labels.length === 1 ? "label" : "labels"} ${o.labels.map((l) => `\`${l}\``).join(", ")} ${o.labels.length === 1 ? "was" : "were"} taken off this issue, so that it is not built as well.`);
+  if (o.cut) lines.push("Only 1,000 open issues were read, so an issue that depends on this one may have been missed. Please check.");
+  const list = (o.leftBehind ?? []).map(oneLine).filter(Boolean);
+  const tail = ["", o.marker];
+  if (list.length) {
+    const full = [...lines, "", "These acceptance criteria were left on this issue and are not in any of the new issues:", ...list.map((c) => `- ${c}`), ...tail].join("\n");
+    if (full.length <= (o.max ?? COMMENT_MAX)) return full;
+    lines.push("", "Some acceptance criteria were left on this issue and are not in any of the new issues. Please check them.");
+  }
+  return [...lines, ...tail].join("\n");
 }

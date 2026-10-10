@@ -2,9 +2,17 @@
    Belongs here: editor panes, graph, block library.
    Does not belong here: card and pill variants; shared helpers (components.css). */
 
-.dirty-dot { width: 8px; height: 8px; border-radius: var(--radius-round); background: var(--accent); display: inline-block; }
-.dirty-dot.clean { visibility: hidden; }
-.graph-pane { position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
+.overview-pane { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
+.editor-body { grid-column: 1; grid-row: 1; min-width: 0; }
+.flow-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin: -8px 0 14px; font-size: var(--text-small); }
+.flow-dirty { font-weight: 600; }
+.flow-validation { border: none; background: transparent; padding: 0; cursor: pointer; text-decoration: underline; }
+.flow-more { position: relative; flex: 0 1 auto; }
+.flow-more summary { list-style: none; cursor: pointer; padding: 6px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); display: flex; align-items: center; }
+.flow-more summary::-webkit-details-marker { display: none; }
+.flow-more-items { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: var(--layer-menu); display: flex; flex-direction: column; align-items: stretch; gap: var(--space-md); padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); white-space: nowrap; width: max-content; max-width: min(320px, 90vw); }
+.flow-more:not([open]) > .flow-more-items { display: none; }
+.flow-search { width: 100%; margin: 8px 0 0; }
 .card-head { display: flex; align-items: center; gap: 8px; }
 .card-head .num { font-family: var(--mono); color: var(--muted); font-size: var(--text-meta); width: 22px; }
 .card-head input.id { font-weight: 600; max-width: 220px; font-family: var(--mono); }
@@ -63,7 +71,8 @@
 .block-item { display: grid; gap: 6px; align-content: start; }
 .block-item pre { background: var(--panel-2); border-radius: var(--radius-md); padding: 10px; overflow: auto; max-height: 300px; margin: 6px 0 0; }
 @media (max-width: 1100px) {
-  .graph-pane { position: static; max-height: none; }
+  .overview-pane, .editor-body { grid-column: auto; grid-row: auto; }
+  .overview-pane { position: static; max-height: none; }
 }
 @media (max-width: 760px) {
   .route { grid-template-columns: 1fr 1fr; }

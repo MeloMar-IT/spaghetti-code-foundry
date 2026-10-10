@@ -52,3 +52,46 @@ describe("step editor: repo_access", () => {
     ]) expect(labelOf(body(step), LABEL), step.type).toBeUndefined();
   });
 });
+
+describe("data-field and data-section markers", () => {
+  const fieldsOf = (nodes: FakeElement[]) => nodes.flatMap((n) => [n, ...n.querySelectorAll("[data-field]")]).map((e) => e.getAttribute("data-field")).filter(Boolean);
+  const stepCtx = { onChange: () => {}, rerender: () => {}, vars: [], earlier: [], priorClaude: [] };
+
+  it("marks the controls of a shell step", () => {
+    const step = { id: "a", type: "shell", run: "x" };
+    const nodes: FakeElement[] = types.stepBody({ name: "t", steps: [step] }, step, 0, stepCtx);
+    expect(fieldsOf(nodes)).toEqual(expect.arrayContaining(["run", "sandbox", "repo_access"]));
+  });
+
+  it("marks the controls of a claude step", () => {
+    const step = { id: "a", type: "claude", prompt: "p" };
+    const nodes: FakeElement[] = types.stepBody({ name: "t", steps: [step] }, step, 0, stepCtx);
+    expect(fieldsOf(nodes)).toEqual(expect.arrayContaining(["prompt", "model", "agent", "permission_mode", "allowed_tools", "system_prompt"]));
+  });
+
+  it("draws a jump-only step as ticked", async () => {
+    const editor: any = await import("../ui/editor.js" as string);
+    const ctx = { onChange: () => {}, rerender: () => {}, onSelect: () => {} };
+    const box = (on: boolean) => editor.renderEditor({ name: "t", steps: [{ id: "a", type: "shell", run: "x", ...(on ? { jump_only: true } : {}) }] }, ctx)
+      .querySelectorAll("[data-field]").find((e: FakeElement) => e.getAttribute("data-field") === "jump_only") as any;
+    expect(box(true).checked).toBe(true);
+    expect(box(false).checked).toBeFalsy(); // h() leaves a false `checked` unset
+  });
+
+  it("refuses flows the visual editor cannot draw", async () => {
+    const editor: any = await import("../ui/editor.js" as string);
+    expect(editor.editable({ name: "t", steps: [{ id: "a" }], defaults: {} })).toBe(true);
+    expect(editor.editable({ name: "t" })).toBe(true);
+    for (const bad of [null, [], "x", { steps: "nope" }, { steps: ["a"] }, { steps: {} }, { defaults: "x" }, { vars: [] }, { publish: 3 }]) {
+      expect(editor.editable(bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("marks the step id and the settings sections in the editor", async () => {
+    const editor: any = await import("../ui/editor.js" as string);
+    const tree: FakeElement = editor.renderEditor({ name: "t", steps: [{ id: "a", type: "shell", run: "x" }] }, { onChange: () => {}, rerender: () => {}, onSelect: () => {} });
+    expect(tree.querySelectorAll("[data-field]").some((e) => e.getAttribute("data-field") === "id")).toBe(true);
+    const sections = tree.querySelectorAll("[data-section]").map((e) => e.getAttribute("data-section"));
+    expect(sections).toEqual(["flow", "defaults", "limits sandbox", "vars", "publish"]);
+  });
+});

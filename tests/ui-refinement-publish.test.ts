@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { answerDialog, autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -17,7 +18,7 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 const realFetch = globalThis.fetch;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 const D1 = "11111111-1111-4111-8111-111111111111";
 const D2 = "22222222-2222-4222-8222-222222222222";
 const D3 = "33333333-3333-4333-8333-333333333333";
@@ -55,6 +56,7 @@ beforeEach(() => {
   plan = makePlan();
   sent = [];
   postAnswer = undefined;
+  pub.partials.clear();
   planStatus = 200;
   putStatus = 200;
   confirmAnswer = true;
@@ -65,7 +67,7 @@ beforeEach(() => {
   (document as any).listeners.keydown = [];
   (document as any).activeElement = null;
   (globalThis as any).location = { hash: "#/refinement/s1", reload: vi.fn() };
-  (globalThis as any).confirm = () => confirmAnswer;
+  stopDialog = autoDialog(() => confirmAnswer);
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     const body = init.body ? JSON.parse(init.body) : undefined;
     sent.push({ method: init.method, url, body });
@@ -83,7 +85,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
 });
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
@@ -489,8 +491,11 @@ describe("a failure", () => {
     await openPlan();
     await press(button(pub.CONFIRM, dialog()));
     expect(dialog()).toBeUndefined();
+    // Issue 101 was made and the other was not: a banner lists both sides, with the server's words and Retry; the plain line is not shown too.
     expect(publishBox().textContent).toContain("GitHub did not make the issue: boom.");
-    expect(publishBox().textContent).toContain("On GitHub already: #101.");
+    expect(publishBox().textContent).toContain("1 of 2 issues are on GitHub: #101 Two. Not published: One.");
+    expect(publishBox().textContent).not.toContain("On GitHub already");
+    expect(button("Retry", publishBox())).toBeDefined();
     expect(publishButton()).toBeDefined();
     plan = makePlan({ items: [item(1, drafts[0]), item(2, drafts[1], { state: "on-github", issue: 101 })], willCreate: [D1] });
     await press(publishButton());
@@ -538,5 +543,128 @@ describe("typed text", () => {
     confirmAnswer = true;
     await press(publishButton());
     expect(dialog()).toBeDefined();
+  });
+  it("asks in the dialog, with its own title and button", async () => {
+    await show();
+    dr.unsaved.set(`s1\u0001gone\u0001title`, "lost text");
+    stopDialog?.();
+    await press(publishButton());
+    expect(walk(modalRoot()).find((e) => e.tag === "h2")!.textContent).toBe(pub.PUBLISH_TITLE);
+    expect(dialog()!.textContent).toContain(pub.LOST_ASK);
+    expect(button("Publish anyway", dialog())).toBeDefined();
+    await answerDialog(false);
+    expect(sent.some((x) => x.method === "GET" && x.url.endsWith("/publish"))).toBe(false);
+  });
+});
+
+describe("a publish that stops half way", () => {
+  const link = (n: number) => ({ issue: n, url: `https://github.com/acme/app/issues/${n}` });
+  const three = () => [mk(D1, "One"), mk(D2, "Two"), mk(D3, "Three")];
+  const plan3 = () => makePlan({ items: three().map((d, i) => item(i + 1, d)), willCreate: [D1, D2, D3] });
+  /** The first publish makes two of three issues and fails; later ones make what is asked. */
+  const partly = (made: string[], error = "GitHub did not make the issue: boom.") => {
+    postAnswer = () => {
+      drafts = three().map((d, i) => (made.includes(d.id) ? { ...d, published: link(101 + i) } : d));
+      return { status: 502, body: { error } };
+    };
+  };
+  const banner = () => walk(publishBox()).find((e) => e.attrs["data-kind"] === "warn");
+  const retry = () => button("Retry", publishBox());
+
+  it("partialOf and partialText", () => {
+    const s = { drafts: [{ ...mk(D1, "One"), published: link(101) }, mk(D2, "Two"), { ...mk(D3, "Three"), published: link(103) }] };
+    const p = pub.partialOf(new Set([D3]), [D1, D2, D3], s);
+    expect(p).toEqual({ made: [D1], rest: [D2] });
+    expect(pub.partialText({ ...p, error: "boom." }, s)).toBe("1 of 2 issues are on GitHub: #101 One. Not published: Two. boom.");
+  });
+  it("lists both sides in a banner with Retry, and not also the plain failure line", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1, D2]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    expect(dialog()).toBeUndefined();
+    expect(banner()).toBeDefined();
+    expect(banner()!.textContent).toContain("2 of 3 issues are on GitHub: #101 One, #102 Two. Not published: Three.");
+    expect(banner()!.textContent).toContain("GitHub did not make the issue: boom.");
+    expect(retry()).toBeDefined();
+    expect(walk(publishBox()).filter((e) => e.attrs.class === "status bad")).toHaveLength(0);
+    expect((document as any).getElementById("toast").textContent).toContain("2 of 3 issues are on GitHub");
+  });
+  it("stays after the same session is drawn again and after the page is drawn again", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1, D2]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()).toBeDefined();
+    cleanup?.();
+    await show();
+    expect(banner()).toBeDefined();
+    expect(banner()!.textContent).toContain("Not published: Three.");
+  });
+  it("Retry opens the plan; a good publish removes the banner and the toast stays extra", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1, D2]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    plan = makePlan({ items: [item(1, drafts[2])], willCreate: [D3] });
+    postAnswer = () => {
+      drafts = three().map((d, i) => ({ ...d, published: link(101 + i) }));
+      return { status: 200, body: { repo: "acme/app", created: [{ draft: D3, ...link(103), found: false }], state: "published" } };
+    };
+    await press(retry());
+    expect(dialog()).toBeDefined();
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()).toBeUndefined();
+    expect((document as any).getElementById("toast").textContent).toContain("1 issue is on GitHub");
+  });
+  it("two partial attempts add up what was made", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()!.textContent).toContain("1 of 3 issues are on GitHub");
+    plan = makePlan({ items: [item(1, drafts[1]), item(2, drafts[2])], willCreate: [D2, D3] });
+    partly([D1, D2]);
+    await press(retry());
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()!.textContent).toContain("2 of 3 issues are on GitHub: #101 One, #102 Two. Not published: Three.");
+  });
+  it("a second partial attempt keeps an earlier unresolved draft that was not part of it", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    plan = makePlan({ items: [item(1, drafts[1])], willCreate: [D2] });
+    partly([D1, D2]);
+    await press(retry());
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()!.textContent).toContain("Not published: Three.");
+  });
+  it("a successful publish that leaves a draft out keeps the banner until it is published or removed", async () => {
+    drafts = three();
+    plan = plan3();
+    partly([D1, D2]);
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    plan = makePlan({ items: [item(1, drafts[0])], willCreate: [D1] });
+    postAnswer = () => ({ status: 200, body: { repo: "acme/app", created: [], state: "drafting" } });
+    await press(retry());
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()).toBeDefined();
+    drafts = [drafts[0]!, drafts[1]!]; // the remaining draft is removed
+    await ui.renderRefinement(main(), { id: "s1" });
+    expect(banner()).toBeUndefined();
+  });
+  it("a failure with nothing made shows the plain failure line and no banner", async () => {
+    postAnswer = () => ({ status: 502, body: { error: "GitHub did not make the issue: boom." } });
+    await openPlan();
+    await press(button(pub.CONFIRM, dialog()));
+    expect(banner()).toBeUndefined();
+    expect(publishBox().textContent).toContain("Nothing is on GitHub yet");
   });
 });

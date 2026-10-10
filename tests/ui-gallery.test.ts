@@ -12,8 +12,8 @@ let LONG: string;
 let view: any;
 const kitExports: Record<string, string[]> = {};
 /** Components with no disabled state, and those whose Long content example opens something when clicked. */
-const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView"];
-const OPENS = ["dialog", "drawer", "toast"];
+const NO_DISABLED = ["card", "table", "list", "badge", "banner", "skeleton", "emptyState", "tabs", "tooltip", "dialog", "drawer", "toast", "evidence", "timelineEntry", "timeline", "logView", "diffView", "pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "confirmDestructive"];
+const OPENS = ["dialog", "drawer", "toast", "confirmDestructive"];
 
 beforeAll(async () => {
   restore = installFakeDom();
@@ -57,7 +57,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(26);
+    expect(names.length).toBe(32);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
@@ -177,6 +177,25 @@ describe("the registry", () => {
     const details = section("evidence").examples.flatMap((e) => all(e.build())).filter((e) => e.tag === "details");
     expect(details.some((e) => e.getAttribute("open") !== null)).toBe(true);
     expect(details.some((e) => e.getAttribute("open") === null)).toBe(true);
+  });
+
+  it("each product section has Error and Notes", () => {
+    for (const id of ["pageHeader", "statusSummary", "nextAction", "filters", "entityLink", "confirmDestructive"]) {
+      expect(section(id).examples.map((e) => e.name), id).toEqual(expect.arrayContaining(["Error", "Notes"]));
+      const text = example(id, "Notes").build().textContent;
+      for (const word of ["Keyboard", "Long content", "Narrow layout"]) expect(text, `${id} ${word}`).toContain(word);
+    }
+  });
+
+  it("the confirmDestructive Error example shows the refusal and stays open", async () => {
+    const root = document.getElementById("modal-root") as unknown as FakeElement;
+    all(example("confirmDestructive", "Error").build()).find((e) => e.tag === "button")!.click();
+    all(root).find((e) => e.tag === "form")!.fire("submit", {});
+    await new Promise<void>((r) => setTimeout(r, 0));
+    const alert = all(root).find((e) => e.getAttribute("role") === "alert")!;
+    expect(alert.textContent).toContain("The server refused this.");
+    all(root).find((e) => e.tag === "button" && e.textContent === "Cancel")!.click();
+    expect(root.children).toEqual([]);
   });
 
   it("building every example opens nothing and adds no document listener", () => {

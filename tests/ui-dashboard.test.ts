@@ -90,7 +90,7 @@ describe("states", () => {
     byFlow: [], byRepo: [{ repo: "acme/app", runs: 1, costUsd: 1 }], byUser: [], failingSteps: [], loops: [],
   };
   const info = { spentToday: 1, dailyBudget: 5, costLimits: true };
-  const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
+  const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }, { variant: "v2", runs: 4, passRate: 0.5, qualityRate: 1, skills: { runs: 4, selectionRate: 1, contextRate: 0.75, activationRate: 0.5 }, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
   const URLS = ["/api/stats", "/api/info", "/api/evals", "/api/watchers", "/api/runs", "/api/clarity"];
   const NAMES: Record<string, string> = {
     "/api/stats": "the statistics", "/api/info": "today's spending", "/api/evals": "evals", "/api/watchers": "the watchers", "/api/runs": "the runs", "/api/clarity": "your turn in numbers",
@@ -153,6 +153,15 @@ describe("states", () => {
     const main = await render();
     expect(errors(main)).toHaveLength(0);
     expect(main.all("p").some((p) => (p.attrs.class ?? "") === "stale-note" && p.textContent.startsWith("Updated"))).toBe(true);
+  });
+
+  it("shows skill rates of an evaluation variant, and a dash for one without", async () => {
+    const main = await render();
+    expect(main.all("th").some((t) => t.textContent === "Skills")).toBe(true);
+    expect(main.all("th").some((t) => t.textContent === "Quality")).toBe(true);
+    const cells = main.all("td").map((t) => t.textContent);
+    expect(cells).toContain("selection 100% · context 75% · activation 50%");
+    expect(cells).toContain("—");
   });
 
   it.each(URLS)("when %s fails, its part is named and the rest is shown", async (url) => {

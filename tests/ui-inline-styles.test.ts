@@ -15,8 +15,8 @@ const STYLE_USE = /\bstyle\s*:|\.style\s*[.[]|setAttribute\(\s*["']style["']/;
 const CLEAN = [
   "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
   "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
-  "ui/editor.js", "ui/app.js", "ui/step-types.js", "ui/graph.js", "ui/library.js",
-  "ui/runs.js", "ui/user/runs.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
+  "ui/editor.js", "ui/app.js", "ui/flow-page.js", "ui/flow-shell.js", "ui/flow-state.js","ui/step-types.js", "ui/graph.js", "ui/library.js",
+  "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
   "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
 ];
 
@@ -194,10 +194,9 @@ describe("ui/**/*.js", () => {
   });
 
   it("uses the same classes on both run pages", () => {
-    for (const f of ["ui/runs.js", "ui/user/runs.js"]) {
-      const src = readFileSync(f, "utf8");
-      for (const c of ["flush pre-wrap", "card mb-16", "seg tabs mb-12"]) expect(src, `${f}: ${c}`).toContain(`class: "${c}"`);
-    }
+    // Both pages share the tab set and the Overview panel, so the classes live in one file.
+    const src = readFileSync("ui/run-tabs.js", "utf8");
+    for (const c of ["flush pre-wrap", "card mb-16", "scf-tabs mb-12"]) expect(src, c).toContain(`class: "${c}"`);
   });
 
   it("does not use the stack class on a form that has no rule for it (ui/auth.js)", () => {

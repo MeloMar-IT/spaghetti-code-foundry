@@ -218,6 +218,17 @@ describe("ui server", () => {
     const checked = (await (await json("POST", "/api/validate", { yaml: conflict })).json()) as { ok: boolean; error?: string };
     expect(checked.ok).toBe(false);
     expect(checked.error).toContain("cannot also have sandbox: true");
+    type Issue = { path: (string | number)[]; message: string };
+    const full = checked as unknown as { error: string; issues: Issue[] };
+    expect(full.issues).toContainEqual({ path: ["steps", 0, "repo_access"], message: expect.stringContaining("cannot also have sandbox: true") });
+    expect(full.error).toBe("<flow>: invalid flow\n" + full.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n"));
+    const empty = (await (await json("POST", "/api/validate", { yaml: "name: x\nsteps: []" })).json()) as { issues: Issue[] };
+    expect(empty.issues.some((i) => i.path.length === 1 && i.path[0] === "steps")).toBe(true);
+    const syntax = (await (await json("POST", "/api/validate", { yaml: "name: a\nname: b\n" })).json()) as { ok: boolean; error: string; issues: Issue[] };
+    expect(syntax.ok).toBe(false);
+    expect(syntax.error.startsWith("<flow>: invalid YAML:")).toBe(true);
+    expect(syntax.issues).toEqual([]);
+    expect(await (await json("POST", "/api/validate", { yaml: FLOW })).json()).not.toHaveProperty("issues");
     expect((await json("PUT", "/api/flows/bad", { yaml: conflict, scope: "repo" })).status).toBe(400);
     expect((await json("PUT", "/api/flows/other", { yaml: FLOW, scope: "repo" })).status).toBe(400); // name mismatch
     expect((await json("PUT", "/api/flows/mine", { yaml: FLOW, scope: "repo" })).status).toBe(200);
@@ -743,7 +754,7 @@ steps:
     expect(index).toContain('id="health"');
     expect(app).toContain("startHealth(");
     // "+ Blank flow" uses pushState, which fires no hashchange: it reloads the line itself.
-    expect(app).toMatch(/pushState\(null, "", "#\/new"\);[\s\S]{0,80}loadHealth\(/);
+    expect(app).toMatch(/pushState\(null, "", hash\);[\s\S]{0,80}loadHealth\(/);
     expect(dashboard).not.toContain("api.next(");
     expect(dashboard).not.toContain('"Server"');
     for (const w of ["Waiting for approval", "waiting for a free slot", "the run on the same ticket", "the coding run on", "Task / reason"]) expect(runs).not.toContain(w);
@@ -752,7 +763,7 @@ steps:
     expect(runs).toContain("detailsRow(");
     expect(runs).not.toContain("s.error.slice");
     expect(runs).toContain("s.reason");
-    expect(runs).toContain("nextBlock(");
+    expect(await text("/run-header.js")).toContain("nextBlock(");
     for (const w of ["waiting for approval", "why issues aren't", "x.reason", "holdList"]) expect(dashboard).not.toContain(w);
     for (const w of ["holdList", "Waiting:"]) expect(admin).not.toContain(w);
     expect(admin).not.toMatch(/errors[^\n]*lastError/);

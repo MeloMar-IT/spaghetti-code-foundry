@@ -419,7 +419,13 @@ async function main(argv: string[]): Promise<number> {
       });
       const rows = report.summary.map((s) =>
         `${s.variant.padEnd(34)} ${String(Math.round(s.passRate * 100) + "%").padStart(5)}  $${s.avgCostUsd.toFixed(3).padStart(7)}  ${String(Math.round((s.avgTokens ?? 0) / 1000) + "k").padStart(6)}  ${s.avgMinutes.toFixed(1).padStart(5)}m  ${s.avgFixLoops.toFixed(1).padStart(5)}`);
-      process.stdout.write(`\n${"variant".padEnd(34)}  pass   avg cost  tokens   time  loops\n${rows.join("\n")}\n\nreport: ${file}\n`);
+      process.stdout.write(`\n${"variant".padEnd(34)}  pass   avg cost  tokens   time  loops\n${rows.join("\n")}\n`);
+      if (report.summary.some((s) => s.skills)) {
+        const pct = (n?: number) => (n === undefined ? "—" : Math.round(n * 100) + "%").padStart(10);
+        const skillRows = report.summary.map((s) => `${s.variant.padEnd(34)} ${pct(s.qualityRate ?? s.passRate)} ${pct(s.skills?.selectionRate)} ${pct(s.skills?.contextRate)} ${pct(s.skills?.activationRate)}`);
+        process.stdout.write(`\n${"variant".padEnd(34)} ${"quality".padStart(10)} ${"selection".padStart(10)} ${"context".padStart(10)} ${"activation".padStart(10)}\n${skillRows.join("\n")}\n`);
+      }
+      process.stdout.write(`\nreport: ${file}\n`);
       return 0;
     }
 
@@ -435,7 +441,8 @@ async function main(argv: string[]): Promise<number> {
       });
       const verb = values["dry-run"] ? "would remove" : "removed";
       process.stdout.write(
-        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""} · ${r.freedMb} MB\n` +
+        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB\n` +
+          (r.planRecordsFailed ? "plan records could not be cleaned (the store is locked or cannot be written) — try again later\n" : "") +
           (r.kept.length ? `kept ${r.kept.length} paused/running run(s) — use --include-paused to clean them too\n` : ""),
       );
       return 0;

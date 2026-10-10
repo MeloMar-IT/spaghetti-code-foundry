@@ -188,6 +188,21 @@ export async function commentOnIssue(repo: string, issue: number, body: string, 
   return commentId(out.split("\n").map((l) => l.trim()).filter(Boolean).at(-1));
 }
 
+/**
+ * The first comment that `match` accepts and that the account gh acts as wrote, or undefined. A comment of another login does not count.
+ * An app has no user to compare with: without `viewerDidAuthor` it rejects with `APP_NO_AUTHOR` and does not ask for a login.
+ */
+export async function findOwnComment(comments: readonly Comment[], match: (c: Comment) => boolean, timeoutMs?: number): Promise<Comment | undefined> {
+  let login: string | undefined;
+  for (const c of comments) {
+    if (!match(c)) continue;
+    if (c.viewerDidAuthor === undefined && ghActsAsApp()) throw new Error(APP_NO_AUTHOR);
+    if (c.viewerDidAuthor === undefined) login ??= await ghLogin(timeoutMs);
+    if (c.viewerDidAuthor === true || (c.viewerDidAuthor === undefined && c.author.login === login)) return c;
+  }
+  return undefined;
+}
+
 export interface UpsertOptions {
   /** The comment id from an earlier call: edit it without reading the issue. */
   id?: string;

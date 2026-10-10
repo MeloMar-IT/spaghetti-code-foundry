@@ -150,3 +150,44 @@ describe("config: audit.retention_days", () => {
     }
   });
 });
+
+describe("flow skills syntax", () => {
+  const flow = (skills: string, step = "{id: a, type: claude, prompt: x}") => parseFlow(`name: t\n${skills}\nsteps:\n  - ${step}`);
+  const ids = (n: number) => `[${Array.from({ length: n }, (_, i) => `s${i}`).join(", ")}]`;
+
+  it("accepts every mode and leaves no field on a flow without skills", () => {
+    for (const m of ["planned", "off", "recorded"]) expect(flow(`skills: {mode: ${m}}`).skills).toEqual({ mode: m });
+    expect(flow("skills: {mode: explicit, ids: [a, b]}").skills).toEqual({ mode: "explicit", ids: ["a", "b"] });
+    const plain = flow("");
+    expect(plain).not.toHaveProperty("skills");
+    expect(plain.steps[0]).not.toHaveProperty("skills");
+    expect(flow(`skills: {mode: explicit, ids: ${ids(20)}}`).skills?.ids).toHaveLength(20);
+  });
+
+  it("refuses bad flow skills", () => {
+    for (const s of [
+      "skills: {mode: auto}", "skills: {}", "skills: {mode: planned, ids: [a]}", "skills: {mode: off, ids: [a]}", "skills: {mode: recorded, ids: [a]}",
+      "skills: {mode: explicit}", "skills: {mode: explicit, ids: []}", "skills: {mode: explicit, ids: [Bad_Id]}", "skills: {mode: explicit, ids: [a, a]}",
+      `skills: {mode: explicit, ids: ${ids(21)}}`, "skills: {mode: off, extra: 1}",
+    ]) expect(() => flow(s), s).toThrow();
+  });
+
+  it("allows explicit mode in a flow whose steps are all jump_only", () => {
+    expect(flow("skills: {mode: explicit, ids: [a]}", "{id: a, type: shell, run: x, jump_only: true}").skills?.mode).toBe("explicit");
+  });
+
+  it("checks the step field", () => {
+    const st = (extra: string, defaults = "") => parseFlow(`name: t\n${defaults}steps:\n  - {id: a, type: claude, prompt: x${extra}}`);
+    expect(st(", skills: selected").steps[0]).toMatchObject({ skills: "selected" });
+    expect(st(", skills: off").steps[0]).toMatchObject({ skills: "off" });
+    expect(st(", skills: catalog, permission_mode: plan").steps[0]).toMatchObject({ skills: "catalog" });
+    expect(st(", skills: catalog, permission_mode: dontAsk, allowed_tools: [Read, Glob, Grep]").steps[0]).toMatchObject({ skills: "catalog" });
+    expect(st(", skills: catalog", "defaults: {permission_mode: plan}\n").steps[0]).toMatchObject({ skills: "catalog" });
+    expect(() => st(", skills: catalog")).toThrow(/read-only/);
+    expect(() => st(", skills: catalog, permission_mode: acceptEdits")).toThrow(/read-only/);
+    expect(() => st(", skills: catalog, permission_mode: dontAsk, allowed_tools: [Bash(ls)]")).toThrow(/read-only/);
+    expect(() => st(", skills: nope")).toThrow();
+    for (const v of ["off", "selected"]) expect(() => st(`, skills: ${v}, skill_role: reviewer, permission_mode: plan`)).toThrow(/reviewer/);
+    expect(() => parseFlow("name: t\nsteps:\n  - {id: a, type: shell, run: x, skills: off}")).toThrow();
+  });
+});

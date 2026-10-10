@@ -131,7 +131,7 @@ describe("user router", () => {
 describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
-      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./runs.js",
+      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
       "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
@@ -150,6 +150,7 @@ describe("admin router", () => {
       "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
       ...Object.fromEntries(names.map((n) => [n, never])),
       "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
+      "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => false }) },
       ...over,
     };
   };
@@ -182,6 +183,16 @@ describe("admin router", () => {
     await tick();
     expect(alerts()).toHaveLength(0);
     expect(main().textContent).toContain("problems page");
+  });
+
+  it("opens a provider on #/models/:name", async () => {
+    setup("#/models/ollama");
+    const renderModels = vi.fn();
+    const renderModelDetail = vi.fn();
+    await loadRouter("app.js", stub({ "./models.js": { refreshModelLists: vi.fn(), renderModels, renderModelDetail } }));
+    await vi.waitFor(() => expect(renderModelDetail).toHaveBeenCalledTimes(1));
+    expect(renderModelDetail.mock.calls[0]![1]).toBe("ollama");
+    expect(renderModels).not.toHaveBeenCalled();
   });
 
   it("keeps the generation check before the error state", () => {

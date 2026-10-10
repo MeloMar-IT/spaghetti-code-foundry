@@ -5,6 +5,7 @@ import { dropDraft, newDraft, preview, saveTyped } from "../src/refinement/draft
 import { confirmSplit, mergeDrafts, moveCriterion, partWarnings } from "../src/refinement/draft-parts.js";
 import { SPLIT_CUTS, splitView } from "../src/refinement/draft-split.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { autoDialog } from "./helpers/confirm-dialog.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -35,7 +36,7 @@ let sent: { method: string; url: string; body: any }[];
 let mode: "ok" | number;
 let modeFor: RegExp;
 let cleanup: (() => void) | undefined;
-const realConfirm = (globalThis as any).confirm;
+let stopDialog: (() => void) | undefined;
 let confirmAnswer = true;
 let asked: string[] = [];
 
@@ -73,10 +74,10 @@ beforeEach(() => {
   reload.mockClear();
   confirmAnswer = true;
   asked = [];
-  (globalThis as any).confirm = (q: string) => {
+  stopDialog = autoDialog((q: string) => {
     asked.push(q);
     return confirmAnswer;
-  };
+  });
   (document as any).getElementById("toast").textContent = "";
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
@@ -113,7 +114,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
-  (globalThis as any).confirm = realConfirm;
+  stopDialog?.();
   apiMod.setViewAs("");
 });
 
@@ -614,7 +615,7 @@ describe("read-only", () => {
     await useWay(1);
     await press(confirmBtn());
     await press(buttons(section()).find((b) => b.attrs["data-focus"] === `open-${D1}`));
-    (globalThis as any).confirm = () => true;
+    confirmAnswer = true;
     const removed: string[] = [];
     const f = (globalThis as any).fetch;
     (globalThis as any).fetch = async (u: string, init: any) => {

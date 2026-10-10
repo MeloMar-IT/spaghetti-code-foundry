@@ -55,6 +55,12 @@ describe("mono-repository", () => {
       "services/api/main.go": 'package main\nimport "github.com/gin-gonic/gin"\n',
       "services/ml/pyproject.toml": '[project]\nname = "ml"\ndependencies = ["numpy>=1.0"]\n',
     });
+  it("takes tsconfig.json as a typescript manifest and no other config name", () => {
+    const p = buildRepoProfile(make({ "tsconfig.json": "{}", "packages/a/tsconfig.json": "{}", "jsconfig.json": "{}", "tsconfig.build.json": "{}" }));
+    expect(paths(p, "manifest", "typescript")).toEqual(["packages/a/tsconfig.json", "tsconfig.json"]);
+    expect(find(p, "manifest", "typescript").every((f) => f.value === undefined)).toBe(true);
+    expect(find(p, "manifest").length).toBe(2);
+  });
   it("finds each manifest, dependency and command with its own path", () => {
     const p = buildRepoProfile(root());
     expect(paths(p, "manifest", "npm")).toEqual(["package.json", "packages/web/package.json"]);

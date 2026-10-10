@@ -64,6 +64,9 @@ export function parseSkillRequestLine(line: string): SkillRequest {
   return parsed.data;
 }
 
+/** The step of a coding run that reads the plan record. It is not a plan gate. */
+export const PLAN_CHECK_STEP = "plan_check";
+
 export const PLAN_PHASE_STEPS = new Set<string>([...SKILL_REQUEST_GATES, "plan", "pull_ticket", "send_back", "split_gate", "force_split", "create_split"]);
 
 /**

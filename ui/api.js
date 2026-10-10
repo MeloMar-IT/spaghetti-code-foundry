@@ -4,6 +4,12 @@ export const setCsrf = (t) => {
   csrf = t || "";
 };
 
+let keepOnAuthFail = () => false;
+/** `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it. */
+export const keepPage = (fn) => {
+  keepOnAuthFail = fn || (() => false);
+};
+
 export const PREVIEW_TEXT = "This is a preview. Nothing can be changed here.";
 export const VIEW_ENDED_TEXT = "The view has ended.";
 
@@ -36,7 +42,7 @@ async function req(method, url, body, stay = false, plain = false) {
   const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
   // the session ended (expired, revoked, password changed): start again at the sign-in page
-  if (r.status === 401 && !stay && !url.startsWith("/api/session")) location.reload();
+  if (r.status === 401 && !stay && !keepOnAuthFail() && !url.startsWith("/api/session")) location.reload();
   if (preview && r.status === 403 && !viewEnded) {
     viewEnded = true;
     onViewEnded?.();
@@ -117,7 +123,8 @@ export const api = {
   refinement: () => req("GET", "/api/refinement"),
   createRefinement: (body) => req("POST", "/api/refinement", body),
   refinementBacklog: (repo) => req("GET", `/api/refinement/backlog?repo=${enc(repo)}`),
-  refinementSession: (id) => req("GET", `/api/refinement/${enc(id)}`),
+  // `stay`: a poll that runs while text is typed must not reload the page on a 401
+  refinementSession: (id, stay = false) => req("GET", `/api/refinement/${enc(id)}`, undefined, stay),
   renameRefinement: (id, body) => req("PUT", `/api/refinement/${enc(id)}`, body),
   dropRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/drop`, {}),
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),

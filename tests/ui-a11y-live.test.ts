@@ -233,6 +233,32 @@ describe("Your turn", () => {
     stop();
   });
 
+  it("every control is named in the failure states, and the focus is kept when the banner appears", async () => {
+    const failing = async (url: string) => {
+      asked.push(url);
+      return { ok: false, status: 500, statusText: "x", json: async () => ({ error: "down" }) };
+    };
+    const okFetch = (globalThis as any).fetch;
+    (globalThis as any).fetch = failing;
+    const first = connected();
+    const stopFirst = await turn.renderYourTurn(first);
+    expectNamed(first);
+    expect(auditPage(first)).toEqual([]);
+    stopFirst();
+    (globalThis as any).fetch = okFetch;
+
+    answers["/api/your-turn"] = turnData([turnItem(5)]);
+    const main = connected();
+    const stop = await turn.renderYourTurn(main);
+    named(main, "turn-dismiss-k5").focus();
+    (globalThis as any).fetch = failing;
+    await tick(5000);
+    expect(main.textContent).toContain("Could not refresh");
+    expectNamed(main);
+    expect(doc().activeElement?.attrs["data-focus"]).toBe("turn-dismiss-k5");
+    stop();
+  });
+
   it("holds the redraw while a dialog is open and draws the newest answer after it closed", async () => {
     answers["/api/your-turn"] = turnData([turnItem(5)]);
     const main = connected();
@@ -282,19 +308,21 @@ describe("Runs list", () => {
     stop();
   });
 
-  it("does not ask or draw while the owner filter has the focus", async () => {
+  it("asks but does not draw while the owner filter has the focus", async () => {
     listAnswers([RUN("r1")]);
     const main = connected();
     const stop = await runs.renderRunsList(main);
     const select = named(main, "owner-filter");
     select.focus();
     asked.length = 0;
-    await tick(30_000);
-    expect(asked).toEqual([]);
-    expect(named(main, "owner-filter")).toBe(select);
-    named(main, "run-r1").focus();
+    listAnswers([RUN("r1", { task: "Changed" })]);
     await tick(30_000);
     expect(asked).toContain("/api/runs");
+    expect(named(main, "owner-filter")).toBe(select);
+    expect(main.textContent).not.toContain("Changed");
+    named(main, "run-r1").focus();
+    await tick(300);
+    expect(main.textContent).toContain("Changed");
     expect(named(main, "owner-filter")).not.toBe(select);
     stop();
   });
@@ -311,12 +339,17 @@ describe("Runs list", () => {
       await gate;
       return { ok: true, status: 200, statusText: "OK", json: async () => answers[url] ?? {} };
     };
+    listAnswers([RUN("r1", { task: "Changed" })]);
     await tick(30_000);
     const select = named(main, "owner-filter");
     select.focus();
     release();
     await flush();
     expect(named(main, "owner-filter")).toBe(select);
+    expect(main.textContent).not.toContain("Changed");
+    named(main, "run-r1").focus();
+    await tick(300);
+    expect(main.textContent).toContain("Changed");
     stop();
   });
 });
@@ -451,6 +484,50 @@ describe("Health", () => {
     expect(h1.attrs.tabindex).toBe("-1");
     stop();
   });
+
+  it("says 'does not answer' once, as an alert", async () => {
+    const el = new FakeElement("div");
+    (globalThis as any).fetch = async (url: string) => {
+      asked.push(url);
+      throw new TypeError("down");
+    };
+    const stop = health.startHealth(el);
+    try {
+      await flush();
+      const b = el.all("b")[0]!;
+      expect(b.attrs.role).toBe("alert");
+      expect(auditPage(el)).toEqual([]);
+      await tick(30_000);
+      expect(el.all("b")[0]).toBe(b);
+    } finally {
+      stop();
+    }
+  });
+
+  it("does not redraw while the Cancel dialog is open, and the focus goes back to Cancel run", async () => {
+    const el = new FakeElement("div");
+    const chip = doc().getElementById("health-btn") as FakeElement;
+    answers["/api/health"] = bad(["r1"]);
+    const stop = health.startHealth(el);
+    try {
+      await flush();
+      chip.fire("click");
+      const before = named(el, "health-cancel-r1");
+      before.focus();
+      before.click();
+      await flush();
+      answers["/api/health"] = bad(["r0", "r1"]);
+      await tick(30_000);
+      expect(named(el, "health-cancel-r1")).toBe(before);
+      const keep = (doc().getElementById("modal-root") as FakeElement).all("button").find((b) => b.textContent === "Keep running")!;
+      keep.click();
+      await tick(250);
+      expectKept(el, "health-cancel-r1", before);
+      expect(asked.some((u) => u.includes("/cancel"))).toBe(false);
+    } finally {
+      stop();
+    }
+  });
 });
 
 // ── My runs ──
@@ -497,7 +574,7 @@ describe("My runs", () => {
     await tick(30_000);
     expect(named(list, "remove-q1")).toBe(opener);
     answer(false);
-    await flush();
+    await tick(300); // the poller lets go of a held answer after a short wait
     expect(list.textContent).toContain("Newest");
     expect(doc().activeElement?.attrs["data-focus"]).toBe("remove-q1");
     stop();
@@ -521,7 +598,8 @@ describe("User run page", () => {
     const before = named(head, "act-cancel");
     before.focus();
     await tick(30_000);
-    expectKept(head, "act-cancel", before);
+    // The header is not drawn again: the same node keeps the focus.
+    expect(doc().activeElement).toBe(before);
     stop();
   });
 
@@ -530,6 +608,8 @@ describe("User run page", () => {
     const main = connected();
     const stop = mine.renderMyRun(main, "r1", { a });
     await flush();
+    esHandlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
+    main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
     const log = named(main, "log");
     expect(log.attrs).toMatchObject({ role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0" });
     esHandlers.log!({ data: JSON.stringify({ line: "▶ step" }) });
@@ -578,7 +658,7 @@ describe("Admin run page", () => {
     const before = named(head, "act-approve");
     before.focus();
     handlers.update!({ data: JSON.stringify({ summary: { ...s, task: "changed" } }) });
-    expectKept(head, "act-approve", before);
+    expect(doc().activeElement).toBe(before);
     stop();
   });
 
@@ -631,11 +711,14 @@ describe("Admin run page", () => {
     const handlers = stubEventSource();
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
+    handlers.log!({ data: JSON.stringify({ line: "▶ first" }) });
+    main.all("button").find((b) => b.attrs["data-tab"] === "log")!.click();
     const log = named(main, "log");
     expect(log.attrs).toMatchObject({ role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0" });
     handlers.log!({ data: JSON.stringify({ line: "✔ done" }) });
     expect(auditPage(main).filter((v) => v.element.includes("log"))).toEqual([]);
-    const region = main.all("div").find((d) => d.attrs.role === "status")!;
+    // The loading skeleton is a status too: the announcer is the one with aria-live.
+    const region = main.all("div").find((d) => d.attrs.role === "status" && d.attrs["aria-live"] === "polite")!;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(RUN("r1", { status: "running", next: nextStep("running", { runId: "r1" }, {}) }));
     expect(region.textContent).toBe("");

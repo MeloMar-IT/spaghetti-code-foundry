@@ -394,6 +394,21 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Since #304
   and #305 a user's run is also held by an OS sandbox profile (`os-sandbox.ts`); its agent steps get their
   own agent folders in the run folder and sign in by a token variable only (`src/agents/boxed.ts`).
+- **Codex sessions belong to a Codex folder.** Each Codex step records `codexHome` (`codex_home` in
+  `state.steps` and in the template context): `run` for the run's own folder, or `personal:` plus 12 hex
+  digits of the path (never the path). `codexHomeId()` and `codexResumeRefusal()` are in
+  `src/agents/codex-home.ts`. A step with `resume:` starts a new session, and logs why, when the recorded
+  folder differs from its own or none was recorded (a record from before #420), so it never asks Codex for
+  a session that folder does not hold.
+- **Codex isolation (#421).** `codexIsolationMode()` picks `private` (a local model or a `CODEX_API_KEY`
+  the step sees: `CODEX_HOME=<runDir>/home/.codex`, made 0700 by `privateCodexHome()`; a failure refuses the
+  step), `ignore-config` (a Codex login: `--ignore-user-config`) or `off`. Boxed steps get no mode.
+  `codexExecFlags()` probes `codex exec --help` or `exec resume --help` per command form (cached 10 min);
+  a CLI without the flag turns `ignore-config` into `unsupported`: no flag, a `!` log line, the step runs.
+  The Foundry assumes this CLI contract: the flag skips `config.toml` only, the sign-in stays in
+  `CODEX_HOME`, and rules are separate (`--ignore-rules` is never passed). `fake-codex.mjs` models exactly
+  this. Not yet checked on a real CLI: whether `exec resume` lists the flag, and whether a private
+  `CODEX_HOME` hides personal skills kept outside it.
   Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not
@@ -482,7 +497,7 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
-**Two displays.** The admin page is `ui/index.html` with `ui/app.js`; the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 

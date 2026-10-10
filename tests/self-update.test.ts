@@ -262,7 +262,8 @@ describe("self-update: the update path", () => {
       expect(f.state().failed).toBeUndefined();
       expect(f.state().tested?.commit).toBe(good);
     }
-  });
+    // Three full update cycles with real git: more than 60 s on a busy machine.
+  }, 180_000);
 
   it("says why a failure happened, in the text of its stage", async () => {
     const f = fixture();
@@ -528,7 +529,8 @@ describe("self-update: going back", () => {
       expect(f.dist()).toBe("v1");
       expect(f.state().failed).toMatchObject({ commit: v2, stage: "apply", backOk: true });
     }
-  });
+    // Several update cycles with real git: more than 60 s on a busy machine.
+  }, 180_000);
 
   it("says when it cannot go back, builds nothing at the new version, and stops self-update", async () => {
     const cases: [string, (f: Fx, v1: string, v2: string) => void][] = [

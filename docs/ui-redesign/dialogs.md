@@ -5,8 +5,8 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 Three mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
-- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
-- **Native `confirm` and `prompt`:** 19 calls in 11 files (second table).
+- **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js` and the refinement pages), `confirmDialog` and `decisionDialog` in `ui/user/runs.js` (`:72` and `:85`; a separate helper of the same name), `withDialog` (`ui/user/runs.js:413`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **Native `confirm` and `prompt`:** 4 calls in 1 file (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
 
@@ -20,16 +20,30 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
 | `ui/monitor.js` | Switch on with a fresh state file | Switch on button when the state file cannot be read (`#/watchers` and `#/problems`, through `confirmUnreadable`) | none | Switch on | `confirmDialog` |
-| `ui/app.js` | Run <flow> | Run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter) | `modal` |
-| `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
-| `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
+| `ui/flow-page.js` | Run <flow> | Test run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter); with an empty task the first click only warns and the button becomes "Run without a task" (inline, no second dialog) | `modal` |
+| `ui/flow-page.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
+| `ui/flow-page.js` | Ask Claude to change this flow | More menu in the flow editor | request text | Apply | `modal` (`generateDialog(true)`) |
+| `ui/flow-page.js` | Discard unsaved changes | Open another flow, Blank flow or Draft a flow with an edited flow | none | Discard | `confirmDialog` |
+| `ui/flow-page.js` | Overwrite flow | Save under the name of another flow | none | Overwrite | `confirmDialog` |
+| `ui/flow-page.js` | Delete flow | Delete in the More menu of the flow editor | none | Delete | `confirmDialog` |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
+| `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
-| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
+| `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; category; one card per block with its scope. Then a preview: steps, variables added, renamed ids | **Insert** in the preview (closes with that block); **Back** returns to the list. An invalid block cannot be picked | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
+| `ui/library.js` | Overwrite block | Save a step as a block under an id that exists | none | Overwrite | `confirmDialog` |
+| `ui/library.js` | Delete block | Delete on a block of the Library page | none | Delete | `confirmDialog` |
 | `ui/monitor.js` | This is not a problem | Button on a finding | reason | Mute | `modal` |
 | `ui/monitor.js` | Mute a finding | Button on a finding | reason, duration | Mute | `modal` |
 | `ui/monitor.js` | Mute a detector | Button on a detector | detector (when picked here), reason, duration | Mute | `modal` |
+| `ui/refinement-draft.js` | Remove draft | Remove draft on a story draft | none | Remove draft | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-draft.js` | Move to notes | Move to notes on a remark | none | Move | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-parts.js` | Merge drafts | Merge on a story draft | none | Merge | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-publish.js` | Publish anyway | Publish while some text has no place on the page | none | Publish anyway | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-ready.js` | Remove reason | Remove reason on an accepted item | none | Remove reason | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-suggest.js` | Replace text | Accept on a suggestion for a field that has text | none | Replace | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement-talk.js` | Remove entry | Remove on a map entry | none | Remove | `confirmDialog` (`ui/dom.js`) |
+| `ui/refinement.js` | Drop this session | Drop on the session page | none | Drop | `confirmDialog` (`ui/dom.js`) |
 | `ui/refinement-import.js` | Refine an existing issue | Refine an existing issue on `#/refinement` | repository, issue number; with no repository it shows a link to `#/repos` | Refine issue | `modal` |
 | `ui/refinement-publish.js` | Publish to GitHub | Publish on the session page | per ready draft: labels, "Start building this story" | Create the issues | `modal` |
 | `ui/refinement-ready.js` | Accept anyway | Button on a failed ready check | reason (required) | Accept | `modal` |
@@ -74,22 +88,7 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 
 | File:line | Kind | Text | Action it guards |
 |---|---|---|---|
-| `ui/app.js:97` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:260` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:281` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:302` | confirm | Run without a task description? | Run (inside the Run dialog) |
-| `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
-| `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
-| `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
-| `ui/refinement-draft.js:458` | confirm | Remove this story draft? | Remove a draft |
-| `ui/refinement-draft.js:585` | confirm | Move this text to the notes for the builder? It is taken out of its field. | Move a draft to notes |
-| `ui/refinement-parts.js:133` | confirm | Merge "<B>" into "<A>"? ... | Merge two drafts |
-| `ui/refinement-publish.js:306` | confirm | Some text has no place on the page any more and is not saved. Publish anyway? | Publish with text that is not saved |
-| `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
-| `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
-| `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
-| `ui/refinement.js:422` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
-| `ui/runs.js:297` | prompt | Approve — note (optional) | Approve a run (admin) |
-| `ui/runs.js:298` | prompt | Why reject? (optional) | Reject a run (admin) |
-| `ui/runs.js:307` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
-| `ui/runs.js:311` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |
+| `ui/runs.js:288` | prompt | Approve — note (optional) | Approve a run (admin) |
+| `ui/runs.js:289` | prompt | Why reject? (optional) | Reject a run (admin) |
+| `ui/runs.js:298` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |
+| `ui/runs.js:302` | confirm | Cancel this run? You can resume it later. | Cancel a run (admin) |

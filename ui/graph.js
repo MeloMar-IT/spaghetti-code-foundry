@@ -82,7 +82,10 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
   });
 
   const nodes = steps.map((s, i) =>
-    svg("g", { class: `node${selected === i ? " sel" : ""}${s.jump_only ? " jump" : ""}`, transform: `translate(${X},${y(i)})`, onClick: () => onSelect?.(i) },
+    svg("g", { class: `node${selected === i ? " sel" : ""}${s.jump_only ? " jump" : ""}`, transform: `translate(${X},${y(i)})`,
+      role: "button", tabindex: "0", "aria-label": `Step ${i + 1}: ${s.id ?? "?"}, ${s.type}`, "aria-pressed": String(selected === i), "data-focus": `graph-step-${i}`,
+      onClick: () => onSelect?.(i),
+      onKeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault?.(); onSelect?.(i); } } },
       svg("rect", { width: W, height: H, rx: 8 }),
       svg("rect", { class: `bar ${s.type}`, width: 4, height: H - 12, x: 6, y: 6, rx: 2 }),
       svg("text", { x: 18, y: 20, "font-weight": 600, "font-size": 13 }, svg("tspan", { "aria-hidden": "true" }, `${ICON[s.type] ?? "?"} `), clip(s.id ?? "?", 24)),
@@ -97,7 +100,7 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
 
   const dangling = edges.filter((e) => e.to === -2);
   return h("div", {},
-    svg("svg", { class: "graph", width, height, viewBox: `0 0 ${width} ${height}` }, defs, lines, arcEls, nodes, end),
+    svg("svg", { class: "graph", role: "group", "aria-label": "Flow steps", width, height, viewBox: `0 0 ${width} ${height}` }, defs, lines, arcEls, nodes, end),
     h("div", { class: "legend" },
       h("span", {}, h("i", { class: "seq" }), "next"),
       h("span", {}, h("i", { class: "ok" }), "on success"),

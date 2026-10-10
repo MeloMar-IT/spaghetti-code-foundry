@@ -672,7 +672,8 @@ describe("internal errors give a plain 500", () => {
       try {
         const quick = Date.now();
         expect((await login(s, "ann@example.com", "not-the-password-1")).status).toBe(401);
-        expect(Date.now() - quick).toBeLessThan(1000);
+        // must not wait for the lock (that takes over 1500 ms, see below); the hash alone can take ~1 s on a busy machine
+        expect(Date.now() - quick).toBeLessThan(1400);
         expect(s.logs).toContain("auth: audit.jsonl cannot-write");
         expect(existsSync(join(s.home, "audit.jsonl"))).toBe(false);
         const started = Date.now();
@@ -776,7 +777,8 @@ describe("sign-ins in the audit log", () => {
       expect(signIns(s)).toHaveLength(4);
       expect((await login(s, ann.email, "not-the-password-1")).status).toBe(429);
       expect(signIns(s)).toHaveLength(4);
-    }));
+      // the clock is frozen: on a slow machine the 1 s wait would end while the fourth password check still runs
+    }, { signInClock: () => 1_000_000 }));
 
   it("writes a create line at setup, and no sign-in line", () =>
     withServer(async (s) => {

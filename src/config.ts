@@ -7,7 +7,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
-import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -289,8 +289,9 @@ export const ConfigSchema = z
      */
     hotfix_to_main: z.boolean().default(false),
     /**
-     * Run agent steps without your personal Claude Code setup (MCP servers, plugins, skills,
-     * hooks, user settings). Smaller context every turn and no off-task detours.
+     * Run agent steps without your personal setup: Claude Code skips MCP servers, plugins, skills,
+     * hooks and user settings; Codex skips `~/.codex/config.toml`, or uses a private folder with a key
+     * or a local model. Smaller context every turn and no off-task detours.
      */
     isolate_agents: z.boolean().default(true),
     /** Block pushes whose new commits add secrets (API keys, private keys, .env files). */
@@ -441,6 +442,8 @@ export const ConfigSchema = z
           .prefault({}),
         /** What to do with a requested skill that cannot be used. */
         unresolved: UnresolvedPolicySchema,
+        /** Which tools a skill may ask for. Decides which skills load; it never limits a session. */
+        tools: ToolPolicySchema,
       })
       .strict()
       .superRefine((s, ctx) => {

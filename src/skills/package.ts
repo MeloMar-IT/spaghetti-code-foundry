@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { credentialProblem, riskyFileName } from "./credential-scan.js";
 import {
   SKILL_FOLDERS,
   SKILL_LIMITS,
@@ -18,10 +19,14 @@ export interface SkillIssue {
   reason: string;
 }
 
+const PACKAGE = "(package)";
+
 export class SkillPackageError extends Error {
   readonly issues: SkillIssue[];
   constructor(source: string, issues: SkillIssue[]) {
-    super(`${source}: invalid skill package` + issues.map((i) => `\n  - ${i.path}: ${i.reason}`).join(""));
+    // A folder name that looks like a credential is never printed.
+    const shown = credentialProblem(source) ? PACKAGE : source;
+    super(`${shown}: invalid skill package` + issues.map((i) => `\n  - ${i.path}: ${i.reason}`).join(""));
     this.name = "SkillPackageError";
     this.issues = issues;
   }
@@ -67,7 +72,6 @@ export function skillDigest(entries: readonly { path: string; content: Uint8Arra
 const SKILL_MD = "SKILL.md";
 const MANIFEST = "skill.yaml";
 const REVIEW_MD = "REVIEW.md";
-const PACKAGE = "(package)";
 const IGNORED = ".DS_Store";
 
 /** Split SKILL.md into its YAML frontmatter and the body. Throws an Error with the reason. */
@@ -120,6 +124,11 @@ function decode(e: SkillEntry): string {
 export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKAGE, dirName?: string): SkillPackage {
   const issues: SkillIssue[] = [];
   const add = (path: string, reason: string) => issues.push({ path, reason });
+  // The credential scan keeps its own list: when it is not empty, only these are reported (step 2b).
+  const findings: SkillIssue[] = [];
+  const flag = (path: string, reason: string) => findings.push({ path, reason });
+  const nameRules = new Set<string>();
+  const scanned: SkillEntry[] = [];
 
   // 1. Entries
   const kept: SkillEntry[] = [];
@@ -128,6 +137,20 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     const path = e.path;
     if (path.split("/").pop() === IGNORED) continue;
     const kind = e.kind ?? "file";
+    // A path that looks like a credential is never printed; step 2b reports the rule once.
+    const nameRule = credentialProblem(path);
+    if (nameRule) {
+      nameRules.add(nameRule);
+      continue;
+    }
+    if (kind === "file") {
+      if (riskyFileName(path)) {
+        flag(path, "is a credential file by its name; a skill must not hold credentials");
+        continue;
+      }
+      // Read by the scan in step 2b, also when a later check in this step refuses the entry.
+      if (e.content && e.content.byteLength <= fileLimit(path)) scanned.push(e);
+    }
     const problem = relativePathProblem(path);
     if (problem) {
       add(path, problem);
@@ -187,6 +210,27 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
   if (counted.filter((e) => e.kind === "directory").length > SKILL_LIMITS.files) add(PACKAGE, `more than ${SKILL_LIMITS.files} folders`);
   if (fileCount > SKILL_LIMITS.files) add(PACKAGE, `more than ${SKILL_LIMITS.files} files`);
   if (total > SKILL_LIMITS.totalBytes) add(PACKAGE, `package is larger than ${SKILL_LIMITS.totalBytes} bytes`);
+
+  // 2b. Credentials and live endpoints. Runs before any file is parsed. On a finding only the scan's own
+  // list is reported: it holds rule names and scanned paths, never a value.
+  for (const rule of [...nameRules].sort()) flag(PACKAGE, `a file name looks like a credential (${rule})`);
+  const dirRule = dirName === undefined ? undefined : credentialProblem(dirName);
+  if (dirRule) flag(PACKAGE, `the folder name looks like a credential (${dirRule})`);
+  let left = SKILL_LIMITS.totalBytes; // the scan reads at most this much per package
+  let unscanned = false;
+  for (const e of scanned) {
+    const c = e.content!;
+    if (c.byteLength > left) {
+      unscanned = true;
+      break;
+    }
+    left -= c.byteLength;
+    const rule = credentialProblem(Buffer.from(c.buffer, c.byteOffset, c.byteLength).toString("latin1"));
+    if (rule) flag(e.path, `holds what looks like a credential or a live endpoint (${rule}); use a placeholder`);
+  }
+  if (findings.length) throw new SkillPackageError(source, findings);
+  // Only when the package is over its total size (reported in step 2): what was not scanned is not parsed.
+  if (unscanned) throw new SkillPackageError(source, issues);
 
   const find = (p: string) => kept.find((e) => e.path === p);
 
@@ -250,6 +294,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     const hasScripts = kept.some((e) => e.path.startsWith("scripts/"));
     if (manifest.tool_profile.shell) add(`${MANIFEST}: risk`, "must be medium or high when tool_profile.shell is true");
     else if (hasScripts) add(`${MANIFEST}: risk`, "must be medium or high when the package has scripts");
+    if (manifest.connectors.length) add(`${MANIFEST}: risk`, "must be medium or high when the package names connectors");
   }
 
   if (issues.length || !fm || !manifest) throw new SkillPackageError(source, issues);
@@ -266,6 +311,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     capabilities: [...manifest.capabilities].sort(),
     roles: [...manifest.roles].sort(),
     conflicts: [...manifest.conflicts].sort(),
+    connectors: [...manifest.connectors].sort(),
     dependencies: [...manifest.dependencies].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     description: fm.description.trim(),
     instructions: body,

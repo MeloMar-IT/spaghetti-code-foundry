@@ -27,6 +27,11 @@ describe("block library", () => {
     expect(pull.steps.find((s) => s.id === "pull_ticket")).toMatchObject({ repo_access: true });
   });
 
+  it("rejects duplicate and reserved step ids in a block", () => {
+    expect(() => parseBlock("name: x\nsteps:\n  - {id: a, type: shell, run: x}\n  - {id: a, type: shell, run: y}")).toThrow(/duplicate step id "a"/);
+    expect(() => parseBlock("name: x\nsteps:\n  - {id: end, type: shell, run: x}")).toThrow(/"end" is a reserved word/);
+  });
+
   it("rejects jumps out of the block", () => {
     const y = "name: x\nsteps:\n  - {id: a, type: shell, run: x, on_failure: elsewhere}";
     expect(() => parseBlock(y)).toThrow(/only jump to their own steps/);
@@ -184,6 +189,11 @@ describe("every posted comment starts with a first-line variable", () => {
   it("does not reuse the group of the first call for the second", () => {
     const run = '{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } | gh issue comment 1 --body-file -\ngh issue comment 2 --body-file -';
     expect(scanShell(run)).toHaveLength(1);
+  });
+  bad("a built text without a first line", 'body=$( { echo "🤖 **X**"; echo; } )\nposted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -)');
+  bad("a built text that was never built", 'posted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -)');
+  it("accepts a text built first and piped from printf", () => {
+    expect(scanShell('body=$( { echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } )\nposted=$(printf \'%s\\n\' "$body" | gh issue comment 1 --body-file -) || exit 1')).toEqual([]);
   });
   bad("a call split over lines by continuations", 'echo hi | gh \\\n  issue comment 1 --body "text"');
   it("accepts good shell comments", () => {

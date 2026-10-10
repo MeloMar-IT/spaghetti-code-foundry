@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { runProcess } from "./process.js";
@@ -47,8 +48,43 @@ export interface CodexRunOptions {
   /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
   onProgress?: (msg: string) => void;
-  /** Read-only reviewer: ignore the personal Codex config and switch off MCP servers and hooks (the login is kept). */
+  /** Read-only reviewer: switch off MCP servers and hooks. It also passes `--ignore-user-config`, unless `ignoreUserConfig` says otherwise (the login is kept). */
   reviewer?: boolean;
+  /** Put the agent note in `<instructions>` (an isolated session). */
+  agentNote?: boolean;
+  /** Skip the personal config.toml. Unset: only a reviewer does. false: not even a reviewer (boxed, private folder, CLI without the flag). */
+  ignoreUserConfig?: boolean;
+}
+
+/** What an isolated Codex session is told about its setup. */
+export const CODEX_AGENT_NOTE = [
+  "You run unattended inside an automated Foundry run: nobody can answer questions, so decide and continue.",
+  "Your setup is isolated from the person's personal Codex setup. Do not look in ~/.codex for skills or settings.",
+  "If the prompt holds a <foundry-skills> block, those are the skills selected for this run; follow them.",
+].join("\n");
+
+const FLAGS_TTL_MS = 10 * 60_000;
+const flagsCache = new Map<string, { at: number; flags: ReadonlySet<string> }>();
+
+/** The options `codex exec` (or `codex exec resume`) lists in its help; empty when the help cannot be read. Cached per program and form for 10 minutes. */
+export function codexExecFlags(bin: string, o: { resume?: boolean; now?: number; run?: (bin: string, args: string[]) => string } = {}): ReadonlySet<string> {
+  const key = `${bin}\n${o.resume ? "resume" : "new"}`;
+  const now = o.now ?? Date.now();
+  const hit = flagsCache.get(key);
+  if (hit && now - hit.at < FLAGS_TTL_MS) return hit.flags;
+  const run = o.run ?? ((b: string, a: string[]) => execFileSync(b, a, { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] }));
+  let flags: ReadonlySet<string>;
+  try {
+    flags = new Set(run(bin, o.resume ? ["exec", "resume", "--help"] : ["exec", "--help"]).match(/--[a-z][a-z-]+/g) ?? []);
+  } catch {
+    flags = new Set();
+  }
+  flagsCache.set(key, { at: now, flags });
+  return flags;
+}
+
+export function resetCodexFlagsCache(): void {
+  flagsCache.clear();
 }
 
 export interface CodexRunResult {
@@ -85,8 +121,10 @@ const toml = (s: string) => JSON.stringify(s); // a JSON string is a valid TOML 
 export function buildCodexArgs(o: CodexRunOptions): string[] {
   const args = ["exec"];
   if (o.resumeSessionId) args.push("resume");
-  args.push("--json", "--skip-git-repo-check", "-c", `sandbox_mode=${toml(o.sandbox)}`, "-c", `approval_policy=${toml("never")}`);
-  if (o.reviewer) args.push("--ignore-user-config", "-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
+  args.push("--json", "--skip-git-repo-check");
+  if (o.ignoreUserConfig ?? o.reviewer) args.push("--ignore-user-config");
+  args.push("-c", `sandbox_mode=${toml(o.sandbox)}`, "-c", `approval_policy=${toml("never")}`);
+  if (o.reviewer) args.push("-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
   if (o.model) args.push("-m", o.model);
   if (o.effort) args.push("-c", `model_reasoning_effort=${toml(o.effort === "max" ? "xhigh" : o.effort)}`);
   if (o.localProvider) args.push("-c", `model_provider=${toml(o.localProvider)}`);
@@ -109,7 +147,8 @@ function describe(item: CodexItem): string | undefined {
 /** Run the OpenAI Codex CLI headlessly (`codex exec --json`). The prompt goes via stdin. */
 export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
   const bin = o.codexBin ?? resolveCodexBin();
-  const prompt = o.systemPrompt ? `<instructions>\n${o.systemPrompt}\n</instructions>\n\n${o.prompt}` : o.prompt;
+  const instructions = [o.agentNote ? CODEX_AGENT_NOTE : "", o.systemPrompt ?? ""].filter(Boolean).join("\n\n");
+  const prompt = instructions ? `<instructions>\n${instructions}\n</instructions>\n\n${o.prompt}` : o.prompt;
   let sessionId: string | undefined;
   let last = "";
   let failure: string | undefined;

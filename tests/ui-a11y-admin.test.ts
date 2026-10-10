@@ -142,6 +142,14 @@ describe("pages", () => {
     noViolations(main());
     tablesOk(main());
   });
+  it("Model detail", async () => {
+    routes = { "GET /api/config": config, "GET /api/providers": providers };
+    await m.models.renderModelDetail(main(), "local");
+    noViolations(main());
+    for (const label of ["Kind", "Base URL", "API key env var", "Default model"]) {
+      expect(main().all("label").some((l) => l.textContent.startsWith(label)), label).toBe(true);
+    }
+  });
   it("Problems", async () => {
     routes = { "GET /api/monitor": monitorState };
     await m.problems.renderProblems(main());

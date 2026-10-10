@@ -6,6 +6,10 @@
 // "READ <path>" lists a folder or reads a file and answers "read ok <path> <count>" (never the content); an error is not caught.
 // "CHILD READ <path>" and "CHILD WRITE <path> <text>" do the same in a child `node -e` process; a failing child fails this fake with its stderr.
 // "CODEX_SIGNED_OUT" fails with a 401 answer.
+// With --help in the args it prints the options of `exec` and exits (before reading stdin); it lists --ignore-rules always
+// and --ignore-user-config unless FAKE_CODEX_NO_IGNORE_CONFIG is set.
+// "SHOWCODEXHOME" (a whole line) puts one line before the answer: codex_home=<path|unset> config=<read|ignored|none> mcp=<names|-> skills=<names|-> instructions=<yes|no> rules=<names|->.
+// It reads $CODEX_HOME (never $HOME/.codex) and $HOME/.agents/skills (the trailing agents_skills=<names|-> part, as the real CLI does); config.toml is "ignored" (no MCP names) when --ignore-user-config is in the args.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -21,9 +25,40 @@ function child(code, ...a) {
   }
 }
 
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  process.stdout.write(`Usage: codex exec [resume] [OPTIONS]\n  --json\n  --skip-git-repo-check\n  --ignore-rules\n${process.env.FAKE_CODEX_NO_IGNORE_CONFIG ? "" : "  --ignore-user-config\n"}`);
+  process.exit(0);
+}
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
-const args = process.argv.slice(2);
+
+// The Codex folder as the step sees it: only $CODEX_HOME, never $HOME/.codex.
+function showCodexHome() {
+  const dir = process.env.CODEX_HOME;
+  if (!dir) return "codex_home=unset config=none mcp=- skills=- instructions=no rules=-";
+  const names = (sub, strip) => {
+    try {
+      const l = readdirSync(`${dir}/${sub}`).filter((n) => !strip || n.endsWith(strip)).map((n) => (strip ? n.slice(0, -strip.length) : n)).sort();
+      return l.length ? l.join(",") : "-";
+    } catch {
+      return "-";
+    }
+  };
+  const cfg = `${dir}/config.toml`;
+  const config = !existsSync(cfg) ? "none" : args.includes("--ignore-user-config") ? "ignored" : "read";
+  const mcp = config === "read" ? [...readFileSync(cfg, "utf8").matchAll(/^\[mcp_servers\.([^\].]+)\]/gm)].map((m) => m[1]).sort().join(",") || "-" : "-";
+  return `codex_home=${dir} config=${config} mcp=${mcp} skills=${names("skills")} instructions=${existsSync(`${dir}/AGENTS.md`) ? "yes" : "no"} rules=${names("rules", ".rules")} agents_skills=${agentsSkills()}`;
+}
+// Personal skills the real CLI also loads from $HOME/.agents/skills, whatever CODEX_HOME is.
+function agentsSkills() {
+  try {
+    const l = readdirSync(`${process.env.HOME}/.agents/skills`).sort();
+    return l.length ? l.join(",") : "-";
+  } catch {
+    return "-";
+  }
+}
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const resumeAt = args.indexOf("resume");
 const thread = resumeAt >= 0 ? args[args.indexOf("-") - 1] : `thread-${Math.random().toString(36).slice(2, 8)}`;
@@ -47,6 +82,7 @@ if (prompt.includes("CODEX_SIGNED_OUT")) {
 }
 let answer = `codex ok args=${args.join(" ")}\nPROMPT<<${prompt}>>`;
 let n = 0;
+let codexHomeLine = "";
 const shown = [];
 for (const line of prompt.split("\n")) {
   const w = line.match(/^WRITE (\S+) (.*)$/);
@@ -65,12 +101,14 @@ for (const line of prompt.split("\n")) {
   const sv = line.match(/^SHOWVARS (.*)$/);
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
   if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
+  if (line === "SHOWCODEXHOME") codexHomeLine = showCodexHome();
   if (line === "SHOWGHDIR") {
     const d = process.env.GH_CONFIG_DIR;
     shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
   }
   if (shown.length) answer = shown.join("\n");
 }
+if (codexHomeLine) answer = `${codexHomeLine}\n${answer}`;
 emit({ type: "item.completed", item: { id: `item_${n++}`, type: "command_execution", command: "git status", aggregated_output: "clean\n", exit_code: 0, status: "completed" } });
 if (prompt.includes("VERDICT: APPROVE")) answer = process.env.FAKE_CODEX_VERDICT ?? "Fine.\nVERDICT: APPROVE";
 // Separate answers for checking a plan and for reviewing code, when a test needs them to differ.

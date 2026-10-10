@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { SKILL_LOCK_CHANGED } from "../src/engine/skill-lock.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
+import { liveLogFile } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { addSkillPins } from "../src/skills/lock.js";
 import { loadSkillPackage } from "../src/skills/package.js";
@@ -200,7 +201,8 @@ ${agentLine}    prompt: |
     demo("1.0.0");
     const s = await runFlow(showFlow("    agent: codex\n"), { ...runOpts(), codexBin });
     expect(s.status).toBe("succeeded");
-    expect(outputOf(s)).not.toContain("<foundry-skills");
+    // the agent note names the tag; only a real block has the count
+    expect(outputOf(s)).not.toContain("<foundry-skills count=");
     expect(s.history.find((h) => h.id === "impl")!.skills).toBeUndefined();
   });
 
@@ -316,5 +318,53 @@ ${fixLine}    prompt: |
     expect(s.history[0]!.skills).toBeUndefined();
     expect(s.history[0]!.output).not.toContain("<foundry-skills");
     expect(s.history[0]!.output).not.toContain("--setting-sources");
+  });
+});
+
+describe("flow skill modes in a run", () => {
+  const modeFlow = (skillsYaml: string, extra = "") =>
+    parseFlow(`
+name: t
+workspace: inplace
+skills: ${skillsYaml}
+steps:
+  - id: impl
+    type: claude
+    prompt: "WRITE ran.txt yes"
+${extra}`);
+
+  it("off: no plan, no lock, no skill block; the log says so once", async () => {
+    demo("1.0.0");
+    const cfg = ConfigSchema.parse({ skills: { roots: [low], selection: { include: ["demo"] } } });
+    const s = await runFlow(modeFlow("{mode: off}"), { ...runOpts(), config: cfg });
+    expect(s.status).toBe("succeeded");
+    const stored = JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")) as Record<string, unknown>;
+    expect(stored.skillPlan).toBeUndefined();
+    expect(stored.skillLock).toBeUndefined();
+    expect(existsSync(join(s.runDir, RUN_SKILL_LOCK_FILE))).toBe(false);
+    expect(s.history.every((h) => h.skills === undefined)).toBe(true);
+    expect(readFileSync(liveLogFile(s.runDir), "utf8").split("skills: off for this flow").length - 1).toBe(1);
+  });
+
+  it("explicit: stops before any step when a skill is missing, locks after an install; step skills off records nothing", async () => {
+    const extra = `  - id: quiet
+    type: claude
+    prompt: "WRITE quiet.txt yes"
+    skills: off
+`;
+    const def = () => modeFlow("{mode: explicit, ids: [demo]}", extra);
+    const s = await runFlow(def(), runOpts());
+    expect(s.status).toBe("stopped");
+    expect(s.history).toEqual([]);
+    expect(s.skillPlan).toMatchObject({ action: "stop", gate: "(flow)" });
+    expect(existsSync(join(s.runDir, RUN_SKILL_LOCK_FILE))).toBe(false);
+
+    demo("1.0.0");
+    const again = await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin, config });
+    expect(again.status).toBe("succeeded");
+    expect(runJson(s.runDir).skillLock!.skills).toEqual([expect.objectContaining({ id: "demo", version: "1.0.0" })]);
+    const byId = (id: string) => again.history.find((h) => h.id === id)!;
+    expect(byId("impl").skills?.loaded).toEqual(["demo@1.0.0"]);
+    expect(byId("quiet").skills).toBeUndefined();
   });
 });

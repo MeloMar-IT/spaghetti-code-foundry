@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
+import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { connectionProblem, connectionStatus, loadFailed, methodLabel, plainError } from "./repos.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
 
@@ -195,17 +196,18 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "all-repos";
+    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === "all-repos";
   } catch {
     return false;
   }
 };
 
 /** The admin page with the repositories of all accounts. Returns a cleanup. */
-export async function renderAllRepos(main) {
+export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
-  const state = { repos: [], at: null, stale: false };
+  // the filters live in the state, so a reload keeps them and a removed filter stays removed
+  const state = { repos: [], at: null, stale: false, filters: query.repo ? { repo: query.repo } : {} };
   const live = () => mine === generation && onPage();
   const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts"));
   const fetchAll = async (n) => {
@@ -257,15 +259,25 @@ export async function renderAllRepos(main) {
         await transferDialog(repo);
         reload();
       } }, "Transfer")));
-  const draw = () => mount(main,
-    head(),
-    state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
-    state.repos.length
-      ? h("table", { class: "table" },
-        h("caption", { class: "sr-only" }, "Repositories of all accounts"),
-        h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-        h("tbody", {}, sortRepos(state.repos).map(row)))
-      : emptyState("No repositories yet."));
+  const setFilters = (next) => {
+    state.filters = next;
+    go(withQuery("#/all-repos", next));
+    draw();
+  };
+  const clear = () => setFilters({});
+  const draw = () => {
+    const shown = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    mount(main,
+      head(),
+      filterBar(state.filters, { onRemove: clear, onClear: clear }),
+      state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
+      shown.length
+        ? h("table", { class: "table" },
+          h("caption", { class: "sr-only" }, "Repositories of all accounts"),
+          h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
+          h("tbody", {}, sortRepos(shown).map(row)))
+        : state.filters.repo ? filterGone({ onClear: clear }) : emptyState("No repositories yet."));
+  };
   await load();
   return () => {
     if (generation === mine) generation++;

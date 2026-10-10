@@ -1,17 +1,25 @@
 import { api } from "./api.js";
-import { glyph, h, mount, timeAgo, toast } from "./dom.js";
+import { h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
-import { needsYou, nextBlock, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
+import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
-import { createLog, diffView, transcriptView } from "./run-output.js";
+// This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
+import { createRunHeader } from "./run-header.js";
+import { createLog, diffView } from "./run-output.js";
+import { skillsCard } from "./run-skills.js";
+import { dialogOpen, keepScroll, poller } from "./live.js";
+import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
+import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
+import { createTimeline } from "./run-timeline.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
+export { failedStepIndex, stepEntry } from "./run-timeline.js";
 
-const money = (n) => (n ? `$${n.toFixed(4)}` : "—");
-const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
+export const money =(n) => (n ? `$${n.toFixed(4)}` : "—");
 const what = (r) => (r.vars?.issue ? `${r.vars.github_repo}#${r.vars.issue}` : r.vars?.pr ? `${r.vars.github_repo} PR #${r.vars.pr}` : "");
 
 const REFRESH_MS = 30_000;
+const CLOCK_MS = 60_000;
 /** The server sends at most this many runs, so a repository filter searches only those. */
 export const RUNS_CAP = 200;
 export const CAP_NOTE = "Only the newest 200 runs are searched.";
@@ -82,59 +90,79 @@ export function stepRow(s) {
   return [h("dt", {}, s.status === "running" ? "Current step" : "Resumes at step"), h("dd", {}, id, h("span", { class: "muted" }, ` — ${about}`))];
 }
 
-/** Runs list; refreshes itself every 30 seconds. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
+/** Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
 export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo } = {}) {
-  mount(main, h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading runs…"));
-  let timer;
   let closed = false;
-  let seq = 0;
+  let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
+  let forcing = false;
   let data = null;
+  let live;
   // A user gets their own runs and queue; the owner filter and its options are for admins.
   let filters = { ...(query.repo ? { repo: query.repo } : {}), ...(admin && query.owner ? { owner: query.owner } : {}) };
+  const wanted = () => (admin ? filters.owner ?? "" : "");
+  const refresh = () => live.refresh();
 
-  // Asks the server (owner filter included) and draws. An older answer never overwrites a newer one, nor a page that was left.
-  // `timed`: the redraw of the timer. It waits while a select or text field of the page has the focus, before it asks
-  // and again before it draws (the focus may arrive while the answers are on their way).
-  const load = async (timed = false) => {
-    if (timed && fieldFocused(main)) return;
-    const mine = ++seq;
-    const [runs, queue, owners] = await Promise.all([api.runs(admin ? filters.owner ?? "" : ""), api.queue(), admin ? api.runOwners() : []]);
-    if (closed || mine !== seq || !main.isConnected) return;
-    if (timed && fieldFocused(main)) return;
-    data = { runs, queue, owners };
-    draw();
+  const states = runsLiveStates({
+    body: main, heading: () => h("div", { class: "toolbar" }, h("h1", {}, "Runs")),
+    label: "Loading runs", rows: 6, shape: "table", what: "Could not load the runs.", retry: refresh, focus: "runs",
+  });
+
+  // Asks the server (owner filter included). Undefined when a newer request started meanwhile: that one is the answer.
+  const fetchAll = async () => {
+    const mine = ++gen;
+    const owner = wanted();
+    try {
+      const [runs, queue, owners] = await Promise.all([api.runs(owner), part(api.queue()), admin ? part(api.runOwners()) : null]);
+      return mine === gen ? { runs, queue, owners } : undefined;
+    } catch (e) {
+      if (mine !== gen) return undefined;
+      throw e;
+    }
   };
-  // A change of the repository only filters what is here; a change of the owner asks the server again.
+  let switching = null; // an owner change whose answer has not been drawn yet
+  const rollback = (e) => {
+    const s = switching;
+    switching = null;
+    if (closed || !s || filters !== s.next) return;
+    filters = s.before;
+    go(withQuery("#/runs", filters));
+    if (data) render();
+    toast(e?.message || "Could not load the runs.", "error");
+  };
+  // A change of the repository only filters what is here; a change of the owner asks the server again and draws at once.
   const setFilters = (next) => {
     const reload = (next.owner ?? "") !== (filters.owner ?? "");
     const before = filters;
     filters = next;
     go(withQuery("#/runs", filters));
-    if (!reload) return draw();
-    // If the server cannot answer, the address and the filters go back to what the page still shows.
-    load().catch((e) => {
-      if (closed || filters !== next) return;
-      filters = before;
-      go(withQuery("#/runs", filters));
-      if (data) draw();
-      toast(e?.message || "Could not load the runs.", "error");
-    });
+    if (!reload) return render();
+    // If the server cannot answer, the address and the filters go back to what the page still shows. A request that a
+    // newer one overtook (a tick) hands this over: that request's failure rolls back too.
+    switching = { before, next };
+    fetchAll().then((d) => {
+      if (closed || !d) return;
+      switching = null;
+      forcing = true;
+      try { live.show(d); } finally { forcing = false; }
+    }, rollback);
   };
   const clear = () => setFilters({});
 
-  const draw = () => {
-    const { runs, queue, owners } = data;
+  const render = () => {
+    const { runs } = data;
+    const queue = data.queue.ok ? data.queue.value : null;
+    const owners = data.owners?.ok ? data.owners.value : null;
     const shown = filters.repo ? runs.filter((r) => sameRepo(r.vars?.github_repo, filters.repo)) : runs;
-    const pending = filters.repo ? queue.pending.filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue.pending;
+    const pending = filters.repo ? (queue?.pending ?? []).filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue?.pending ?? [];
     const yours = needsYou(shown);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
     const table = (list, scope) => h("div", { class: "table-box" }, h("table", { class: "table" },
       h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
       h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })))));
-    const filter = admin ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
+    const filter = admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
       h("option", { value: "" }, "All owners"),
       owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
-    const labels = { owner: ownerLabel(owners.find((o) => o.id === filters.owner)?.name) || filters.owner };
+    const labels = { owner: ownerLabel(owners?.find((o) => o.id === filters.owner)?.name) || filters.owner };
     const note = filters.repo && runs.length >= RUNS_CAP ? CAP_NOTE : null;
     const active = Boolean(filters.repo || filters.owner);
     // A queued job that matches is a result too.
@@ -142,26 +170,51 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
 
     mount(main,
       h("div", { class: "toolbar" }, h("h1", {}, "Runs"),
-        admin ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
+        admin && queue ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
         filter,
         h("span", { class: "spacer" }),
-        h("span", { class: "muted text-xs" }, `updated ${new Date().toLocaleTimeString()} · refreshes every 30 s`),
-        h("button", { "data-focus": "refresh", onClick: () => load().catch(() => {}) }, "↻ Refresh")),
+        states.note,
+        h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")),
+      states.alert,
       filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
+      admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
       note && found ? h("p", { class: "muted" }, note) : null,
-      pending.length ? h("div", { class: "card mb-16" },
-        h("h3", {}, "Queue"),
-        pending.map((p) => queueRow(p, async () => { await api.cancelRun(p.runId); load().catch(() => {}); }))) : null,
+      !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
+        : pending.length ? h("div", { class: "card mb-16" },
+          h("h3", {}, "Queue"),
+          pending.map((p) => queueRow(p, async () => {
+            await api.cancelRun(p.runId);
+            gen++; // an answer asked before the cancel still shows the job
+            refresh();
+          }))) : null,
       yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
       shown.length ? table(shown, "run")
         : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
-          : h("div", { class: "empty" }, admin ? "No runs yet. Open a flow and press ▶ Run." : "No runs yet."));
+          : noRuns());
   };
-  await load();
-  timer = setInterval(() => load(true).catch(() => {}), REFRESH_MS);
+
+  // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
+  const isHeld = () => !forcing && (fieldFocused(main) || dialogOpen());
+  live = poller({
+    load: async () => {
+      try {
+        const d = await fetchAll();
+        if (d) switching = null;
+        return d;
+      } catch (e) {
+        rollback(e);
+        throw e;
+      }
+    },
+    draw: (next) => { data = next; keepScroll(main, render); },
+    every: REFRESH_MS,
+    onState: states.onState,
+    hold: isHeld,
+  });
+  await live.ready;
   return () => {
     closed = true;
-    clearInterval(timer);
+    live.stop();
   };
 }
 
@@ -182,23 +235,6 @@ export function statusAnnouncer() {
       if (!first) el.textContent = `Run status: ${t}`;
     },
   };
-}
-
-function stepsView(runId, summary, open = -1) {
-  if (!summary.history.length) return h("p", { class: "muted" }, "No steps finished yet.");
-  return h("div", { class: "timeline" }, summary.history.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
-}
-
-/** The step that explains a failed run: the last failed one that is not a sub-flow or parallel step (else the last failed one). -1 if none. */
-export function failedStepIndex(s) {
-  const h2 = s.history ?? [];
-  let last = -1;
-  for (let i = h2.length - 1; i >= 0; i--) {
-    if (h2[i].ok) continue;
-    if (last < 0) last = i;
-    if (h2[i].type !== "flow" && h2[i].type !== "parallel") return i;
-  }
-  return last;
 }
 
 /**
@@ -223,56 +259,11 @@ export function failureCard(s, { onStep } = {}) {
     s.reason ? h("details", { class: "raw" }, h("summary", { "data-focus": "raw-details" }, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
 }
 
-/** The mark of a finished step: the glyph for the eye, a word for screen readers. */
-const stepMark = (ok) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, glyph(ok ? "✔" : "✘"), h("span", { class: "sr-only" }, ok ? "Succeeded" : "Failed"));
-
-/** One finished step: summary line, the raw error under "Details", and the output or transcript when opened. `open`: shown opened. */
-export function stepEntry(runId, s, i, { open = false } = {}) {
-  // A user's view has no output: a plain row that cannot be opened and never asks for a transcript.
-  if (!("output" in s)) {
-    return h("div", { class: "tl" },
-      h("div", { class: "row" },
-        stepMark(s.ok),
-        h("b", { class: "mono" }, s.id),
-        s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
-        h("span", { class: "muted" }, s.type === "agent" ? "Agent" : s.type),
-        h("span", { class: "spacer" }),
-        h("span", { class: "muted mono" }, secs(s.durationMs))),
-      s.error ? h("p", { class: "muted mt-4 mb-4 mx-12" }, s.error) : null);
-  }
-  const body = h("div");
-  let loaded = false;
-  const load = async () => {
-    if (loaded) return;
-    loaded = true;
-    if (s.type !== "claude") return mount(body, h("pre", {}, s.output || "(no output)"));
-    mount(body, h("p", { class: "muted px-12" }, "Loading transcript…"));
-    const t = await api.transcript(runId, i).catch((err) => ({ events: [{ kind: "raw", text: err.message }] }));
-    mount(body, transcriptView(t.events));
-  };
-  if (open) load();
-  return h("details", {
-    class: "tl",
-    open: open || null,
-    onToggle: (e) => { if (e.target.open) load(); },
-  },
-    h("summary", { "data-focus": `step-${i}` },
-      stepMark(s.ok),
-      h("b", { class: "mono" }, s.id),
-      s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
-      h("span", { class: "muted" }, s.agent ? s.agent : s.type),
-      h("span", { class: "spacer" }),
-      h("span", { class: "muted mono" }, secs(s.durationMs)),
-      s.costUsd ? h("span", { class: "muted mono" }, money(s.costUsd)) : s.tokens ? h("span", { class: "muted mono", title: "no per-token cost (local model or subscription)" }, `${Math.round((s.tokens.input + s.tokens.output) / 1000)}k tok`) : null),
-    s.error ? h("pre", { class: "mono" }, h("b", {}, "Details"), "\n", s.error) : null,
-    body);
-}
-
 /** The raw reason of a run, shown as a detail under the plain text. */
 /** The published version of the flow a run started with; null for a flow that is not published. */
 export const versionRow = (s) => (s.flowDef?.publish?.enabled ? [h("dt", {}, "Flow version"), h("dd", {}, String(s.flowDef.publish.version))] : null);
 
-export const detailsRow =(s) => (s.reason ? [h("dt", {}, "Details"), h("dd", { class: "pre-wrap" }, s.reason)] : null);
+export function detailsRow(s) { return s.reason ? [h("dt", {}, "Details"), h("dd", { class: "pre-wrap" }, s.reason)] : null; }
 
 // ── actions ──
 
@@ -294,11 +285,11 @@ export function actions(s) {
   // A closed issue or a retired flow: the server refuses Approve, Reject, Resume and Retry.
   const closed = s.next?.kind === "issue_closed" || s.next?.retired === true;
   if (s.status === "waiting" && !closed) {
-    b.push(h("button", { class: "primary", "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
+    b.push(h("button", { "data-focus": "act-approve", onClick: () => { const note = prompt("Approve — note (optional)"); if (note !== null) act(() => api.approveRun(s.runId, note), "Approved — continuing"); } }, "✔ Approve"));
     b.push(h("button", { class: "danger", "data-focus": "act-reject", onClick: () => { const note = prompt("Why reject? (optional)"); if (note !== null) act(() => api.rejectRun(s.runId, note), "Rejected"); } }, "✘ Reject"));
   }
   if (["stopped", "failed", "cancelled"].includes(s.status) && s.state?.next && !closed) {
-    b.push(h("button", { class: "primary", "data-focus": "act-resume", onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, `↻ Resume at ${s.state.next}`));
+    b.push(h("button", { "data-focus": "act-resume", title: `Continue at step "${s.state.next}"`, onClick: () => act(() => api.resumeRun(s.runId), "Resuming") }, "Retry from the failing step"));
   }
   if (s.status !== "running" && s.status !== "waiting" && s.flowDef?.steps?.length && !closed) {
     b.push(h("select", { class: "small-select", title: "Re-run from a step", "aria-label": "Re-run from a step", "data-focus": "act-retry-from", onChange: (e) => {
@@ -318,34 +309,64 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const log = createLog();
   const status = statusAnnouncer();
   const head = h("div");
-  const tabBody = h("div");
   let summary;
+  let job = null; // a queued run: it has no record yet, the queue knows it
+  let mode = "state"; // what the page shows: "state" (loading, not found, error), "queued" or "page"
+  let stateKey = null;
+  let loadSeq = 0;
+  let updates = 0; // every event of the stream counts: an answer asked before it is older than the stream
+  const BACK = { href: "#/runs", label: "Runs", focus: "back-runs" };
   let held = null; // an update that came while a field of the head had the focus: drawn when the focus leaves
-  let tab = "log";
   let names = null;
   let open = true;
 
-  // The reader picked a tab: the page does not move it any more (a failed run opens on Steps until then).
-  let picked = false;
-  const tabButtons = [];
-  const showTab = async (t, open = -1) => {
-    tab = t;
-    for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
-    if (t === "log") return mount(tabBody, log.el);
-    if (t === "steps") return mount(tabBody, summary ? stepsView(runId, summary, open) : null);
-    mount(tabBody, h("p", { class: "muted" }, "Computing diff…"));
-    mount(tabBody, diffView(await api.diff(runId).catch((e) => ({ patch: "", stat: e.message }))));
+  const timeline = createTimeline({ runId, admin });
+  // The reader's tab is never moved by an update; a failed run opens on Steps once (see showFailedOnce).
+  const tabs = createTabs([
+    { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
+    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update(s) },
+    { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
+    { id: "evidence", label: "Evidence", ...evidencePanel() },
+    { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
+  ], { initial: "overview" });
+  const tabsBox = tabs.el;
+
+  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to Runs" });
+  const skillsBox = h("div");
+  let load;
+  const stream = runStream({
+    open: () => api.events(runId),
+    on: {
+      update: (e) => { updates++; draw(JSON.parse(e.data).summary); },
+      log: (e) => { updates++; log.add(JSON.parse(e.data).line); },
+    },
+    onLost: () => load(),
+    onReopen: () => log.clear(),
+  });
+  mount(main, head, stream.el, status.el, tabsBox);
+
+  const showState = (error) => {
+    const key = `${runLoadKind(error)}|${error?.message ?? ""}`;
+    if (mode === "state" && key === stateKey) return;
+    mode = "state";
+    stateKey = key;
+    summary = held = job = null;
+    tabsBox.hidden = true;
+    stream.el.hidden = true;
+    mount(head, runLoadState(error, { back: BACK, onRetry: load }));
   };
 
-  const tabs = h("div", { class: "seg tabs mb-12" },
-    [["log", "Live log"], ["steps", admin ? "Steps & transcripts" : "Steps"], ["diff", "Changes"]].map(([k, l]) => {
-      const b = h("button", { "data-tab": k, class: k === tab ? "on" : null, onClick: () => { picked = true; showTab(k); } }, l);
-      tabButtons.push([k, b]);
-      return b;
-    }));
-
-  mount(main, head, status.el, tabs, tabBody);
-  mount(tabBody, log.el);
+  // A queued run: a small head from the job, no actions.
+  const showQueued = (found) => {
+    if (mode === "state") mount(head, header.el, skillsBox);
+    mode = "queued";
+    job = found;
+    stateKey = null;
+    mount(skillsBox);
+    header.update(null, { job });
+    tabsBox.hidden = true;
+    stream.el.hidden = false;
+  };
 
   // The select of "Retry from step…" must not be replaced under the reader's hands. The timeout lets the next control take the focus first.
   head.addEventListener("focusout", () => setTimeout(() => {
@@ -359,54 +380,55 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     status.say(s);
     if (fieldFocused(head)) { held = s; return; }
     held = null;
+    if (mode !== "page") {
+      if (mode === "state") mount(head, header.el, skillsBox);
+      mode = "page";
+      job = null;
+      stateKey = null;
+      tabsBox.hidden = false;
+      stream.el.hidden = false;
+    }
     const prev = summary;
     summary = s;
-    const failedIdx = s.status === "failed" ? failedStepIndex(s) : -1;
-    const card = s.status === "failed" ? failureCard(s, failedIdx >= 0 ? { onStep: () => { picked = true; showTab("steps", failedIdx); } } : {}) : null;
-    mount(head,
-      h("div", { class: "toolbar" },
-        h("a", { href: "#/runs", class: "btn ghost", "data-focus": "back", "aria-label": "Back to Runs" }, "←"),
-        h("h1", {}, s.flow),
-        s.next ? nextStatus(s.next, "status-help") : null,
-        admin ? h("span", { class: "muted mono" }, money(s.totalCostUsd)) : null,
-        s.resumes ? h("span", { class: "muted" }, `resumed ${s.resumes}×`) : null,
-        h("span", { class: "spacer" }),
-        ...actions(s),
-        admin ? h("a", { class: "btn", "data-focus": "open-flow", href: `#/flows/${encodeURIComponent(s.flow)}` }, "Open flow") : null),
-      card ?? (s.next ? nextBlock(s.next) : null),
-      retiredLine(s),
-      h("div", { class: "card mb-16" },
-        s.task ? h("p", { class: "flush pre-wrap" }, s.task) : null,
-        s.questions ? h("pre", { class: "mono pre-wrap" }, h("b", {}, "Questions"), "\n", s.questions) : null,
-        h("dl", { class: "meta" },
-          what(s) ? [h("dt", {}, "Ticket"), h("dd", {}, what(s))] : null,
-          h("dt", {}, "Run"), h("dd", {}, s.runId),
-          admin ? ownerRow(s, names) : null,
-          s.branch ? [h("dt", {}, "Branch"), h("dd", {}, s.branch)] : null,
-          s.workdir ? [h("dt", {}, "Workspace"), h("dd", {}, s.workdir)] : null,
-          versionRow(s),
-          stepRow(s),
-          card ? null : detailsRow(s))));
-    // A failed run opens on its steps, once, unless the reader already chose a tab.
-    if (card && !picked && !(prev && prev.status === "failed" && prev.next?.failure)) return showTab("steps");
-    if (tab === "steps" && (!prev || prev.history.length !== s.history.length)) showTab("steps");
+    header.update(s, { names });
+    mount(skillsBox, skillsCard(s.skillView, { admin, repo: s.vars?.github_repo }));
+    showFailedOnce(tabs, s, prev);
+    tabs.update(s, prev);
   };
 
   if (admin) api.users().then((list) => { names = ownerNames(list); if (open && (held ?? summary)) draw(held ?? summary); }).catch(() => {});
 
-  const es = api.events(runId);
-  es.addEventListener("update", (e) => {
-    const { summary: s } = JSON.parse(e.data);
-    draw(s);
-  });
-  es.addEventListener("log", (e) => {
-    log.add(JSON.parse(e.data).line);
-  });
-  es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED) toast("Lost connection to the run stream", "error");
+  // The times in the header move on even when the stream sends only pings.
+  const clock = setInterval(() => { if (summary && !fieldFocused(head)) header.update(summary, { names }); }, CLOCK_MS);
+
+  load = async () => {
+    const mine = ++loadSeq, seen = updates;
+    const stale = () => !open || mine !== loadSeq || seen !== updates;
+    let s, err = null;
+    try { s = await api.run(runId); } catch (e) { err = e; }
+    if (stale()) return;
+    if (!err) { if (isRun(s)) draw(s); return; }
+    const status = Number(err.status) || 0;
+    if (status === 404) {
+      // A queued run has no record yet: the queue knows it. A run that just started is in the active list.
+      let q;
+      try { q = await api.queue(); } catch (e) { if (!stale() && mode === "state") showState(e); return; }
+      if (stale()) return;
+      const found = (q?.pending ?? []).find((p) => p.runId === runId);
+      if (found) return showQueued(found);
+      if ((q?.active ?? []).some((p) => p?.runId === runId)) return mode === "state" ? showState(null) : undefined; // starting: the stream sends the summary
+      return showState(err);
+    }
+    if (status === 403) return showState(err);
+    if (mode === "state") showState(err); // with content on the page the content stays; the banner tells
   };
+
+  showState(null);
+  stream.start();
+  load();
   return () => {
     open = false;
-    es.close();
+    clearInterval(clock);
+    stream.close();
   };
 }

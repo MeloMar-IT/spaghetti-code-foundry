@@ -2,7 +2,7 @@ import { z } from "zod";
 import { findSkill, type SkillRegistry } from "./registry.js";
 import type { SkillDecision, SkillResolution } from "./resolve.js";
 import {
-  RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KIND, UNRESOLVED_KINDS, UNRESOLVED_LIMITS,
+  RESOLVE_RANGE, RESOLVE_REASONS, RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KIND, UNRESOLVED_KINDS, UNRESOLVED_LIMITS,
 } from "./resolve-rules.js";
 import { SKILL_DIGEST_RE, SKILL_RISKS, SKILL_ROLES, SkillIdSchema, SkillVersionSchema, type SkillRole, type UnresolvedPolicy } from "./schema.js";
 
@@ -27,12 +27,25 @@ export const UnresolvedSkillSchema = z
   })
   .strict();
 
+/** One selected skill of the plan. The last four fields are absent in plans of older versions. */
+const SelectedPlanSkillSchema = z
+  .object({
+    id: SkillIdSchema,
+    version: SkillVersionSchema,
+    digest: z.string().regex(SKILL_DIGEST_RE),
+    selection: z.enum(RESOLVE_REASONS).optional(),
+    requiredBy: z.array(SkillIdSchema).max(RESOLVE_RANGE.maxSkills[1]).optional(),
+    estimatedTokens: z.number().int().min(0).optional(),
+    category: z.string().min(1).max(64).optional(),
+  })
+  .strict();
+
 export const SkillPlanSchema = z
   .object({
     version: z.literal(1),
     role: z.enum(SKILL_ROLES),
     action: z.enum(["continue", "warn", "stop"]),
-    selected: z.array(z.object({ id: SkillIdSchema, version: SkillVersionSchema, digest: z.string().regex(SKILL_DIGEST_RE) }).strict()),
+    selected: z.array(SelectedPlanSkillSchema),
     unresolved: z.array(UnresolvedSkillSchema),
     /** One line per item with action "warn". */
     warnings: z.array(z.string()),
@@ -214,7 +227,13 @@ export function assessSkills(resolution: SkillResolution, registry: Reg, policy:
     version: 1,
     role: resolution.role,
     action: stop ? "stop" : warnings.length ? "warn" : "continue",
-    selected: resolution.selected.map((s) => ({ id: s.id, version: s.version, digest: s.digest })),
+    selected: resolution.selected.map((s) => {
+      const category = findSkill(registry, s.id, s.version)?.pkg.category;
+      return {
+        id: s.id, version: s.version, digest: s.digest, selection: s.reason, requiredBy: s.requiredBy, estimatedTokens: s.estimatedTokens,
+        ...(typeof category === "string" && category ? { category } : {}),
+      };
+    }),
     unresolved,
     warnings,
     ...(reason ? { reason } : {}),

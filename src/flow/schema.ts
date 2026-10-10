@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { STEP_SKILL_ROLES } from "../skills/schema.js";
+import { FLOW_SKILL_MODES, SkillIdSchema, STEP_SKILL_MODES, STEP_SKILL_ROLES } from "../skills/schema.js";
+import { RESOLVE_RANGE } from "../skills/resolve-rules.js";
 import { varEnvName } from "../engine/template.js";
 
 /** Reserved transition targets. Anything else must be a step id. */
@@ -124,6 +125,8 @@ export const ClaudeStepSchema = z
     sandbox: z.boolean().optional(),
     /** The skill context of this session: coder (default; the full skills) or reviewer (compact REVIEW.md checks; the step must be read-only). */
     skill_role: z.enum(STEP_SKILL_ROLES).optional(),
+    /** The skill block of this session: catalog (a planner step; read-only), selected (the locked skills, default) or off (no block; the lock is still verified). */
+    skills: z.enum(STEP_SKILL_MODES).optional(),
   })
   .strict();
 
@@ -199,6 +202,23 @@ export const SandboxSchema = z
   })
   .strict();
 
+/** How the whole flow gets its skills: planned (the plan gate asks), explicit (the flow names `ids`) or off. */
+export const FlowSkillsSchema = z
+  .object({
+    mode: z.enum(FLOW_SKILL_MODES),
+    ids: z.array(SkillIdSchema).min(1).max(RESOLVE_RANGE.include).optional(),
+  })
+  .strict()
+  .superRefine((s, ctx) => {
+    if (s.mode === "explicit" && !s.ids) ctx.addIssue({ code: "custom", path: ["ids"], message: "mode explicit needs ids" });
+    if (s.mode !== "explicit" && s.ids) ctx.addIssue({ code: "custom", path: ["ids"], message: "ids are only allowed with mode explicit" });
+    const seen = new Set<string>();
+    s.ids?.forEach((id, i) => {
+      if (seen.has(id)) ctx.addIssue({ code: "custom", path: ["ids", i], message: "duplicate skill" });
+      seen.add(id);
+    });
+  });
+
 type AnyStep = z.infer<typeof StepSchema>;
 
 /**
@@ -268,6 +288,8 @@ export const FlowSchema = z
     defaults: DefaultsSchema.default({}),
     limits: z.object({ max_cost_usd: z.number().positive().optional() }).strict().default({}),
     sandbox: SandboxSchema.default({}),
+    /** How the flow gets its skills. Absent: planned. */
+    skills: FlowSkillsSchema.optional(),
     vars: varsRecord.default({}),
     publish: PublishSchema.optional(),
     steps: z.array(StepSchema).min(1),
@@ -284,6 +306,14 @@ export const FlowSchema = z
       if (s.type === "claude" && s.skill_role === "reviewer") {
         const problem = reviewerStepProblem(s, flow.defaults);
         if (problem) ctx.addIssue({ code: "custom", path: ["steps", i, "skill_role"], message: problem });
+      }
+      if (s.type === "claude" && s.skills !== undefined) {
+        const path = ["steps", i, "skills"];
+        if (s.skill_role === "reviewer") {
+          ctx.addIssue({ code: "custom", path, message: "skills cannot be set on a reviewer step (skill_role: reviewer)" });
+        } else if (s.skills === "catalog" && !readOnlyStep(s, flow.defaults)) {
+          ctx.addIssue({ code: "custom", path, message: "a step with skills: catalog must be read-only (permission_mode plan, or dontAsk without Edit, Write or Bash tools)" });
+        }
       }
     });
     checkStepRefs(flow.steps, ids, (path, message) => ctx.addIssue({ code: "custom", path, message }));

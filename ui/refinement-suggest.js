@@ -1,4 +1,4 @@
-import { aiProps, h, modal } from "./dom.js";
+import { aiProps, confirmDialog, h, modal } from "./dom.js";
 
 // The suggestions of the architect on the draft page: the Suggest button, its status, and Accept / Edit and accept / Reject.
 // Every text is set as text, never as HTML.
@@ -138,9 +138,10 @@ function parts(s, x, act) {
     h("span", aiProps(`suggestion for ${FIELD_LABELS[x.field] ?? x.field}`), h("span", { class: "pill" }, "Suggested"), " ", h("span", { class: "said" }, textOf(s, x))),
     tie ? h("small", { class: "muted" }, `From the ${tie.kind}: ${tie.text}`) : null,
     act ? [
-      h("button", { class: "small", "data-focus": `sug-accept-${x.id}`, "aria-label": `Accept suggestion for ${act.label}`, onClick: (e) => {
-        if (TEXT_FIELDS.includes(x.field) && act.hasOther(x) && !confirm(REPLACE_ASK)) return undefined;
-        return act.accept(e.currentTarget, x);
+      h("button", { class: "small", "data-focus": `sug-accept-${x.id}`, "aria-label": `Accept suggestion for ${act.label}`, onClick: async (e) => {
+        const btn = e.currentTarget;
+        if (TEXT_FIELDS.includes(x.field) && act.hasOther(x) && !(await confirmDialog({ title: "Replace text", text: REPLACE_ASK, confirm: "Replace", danger: false }))) return undefined;
+        return act.accept(btn, x);
       } }, "Accept"),
       x.field !== "dependsOn" ? h("button", { class: "small", "data-focus": `sug-edit-${x.id}`, "aria-label": `Edit and accept suggestion for ${act.label}`, onClick: async () => {
         await acceptDialog(act, x);

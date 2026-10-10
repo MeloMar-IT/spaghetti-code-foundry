@@ -89,6 +89,19 @@ describe("renderStart: flows", () => {
     expect((radios[0] as any).checked).toBe(true);
     expect(main.textContent).toContain("Title b");
     expect(main.textContent).toContain("About b");
+    expect(one(main, "legend").textContent).toBe(ui.PICK_FLOW);
+    expect(main.textContent).not.toMatch(/\d\. /);
+  });
+
+  it("draws no picker and no flow name with one flow, and still sends that flow", async () => {
+    data.flows = [flow("a")];
+    await open();
+    expect(find(main, "input", { name: "flow" })).toHaveLength(0);
+    expect(find(main, "legend")).toHaveLength(0);
+    expect(main.textContent).not.toContain("Title a");
+    expect(main.textContent).not.toContain("About a");
+    await submit(main);
+    expect(calls.start[0].flow).toBe("a");
   });
 
   it("redraws the fields on a flow change and brings typed values back", async () => {
@@ -153,7 +166,7 @@ describe("renderStart: repository", () => {
     expect(one(main, "select").value).toBe("c/c");
   });
 
-  it("keeps Start off and the old fields until the repositories of the new flow have loaded", async () => {
+  it("keeps Start off until the repositories of the new flow have loaded", async () => {
     data.flows = [flow("a", [field("x")]), flow("b", [field("github_repo")])];
     data.repos = [repo("1", "a/a")];
     await open();
@@ -161,6 +174,7 @@ describe("renderStart: repository", () => {
     one(main, "input", { name: "x" }).value = "typed";
     find(main, "input", { name: "flow" })[1]!.fire("change");
     await flush();
+    expect(main.textContent).toContain("Loading your repositories");
     expect(submitBtn(main).disabled).toBe(true);
     await submit(main);
     expect(calls.start).toHaveLength(0);
@@ -198,7 +212,11 @@ describe("renderStart: repository", () => {
     await submit(main);
     expect(alertText(main)).toBe("Choose a repository.");
     expect(calls.start).toHaveLength(0);
-    expect((document as any).activeElement.attrs["data-focus"]).toBe("add-repo");
+    // the group that holds the sentence and the Add repository button is marked and focused
+    const group = one(main, "div", { role: "group", "aria-label": "Repository" });
+    expect((document as any).activeElement).toBe(group);
+    expect(group.attrs["aria-invalid"]).toBe("true");
+    expect(group.attrs["aria-describedby"]).toBe("start-error");
   });
 
   it("shows the sentence of a failing list and still offers Add repository", async () => {
@@ -254,7 +272,15 @@ describe("renderStart: repository", () => {
     data.reposFail = true;
     one(main, "button", { "data-focus": "add-repo" }).click();
     await flush();
-    expect(alertText(main)).toBe("repo list broken");
+    // the last known list stays, and the step explains the failure with Retry
+    expect(one(main, "select").value).toBe("a/a");
+    expect(one(main, "div", { class: "state-error" }).textContent).toContain("repo list broken");
+    expect(find(main, "button", { "data-focus": "retry-repos" })).toHaveLength(1);
+    data.reposFail = false;
+    one(main, "button", { "data-focus": "retry-repos" }).click();
+    await flush();
+    expect(find(main, "div", { class: "state-error" })).toHaveLength(0);
+    expect(one(main, "select").value).toBe("a/a");
   });
 
   it("shows a fixed github_repo as text, without select, button or var", async () => {
@@ -299,14 +325,18 @@ describe("renderStart: fields and start", () => {
     expect(main.textContent).toContain("Which one");
     expect(main.textContent).toContain("Fixed y");
     expect(find(main, "input", { name: "y" })).toHaveLength(0);
+    expect(one(main, "details").textContent).toContain("Fixed y");
+    expect(find(one(main, "details"), "input", { name: "x" })).toHaveLength(0);
   });
 
-  it("shows nothing about costs, models or agents", async () => {
-    data.flows = [flow("a", [field("github_repo"), field("x")])];
+  it("shows nothing about costs, models, agents, steps or YAML, for a user and an admin", async () => {
+    data.flows = [flow("a", [field("github_repo"), field("x"), field("f", { mode: "fixed", value: "v" })])];
     data.repos = [repo("1", "a/a")];
-    await open();
-    const text = main.textContent.toLowerCase();
-    for (const w of ["$", "cost", "model", "agent"]) expect(text, w).not.toContain(w);
+    for (const admin of [false, true]) {
+      await open(admin);
+      const text = main.textContent.toLowerCase();
+      for (const w of ["$", "cost", "model", "agent", "step", "yaml"]) expect(text, w).not.toContain(w);
+    }
   });
 
   it("sends exactly { flow, task, vars } with inputs only; an empty optional input is sent as an empty string", async () => {
@@ -327,6 +357,45 @@ describe("renderStart: fields and start", () => {
     expect(alertText(main)).toBe('Fill in "Branch".');
     expect(calls.start).toHaveLength(0);
     expect((document as any).activeElement).toBe(one(main, "input", { name: "x" }));
+    const input = one(main, "input", { name: "x" });
+    expect(input.attrs["aria-invalid"]).toBe("true");
+    expect(input.attrs["aria-describedby"]).toBe("start-error");
+    expect(one(main, "p", { role: "alert" }).attrs.id).toBe("start-error");
+  });
+
+  it("takes the mark off when the field is edited, and the next submit sends", async () => {
+    data.flows = [flow("a", [field("x", { label: "Branch", required: true })])];
+    await open();
+    await submit(main);
+    const input = one(main, "input", { name: "x" });
+    expect(input.attrs["aria-invalid"]).toBe("true");
+    input.value = "main";
+    input.fire("input", { target: input });
+    expect(input.attrs["aria-invalid"]).toBeUndefined();
+    expect(input.attrs["aria-describedby"]).toBeUndefined();
+    expect(alertText(main)).toBe("");
+    await submit(main);
+    expect(calls.start).toHaveLength(1);
+  });
+
+  it("marks and focuses only the first of two empty required inputs", async () => {
+    data.flows = [flow("a", [field("x", { required: true }), field("y", { required: true })])];
+    await open();
+    await submit(main);
+    expect(one(main, "input", { name: "x" }).attrs["aria-invalid"]).toBe("true");
+    expect(one(main, "input", { name: "y" }).attrs["aria-invalid"]).toBeUndefined();
+    expect((document as any).activeElement).toBe(one(main, "input", { name: "x" }));
+  });
+
+  it("clears the mark and the message when another flow is chosen", async () => {
+    data.flows = [flow("a", [field("x", { required: true })]), flow("b", [field("z")])];
+    await open();
+    await submit(main);
+    expect(alertText(main)).not.toBe("");
+    find(main, "input", { name: "flow" })[1]!.fire("change");
+    await flush();
+    expect(alertText(main)).toBe("");
+    expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
   });
 
   it("shows the server's sentence, keeps what was typed and turns the button on again", async () => {
@@ -336,7 +405,12 @@ describe("renderStart: fields and start", () => {
     one(main, "input", { name: "x" }).value = "keep";
     one(main, "textarea").value = "kept task";
     await submit(main);
-    expect(alertText(main)).toBe("you cannot start this");
+    const box = one(main, "div", { role: "alert" });
+    expect(box.attrs["data-kind"]).toBe("permission");
+    expect(box.textContent).toContain("The run could not be started. you cannot start this");
+    expect(box.textContent).toContain(ui.START_KEPT);
+    expect(alertText(main)).toBe("");
+    expect(find(main, "input").some((el) => "aria-invalid" in el.attrs)).toBe(false);
     expect(one(main, "input", { name: "x" }).value).toBe("keep");
     expect(one(main, "textarea").value).toBe("kept task");
     expect(submitBtn(main).disabled).toBe(false);
@@ -348,7 +422,10 @@ describe("renderStart: fields and start", () => {
     data.startFail = new TypeError("fetch failed");
     await open();
     await submit(main);
-    expect(alertText(main)).toBe("Could not reach the server.");
+    const box = one(main, "div", { role: "alert" });
+    expect(box.textContent).toContain("The server could not be reached.");
+    expect(box.textContent).toContain(ui.START_UNSURE);
+    expect(one(box, "p", { class: "state-next" }).textContent).toBe(ui.START_UNSURE_NEXT);
   });
 
   it("switches the button off while the call runs, ignores a second submit and keeps it off on success", async () => {
@@ -405,7 +482,164 @@ describe("renderStart: fields and start", () => {
   });
 });
 
+describe("renderStart: required first, More options", () => {
+  const mixed = () => flow("a", [field("o"), field("github_repo", { value: "a/a" }), field("x", { required: true }), field("f", { mode: "fixed", value: "v" })]);
+
+  it("shows the repository, Task and required inputs outside the disclosure, each marked", async () => {
+    data.flows = [mixed()];
+    data.repos = [repo("1", "a/a")];
+    await open();
+    const more = one(main, "details");
+    expect(find(more, "select")).toHaveLength(0);
+    expect(find(more, "textarea")).toHaveLength(0);
+    expect(find(more, "input", { name: "x" })).toHaveLength(0);
+    expect(find(more, "input", { name: "o" })).toHaveLength(1);
+    for (const t of ["Repository (required)", "Task (required)", "x (required)"]) expect(main.textContent).toContain(t);
+    expect(one(main, "textarea").attrs["aria-required"]).toBeUndefined();
+    expect(one(main, "input", { name: "x" }).attrs["aria-required"]).toBe("true");
+  });
+
+  it("closes the disclosure at first and says how many options it holds", async () => {
+    data.flows = [mixed()];
+    data.repos = [repo("1", "a/a")];
+    await open();
+    const more = one(main, "details");
+    expect(more.attrs.open).toBeUndefined();
+    expect(one(more, "summary").textContent).toBe(ui.moreSummary(1, 1));
+  });
+
+  it("draws no disclosure when nothing is optional or fixed, and no Task without usesTask", async () => {
+    data.flows = [flow("a", [field("x", { required: true })], { usesTask: false })];
+    await open();
+    expect(find(main, "details")).toHaveLength(0);
+    expect(find(main, "textarea")).toHaveLength(0);
+    data.flows = [flow("a")];
+    await open();
+    expect(find(main, "details")).toHaveLength(0);
+    await submit(main);
+    expect(calls.start).toHaveLength(1);
+  });
+
+  it("opens the disclosure after the server refuses, with the typed values in place", async () => {
+    data.flows = [flow("a", [field("o")])];
+    data.startFail = Object.assign(new Error("bad"), { status: 400 });
+    await open();
+    const input = one(main, "input", { name: "o" });
+    input.value = "typed";
+    await submit(main);
+    expect(one(main, "details").attrs.open).toBe("");
+    expect(one(main, "input", { name: "o" })).toBe(input);
+    expect(input.value).toBe("typed");
+    expect(submitBtn(main).disabled).toBe(false);
+    await submit(main);
+    expect(calls.start).toHaveLength(2);
+    expect(calls.start[1]).toEqual(calls.start[0]);
+  });
+
+  it("does not open the disclosure for a field problem", async () => {
+    data.flows = [flow("a", [field("x", { required: true }), field("o")])];
+    await open();
+    await submit(main);
+    expect(one(main, "details").attrs.open).toBeUndefined();
+    expect(calls.start).toHaveLength(0);
+  });
+
+  it("closes it again on a flow change", async () => {
+    data.flows = [flow("a", [field("o")]), flow("b", [field("p")])];
+    data.startFail = Object.assign(new Error("bad"), { status: 400 });
+    await open();
+    await submit(main);
+    expect(one(main, "details").attrs.open).toBe("");
+    find(main, "input", { name: "flow" })[1]!.fire("change");
+    expect(one(main, "details").attrs.open).toBeUndefined();
+  });
+
+  it("keeps the flow picker off while sending, so a late refusal opens the sent flow's options", async () => {
+    data.flows = [flow("a", [field("o")]), flow("b", [field("p")])];
+    data.startFail = Object.assign(new Error("bad"), { status: 400 });
+    data.hold = true;
+    await open();
+    one(main, "input", { name: "o" }).value = "typed";
+    const sent = submit(main);
+    await flush();
+    const radios = find(main, "input", { name: "flow" });
+    expect(radios.every((r) => (r as any).disabled)).toBe(true);
+    radios[1]!.fire("change");
+    expect(find(main, "input", { name: "p" })).toHaveLength(0);
+    await sent;
+    release();
+    await flush();
+    expect(one(main, "details").attrs.open).toBe("");
+    expect(one(main, "input", { name: "o" }).value).toBe("typed");
+    expect(find(main, "input", { name: "flow" }).every((r) => !(r as any).disabled)).toBe(true);
+  });
+
+  it("shows a note with a link to My repositories for a failed repository, following the selection", async () => {
+    data.flows = [flow("a", [field("github_repo", { value: "a/a" })])];
+    data.repos = [repo("1", "a/a", { ok: true }), repo("2", "b/b", { ok: false })];
+    await open();
+    expect(main.textContent).not.toContain(ui.REPO_FAILED_NOTE);
+    const sel = one(main, "select");
+    sel.value = "b/b";
+    sel.fire("change");
+    const link = one(main, "a", { href: "#/repos" });
+    expect(link.textContent).toBe("My repositories");
+    expect(main.textContent).toContain(ui.REPO_FAILED_NOTE);
+    sel.value = "a/a";
+    sel.fire("change");
+    expect(find(main, "a", { href: "#/repos" })).toHaveLength(0);
+  });
+
+  it("shows the note at once when the preselected repository failed", async () => {
+    data.flows = [flow("a", [field("github_repo", { value: "b/b" })])];
+    data.repos = [repo("1", "a/a"), repo("2", "b/b", { ok: false })];
+    await open();
+    expect(find(main, "a", { href: "#/repos" })).toHaveLength(1);
+  });
+
+  it("names the repository while it loads", async () => {
+    data.flows = [flow("a", [field("github_repo")])];
+    data.holdRepos = true;
+    const opened = open();
+    await flush();
+    expect(main.textContent).toContain("Repository (required)");
+    releaseRepos();
+    await opened;
+  });
+
+  it("puts a fixed repository into the disclosure, without a select", async () => {
+    data.flows = [flow("a", [field("github_repo", { mode: "fixed", value: "me/fixed" })])];
+    await open();
+    expect(one(main, "details").textContent).toContain("me/fixed");
+    expect(find(main, "select")).toHaveLength(0);
+  });
+
+  it("draws the disclosure but no Start button in the read-only preview", async () => {
+    data.flows = [flow("a", [field("o")])];
+    main = document.createElement("div") as unknown as FakeElement;
+    await ui.renderStart(main, { a: fakeApi(), dialog, go, readOnly: true });
+    expect(find(main, "details")).toHaveLength(1);
+    expect(find(main, "button", { type: "submit" })).toHaveLength(0);
+  });
+});
+
 describe("helpers", () => {
+  it("splitFields puts the repository first, then required inputs, optional inputs and fixed values apart", () => {
+    const f = (name: string, over: object = {}) => field(name, over);
+    const parts = ui.splitFields(flow("a", [f("o"), f("x", { required: true }), f("github_repo"), f("fx", { mode: "fixed" })]));
+    expect(parts.required.map((x: any) => x.name)).toEqual(["github_repo", "x"]);
+    expect(parts.optional.map((x: any) => x.name)).toEqual(["o"]);
+    expect(parts.fixed.map((x: any) => x.name)).toEqual(["fx"]);
+    expect(ui.splitFields(flow("a", [f("github_repo", { mode: "fixed" })])).fixed).toHaveLength(1);
+    expect(ui.splitFields({})).toEqual({ required: [], optional: [], fixed: [] });
+  });
+
+  it("moreSummary counts the parts and leaves out zeros", () => {
+    expect(ui.moreSummary(2, 1)).toBe("More options: 2 optional fields, 1 fixed value");
+    expect(ui.moreSummary(1, 0)).toBe("More options: 1 optional field");
+    expect(ui.moreSummary(0, 2)).toBe("More options: 2 fixed values");
+  });
+
   it("githubRepos keeps records with a github name", () => {
     expect(ui.githubRepos([repo("1", "a/a"), repo("2"), { id: "3", github: "" }]).map((r: any) => r.id)).toEqual(["1"]);
     expect(ui.githubRepos(undefined)).toEqual([]);
@@ -423,6 +657,16 @@ describe("helpers", () => {
     expect(ui.addedRepo(undefined, after)).toBe("");
     expect(ui.addedRepo(repo("2"), after)).toBe("");
   });
+  it("startProblem checks the repository first, as the page shows it, whatever the metadata order", async () => {
+    const f = flow("a", [field("x", { required: true }), field("github_repo", { required: true })]);
+    expect(ui.startProblem(f, {})).toEqual({ field: "github_repo", text: "Choose a repository." });
+    data.flows = [f];
+    await open();
+    await submit(main);
+    expect(alertText(main)).toBe("Choose a repository.");
+    expect((document as any).activeElement.attrs["aria-label"]).toBe("Repository");
+  });
+
   it("startProblem finds the first empty required input", () => {
     const f = flow("a", [field("x", { label: "X", required: true }), field("y", { label: "Y", required: true }), field("z", { mode: "fixed", required: true })]);
     expect(ui.startProblem(f, { x: "ok", y: " " })).toEqual({ field: "y", text: 'Fill in "Y".' });

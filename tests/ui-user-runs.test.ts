@@ -54,7 +54,12 @@ describe("helpers", () => {
   });
 
   it("runActions per status", () => {
-    const k = (status: string, over: any = {}, queued = false) => ui.runActions({ status, ...over }, queued);
+    const k = (status: string, over: any = {}, queued = false) => ui.runActions({ status, state: { next: "a" }, ...over }, queued);
+    // Retry needs a step to continue at.
+    for (const s of ["failed", "stopped", "cancelled"]) {
+      expect(ui.runActions({ status: s }), s).toEqual([]);
+      expect(ui.runActions({ status: s, state: { next: null } }), s).toEqual([]);
+    }
     expect(k("waiting")).toEqual(["approve", "reject", "cancel"]);
     expect(k("running")).toEqual(["cancel"]);
     expect(k("failed")).toEqual(["retry"]);
@@ -294,6 +299,7 @@ describe("renderMyRun", () => {
       queue: vi.fn(async () => { if (state.queueError) throw state.queueError; return { pending: state.pending, active: [] }; }),
       events: vi.fn(() => stream),
       diff: vi.fn(async () => ({ patch: "+a", stat: "1 file" })),
+      transcript: vi.fn(async () => ({ events: [] })),
       approveRun: vi.fn(async () => ({})),
       rejectRun: vi.fn(async () => ({})),
       resumeRun: vi.fn(async () => ({})),
@@ -306,6 +312,21 @@ describe("renderMyRun", () => {
   const form = () => one(main, "form", { class: "run-answer" });
   const box = () => one(main, "textarea");
   const send = async (text: string) => { box().value = text; form().fire("submit", { preventDefault() {} }); await flush(); };
+
+  it("shows the Skills card from the skill view, without a digest, and none without it", async () => {
+    const skillView = {
+      lock: "ok", requested: [{ id: "a", version: "1.0.0", by: "plan", state: "selected" }],
+      resolved: [{ id: "a", version: "1.0.0", requiredBy: [], integrity: "verified", estimatedTokens: 50 }],
+    };
+    state.summary = summaryOf({ skillView });
+    await open();
+    const section = one(main, "section", { "aria-label": "Skills" });
+    expect(section.textContent).toContain("a@1.0.0");
+    expect(section.textContent).not.toContain("Digest");
+    state.summary = summaryOf();
+    await open();
+    expect(find(main, "section", { "aria-label": "Skills" })).toHaveLength(0);
+  });
 
   it("shows the answer form under the questions", async () => {
     state.summary = asking();
@@ -484,13 +505,19 @@ describe("renderMyRun", () => {
     expect(main.textContent).not.toMatch(/\$|model|folder|Codex|claude/i);
   });
 
+  it("does not fill Retry while the answer form is shown", async () => {
+    state.summary = asking();
+    await open();
+    expect(button("retry").attrs.class ?? "").not.toContain("primary");
+  });
+
   it("shows the right buttons for each status", async () => {
     const cases: [any, string[]][] = [
       [{ status: "waiting", next: rec("approval") }, ["Approve", "Reject", "Cancel"]],
       [{ status: "running" }, ["Cancel"]],
-      [{ status: "failed" }, ["Retry"]],
-      [{ status: "stopped" }, ["Retry"]],
-      [{ status: "cancelled" }, ["Retry"]],
+      [{ status: "failed" }, ["Retry from the failing step"]],
+      [{ status: "stopped" }, ["Retry from the failing step"]],
+      [{ status: "cancelled" }, ["Retry from the failing step"]],
       [{ status: "succeeded" }, []],
       [{ status: "queued" }, ["Cancel"]],
       [{ status: "failed", refinement: "s1" }, []],
@@ -656,14 +683,15 @@ describe("renderMyRun", () => {
 
     state.runError = refused("boom", 500);
     await open();
-    expect(one(main, "p", { role: "alert" }).textContent).toBe("boom");
-    expect(main.textContent).not.toContain("Loading");
+    const alert = one(main, "div", { role: "alert" }).textContent;
+    expect(alert).toContain("Could not load the run.");
+    expect(alert).toContain("boom");
 
     state.runError = refused("run not found", 404);
     state.queueError = new Error("queue down");
     await open();
     expect(main.textContent).not.toContain(ui.NOT_FOUND);
-    expect(one(main, "p", { role: "alert" }).textContent).toBe("queue down");
+    expect(one(main, "div", { role: "alert" }).textContent).toContain("queue down");
   });
 
   it("explains a failed run without raw details", async () => {
@@ -677,16 +705,31 @@ describe("renderMyRun", () => {
     expect(find(main, "details")).toHaveLength(0);
   });
 
-  it("has Log, Steps and Changes", async () => {
+  it("'Show the failed step' selects Steps without a transcript request", async () => {
+    state.summary = summaryOf({ status: "failed", reason: "raw", next: { ...rec("failed"), failure }, history: [
+      { id: "b", type: "claude", visit: 1, ok: false, durationMs: 50, error: "exit 1", output: "secret" },
+    ] });
+    await open();
+    find(main, "button").find((b) => b.textContent === "Show the failed step")!.click();
+    await flush();
+    const steps = find(main, "button").find((b) => b.attrs["data-tab"] && b.textContent === "Steps")!;
+    expect(steps.attrs["aria-selected"]).toBe("true");
+    expect(main.textContent).toContain("exit 1");
+    expect(main.textContent).not.toContain("secret");
+    expect(a.transcript).not.toHaveBeenCalled();
+  });
+
+  it("has Overview, Steps, Changes, Evidence and Logs", async () => {
     state.summary = summaryOf({ history: [
       { id: "a", type: "claude", visit: 1, ok: true, durationMs: 1000, output: "secret", agent: "claude", model: "opus-x" },
       { id: "b", type: "shell", visit: 1, ok: false, durationMs: 50, error: "exit 1" },
     ] });
     await open();
-    const tabs = find(one(main, "div", { class: "seg tabs mb-12" }), "button");
-    expect(tabs.map((b) => b.textContent)).toEqual(["Log", "Steps", "Changes"]);
+    const tabs = find(main, "button").filter((b) => b.attrs["data-tab"]);
+    expect(tabs.map((b) => b.textContent)).toEqual(["Overview", "Steps", "Changes", "Evidence", "Logs"]);
     emit("log", { line: "▶ a (shell)" });
     emit("log", "not json");
+    tabs[4]!.click();
     expect(one(main, "pre", { class: "log" }).textContent).toContain("▶ a (shell)");
 
     tabs[1]!.click();
@@ -694,18 +737,76 @@ describe("renderMyRun", () => {
     expect(find(main, "summary")).toHaveLength(0);
     expect(main.textContent).not.toContain("secret");
     expect(main.textContent).toContain("Agent");
+    expect(main.textContent).toContain("Run started");
+    expect(main.textContent).toContain("exit 1");
+    expect(a.transcript).not.toHaveBeenCalled();
 
+    // Changes loads on the first open, not on later opens or updates, and again on Refresh
+    expect(a.diff).not.toHaveBeenCalled();
     tabs[2]!.click();
     await flush();
+    expect(a.diff).toHaveBeenCalledTimes(1);
     one(main, "pre", { class: "diff" });
-    a.diff.mockResolvedValueOnce({ patch: "" });
+    emit("update", { summary: summaryOf({ history: state.summary.history }) });
+    tabs[0]!.click();
     tabs[2]!.click();
     await flush();
+    expect(a.diff).toHaveBeenCalledTimes(1);
+    const refreshBtn = () => find(main, "button").find((b) => b.attrs["data-focus"] === "diff-refresh")!;
+    a.diff.mockResolvedValueOnce({ patch: "" });
+    refreshBtn().click();
+    await flush();
+    expect(a.diff).toHaveBeenCalledTimes(2);
     expect(main.textContent).toContain(ui.NO_CHANGES);
     a.diff.mockRejectedValueOnce(refused("no access", 403));
-    tabs[2]!.click();
+    refreshBtn().click();
     await flush();
-    expect(find(main, "p", { role: "alert" }).map((p) => p.textContent)).toContain("no access");
+    expect(one(main, "button", { "data-focus": "diff-retry" }).textContent).toBe("Retry");
+    expect(main.textContent).toContain("no access");
+  });
+
+  describe("the tabs keep their state", () => {
+    const tabButtons = () => find(main, "button").filter((b) => b.attrs["data-tab"]);
+    const selected = () => tabButtons().filter((b) => b.attrs["aria-selected"] === "true").map((b) => b.textContent);
+    const failed = { status: "failed", reason: "x", next: { ...rec("failed"), failure } };
+
+    it("keeps the selected tab over a stream update and a refresh", async () => {
+      await open();
+      expect(selected()).toEqual(["Overview"]);
+      tabButtons()[4]!.click();
+      emit("update", { summary: summaryOf({ task: "changed" }) });
+      expect(selected()).toEqual(["Logs"]);
+      emit("update", { summary: summaryOf({ task: "changed again" }) });
+      expect(selected()).toEqual(["Logs"]);
+    });
+
+    it("opens Steps once when the run fails, and not after the reader picked a tab", async () => {
+      await open();
+      emit("update", { summary: summaryOf(failed) });
+      expect(selected()).toEqual(["Steps"]);
+      tabButtons()[0]!.click();
+      emit("update", { summary: summaryOf({ ...failed, task: "again" }) });
+      expect(selected()).toEqual(["Overview"]);
+    });
+
+    it("keeps the answer text over a switch to Logs and back, and over an update", async () => {
+      state.summary = asking();
+      await open();
+      box().value = "half an answ";
+      tabButtons()[4]!.click();
+      tabButtons()[0]!.click();
+      emit("update", { summary: asking({ task: "changed" }) });
+      expect(box().value).toBe("half an answ");
+    });
+
+    it("has the form and the answers given in the Overview panel", async () => {
+      state.summary = asking({ answers: [{ at: "2026-01-01T00:00:00Z", text: "first" }] });
+      await open();
+      const overview = find(main, "div").find((d) => d.attrs.role === "tabpanel")!;
+      expect(overview.contains(form())).toBe(true);
+      expect(overview.textContent).toContain("Answers given");
+      expect(overview.textContent).toContain("Q1?");
+    });
   });
 
   it("draws no cost, model, agent, folder or admin control on any tab", async () => {
@@ -716,7 +817,7 @@ describe("renderMyRun", () => {
     state.summary.flowDef.steps = [{ id: "step2", type: "agent" }];
     await open();
     const texts: string[] = [main.textContent];
-    for (const b of find(one(main, "div", { class: "seg tabs mb-12" }), "button")) {
+    for (const b of find(main, "button").filter((x) => x.attrs["data-tab"])) {
       b.click();
       await flush();
       texts.push(main.textContent);
@@ -762,11 +863,12 @@ describe("renderMyRun", () => {
     expect(a.queue.mock.calls.length).toBe(n);
   });
 
-  it("toasts when the stream is lost for good", async () => {
+  it("shows one banner when the stream is lost for good", async () => {
     await open();
     stream.readyState = 2;
     stream.onerror();
-    expect(toastText()).toBe("Lost connection to the run stream");
+    expect(main.textContent).toContain("Lost connection to the run stream");
+    expect(toastText()).toBe("");
   });
 });
 
