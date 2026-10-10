@@ -11,7 +11,7 @@ import {
 } from "../skills/run-lock.js";
 import type { Engine } from "./execute.js";
 
-// The skill lock of a run, made at the first agent step after a checked plan and verified before every agent session.
+// The skill lock of a run, made at the first agent step after a checked plan (or a plan record carried at plan_check) and verified before every agent session.
 // The file <runDir>/skill-lock.json is the authority; summary.skillLock is a copy that is repaired from it.
 
 export const SKILL_INTEGRITY_PREFIX = "skill integrity: ";
@@ -74,13 +74,15 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
   const read = readRunSkillLock(s.runDir);
   const kept = s.skillLock;
 
-  // No current gate (no plan yet, or being planned again): nothing is made, but a lock that exists is still verified.
-  if (!gate) {
+  const carry = gate ? undefined : s.skillCarry;
+
+  // No current gate and no carry (no plan yet, or being planned again): nothing is made, but a lock that exists is still verified.
+  if (!gate && !carry) {
     if (!read.ok) return read.reason === "missing" && !kept ? undefined : SKILL_LOCK_CHANGED;
     if (read.lock.runId !== s.runId || (kept && kept.planHash === read.lock.planHash && kept.lockDigest !== read.lockDigest)) return SKILL_LOCK_CHANGED;
     return verifyLock(engine, read.lock, discover);
   }
-  const planHash = planHashOf(gate.output);
+  const planHash = gate ? planHashOf(gate.output) : carry!.lockHash;
 
   if (read.ok && read.lock.planHash === planHash) {
     // The lock of this plan: it is never resolved again. A summary of this plan must match the file exactly;
@@ -106,7 +108,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
 
   // Make the lock.
   try {
-    const request = planSkillRequest({ history: s.history, flowDef: s.flowDef });
+    const request = gate ? planSkillRequest({ history: s.history, flowDef: s.flowDef }) : carry!.request;
     if (!request) return undefined;
     const reg = discover(engine.config.skills);
     const resolution = resolveSkills(reg, request.skills.map((i) => i.id), { role: "coder", ...resolveOptionsFrom(engine.config.skills) });

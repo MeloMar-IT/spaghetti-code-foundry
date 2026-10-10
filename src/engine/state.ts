@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
 import type { RunSkillPlan } from "../skills/run-plan.js";
@@ -97,6 +98,8 @@ export interface RunSummary {
   skillLock?: RunSkillLockSummary;
   /** The skill resolution of the plan and what was decided about skills that could not be used. Absent on older runs and when no skill was asked for. */
   skillPlan?: RunSkillPlan;
+  /** The skill request carried from the plan record at plan_check. Absent on older runs and on runs without a plan record. */
+  skillCarry?: RunSkillCarry;
   /** When the run was archived (taken out of the default list). Absent: not archived. */
   archivedAt?: string;
   /** The id of the account that archived it. Never shown to a user. */

@@ -2505,6 +2505,16 @@ When a run has a plan that is ready to code, the first agent step resolves the p
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
 
+### Skills from the plan to the coding run
+
+When `issue-plan` posts a plan, the Foundry keeps its own record of the skill request on the machine that planned. `issue-code-daily` has a step `plan_check` after `daily_branch`. It reads the issue comments again and compares them with that record. If they match, the run uses the skills from the record and builds its skill lock from them at the first agent step. The skills are never taken from the comment text.
+
+- **Carried with a warning:** if someone commented after the plan, a `path:` evidence file changed since the plan's commit, or the technology of the repository changed, the run still carries the skills. It logs one warning for each change and makes the lock again.
+- **Stops:** if the plan comment was deleted or edited, a newer plan of ours has no record, the record was cleaned up, or the comments cannot be read, the run stops when skills are in play. The reason reads `skills not resolved: … plan the issue again`. Plan the issue again, then resume; the check runs again. With no skills in play the run only warns and goes on. A stored record that is invalid always stops the run.
+- **Older plans:** if nothing is stored (plans made before this feature, on another machine, or run with a custom flow), the run codes without carried skills, as before. This includes the skills in `skills.selection.include`.
+- **The record lives on the planning machine.** To carry skills, plan and code on the same Foundry. A record for the same issue number in another repository is never used.
+- **Retention:** old records are cleaned up. A run that needs a cleaned-up record stops as above.
+
 ### Missing and conflicting skills
 
 After the plan gate (`issue-plan`: the plan step) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.

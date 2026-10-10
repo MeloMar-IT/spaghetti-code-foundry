@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { SKILL_LOCK_CHANGED, ensureSkillLock, skillSession } from "../src/engine/skill-lock.js";
+import type { RunSkillCarry } from "../src/engine/plan-carry.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
+import type { SkillRequest } from "../src/skills/request.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
 import { RUN_SKILL_LOCK_FILE, readRunSkillLock } from "../src/skills/run-lock.js";
 
@@ -43,6 +45,45 @@ function setup(output: string | undefined, over: Record<string, unknown> = {}) {
 }
 const file = (runDir: string) => join(runDir, RUN_SKILL_LOCK_FILE);
 const commitOf = () => "f".repeat(40);
+
+describe("ensureSkillLock with a carry", () => {
+  const request: SkillRequest = { version: 1, skills: [{ id: "a", reason: "Needed", evidence: ["catalogue:a"] }] };
+  const carry = (lockHash = digestOf("1")): RunSkillCarry => ({ request, planHash: digestOf("1"), lockHash, commentId: "7", changes: [], at: "2026-01-01T00:00:00.000Z" });
+
+  it("makes the lock from the carry and verifies on the second call", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock).toMatchObject({ planHash: digestOf("1"), skills: [{ id: "a", version: "1.0.0" }] });
+    const bytes = readFileSync(file(t.runDir));
+    const discover = vi.fn(() => reg(sk("a")));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    expect(Buffer.compare(readFileSync(file(t.runDir)), bytes)).toBe(0);
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(t.logs.at(-1)).toMatch(/verified 1 skill$/);
+  });
+
+  it("a plan gate wins over a carry", () => {
+    const t = setup(gateOutput(["a"]), { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock!.planHash).not.toBe(digestOf("1"));
+  });
+
+  it("a changed carry makes a new lock with the new registry version", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    t.summary.skillCarry = carry(digestOf("2"));
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a", { version: "1.1.0", digest: digestOf("b") }), sk("a")), commitOf })).toBeUndefined();
+    expect(t.summary.skillLock).toMatchObject({ planHash: digestOf("2"), skills: [{ id: "a", version: "1.1.0" }] });
+  });
+
+  it("a changed carry with a tampered summary is refused", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
+    t.summary.skillCarry = carry(digestOf("2"));
+    t.summary.skillLock = { ...t.summary.skillLock!, lockDigest: digestOf("9") };
+    expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBe(SKILL_LOCK_CHANGED);
+  });
+});
 
 describe("ensureSkillLock", () => {
   it("does nothing for a run without a checked plan gate", () => {
