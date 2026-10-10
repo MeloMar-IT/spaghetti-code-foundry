@@ -141,6 +141,18 @@ export const UnresolvedPolicySchema = z
   .prefault({});
 export type UnresolvedPolicy = z.infer<typeof UnresolvedPolicySchema>;
 
+/** Which tools a skill may ask for (config key skills.tools). A loading rule, not a tool allowlist for sessions. */
+export const ToolPolicySchema = z
+  .object({
+    shell: z.boolean().default(true),
+    network: z.boolean().default(false),
+    filesystem: z.enum(["read", "write"]).default("write"),
+    missing: z.enum(["stop", "degrade"]).default("stop"),
+  })
+  .strict()
+  .prefault({});
+export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
+
 export type SkillRole = (typeof SKILL_ROLES)[number];
 export type SkillRisk = (typeof SKILL_RISKS)[number];
 export type SkillFolder = (typeof SKILL_FOLDERS)[number];
