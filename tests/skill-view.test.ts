@@ -432,3 +432,25 @@ describe("runSkillView: bad input", () => {
     for (const k of ["code", "action", "version", "message"]) expect(k in v.requested[0]!).toBe(false);
   });
 });
+
+describe("runSkillView: flow skill modes", () => {
+  const r = reg(sk("a"), sk("b"));
+  const planReq = request({ id: "b" });
+
+  it("explicit: shows the ids the flow names, ignores a plan gate, and is not planChanged", () => {
+    const req = request({ id: "a", reason: "named by the flow", evidence: [] });
+    const flowDef = { name: "f", steps: [GATE_DEF], skills: { mode: "explicit", ids: ["a"] } };
+    const hash = planHashOf("flow-skills:" + JSON.stringify(["a"]));
+    const lock = lockOf(r, req, { planHash: hash });
+    const run = runOf(planReq, { flowDef, skillLock: summaryOf(lock), skillPlan: { ...planOf(r, req), gate: "(flow)", planHash: hash } });
+    const v = view(run, { readLock: () => read(lock), registry: withRegistry(r) })!;
+    expect(v.planChanged).toBeUndefined();
+    expect(v.lock).toBe("ok");
+    expect(v.requested.map((x) => x.id)).toEqual(["a"]);
+  });
+
+  it("off: a plan request shows nothing", () => {
+    const flowDef = { name: "f", steps: [GATE_DEF], skills: { mode: "off" } };
+    expect(view(runOf(planReq, { flowDef }), { readLock: missing })).toBeUndefined();
+  });
+});

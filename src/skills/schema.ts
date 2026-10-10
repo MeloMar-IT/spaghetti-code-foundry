@@ -19,6 +19,12 @@ export const REVIEW_RANGE = { maxTokens: [100, 20000], maxSkillTokens: [50, 5000
 /** What a claude step may declare as `skill_role`: the coder is the default and needs no field. */
 export const STEP_SKILL_ROLES = ["coder", "reviewer"] as const;
 export type StepSkillRole = (typeof STEP_SKILL_ROLES)[number];
+/** How a flow gets its skills. `recorded` is reserved (#439) and runs as `planned` for now. */
+export const FLOW_SKILL_MODES = ["planned", "explicit", "off", "recorded"] as const;
+export type FlowSkillMode = (typeof FLOW_SKILL_MODES)[number];
+/** What a claude step may declare as `skills`. `selected` is the default and needs no field. */
+export const STEP_SKILL_MODES = ["catalog", "selected", "off"] as const;
+export type StepSkillMode = (typeof STEP_SKILL_MODES)[number];
 export const SKILL_RISKS = ["low", "medium", "high"] as const;
 export const SKILL_FOLDERS = ["references", "scripts", "assets", "evals"] as const;
 export const SKILL_LIMITS = {

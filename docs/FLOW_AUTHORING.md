@@ -53,6 +53,9 @@ limits:
 sandbox:                      # optional
   claude: false               # true = agents' shell commands may only write inside the workspace
   docker_image: node:22       # image for shell steps with `sandbox: true`
+skills:                       # optional: how the run gets its skills; see "Skills" below
+  mode: planned               # planned (default) | explicit | off  (recorded is reserved)
+  ids: [rest-openapi]         # only with mode: explicit
 vars:                         # optional: variables with defaults; the user can override them per run
   test_cmd: npm test
 publish: {...}                # optional: publish the flow to users — leave it out unless asked; see below
@@ -108,6 +111,7 @@ steps: [...]                  # required, at least one
   max_budget_usd: 3                 # optional: stop this step at this cost
   sandbox: true                     # optional: agent's shell commands may only write inside the workspace
   skill_role: reviewer              # optional: give this read-only step compact review checks from the run's skills (coder is the default)
+  skills: selected                  # optional: catalog | selected (default) | off; see "Skills" below
 ```
 
 - The step **output** is the agent's final answer. It succeeds unless the agent errors (or
@@ -208,6 +212,50 @@ Succeeds when all of them succeed.
 ```
 
 Runs in the same workspace. May not contain approval steps.
+
+## Skills
+
+Skills are optional. Leave the fields out and the flow works as before: a plan gate asks for skills and the run locks them.
+
+**Flow `skills.mode`**
+
+| Mode | What happens |
+|---|---|
+| `planned` | The default. The skills come from the request of the plan gate. |
+| `explicit` | The skills are the `ids` you list. They are checked when the run starts, under the same policy as a planned request, and locked at the first agent step. No plan gate is needed; a `SKILL_REQUEST` line of a plan gate is ignored. |
+| `off` | No check, no lock and no skill block for the run. This also skips the administrator's `skills.selection.include`. The log says so once. |
+| `recorded` | Reserved. It is accepted and runs like `planned` for now. |
+
+- `ids` is required for `explicit` and not allowed for the other modes. Ids are lower-case slugs, not repeated, at most 20.
+- Only the top flow decides; the `skills` field of a sub-flow is ignored.
+
+**Step `skills`** (`claude` steps only)
+
+| Value | What happens |
+|---|---|
+| `selected` | The step gets the locked skills. This is the default. |
+| `catalog` | Marks a planner step. The step must be read-only. It runs like `selected` for now. |
+| `off` | This session gets no skill block. The lock is still verified. A step with `skills: off` always starts a new session: it does not resume another step's session, because that one may hold a skill block. |
+
+Step `skills` cannot be set together with `skill_role: reviewer`.
+
+```yaml
+name: rest-change
+steps:
+  - id: implement
+    type: claude
+    prompt: "Implement this: {{task}}"
+skills:
+  mode: explicit
+  ids: [rest-openapi]
+```
+
+```yaml
+- id: summary
+  type: claude
+  prompt: Summarise the change in three lines.
+  skills: off
+```
 
 ## Publishing a flow to users
 

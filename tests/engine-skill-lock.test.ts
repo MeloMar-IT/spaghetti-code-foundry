@@ -311,3 +311,54 @@ describe("skillSession", () => {
     }
   });
 });
+
+describe("flow skill modes", () => {
+  const explicit = (ids: string[]) => ({ flowDef: { steps: [{ id: "impl", type: "claude", prompt: "x" }], skills: { mode: "explicit", ids } } });
+  const off = { flowDef: { steps: [{ id: "risk_gate", type: "shell", run: "# /skill-request" }], skills: { mode: "off" } } };
+
+  it("off: no lock, no payload, even with include and a valid request", () => {
+    const t = setup(gateOutput(["a"]), off);
+    t.engine.config.skills.selection.include = ["a"];
+    const discover = vi.fn(() => reg(sk("a")));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    for (const [agent, role] of [["claude", "coder"], ["codex", "coder"], ["claude", "reviewer"]] as const) {
+      expect(skillSession(t.engine, agent, { discover }, role)).toEqual({});
+    }
+    expect(existsSync(file(t.runDir))).toBe(false);
+    expect(t.summary.skillLock).toBeUndefined();
+    expect(discover).not.toHaveBeenCalled();
+    expect(t.save).not.toHaveBeenCalled();
+  });
+
+  it("explicit: locks the named ids without evidence and verifies afterwards", () => {
+    const t = setup(undefined, explicit(["a"]));
+    const discover = () => reg(sk("a"));
+    expect(ensureSkillLock(t.engine, { discover, commitOf })).toBeUndefined();
+    const lock = JSON.parse(readFileSync(file(t.runDir), "utf8"));
+    expect(lock.version).toBe(1);
+    expect(lock.skills[0]).toMatchObject({ id: "a", selection: "requested", reason: "named by the flow" });
+    expect(lock.skills[0]).not.toHaveProperty("evidence");
+    const bytes = readFileSync(file(t.runDir));
+    expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
+    expect(readFileSync(file(t.runDir)).equals(bytes)).toBe(true);
+    expect(t.save).toHaveBeenCalledTimes(1);
+    expect(skillSession(t.engine, "claude", { discover })).toMatchObject({ payload: { loaded: ["a@1.0.0"] } });
+    rmSync(file(t.runDir));
+    expect(ensureSkillLock(t.engine, { discover })).toBe(SKILL_LOCK_CHANGED);
+  });
+
+  it("explicit: a skill that went away before the lock stops the run under the unresolved policy", () => {
+    const t = setup(undefined, explicit(["a"]));
+    const r = ensureSkillLock(t.engine, { discover: () => reg() });
+    expect(r).toMatch(/\ba\b/);
+    expect(existsSync(file(t.runDir))).toBe(false);
+  });
+
+  it("block = false: lock still made, no payload; a changed skill is refused", () => {
+    const t = setup(gateOutput(["a"]));
+    expect(skillSession(t.engine, "claude", { discover: () => reg(sk("a")), commitOf }, "coder", false)).toEqual({});
+    expect(existsSync(file(t.runDir))).toBe(true);
+    const changed = () => reg(sk("a", { digest: digestOf("b") }));
+    expect(skillSession(t.engine, "claude", { discover: changed }, "coder", false)).toHaveProperty("refused");
+  });
+});
