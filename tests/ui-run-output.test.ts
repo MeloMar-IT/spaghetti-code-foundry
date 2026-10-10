@@ -31,6 +31,19 @@ describe("createLog", () => {
     expect(log.count()).toBe(5);
   });
 
+  it("clear removes the lines and the note, resets the count and draws new lines", () => {
+    const log = mod.createLog({ max: 3 });
+    for (let i = 1; i <= 5; i++) log.add(`l${i}`);
+    log.clear();
+    expect(notes(log.el)).toHaveLength(0);
+    expect(spans(log.el)).toHaveLength(0);
+    expect(log.count()).toBe(0);
+    log.add("again");
+    expect(spans(log.el).map((s) => s.textContent)).toEqual(["again\n"]);
+    expect(notes(log.el)).toHaveLength(0);
+    expect(log.count()).toBe(1);
+  });
+
   it("says '1 earlier line' for one and has no note when nothing is dropped", () => {
     const one1 = mod.createLog({ max: 3 });
     for (let i = 1; i <= 4; i++) one1.add(`l${i}`);

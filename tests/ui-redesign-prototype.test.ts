@@ -251,7 +251,7 @@ describe("permissions", () => {
   });
 
   it("answers not found with one card for both roles", () => {
-    const text = /export const NOT_FOUND = "([^"]*)";/.exec(read("ui/user/runs.js"))![1]!;
+    const text = /export const NOT_FOUND = "([^"]*)";/.exec(read("ui/run-states.js"))![1]!;
     const v = viewsOf(page("run.html")).find((x) => x.attrs.state?.join() === "notfound");
     expect(v).toBeDefined();
     expect(v!.attrs.role).toBeUndefined();

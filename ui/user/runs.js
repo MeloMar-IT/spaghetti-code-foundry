@@ -9,11 +9,10 @@ import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filte
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
-import { noRuns, part, partNote, runsLiveStates } from "../run-states.js";
+import { loadInto, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
 import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer, stepEntry } from "../runs.js";
 
-export { NO_RUNS } from "../run-states.js";
-export const NOT_FOUND = "This run was not found. It may have been removed.";
+export { NO_RUNS, NOT_FOUND } from "../run-states.js";
 export const NO_STEPS = "No steps finished yet.";
 export const NO_CHANGES = "No changes yet.";
 const REFRESH_MS = 30_000;
@@ -201,6 +200,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   let job = null;
   let runError = null;
   let queueError = null;
+  let starting = false; // the queue lists the run as active: it has no record yet, the stream sends it
   let gone = false;
   let busy = false;
   let acting = false;
@@ -216,6 +216,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const taskBox = h("div");
   const skillsBox = h("div");
   let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
+  let stateKey = null; // the state drawn in `head`: an unchanged one is not drawn again
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const log = createLog();
   const status = statusAnnouncer();
@@ -235,14 +236,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
       return mount(tabBody, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, NO_STEPS));
     }
     if (!summary) return mount(tabBody, h("p", { class: "muted" }, NO_CHANGES));
-    mount(tabBody, h("p", { class: "muted" }, "Loading the changes…"));
-    let view;
-    try {
-      view = diffView(await a.diff(runId), { none: NO_CHANGES });
-    } catch (e) {
-      view = h("p", { class: "status bad", role: "alert" }, errorText(e));
-    }
-    if (!gone && tab === t && mine === tabSeq) mount(tabBody, view);
+    await loadInto(tabBody, { loading: "Loading the changes…", load: () => a.diff(runId), draw: (d) => diffView(d, { none: NO_CHANGES }), what: "Could not load the changes.", focus: "diff-retry", current: () => !gone && tab === t && mine === tabSeq });
   }
 
   for (const [k, label] of [["log", "Log"], ["steps", "Steps"], ["diff", "Changes"]]) {
@@ -271,7 +265,41 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
-  mount(main, head, alertEl, status.el, answerBox, tabsBox);
+  // The stream is made here, started below. A closed stream asks the server: a refusal or a missing run ends the view.
+  const stream = runStream({
+    open: () => a.events(runId),
+    on: {
+      update: (e) => {
+        let s;
+        try {
+          s = JSON.parse(e.data).summary;
+        } catch {
+          return;
+        }
+        if (!s || typeof s !== "object") return;
+        if (staleAfterSend(s)) return;
+        runSeq++;
+        const had = summary?.history?.length;
+        summary = s;
+        runError = null;
+        draw();
+        if (tab === "steps" && had !== s.history?.length) showTab("steps");
+        if (job !== null) refresh();
+      },
+      log: (e) => {
+        let line;
+        try {
+          line = JSON.parse(e.data).line;
+        } catch {
+          return;
+        }
+        log.add(String(line ?? ""));
+      },
+    },
+    onLost: () => refresh(),
+    onReopen: () => log.clear(),
+  });
+  mount(main, head, stream.el, alertEl, status.el, answerBox, tabsBox);
 
   /** A summary older than an answer sent here: it asks questions with fewer answers than the run now has (answers only grow). */
   const staleAfterSend = (s) => expectAnswers > 0 && !!s?.questions && (Array.isArray(s.answers) ? s.answers.length : 0) < expectAnswers;
@@ -330,15 +358,20 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const hasTabs = !!summary;
     tabsBox.hidden = !hasTabs;
     if (!summary && !job) {
-      const missing = runError?.status === 404 && !queueError;
-      const err = !missing && (queueError || runError);
+      // The error to show: none while nothing failed; a 404 of the run alone is "not found"; else the queue's failure comes first.
+      const starts = starting && runError?.status === 404; // no record yet: keep the skeleton until the stream sends the summary
+      const err = starts ? null : runError?.status === 403 || (runError?.status === 404 && !queueError) ? runError : queueError || runError;
       mode = "state";
-      return mount(head, missing
-        ? h("div", { class: "empty" }, h("p", {}, NOT_FOUND), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
-        : err
-          ? h("div", { class: "empty" }, h("p", { class: "status bad", role: "alert" }, errorText(err)), h("a", { href: "#/runs", "data-focus": "my-runs" }, "My runs"))
-          : h("div", { class: "row" }, h("span", { class: "spinner" }), " Loading…"));
+      stream.el.hidden = true;
+      const key = `${runLoadKind(err)}|${err?.message ?? ""}`;
+      if (key !== stateKey) {
+        stateKey = key;
+        mount(head, runLoadState(err, { back: { href: "#/runs", label: "My runs", focus: "my-runs" }, onRetry: refresh }));
+      }
+      return;
     }
+    stateKey = null;
+    stream.el.hidden = false;
     // `head` is mounted again only when it changes from one mode to the other, so the header nodes stay in the page.
     if (mode !== "header") {
       mode = "header";
@@ -362,6 +395,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     const mineQueue = ++queueSeq;
     const [runP, queueP] = await Promise.allSettled([a.run(runId), a.queue()]);
     if (gone) return;
+    let lostRun = false;
+    let denied = false;
     if (mineRun === runSeq) {
       if (runP.status === "fulfilled" && staleAfterSend(runP.value)) {
         // older than the answer just sent: keep what we have
@@ -372,16 +407,23 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
         if (tab === "steps" && had !== summary?.history?.length) showTab("steps");
       } else {
         runError = runP.reason;
+        const status = Number(runError?.status) || 0;
+        // A refusal is the answer: the run is not shown any more (a 404 only when the stream was lost, as a queued run has no record).
+        if (status === 403) { summary = null; job = null; denied = true; }
+        else if (status === 404 && stream.down()) lostRun = true;
       }
     }
     if (mineQueue === queueSeq) {
       if (queueP.status === "fulfilled") {
         job = (queueP.value?.pending ?? []).find((p) => p.runId === runId) ?? null;
+        starting = (queueP.value?.active ?? []).some((p) => p?.runId === runId);
         queueError = null;
       } else {
         queueError = queueP.reason;
       }
     }
+    if (denied && mineRun === runSeq) { summary = null; job = null; }
+    else if (lostRun && !job && !queueError && !starting) summary = null;
     draw();
   }
 
@@ -434,40 +476,8 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     }
   }
 
-  const es = a.events(runId);
-  es.addEventListener("update", (e) => {
-    let s;
-    try {
-      s = JSON.parse(e.data).summary;
-    } catch {
-      return;
-    }
-    if (!s || typeof s !== "object") return;
-    if (staleAfterSend(s)) return;
-    runSeq++;
-    const had = summary?.history?.length;
-    summary = s;
-    runError = null;
-    draw();
-    if (tab === "steps" && had !== s.history?.length) showTab("steps");
-    if (job !== null) refresh();
-  });
-  es.addEventListener("log", (e) => {
-    let line;
-    try {
-      line = JSON.parse(e.data).line;
-    } catch {
-      return;
-    }
-    log.add(String(line ?? ""));
-  });
-  es.onerror = () => {
-    // A stream is not a fetch: in a preview a closed stream is checked with a GET, which shows a 403 when the view has ended.
-    if (es.readyState === 2 && readOnly) return void refresh();
-    if (es.readyState === 2 && summary) toast("Lost connection to the run stream", "error");
-  };
-
   draw();
+  stream.start();
   refresh();
   const timer = setInterval(() => { if (job) refresh(); }, REFRESH_MS);
   // The times in the header move on even when the stream sends only pings.
@@ -476,6 +486,6 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     gone = true;
     clearInterval(timer);
     clearInterval(clock);
-    es.close();
+    stream.close();
   };
 }

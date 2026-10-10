@@ -682,14 +682,15 @@ describe("renderMyRun", () => {
 
     state.runError = refused("boom", 500);
     await open();
-    expect(one(main, "p", { role: "alert" }).textContent).toBe("boom");
-    expect(main.textContent).not.toContain("Loading");
+    const alert = one(main, "div", { role: "alert" }).textContent;
+    expect(alert).toContain("Could not load the run.");
+    expect(alert).toContain("boom");
 
     state.runError = refused("run not found", 404);
     state.queueError = new Error("queue down");
     await open();
     expect(main.textContent).not.toContain(ui.NOT_FOUND);
-    expect(one(main, "p", { role: "alert" }).textContent).toBe("queue down");
+    expect(one(main, "div", { role: "alert" }).textContent).toContain("queue down");
   });
 
   it("explains a failed run without raw details", async () => {
@@ -731,7 +732,8 @@ describe("renderMyRun", () => {
     a.diff.mockRejectedValueOnce(refused("no access", 403));
     tabs[2]!.click();
     await flush();
-    expect(find(main, "p", { role: "alert" }).map((p) => p.textContent)).toContain("no access");
+    expect(one(main, "button", { "data-focus": "diff-retry" }).textContent).toBe("Retry");
+    expect(main.textContent).toContain("no access");
   });
 
   it("draws no cost, model, agent, folder or admin control on any tab", async () => {
@@ -788,11 +790,12 @@ describe("renderMyRun", () => {
     expect(a.queue.mock.calls.length).toBe(n);
   });
 
-  it("toasts when the stream is lost for good", async () => {
+  it("shows one banner when the stream is lost for good", async () => {
     await open();
     stream.readyState = 2;
     stream.onerror();
-    expect(toastText()).toBe("Lost connection to the run stream");
+    expect(main.textContent).toContain("Lost connection to the run stream");
+    expect(toastText()).toBe("");
   });
 });
 

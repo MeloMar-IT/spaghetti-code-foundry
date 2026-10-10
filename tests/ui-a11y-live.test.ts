@@ -713,7 +713,8 @@ describe("Admin run page", () => {
     expect(log.attrs).toMatchObject({ role: "log", "aria-live": "polite", "aria-label": "Run log", tabindex: "0" });
     handlers.log!({ data: JSON.stringify({ line: "✔ done" }) });
     expect(auditPage(main).filter((v) => v.element.includes("log"))).toEqual([]);
-    const region = main.all("div").find((d) => d.attrs.role === "status")!;
+    // The loading skeleton is a status too: the announcer is the one with aria-live.
+    const region = main.all("div").find((d) => d.attrs.role === "status" && d.attrs["aria-live"] === "polite")!;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(RUN("r1", { status: "running", next: nextStep("running", { runId: "r1" }, {}) }));
     expect(region.textContent).toBe("");
