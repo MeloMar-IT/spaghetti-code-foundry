@@ -59,11 +59,11 @@ describe("showPage", () => {
     expect(sub.hidden).toBe(true);
     shell.showPage("admin", ia.resolve("admin", "#/users"));
     expect(sub.hidden).toBe(false);
-    expect(sub.all("a").length).toBe(10);
+    expect(sub.all("a").length).toBe(11);
     expect(sub.all("a").filter((a) => a.attrs.class === "active").map((a) => a.textContent)).toEqual(["Users"]);
     const heads = sub.all("span").filter((s) => s.attrs.class === "subnav-head");
     expect(heads.map((s) => s.textContent)).toEqual(["Operations", "People and access", "System"]);
-    for (const label of ["Problems", "Users", "Settings"]) {
+    for (const label of ["Overview", "Users", "Settings"]) {
       const i = sub.children.findIndex((c) => c.tag === "a" && c.textContent === label);
       expect((sub.children[i - 1] as FakeElement).attrs.class).toBe("subnav-head");
     }

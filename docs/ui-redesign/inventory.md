@@ -11,7 +11,7 @@ How to read it:
 
 ## Admin display
 
-The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 4 detail forms).
+The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4 detail forms).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
@@ -33,6 +33,7 @@ The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 
 | `#/maintenance` | Maintenance | `ui/maintenance.js` | `renderMaintenance` | `api-admin.ts` | admin display only | Clean old run workspaces | Clean up | The clean action is a native confirm (`maintenance.js:12`) |
 | `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 3 native confirms and two pages |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
+| `#/operations` | Overview | `ui/operations.js` | `renderOperations` | `health.ts`, `api-admin.ts`, `api-runs.ts`, `api-repos.ts`, `api-audit.ts` | admin display only | See what needs attention | Cancel run (Health card) | — |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:41` (`problems.js:88`) |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
@@ -84,7 +85,7 @@ Admin preview: `/user/?as=<id>` (`ui/view-as.js`) draws these pages for the chos
 
 ## States
 
-Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js`). Since part 8 all six Administration pages (`#/users`, `#/watchers`, `#/problems`, `#/dashboard`, `#/audit`, `#/settings`) draw a skeleton (`loadingState`) at once and an `errorState` with Retry on failure; a failed reload of Users, Watchers or Problems keeps the list and shows a `staleNote`; a failed part of the Dashboard is a `partNote` on its section, and a failed monitor call on Watchers is an `errorState` in the monitor card. Save on Settings shows "Saving…", "Saved at …" or "Not saved." next to the button. All other routes leave `main` as it was until the first `await` ends.
+Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) `#/operations` (`operations.js`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js`). Since part 8 all six Administration pages (`#/users`, `#/watchers`, `#/problems`, `#/dashboard`, `#/audit`, `#/settings`) draw a skeleton (`loadingState`) at once and an `errorState` with Retry on failure; a failed reload of Users, Watchers or Problems keeps the list and shows a `staleNote`; a failed part of the Dashboard is a `partNote` on its section, and a failed monitor call on Watchers is an `errorState` in the monitor card. Save on Settings shows "Saving…", "Saved at …" or "Not saved." next to the button. All other routes leave `main` as it was until the first `await` ends.
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
@@ -106,6 +107,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/maintenance` | no empty state | toast | none |
 | `#/watchers` | `div.empty` (`admin.js:211`) | errors box | none found |
 | `#/settings` | no empty state | errors box | none |
+| `#/operations` | per card: "Nothing is waiting.", "No entries.", "No account is at a limit." | "Not available" in the cards and tiles that depend on the failed call | none; open it again |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
 | `#/models` | none found | errors box | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
@@ -143,6 +145,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/maintenance` | Form | Probably fits |
 | `#/watchers` | Cards | Probably fits |
 | `#/settings` | Form | Probably fits |
+| `#/operations` | `.dash-grid` one column (R1); 2 compact tables | Probably overflows |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |

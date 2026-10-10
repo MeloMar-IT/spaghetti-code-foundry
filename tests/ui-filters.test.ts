@@ -166,7 +166,7 @@ describe("githubOf, matchesRepo, filterGone", () => {
 describe("the routers", () => {
   it("every page that checks the address compares the path without the query", async () => {
     const { readFileSync } = await import("node:fs");
-    for (const file of ["admin-credentials", "users", "audit"]) {
+    for (const file of ["admin-credentials", "operations", "users", "audit"]) {
       const src = readFileSync(`ui/${file}.js`, "utf8");
       expect(src, file).toMatch(/location\.hash( \?\? "")?\)?\.split\("\?"\)\[0\]\.split\("\/"\)\[1\]/);
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\("\/"\)/);

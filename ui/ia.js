@@ -34,6 +34,7 @@ export const PAGES = [
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "library", path: "#/library", title: "Library", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Library" }, roles: A },
+  adminPage("operations", "Overview", "operations"),
   adminPage("problems", "Problems", "operations"),
   adminPage("watchers", "Watchers", "operations"),
   adminPage("models", "Models", "operations"),
@@ -54,7 +55,7 @@ export const DESTINATIONS = [
   { id: "runs", label: { admin: "Runs", user: "My runs" }, landing: "runs", group: "work", roles: AU },
   { id: "repos", label: { admin: "Repositories", user: "My repositories" }, landing: "repos", group: "work", roles: AU },
   { id: "flows", label: { admin: "Flows" }, landing: "flows", group: "setup", roles: A },
-  { id: "administration", label: { admin: "Administration" }, landing: "users", group: "setup", roles: A },
+  { id: "administration", label: { admin: "Administration" }, landing: "operations", group: "setup", roles: A },
 ];
 
 /** The groups of the sidebar, in order. */

@@ -132,7 +132,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
