@@ -8,7 +8,7 @@ import { createRunHeader, firstLine } from "./run-header.js";
 import { createLog, diffView, transcriptView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
-import { noRuns, part, partNote, runsLiveStates } from "./run-states.js";
+import { isRun, loadInto, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 
@@ -298,9 +298,7 @@ export function stepEntry(runId, s, i, { open = false } = {}) {
     if (loaded) return;
     loaded = true;
     if (s.type !== "claude") return mount(body, h("pre", {}, s.output || "(no output)"));
-    mount(body, h("p", { class: "muted px-12" }, "Loading transcript…"));
-    const t = await api.transcript(runId, i).catch((err) => ({ events: [{ kind: "raw", text: err.message }] }));
-    mount(body, transcriptView(t.events));
+    await loadInto(body, { loading: h("p", { class: "muted px-12" }, "Loading transcript…"), load: () => api.transcript(runId, i), draw: (t) => transcriptView(t.events), what: "Could not load the transcript.", focus: `step-${i}-retry` });
   };
   if (open) load();
   return h("details", {
@@ -372,6 +370,13 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const head = h("div");
   const tabBody = h("div");
   let summary;
+  let job = null; // a queued run: it has no record yet, the queue knows it
+  let mode = "state"; // what the page shows: "state" (loading, not found, error), "queued" or "page"
+  let stateKey = null;
+  let loadSeq = 0;
+  let updates = 0; // every event of the stream counts: an answer asked before it is older than the stream
+  let tabSeq = 0;
+  const BACK = { href: "#/runs", label: "Runs", focus: "back-runs" };
   let held = null; // an update that came while a field of the head had the focus: drawn when the focus leaves
   let tab = "log";
   let names = null;
@@ -380,13 +385,13 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   // The reader picked a tab: the page does not move it any more (a failed run opens on Steps until then).
   let picked = false;
   const tabButtons = [];
-  const showTab = async (t, open = -1) => {
+  const showTab = async (t, openStep = -1) => {
     tab = t;
+    const mine = ++tabSeq;
     for (const [k, b] of tabButtons) b.setAttribute("class", k === t ? "on" : "");
     if (t === "log") return mount(tabBody, log.el);
-    if (t === "steps") return mount(tabBody, summary ? stepsView(runId, summary, open) : null);
-    mount(tabBody, h("p", { class: "muted" }, "Computing diff…"));
-    mount(tabBody, diffView(await api.diff(runId).catch((e) => ({ patch: "", stat: e.message }))));
+    if (t === "steps") return mount(tabBody, summary ? stepsView(runId, summary, openStep) : null);
+    await loadInto(tabBody, { loading: "Computing diff…", load: () => api.diff(runId), draw: diffView, what: "Could not load the changes.", focus: "diff-retry", current: () => open && tab === "diff" && mine === tabSeq });
   };
 
   const tabs = h("div", { class: "seg tabs mb-12" },
@@ -399,9 +404,43 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   const header = createRunHeader({ admin, actions, onFailedStep: (i) => { picked = true; showTab("steps", i); }, backLabel: "Back to Runs" });
   const cardBox = h("div");
   const skillsBox = h("div");
-  mount(head, header.el, cardBox, skillsBox);
-  mount(main, head, status.el, tabs, tabBody);
+  const tabsBox = h("div", {}, tabs, tabBody);
+  let load;
+  const stream = runStream({
+    open: () => api.events(runId),
+    on: {
+      update: (e) => { updates++; draw(JSON.parse(e.data).summary); },
+      log: (e) => { updates++; log.add(JSON.parse(e.data).line); },
+    },
+    onLost: () => load(),
+    onReopen: () => log.clear(),
+  });
+  mount(main, head, stream.el, status.el, tabsBox);
   mount(tabBody, log.el);
+
+  const showState = (error) => {
+    const key = `${runLoadKind(error)}|${error?.message ?? ""}`;
+    if (mode === "state" && key === stateKey) return;
+    mode = "state";
+    stateKey = key;
+    summary = held = job = null;
+    tabsBox.hidden = true;
+    stream.el.hidden = true;
+    mount(head, runLoadState(error, { back: BACK, onRetry: load }));
+  };
+
+  // A queued run: a small head from the job, no actions.
+  const showQueued = (found) => {
+    if (mode === "state") mount(head, header.el, cardBox, skillsBox);
+    mode = "queued";
+    job = found;
+    stateKey = null;
+    mount(cardBox);
+    mount(skillsBox);
+    header.update(null, { job });
+    tabsBox.hidden = true;
+    stream.el.hidden = false;
+  };
 
   // The select of "Retry from step…" must not be replaced under the reader's hands. The timeout lets the next control take the focus first.
   head.addEventListener("focusout", () => setTimeout(() => {
@@ -415,6 +454,14 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     status.say(s);
     if (fieldFocused(head)) { held = s; return; }
     held = null;
+    if (mode !== "page") {
+      if (mode === "state") mount(head, header.el, cardBox, skillsBox);
+      mode = "page";
+      job = null;
+      stateKey = null;
+      tabsBox.hidden = false;
+      stream.el.hidden = false;
+    }
     const prev = summary;
     summary = s;
     const card = s.status === "failed" && !!s.next?.failure;
@@ -437,20 +484,34 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   // The times in the header move on even when the stream sends only pings.
   const clock = setInterval(() => { if (summary && !fieldFocused(head)) header.update(summary, { names }); }, CLOCK_MS);
 
-  const es = api.events(runId);
-  es.addEventListener("update", (e) => {
-    const { summary: s } = JSON.parse(e.data);
-    draw(s);
-  });
-  es.addEventListener("log", (e) => {
-    log.add(JSON.parse(e.data).line);
-  });
-  es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED) toast("Lost connection to the run stream", "error");
+  load = async () => {
+    const mine = ++loadSeq, seen = updates;
+    const stale = () => !open || mine !== loadSeq || seen !== updates;
+    let s, err = null;
+    try { s = await api.run(runId); } catch (e) { err = e; }
+    if (stale()) return;
+    if (!err) { if (isRun(s)) draw(s); return; }
+    const status = Number(err.status) || 0;
+    if (status === 404) {
+      // A queued run has no record yet: the queue knows it. A run that just started is in the active list.
+      let q;
+      try { q = await api.queue(); } catch (e) { if (!stale() && mode === "state") showState(e); return; }
+      if (stale()) return;
+      const found = (q?.pending ?? []).find((p) => p.runId === runId);
+      if (found) return showQueued(found);
+      if ((q?.active ?? []).some((p) => p?.runId === runId)) return mode === "state" ? showState(null) : undefined; // starting: the stream sends the summary
+      return showState(err);
+    }
+    if (status === 403) return showState(err);
+    if (mode === "state") showState(err); // with content on the page the content stays; the banner tells
   };
+
+  showState(null);
+  stream.start();
+  load();
   return () => {
     open = false;
     clearInterval(clock);
-    es.close();
+    stream.close();
   };
 }

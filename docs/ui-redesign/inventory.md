@@ -99,7 +99,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/library` | none found | errors box | none |
 | `#/start` | `NO_FLOWS_ADMIN`, `NO_REPOS` | errors box | none |
 | `#/runs` | "No runs yet. Open a flow and press ▶ Run." (`runs.js:90`) | errors box | poll 30 s (`runs.js:93`) |
-| `#/runs/:id` | "No steps" in the graph | errors box; stream loss gives a toast (`runs.js:345`) | event stream |
+| `#/runs/:id` | "No steps" in the graph | skeleton, `NOT_FOUND`, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; transcript and diff failures give an inline `errorState` with Retry | event stream |
 | `#/repos` | "No repositories yet..." (`repos.js:395`) | errors box | none |
 | `#/all-repos` | "No repositories yet." (`admin-repos.js:222`) | errors box | cleanup returned |
 | `#/credentials` | "No stored credentials yet." (`admin-credentials.js:36`) | errors box | cleanup returned |
@@ -114,7 +114,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` | errors box | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
-| `/user/#/runs/:id` | `NOT_FOUND` card, `NO_STEPS`, `NO_CHANGES` | card with the error and a link back (`user/runs.js:339`) | stream and poll 30 s (`user/runs.js:487`) |
+| `/user/#/runs/:id` | `NOT_FOUND` with a link back, `NO_STEPS`, `NO_CHANGES` | skeleton, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; a diff failure gives an inline `errorState` with Retry | stream and poll 30 s |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
 | `/user/#/refinement` | as admin | errors box | none found |
 | `/user/#/refinement/:id` | as admin | errors box | none found |

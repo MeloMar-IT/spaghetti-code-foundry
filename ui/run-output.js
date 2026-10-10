@@ -73,7 +73,18 @@ export function createLog({ max = LOG_MAX } = {}) {
     } else flush();
   }
 
-  return { el, add, count: () => total };
+  /** Empties the log (a replayed stream sends the lines again). */
+  function clear() {
+    for (const n of lines) n.remove();
+    note.remove();
+    lines = [];
+    pending = [];
+    dropped = 0;
+    total = 0;
+    follow = true;
+  }
+
+  return { el, add, clear, count: () => total };
 }
 
 // ── diff ──

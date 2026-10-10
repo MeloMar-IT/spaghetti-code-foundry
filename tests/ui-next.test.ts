@@ -643,14 +643,14 @@ describe("the Runs pages for a user", () => {
   };
   const flowLinks = (main: FakeElement) => main.all("a").filter((a) => (a.attrs.href ?? "").startsWith("#/flows/"));
 
-  it("the run page of a user opens only the event stream and has no link to the flow", async () => {
+  it("the run page of a user asks for the run and opens the event stream; no users call, no link to the flow", async () => {
     const runs = (await import("../ui/runs.js" as string)) as any;
     const { opened, handlers } = stubEventSource();
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
     handlers.update!({ data: JSON.stringify({ summary: RUN }) });
     expect(opened).toEqual(["/api/runs/r1/events"]);
-    expect(asked).toEqual([]);
+    expect(asked).toEqual(["/api/runs/r1"]);
     expect(main.textContent).toContain("walk");
     expect(flowLinks(main)).toHaveLength(0);
     expect(main.textContent).not.toContain("$");
