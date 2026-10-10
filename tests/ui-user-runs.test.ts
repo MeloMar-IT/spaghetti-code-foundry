@@ -299,6 +299,7 @@ describe("renderMyRun", () => {
       queue: vi.fn(async () => { if (state.queueError) throw state.queueError; return { pending: state.pending, active: [] }; }),
       events: vi.fn(() => stream),
       diff: vi.fn(async () => ({ patch: "+a", stat: "1 file" })),
+      transcript: vi.fn(async () => ({ events: [] })),
       approveRun: vi.fn(async () => ({})),
       rejectRun: vi.fn(async () => ({})),
       resumeRun: vi.fn(async () => ({})),
@@ -704,6 +705,20 @@ describe("renderMyRun", () => {
     expect(find(main, "details")).toHaveLength(0);
   });
 
+  it("'Show the failed step' selects Steps without a transcript request", async () => {
+    state.summary = summaryOf({ status: "failed", reason: "raw", next: { ...rec("failed"), failure }, history: [
+      { id: "b", type: "claude", visit: 1, ok: false, durationMs: 50, error: "exit 1", output: "secret" },
+    ] });
+    await open();
+    find(main, "button").find((b) => b.textContent === "Show the failed step")!.click();
+    await flush();
+    const steps = find(main, "button").find((b) => b.attrs["data-tab"] && b.textContent === "Steps")!;
+    expect(steps.attrs["aria-selected"]).toBe("true");
+    expect(main.textContent).toContain("exit 1");
+    expect(main.textContent).not.toContain("secret");
+    expect(a.transcript).not.toHaveBeenCalled();
+  });
+
   it("has Overview, Steps, Changes, Evidence and Logs", async () => {
     state.summary = summaryOf({ history: [
       { id: "a", type: "claude", visit: 1, ok: true, durationMs: 1000, output: "secret", agent: "claude", model: "opus-x" },
@@ -722,6 +737,9 @@ describe("renderMyRun", () => {
     expect(find(main, "summary")).toHaveLength(0);
     expect(main.textContent).not.toContain("secret");
     expect(main.textContent).toContain("Agent");
+    expect(main.textContent).toContain("Run started");
+    expect(main.textContent).toContain("exit 1");
+    expect(a.transcript).not.toHaveBeenCalled();
 
     // Changes loads on the first open, not on later opens or updates, and again on Refresh
     expect(a.diff).not.toHaveBeenCalled();

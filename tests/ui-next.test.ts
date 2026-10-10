@@ -248,9 +248,12 @@ describe("plain error text in the UI", () => {
     const runs = (await import("../ui/runs.js" as string)) as any;
     const bad = runs.stepEntry("r", { id: "a", type: "shell", ok: false, visit: 1, durationMs: 5, output: "", error: "exit code 1" }, 0) as FakeElement;
     expect(bad.all("summary")[0]!.textContent).not.toContain("exit code 1");
-    expect(bad.textContent).toContain("Details");
-    expect(bad.textContent).toContain("exit code 1");
-    const ok = runs.stepEntry("r", { id: "a", type: "shell", ok: true, visit: 1, durationMs: 5, output: "" }, 0) as FakeElement;
+    // The error is built when the entry is opened, not before.
+    expect(bad.textContent).not.toContain("exit code 1");
+    const opened = runs.stepEntry("r", { id: "a", type: "shell", ok: false, visit: 1, durationMs: 5, output: "", error: "exit code 1" }, 0, { open: true }) as FakeElement;
+    expect(opened.textContent).toContain("Details");
+    expect(opened.textContent).toContain("exit code 1");
+    const ok = runs.stepEntry("r", { id: "a", type: "shell", ok: true, visit: 1, durationMs: 5, output: "" }, 0, { open: true }) as FakeElement;
     expect(ok.textContent).not.toContain("Details");
   });
 
@@ -821,11 +824,30 @@ describe("the Runs pages for a user", () => {
       const main = connected();
       const stop = runs.renderRunDetail(main, "r1");
       push(handlers, FAILED);
+      const before = main.all("details").filter((d) => d.attrs.class === "tl");
       main.all("button").find((b) => b.textContent === "Show the failed step")!.click();
       const entries = main.all("details").filter((d) => d.attrs.class === "tl");
+      expect(onTab(main)).toEqual(["Steps"]);
       expect(entries).toHaveLength(1);
+      expect(entries[0]).toBe(before[0]);
       expect("open" in entries[0]!.attrs).toBe(true);
       expect(entries[0]!.textContent).toContain("boom output");
+      stop();
+    });
+    it("a new step keeps the entries already shown", async () => {
+      const runs = (await import("../ui/runs.js" as string)) as any;
+      const { handlers } = stubEventSource();
+      const main = connected();
+      const stop = runs.renderRunDetail(main, "r1");
+      push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running") });
+      tabs(main).find((b) => b.textContent === "Steps")!.click();
+      const first = main.all("details").filter((d) => d.attrs.class === "tl")[0]!;
+      first.setAttribute("open", "");
+      push(handlers, { ...base, status: "running", reason: undefined, next: nextStep("running"), history: [...base.history, { ...base.history[0], id: "later" }] });
+      const now = main.all("details").filter((d) => d.attrs.class === "tl");
+      expect(now).toHaveLength(2);
+      expect(now[0]).toBe(first);
+      expect("open" in first.attrs).toBe(true);
       stop();
     });
     it("moves to Steps when a running run fails, unless the reader picked a tab", async () => {

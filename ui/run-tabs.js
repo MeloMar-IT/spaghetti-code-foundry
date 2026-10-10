@@ -70,7 +70,7 @@ export function evidenceItems(s) {
   return out;
 }
 
-const timeText = (at) => {
+export const timeText = (at) => {
   const d = new Date(at ?? "");
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 };

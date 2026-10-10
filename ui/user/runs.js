@@ -10,8 +10,9 @@ import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
-import { changesPanel, createTabs, evidencePanel, noStepsText, overviewPanel, showFailedOnce } from "../run-tabs.js";
-import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer, stepEntry } from "../runs.js";
+import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
+import { createTimeline } from "../run-timeline.js";
+import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer } from "../runs.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
 export { NO_STEPS } from "../run-tabs.js";
@@ -193,7 +194,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
 // ── The run page ──
 
 /** A step as the user page draws it: no output, never a model name. */
-const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, type: s.type === "claude" ? "agent" : s.type });
+const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, startedAt: s.startedAt, parent: s.parent, type: s.type === "claude" ? "agent" : s.type });
 
 /** The run page. Returns a cleanup that stops the stream and the timer. */
 export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {
@@ -212,7 +213,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
 
   const head = h("div");
   // The header is built once; its buttons carry aria-disabled, not disabled, so a button keeps the focus while a call is out.
-  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: () => tabs.show("steps", { byUser: true }), backLabel: "Back to My runs" });
+  const header = createRunHeader({ admin: false, onAction: readOnly ? null : onAction, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to My runs" });
   const taskBox = h("div");
   const skillsBox = h("div");
   let mode = null; // what `head` holds: "state" (loading, not found, error) or "header"
@@ -243,14 +244,10 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
   const givenBox = h("div");
   const answerBox = h("div", {}, givenBox, answerForm);
   answerForm.hidden = true;
-  const stepsBox = h("div");
-  const drawSteps = () => {
-    const steps = summary?.history ?? [];
-    mount(stepsBox, steps.length ? h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, plain(s), i))) : h("p", { class: "muted" }, noStepsText(summary)));
-  };
+  const timeline = createTimeline({ runId, admin: false, a });
   const tabs = createTabs([
     { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
-    { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
+    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update({ ...s, history: (s.history ?? []).map(plain) }) },
     { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
     { id: "evidence", label: "Evidence", ...evidencePanel() },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },

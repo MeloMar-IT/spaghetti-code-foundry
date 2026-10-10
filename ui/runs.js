@@ -1,17 +1,19 @@
 import { api } from "./api.js";
-import { glyph, h, mount, timeAgo, toast } from "./dom.js";
+import { h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
 import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
 import { createRunHeader } from "./run-header.js";
-import { createLog, diffView, transcriptView } from "./run-output.js";
+import { createLog, diffView } from "./run-output.js";
 import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
-import { isRun, loadInto, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
-import { changesPanel, createTabs, evidencePanel, noStepsText, overviewPanel, secs, showFailedOnce } from "./run-tabs.js";
+import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
+import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
+import { createTimeline } from "./run-timeline.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
+export { failedStepIndex, stepEntry } from "./run-timeline.js";
 
 export const money =(n) => (n ? `$${n.toFixed(4)}` : "—");
 const what = (r) => (r.vars?.issue ? `${r.vars.github_repo}#${r.vars.issue}` : r.vars?.pr ? `${r.vars.github_repo} PR #${r.vars.pr}` : "");
@@ -235,24 +237,6 @@ export function statusAnnouncer() {
   };
 }
 
-function stepsView(runId, summary, open = -1) {
-  const steps = summary.history ?? [];
-  if (!steps.length) return h("p", { class: "muted" }, noStepsText(summary));
-  return h("div", { class: "timeline" }, steps.map((s, i) => stepEntry(runId, s, i, { open: i === open })));
-}
-
-/** The step that explains a failed run: the last failed one that is not a sub-flow or parallel step (else the last failed one). -1 if none. */
-export function failedStepIndex(s) {
-  const h2 = s.history ?? [];
-  let last = -1;
-  for (let i = h2.length - 1; i >= 0; i--) {
-    if (h2[i].ok) continue;
-    if (last < 0) last = i;
-    if (h2[i].type !== "flow" && h2[i].type !== "parallel") return i;
-  }
-  return last;
-}
-
 /**
  * The card of a failed run: who, the kind of problem, what failed, why, what was tried, what to do first and the four
  * options. The raw reason is one click away under "Raw details" (an administrator only). Null when the run has no explanation.
@@ -273,49 +257,6 @@ export function failureCard(s, { onStep } = {}) {
     h("ul", { class: "options" }, f.options.map((o) => h("li", {}, o))),
     onStep ? h("button", { class: "small", "data-focus": "failed-step", onClick: onStep }, "Show the failed step") : null,
     s.reason ? h("details", { class: "raw" }, h("summary", { "data-focus": "raw-details" }, "Raw details"), h("pre", { class: "mono pre-wrap" }, s.reason)) : null);
-}
-
-/** The mark of a finished step: the glyph for the eye, a word for screen readers. */
-const stepMark = (ok) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, glyph(ok ? "✔" : "✘"), h("span", { class: "sr-only" }, ok ? "Succeeded" : "Failed"));
-
-/** One finished step: summary line, the raw error under "Details", and the output or transcript when opened. `open`: shown opened. */
-export function stepEntry(runId, s, i, { open = false } = {}) {
-  // A user's view has no output: a plain row that cannot be opened and never asks for a transcript.
-  if (!("output" in s)) {
-    return h("div", { class: "tl" },
-      h("div", { class: "row" },
-        stepMark(s.ok),
-        h("b", { class: "mono" }, s.id),
-        s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
-        h("span", { class: "muted" }, s.type === "agent" ? "Agent" : s.type),
-        h("span", { class: "spacer" }),
-        h("span", { class: "muted mono" }, secs(s.durationMs))),
-      s.error ? h("p", { class: "muted mt-4 mb-4 mx-12" }, s.error) : null);
-  }
-  const body = h("div");
-  let loaded = false;
-  const load = async () => {
-    if (loaded) return;
-    loaded = true;
-    if (s.type !== "claude") return mount(body, h("pre", {}, s.output || "(no output)"));
-    await loadInto(body, { loading: h("p", { class: "muted px-12" }, "Loading transcript…"), load: () => api.transcript(runId, i), draw: (t) => transcriptView(t.events), what: "Could not load the transcript.", focus: `step-${i}-retry` });
-  };
-  if (open) load();
-  return h("details", {
-    class: "tl",
-    open: open || null,
-    onToggle: (e) => { if (e.target.open) load(); },
-  },
-    h("summary", { "data-focus": `step-${i}` },
-      stepMark(s.ok),
-      h("b", { class: "mono" }, s.id),
-      s.visit > 1 ? h("span", { class: "pill" }, `visit ${s.visit}`) : null,
-      h("span", { class: "muted" }, s.agent ? s.agent : s.type),
-      h("span", { class: "spacer" }),
-      h("span", { class: "muted mono" }, secs(s.durationMs)),
-      s.costUsd ? h("span", { class: "muted mono" }, money(s.costUsd)) : s.tokens ? h("span", { class: "muted mono", title: "no per-token cost (local model or subscription)" }, `${Math.round((s.tokens.input + s.tokens.output) / 1000)}k tok`) : null),
-    s.error ? h("pre", { class: "mono" }, h("b", {}, "Details"), "\n", s.error) : null,
-    body);
 }
 
 /** The raw reason of a run, shown as a detail under the plain text. */
@@ -379,19 +320,18 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
   let names = null;
   let open = true;
 
-  const stepsBox = h("div");
-  const drawSteps = (open = -1) => { if (summary) mount(stepsBox, stepsView(runId, summary, open)); };
+  const timeline = createTimeline({ runId, admin });
   // The reader's tab is never moved by an update; a failed run opens on Steps once (see showFailedOnce).
   const tabs = createTabs([
     { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
-    { id: "steps", label: "Steps", build: () => stepsBox, update: (s, prev) => { if (!prev || (prev.history ?? []).length !== (s.history ?? []).length) drawSteps(); } },
+    { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update(s) },
     { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
     { id: "evidence", label: "Evidence", ...evidencePanel() },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
   ], { initial: "overview" });
   const tabsBox = tabs.el;
 
-  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); drawSteps(i); }, backLabel: "Back to Runs" });
+  const header = createRunHeader({ admin, actions, onFailedStep: (i) => { tabs.show("steps", { byUser: true }); timeline.open(i); }, backLabel: "Back to Runs" });
   const skillsBox = h("div");
   let load;
   const stream = runStream({
