@@ -1,4 +1,4 @@
-import { api, holdReload } from "./api.js";
+import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
@@ -324,7 +324,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const cleanup = () => {
     if (reloaded) return reloaded();
     leaveDrafts(); // text that waits for its timer is sent now
-    holdReload(null);
+    keepPage(null);
     generation++;
     stopPoll();
   };
@@ -369,15 +369,15 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     let noteUp = false;
     let inflight = false; // one poll request at a time, also for Retry
     let held = null; // the newest answer that waits while the person types
-    let holdTimer;
+    let waitTimer;
     const pendingText = () => {
       const el = document.activeElement;
       const typing = Boolean(el) && ["TEXTAREA", "INPUT"].includes(String(el.tagName ?? el.tag ?? "").toUpperCase()) && upper.contains(el);
       return typing || talkText(id);
     };
-    const holding = () => pendingText() || dialogOpen(); // the draft editor guards its own unsaved fields
+    const guarding = () => pendingText() || dialogOpen(); // the draft editor guards its own unsaved fields
     const textWaits = () => pendingText() || unsaved.size > 0;
-    holdReload(() => unsaved.size > 0 || talkText(id)); // a 401 of any call keeps the page while text waits
+    keepPage(() => unsaved.size > 0 || talkText(id)); // a 401 of any call keeps the page while text waits
     let shownUpper = null;
     let shownLower = null;
     let shown = "";
@@ -400,10 +400,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     };
     // An answer that came while the person types waits; the newest one is drawn when the typing and the dialog are over.
     const release = () => {
-      holdTimer = undefined;
+      waitTimer = undefined;
       if (!held || !current()) return;
       if (held.draws !== draws) held = null; // a newer page was drawn meanwhile
-      else if (holding()) holdTimer = setTimeout(release, 250);
+      else if (guarding()) waitTimer = setTimeout(release, 250);
       else show(held.next);
     };
     const tick = async () => {
@@ -439,9 +439,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       }
       // A change is on its way: this answer may show its state before its own answer does. Ask again later.
       if (active) poll = setTimeout(tick, POLL_MS);
-      else if (holding()) {
+      else if (guarding()) {
         held = { next, draws };
-        holdTimer ??= setTimeout(release, 250);
+        waitTimer ??= setTimeout(release, 250);
         if (architectStatus(next.architect).busy) poll = setTimeout(tick, POLL_MS);
       } else show(next);
     };

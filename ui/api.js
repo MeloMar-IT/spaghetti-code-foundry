@@ -6,7 +6,7 @@ export const setCsrf = (t) => {
 
 let keepOnAuthFail = () => false;
 /** `fn()` true: typed text is waiting, so a 401 does not reload the page (the call still fails). Pass null to remove it. */
-export const holdReload = (fn) => {
+export const keepPage = (fn) => {
   keepOnAuthFail = fn || (() => false);
 };
 
