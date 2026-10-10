@@ -87,6 +87,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/settings` | admin | Administration, Settings | yes | |
 | `#/problems` | admin | Health band and panel; Administration, Problems (title only) | yes | |
 | `#/models` | admin | Administration, Models (title only) | yes | |
+| `#/models/:name` | admin | Administration, Models, name | yes | |
 | `#/dashboard` | admin | Administration, Dashboard (title only) | yes | |
 | `#/users` | admin | Administration, Users | yes | |
 | `#/audit` | admin | Administration, Audit (title only) | yes | |

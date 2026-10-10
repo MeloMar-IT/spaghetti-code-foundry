@@ -115,7 +115,7 @@ describe("Model test", () => {
     await vi.waitFor(() => expect(testRow().textContent).toMatch(/works|failed|could not/));
   };
 
-  it("keeps a good result in the row and in the provider row, also after Reload, Add and Remove", async () => {
+  it("keeps a good result in the row and in the provider row, also after Reload and Add", async () => {
     await show();
     await test();
     expect(testRow().textContent).toContain("works");
@@ -136,11 +136,6 @@ describe("Model test", () => {
     await vi.waitFor(() => expect(saved).toHaveLength(1));
     await vi.waitFor(() => expect(row("extra")).toBeDefined());
     expect(testRow().textContent).toContain("works");
-
-    row("ollama").all("button").find((b) => b.textContent === "Remove")!.click();
-    await vi.waitFor(() => expect(saved).toHaveLength(2));
-    await vi.waitFor(() => expect(testRow().textContent).toContain("works"));
-    expect(saved[1].providers.ollama).toBeUndefined();
   });
 
   it("keeps a failed result and its reason after Reload", async () => {
@@ -177,15 +172,6 @@ describe("Model test", () => {
 });
 
 describe("Config changes", () => {
-  it("explains a failed Remove with a toast and keeps the row", async () => {
-    await show();
-    routes["PUT /api/config"] = () => ({ status: 500, body: { error: "disk full" } });
-    row("ollama").all("button").find((b) => b.textContent === "Remove")!.click();
-    await vi.waitFor(() => expect(toastEl().className).toContain("error"));
-    expect(toastEl().textContent).toContain("disk full");
-    expect(row("ollama")).toBeDefined();
-  });
-
   it("explains a failed Add and keeps the typed values", async () => {
     await show();
     routes["PUT /api/config"] = () => ({ status: 400, body: { error: 'providers.p2.base_url: not a URL' } });

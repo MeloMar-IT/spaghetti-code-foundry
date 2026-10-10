@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { fieldFor, glyph, h, markInvalid, mount, toast } from "./dom.js";
+import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, toast } from "./dom.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "./states.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
@@ -38,7 +38,11 @@ export async function refreshModelLists(st) {
 }
 
 // The last model test lives here, not in the page: Reload draws the page again and the result stays.
-const test = { spec: "", busy: false, result: null, error: null, view: null };
+// `owner` is the page the last test was started on ("" is the list, else a provider name): other pages do not show its answer.
+const test = { spec: "", busy: false, result: null, error: null, view: null, owner: "" };
+
+// The page that drew last. A load that finishes after another page was mounted must not touch the shared test state.
+let activePage = null;
 
 /** The provider a test went through: the first name in the target (or the typed spec) that is a provider. */
 const testedProvider = (providers) => {
@@ -54,6 +58,7 @@ function paintTest() {
   if (!v) return;
   test.marks?.();
   v.btn.disabled = test.busy;
+  if (v.owner !== test.owner) return mount(v.out, null);
   if (test.busy) return mount(v.out, h("span", { class: "spinner" }), " asking the model… (local models can take a few minutes)");
   const r = test.result;
   if (r) {
@@ -64,12 +69,13 @@ function paintTest() {
   else mount(v.out, null);
 }
 
-function testBox(defaultSpec) {
-  const spec = input(test.spec || defaultSpec, { class: "mono", list: "models", placeholder: "e.g. ollama:qwen3-coder", "aria-label": "Model to try" });
+function testBox(defaultSpec, owner = "") {
+  const spec = input((test.owner === owner && test.spec) || defaultSpec, { class: "mono", list: "models", placeholder: "e.g. ollama:qwen3-coder", "aria-label": "Model to try" });
   const out = h("span", { class: "muted" });
   const btn = h("button", { onClick: async () => {
     if (test.busy) return;
     test.busy = true;
+    test.owner = owner;
     test.spec = spec.value.trim();
     markInvalid([spec]);
     paintTest();
@@ -83,10 +89,10 @@ function testBox(defaultSpec) {
       test.busy = false;
       // The page may have been drawn again meanwhile: the newest one shows the answer.
       paintTest();
-      if (test.error?.status === 400 && test.view) markInvalid([test.view.spec], test.view.spec);
+      if (test.error?.status === 400 && test.view?.owner === owner) markInvalid([test.view.spec], test.view.spec);
     }
   } }, "Test");
-  test.view = { spec, btn, out };
+  test.view = { spec, btn, out, owner };
   paintTest();
   return h("div", { class: "row", "data-model-test-row": "" }, spec, btn, out);
 }
@@ -119,7 +125,6 @@ function agentsCard(agents) {
 }
 
 function providersCard(cfg, providers, reload, problem) {
-  const custom = new Set(Object.keys(cfg.providers));
   const name = input("", { class: "mono", placeholder: "my-proxy" });
   const kind = h("select", {}, ["ollama", "lmstudio", "anthropic-compatible"].map((k) => h("option", { value: k }, k)));
   const url = input("", { class: "mono", placeholder: "http://localhost:11434" });
@@ -144,14 +149,6 @@ function providersCard(cfg, providers, reload, problem) {
     toast(`Provider ${n} saved`);
     reload();
   };
-  const remove = async (n) => {
-    try {
-      await changeConfig((c) => { delete c.providers[n]; });
-    } catch (e) {
-      return toast(e.message, "error");
-    }
-    reload();
-  };
   // The provider row the last test went through says so; a new test result updates it without drawing the page again.
   const marks = new Map(providers.map((p) => [p.name, h("div", { class: "muted text-2xs" })]));
   test.marks = () => {
@@ -168,14 +165,13 @@ function providersCard(cfg, providers, reload, problem) {
     ? errorState(problem, { onRetry: reload })
     : providers.length
       ? h("table", { class: "table compact", "aria-label": "Providers" },
-        h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))),
+        h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models"].map((x) => h("th", { scope: "col" }, x)))),
         h("tbody", {}, providers.map((p) => h("tr", {},
-          h("td", {}, h("b", { class: "mono" }, p.name), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
-          h("td", {}, okPill(p.ok, p.ok ? "ok" : "unreachable"), h("div", { class: "muted text-2xs" }, p.detail),
+          h("td", {}, h("a", { href: `#/models/${encodeURIComponent(p.name)}` }, h("b", { class: "mono" }, p.name)), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
+          h("td", {}, okPill(p.ok), h("div", { class: "muted text-2xs" }, p.detail),
             marks.get(p.name)),
           h("td", { class: "muted" }, p.agents.join(", ")),
-          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")),
-          h("td", {}, custom.has(p.name) ? h("button", { class: "small danger", onClick: () => remove(p.name) }, "Remove") : null)))))
+          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—"))))))
       : emptyState("No providers.");
   return section("Providers",
     h("p", { class: "muted flush" }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
@@ -283,12 +279,13 @@ export async function renderModels(main) {
   // The page draws into its own box, so an answer that comes after another page was mounted cannot touch it.
   const box = h("div");
   mount(main, box);
+  const page = (activePage = {});
   let gen = 0;
   const load = async () => {
     const mine = ++gen;
     mount(box, loadingState("Checking agents and providers…", { shape: "table" }));
     const [cfg, st] = await Promise.allSettled([api.config(), api.providers()]);
-    if (mine !== gen) return;
+    if (mine !== gen || page !== activePage) return;
     if (cfg.status === "rejected") {
       mount(box, Number(cfg.reason?.status) === 403
         ? permissionState("You may not open the model settings.")
@@ -307,6 +304,126 @@ export async function renderModels(main) {
     const specs = specSuggestions(st.value.providers);
     const localSpec = specs.find((s) => /^(ollama|lmstudio):/.test(s) && /coder|gpt-oss|devstral/.test(s)) ?? specs.find((s) => /^(ollama|lmstudio):/.test(s) && !/:(0\.5b|135m|1b)$/.test(s));
     mount(box, head, agentsCard(st.value.agents), providersCard(cfg.value, st.value.providers, load), routingCard(cfg.value, specs, localSpec));
+  };
+  await load();
+}
+
+/** The provider a model spec runs on: the one it names, else the agent's own (codex → openai, others → anthropic). undefined for an empty spec. */
+export function providerOfSpec(spec, names) {
+  if (!spec?.trim()) return undefined;
+  const parts = spec.trim().split(":");
+  const agent = parts[0] === "claude" || parts[0] === "codex" ? parts.shift() : undefined;
+  if (parts.length && names.includes(parts[0])) return parts[0];
+  return agent === "codex" ? "openai" : "anthropic";
+}
+
+/** The lines that say where the config uses this provider. */
+function routingUse(cfg, name, names) {
+  const uses = (spec) => providerOfSpec(spec, names) === name;
+  const out = [];
+  if (uses(cfg.default_model)) out.push(`Default model: ${cfg.default_model}`);
+  cfg.router.rules.forEach((r, i) => {
+    if (uses(r.model)) out.push(`Rule ${i + 1}: ${r.step ?? "any step"} · ${r.flow ?? "any flow"}${r.min_visit ? ` · from visit ${r.min_visit}` : ""} → ${r.model}`);
+  });
+  cfg.router.fallback.forEach((spec, i) => {
+    if (uses(spec)) out.push(`Fallback ${i + 1}: ${spec}`);
+  });
+  return out;
+}
+
+/** The spec the test box starts with: it names the provider, so the test goes through this one and no other. */
+function testSpecFor(name, p, cfg) {
+  const model = p.models[0] ?? cfg.providers[name]?.default_model ?? (p.kind === "anthropic" ? "haiku" : undefined);
+  // Always name the agent: a provider called "claude" or "codex" would otherwise be read as the agent.
+  const agent = p.kind === "openai" ? "codex" : "claude";
+  return [agent, name, model].filter(Boolean).join(":");
+}
+
+/** Settings of one provider. A built-in one (not in the config yet) keeps its kind: saving adds an override. */
+function providerForm(name, entry, reload, builtin) {
+  const kinds = builtin ? [entry.kind] : [...new Set(["ollama", "lmstudio", "anthropic-compatible", entry.kind].filter(Boolean))];
+  const kind = h("select", {}, kinds.map((k) => h("option", { value: k }, k)));
+  kind.value = entry.kind;
+  const url = input(entry.base_url, { class: "mono", placeholder: "http://localhost:11434" });
+  const keyEnv = input(entry.api_key_env, { class: "mono", placeholder: "MY_API_KEY (optional)" });
+  const defModel = input(entry.default_model, { class: "mono", placeholder: "qwen3-coder" });
+  const inputs = [kind, url, keyEnv, defModel];
+  const save = async () => {
+    markInvalid(inputs);
+    const next = { kind: kind.value, base_url: url.value.trim() || undefined, api_key_env: keyEnv.value.trim() || undefined, default_model: defModel.value.trim() || undefined };
+    try {
+      await changeConfig((c) => { c.providers[name] = { ...c.providers[name], ...next }; });
+    } catch (e) {
+      markInvalid(inputs, fieldFor(e.message, [[/base_url/, url], [/api_key_env/, keyEnv], [/default_model/, defModel], [/"kind"/, kind]]));
+      return toast(e.message, "error");
+    }
+    toast(`Provider ${name} saved`);
+    reload();
+  };
+  return h("div", {},
+    builtin ? h("p", { class: "muted flush" }, `Built-in provider. Saving adds an entry with the same name to the config; its kind stays ${entry.kind}.`) : null,
+    h("div", { class: "grid mt-10" }, f("Kind", kind), f("Base URL", url), f("API key env var", keyEnv), f("Default model", defModel)),
+    h("div", { class: "row mt-8" }, h("button", { class: "primary", onClick: save }, builtin ? "Save override" : "Save provider")));
+}
+
+export async function renderModelDetail(main, name, { go = (hash) => { location.hash = hash; } } = {}) {
+  const box = h("div");
+  mount(main, box);
+  const page = (activePage = {});
+  const back = { href: "#/models", label: "Back to Models" };
+  let gen = 0;
+  const load = async () => {
+    const mine = ++gen;
+    mount(box, loadingState("Checking the provider…", { shape: "detail" }));
+    const [cfg, st] = await Promise.allSettled([api.config(), api.providers()]);
+    if (mine !== gen || page !== activePage) return;
+    if (cfg.status === "rejected") {
+      mount(box, Number(cfg.reason?.status) === 403
+        ? permissionState("You may not open the model settings.", back)
+        : errorState(explainError(cfg.reason, { what: "The provider could not be loaded." }), { onRetry: load, back }));
+      return;
+    }
+    if (st.status === "rejected") {
+      mount(box, errorState(explainError(st.reason, { what: "The provider could not be checked." }), { onRetry: load, back }));
+      return;
+    }
+    const c = cfg.value;
+    const p = st.value.providers.find((x) => x.name === name);
+    if (!p) {
+      mount(box, h("div", { class: "empty" }, h("p", {}, "This provider is not set up."), h("a", { href: "#/models" }, "Back to Models")));
+      return;
+    }
+    void refreshModelLists(st.value);
+    test.marks = undefined;
+    const inConfig = Object.hasOwn(c.providers, name);
+    const used = routingUse(c, name, st.value.providers.map((x) => x.name));
+    const head = h("div", { class: "toolbar" }, h("h1", {}, name), okPill(p.ok), h("span", { class: "muted" }, p.detail),
+      h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻"));
+    const settings = section("Settings",
+      h("p", { class: "muted flush" }, [p.kind, p.base_url, p.agents.length ? `Used by: ${p.agents.join(", ")}` : null].filter(Boolean).join(" · ")),
+      p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—"),
+      providerForm(name, inConfig ? c.providers[name] : { kind: p.kind, base_url: p.base_url }, load, !inConfig));
+    const tryIt = section("Try a model",
+      testBox(testSpecFor(name, p, c), name),
+      h("small", {}, "Sends one tiny read-only prompt through the agent and provider."));
+    const routing = section("Use in routing",
+      used.length ? h("ul", {}, used.map((line) => h("li", {}, line))) : h("p", { class: "muted flush" }, "No default, rule or fallback uses this provider."),
+      h("a", { href: "#/models" }, "Change routing on the Models page"));
+    const remove = async () => {
+      const ok = await confirmDialog({ title: `Remove provider ${name}?`, text: "Rules and fallbacks that name it stop working. You can add it again later.", confirm: "Remove provider" });
+      if (!ok) return;
+      try {
+        await changeConfig((cur) => { delete cur.providers[name]; });
+      } catch (e) {
+        return toast(e.message, "error");
+      }
+      toast(`Provider ${name} removed`);
+      go("#/models");
+    };
+    const danger = inConfig ? section("Danger",
+      h("p", { class: "muted flush" }, "Removes this provider from the config. Rules that name it stop working."),
+      h("button", { class: "danger", onClick: remove }, "Remove provider")) : null;
+    mount(box, head, settings, tryIt, routing, danger);
   };
   await load();
 }
