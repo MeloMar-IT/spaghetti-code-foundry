@@ -1,4 +1,5 @@
-// Start work: pick a flow, a repository, fill in the fields and start. The server does every real check
+// Start work: required decisions first (repository, task, required inputs), the rest under "More options"; a flow
+// picker only with several flows. The server does every real check
 // (published flow, inputs, ownership); this page only shows its answer. Relative imports, so a test can load it:
 // in the browser "../api.js" from /user/start.js is the same module as "/api.js". The admin display uses the page too.
 import { api } from "../api.js";
@@ -65,6 +66,30 @@ export function startBody(flow, task, values) {
     vars[f.name] = values[f.name];
   }
   return { flow: flow.name, task: flow.usesTask === false ? "" : task, vars };
+}
+
+export const MORE_OPTIONS = "More options";
+export const REPO_FAILED_NOTE = "The last connection test of this repository failed. Check it in ";
+export const PICK_FLOW = "What do you want to start?";
+
+/** The fields of a flow in the three groups the page draws. `required`: the github_repo input first (also when it is
+ *  optional), then inputs with required: true in flow order. `optional`: the other inputs. `fixed`: mode "fixed". */
+export function splitFields(flow) {
+  const fields = Array.isArray(flow?.fields) ? flow.fields : [];
+  const inputs = fields.filter((f) => f.mode === "input");
+  return {
+    required: [...inputs.filter((f) => f.name === REPO_FIELD), ...inputs.filter((f) => f.name !== REPO_FIELD && f.required)],
+    optional: inputs.filter((f) => f.name !== REPO_FIELD && !f.required),
+    fixed: fields.filter((f) => f.mode !== "input"),
+  };
+}
+
+/** The summary of the disclosure: "More options: 2 optional fields, 1 fixed value". Parts with 0 are left out. */
+export function moreSummary(optional, fixed) {
+  const parts = [];
+  if (optional) parts.push(`${optional} optional field${optional === 1 ? "" : "s"}`);
+  if (fixed) parts.push(`${fixed} fixed value${fixed === 1 ? "" : "s"}`);
+  return parts.length ? `${MORE_OPTIONS}: ${parts.join(", ")}` : MORE_OPTIONS;
 }
 
 const fixedField = (f, label) =>
@@ -140,6 +165,8 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     let repoSelect = null;
     let addBtn = null;
     let repoGroup = null;
+    let more = null;
+    let moreOpen = false;
     const err = h("p", { class: "status bad", role: "alert", id: "start-error" });
     // The field the message in `err` is about, while it is marked.
     let invalid = null;
@@ -171,10 +198,19 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       drawRepo();
     };
 
-    function repoStep(field, n) {
-      const legend = h("legend", {}, `${n}. Repository`);
-      if (field.mode === "fixed") return h("fieldset", {}, legend, fixedField(field, field.label === REPO_FIELD ? "Repository" : field.label));
-      if (repoData.pending) return h("fieldset", {}, legend, loadingState("Loading your repositories…", { rows: 2 }));
+    const req = () => h("span", { class: "req" }, " (required)");
+    const noteBox = h("div", {});
+    function drawNote() {
+      const r = repoSelect ? (repoData.repos ?? []).find((x) => x.github === repoSelect.value) : null;
+      mount(noteBox, r && connectionStatus(r) === "Failed"
+        ? h("p", { class: "start-note" }, REPO_FAILED_NOTE, h("a", { href: "#/repos" }, "My repositories"), ".")
+        : null);
+    }
+
+    function repoStep(field) {
+      const name = field.label === REPO_FIELD ? "Repository" : field.label;
+      const label = () => h("span", { class: "start-label" }, name, req());
+      if (repoData.pending) return h("div", { class: "start-repo" }, label(), loadingState("Loading your repositories…", { rows: 2 }));
       const list = repoData.repos ?? [];
       // a preview never adds anything
       const add = readOnly ? null : h("button", { type: "button", "data-focus": "add-repo", onClick: addRepository }, "Add repository");
@@ -188,44 +224,52 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         const box = failed ? null : emptyState(NO_REPOS);
         if (box && add) box.append(add);
         repoGroup = h("div", { role: "group", "aria-label": "Repository", tabindex: "-1" }, failed, box, failed ? addRow : null);
-        return h("fieldset", {}, legend, repoGroup);
+        return h("div", { class: "start-repo" }, label(), repoGroup);
       }
-      repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null, onChange: () => { if (invalid === repoSelect) unmark(); } },
+      repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null, onChange: () => { if (invalid === repoSelect) unmark(); drawNote(); } },
         list.map((r) => h("option", { value: r.github }, `${r.github} — ${connectionStatus(r)}`)));
       const mine = state.values[state.flow.name];
       repoSelect.value = pickRepo(list, mine[REPO_FIELD]);
       mine[REPO_FIELD] = repoSelect.value;
-      return h("fieldset", {}, legend, failed,
-        h("label", { class: "field" }, h("span", {}, field.label === REPO_FIELD ? "Repository" : field.label, field.required ? h("span", { class: "req" }, " (required)") : null), repoSelect, field.help ? h("small", {}, field.help) : null),
-        addRow);
+      drawNote();
+      return h("div", { class: "start-repo" }, failed,
+        h("label", { class: "field" }, h("span", {}, name, req()), repoSelect, field.help ? h("small", {}, field.help) : null),
+        noteBox, addRow);
     }
 
+    const repoInput = () => state.flow.fields.find((f) => f.name === REPO_FIELD && f.mode === "input");
+
     function drawRepo() {
-      const field = state.flow.fields.find((f) => f.name === REPO_FIELD);
+      const field = repoInput();
       if (!field) return;
       if (invalid && invalid === (repoSelect ?? repoGroup)) unmark();
       repoSelect = null;
       addBtn = null;
       repoGroup = null;
-      mount(repoBox, repoStep(field, 2));
+      mount(repoBox, repoStep(field));
     }
 
-    function detailsStep(n) {
-      const flow = state.flow;
+    function inputRow(f) {
+      const input = h("input", { name: f.name, type: "text", autocomplete: "off", "aria-required": f.required ? "true" : null, value: state.values[state.flow.name][f.name] ?? "" });
+      input.addEventListener("input", edited(input));
+      controls[f.name] = input;
+      return h("label", { class: "field" }, h("span", {}, f.label, f.required ? req() : null), input, f.help ? h("small", {}, f.help) : null);
+    }
+
+    function mainPart(parts) {
       const rows = [];
-      if (flow.usesTask !== false) rows.push(h("label", { class: "field" }, h("span", {}, "Task"), taskBox));
-      for (const f of flow.fields) {
-        if (f.name === REPO_FIELD) continue;
-        if (f.mode === "fixed") {
-          rows.push(fixedField(f, f.label));
-          continue;
-        }
-        const input = h("input", { name: f.name, type: "text", autocomplete: "off", "aria-required": f.required ? "true" : null, value: state.values[flow.name][f.name] ?? "" });
-        input.addEventListener("input", edited(input));
-        controls[f.name] = input;
-        rows.push(h("label", { class: "field" }, h("span", {}, f.label, f.required ? h("span", { class: "req" }, " (required)") : null), input, f.help ? h("small", {}, f.help) : null));
-      }
-      return rows.length ? h("fieldset", {}, h("legend", {}, `${n}. Task and details`), rows) : null;
+      if (parts.required[0]?.name === REPO_FIELD) rows.push(repoBox);
+      if (state.flow.usesTask !== false) rows.push(h("label", { class: "field" }, h("span", {}, "Task", req()), taskBox));
+      for (const f of parts.required) if (f.name !== REPO_FIELD) rows.push(inputRow(f));
+      return rows.length ? h("div", { class: "start-main" }, rows) : null;
+    }
+
+    function morePart(parts) {
+      if (parts.optional.length + parts.fixed.length === 0) return null;
+      return h("details", { class: "start-more", open: moreOpen, onToggle: (e) => { moreOpen = !!e?.target?.open; } },
+        h("summary", {}, moreSummary(parts.optional.length, parts.fixed.length)),
+        h("div", { class: "start-more-body" }, parts.optional.map(inputRow),
+          parts.fixed.map((f) => fixedField(f, f.label === REPO_FIELD ? "Repository" : f.label))));
     }
 
     function drawRest() {
@@ -234,24 +278,30 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       repoSelect = null;
       addBtn = null;
       repoGroup = null;
-      const field = state.flow.fields.find((f) => f.name === REPO_FIELD);
-      if (field) mount(repoBox, repoStep(field, 2));
-      mount(rest, field ? repoBox : null, detailsStep(field ? 3 : 2));
+      const parts = splitFields(state.flow);
+      if (repoInput()) mount(repoBox, repoStep(repoInput()));
+      more = morePart(parts);
+      mount(rest, mainPart(parts), more);
     }
 
+    const radios = [];
     function flowStep() {
-      return h("fieldset", {}, h("legend", {}, "1. Flow"),
+      if (flows.length < 2) return null;
+      return h("fieldset", {}, h("legend", {}, PICK_FLOW),
         flows.map((f) => {
           const radio = h("input", { type: "radio", name: "flow", value: f.name, checked: f === state.flow });
           radio.addEventListener("change", () => choose(f));
+          radios.push(radio);
           return h("label", { class: "choice" }, radio, h("b", {}, f.title), f.description ? h("span", { class: "muted" }, f.description) : null);
         }));
     }
 
     function choose(flow) {
+      if (busy) return;
       keep();
       mount(failBox);
       state.flow = flow;
+      moreOpen = false;
       if (needsRepos(flow)) loadRepos();
       syncStart();
       drawRest();
@@ -295,6 +345,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       }
       busy = true;
       submitBtn.disabled = true;
+      for (const r of radios) r.disabled = true;
       try {
         const body = startBody(flow, state.task, values);
         const run = await a.startRun(admin ? { ...body, likeUser: true } : body);
@@ -302,7 +353,11 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         go("#/runs/" + run.runId);
       } catch (e) {
         busy = false;
+        for (const r of radios) r.disabled = false;
         if (gone) return toast(errorText(e), "error");
+        // the picker is off while sending, so this is still the flow that was sent: show every value that went out
+        moreOpen = true;
+        more?.setAttribute("open", "");
         mount(failBox, errorState(explainStart(e)));
         syncStart();
       }

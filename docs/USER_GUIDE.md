@@ -186,7 +186,7 @@ When a run finishes, its branch stays in your repository. Review it, merge it, o
 
 ### Start work as an admin
 
-An admin can also start a run the way a user does. Open **Start work** (`#/start`, before **Runs**). It lists the published flows and your repositories (My repositories), and asks for the task and the inputs the flow publishes. If no flow is published you see "No published flows yet. Publish one in the flow editor." After **Start** you land on the run page. The run is yours and shows in **Runs** with you as owner.
+An admin can also start a run the way a user does. Open **Start work** (`#/start`, before **Runs**). The page asks first only for what is required, each marked "(required)": the repository (when the flow asks for one), the task, and every required input. With one published flow there is no flow choice; with several, a picker shows each flow's title and description. Optional inputs and fixed values are in a closed **More options** line that says how many there are; it is not shown when there are none, and it opens by itself when the server refuses the start. The repository shows "Connected", "Not tested yet" or "Failed"; a failed one has a note with a link to My repositories. **Add repository** still works. If no flow is published you see "No published flows yet. Publish one in the flow editor." After **Start** you land on the run page. The run is yours and shows in **Runs** with you as owner.
 
 The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **▶ Run** button of the flow editor works as before.
 
