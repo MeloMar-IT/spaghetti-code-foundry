@@ -11,7 +11,7 @@ import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from 
 import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
 import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
-import { CLOSED, ReplacedBySchema, ReplacingSchema, withDone, withJournal, withReplaced, withWrite, type Closed, type Found, type WriteEvidence } from "./replace-journal.js";
+import { CLOSED, ReplacedBySchema, ReplacingSchema, markOf, replaceStarted, replaceState, withDone, withJournal, withLabels, withReplaced, withWrite, type Closed, type Found, type WriteEvidence } from "./replace-journal.js";
 import { readyListOf, type ReadyItem } from "./ready-list.js";
 import { moveToNotes, setReview, type ReviewRefs } from "./draft-review.js";
 import { draftFromStory, type StoryFields } from "./issue-import.js";
@@ -274,8 +274,13 @@ function insertSession(owner: string, given: string, opts: CreateOptions, make: 
   });
 }
 
+/** Not dropped and not published; a published session whose split original is not replaced yet (`due`) counts too. */
 const openOfIssue = (s: Session, owner: string, repo: string, issue: number) =>
-  s.owner === owner && s.source?.issue === issue && s.repo.toLowerCase() === repo.toLowerCase() && s.state !== "dropped" && s.state !== "published";
+  s.owner === owner &&
+  s.source?.issue === issue &&
+  s.repo.toLowerCase() === repo.toLowerCase() &&
+  s.state !== "dropped" &&
+  (s.state !== "published" || replaceState(s) === "due");
 
 /** The open (not dropped, not published, not expired) session of `owner` that came from this issue. */
 export function openSessionOfIssue(owner: string, repo: string, issue: number, opts: StoreOptions = {}): Session | undefined {
@@ -741,6 +746,8 @@ interface DraftGuard {
   draft?: string;
   epic?: true;
   add?: true;
+  /** The draft is removed: the draft that stands for a split issue stays once a part is on GitHub. */
+  remove?: true;
 }
 
 const onGithub = (d: Draft): string => `a story draft that is on GitHub as issue #${d.published?.issue}`;
@@ -765,6 +772,9 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
     if (target?.published) throw new RefinementError("bad-state", `${onGithub(target)}; it cannot be changed here`);
     // The issue was replaced with this draft and the publish is not finished: the draft stays as it was sent until it is.
     if (target && s.source?.pending?.draft === target.id) throw new RefinementError("bad-state", `this draft replaced issue #${s.source.issue} and its publish is not finished; publish again first`);
+    if (guard.remove && target && markOf(s) === target.id && replaceStarted(s)) {
+      throw new RefinementError("bad-state", `the draft that stands for issue #${s.source?.issue} cannot be removed: a part of it is on GitHub already`);
+    }
     const lock = guard.epic ? s.drafts.find((d) => d.published) : undefined;
     if (lock) throw new RefinementError("bad-state", `${onGithub(lock)}; the Epic cannot be changed any more`);
     const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo) ?? readyListOf(undefined);
@@ -788,7 +798,7 @@ function changeDrafts(actor: Actor, id: string, opts: TalkOptions, fn: (st: Draf
 
 export const addDraft = (actor: Actor, id: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, newDraft, { add: true });
 export const saveDraft = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => (refuseSplit(st, draftId), saveTyped(st, draftId, input)), { draft: draftId });
-export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId });
+export const removeDraft = (actor: Actor, id: string, draftId: string, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => dropDraft(st, draftId), { draft: draftId, remove: true });
 export const confirmSplitOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => confirmSplit(st, draftId, input), { draft: draftId });
 export const moveCriterionOf = (actor: Actor, id: string, draftId: string, criterionId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => moveCriterion(st, draftId, criterionId, input), { draft: draftId });
 export const mergeDraftsOf = (actor: Actor, id: string, draftId: string, input: unknown, opts: TalkOptions = {}): Session => changeDrafts(actor, id, opts, (st) => mergeDrafts(st, draftId, input), { draft: draftId });
@@ -887,7 +897,9 @@ const withSource = (actor: Actor, id: string, opts: StoreOptions, fn: (src: Issu
 /** Stores the parts and the journal of the replacement, merged with the one kept; `cut` stays once set. Only while the session is being published. */
 export const recordReplacing = (actor: Actor, id: string, input: { parts: number[]; found: readonly Found[]; cut?: boolean }, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withJournal(src, input));
 /** Stores the write evidence of one dependant. Only while the session is being published. */
-export const recordDependantWrite = (actor: Actor, id: string, issue: number, ev: WriteEvidence, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withWrite(src, issue, ev));
+export const recordDependantWrite = (actor: Actor, id: string, issue: number, ev: WriteEvidence, opts: StoreOptions = {}, again = false): Session => withSource(actor, id, opts, (src) => withWrite(src, issue, ev, again));
+/** Stores the trigger labels that are taken off the original. Only while the session is being published. */
+export const recordOriginalLabels = (actor: Actor, id: string, labels: readonly string[], opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withLabels(src, labels));
 /** Sets `outcome` and `done` of one dependant in one write. Only while the session is being published. */
 export const recordDependantDone = (actor: Actor, id: string, issue: number, outcome: string, opts: StoreOptions = {}): Session => withSource(actor, id, opts, (src) => withDone(src, issue, outcome));
 

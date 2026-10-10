@@ -252,7 +252,8 @@ export function planOf(
     items,
     willCreate: ready.filter((x) => x.updates === undefined).map((x) => x.draft),
     willUpdate: ready.filter((x) => x.updates !== undefined).map((x) => x.draft),
-    ...(notChanged !== undefined ? { notChanged } : {}),
+    // A split original is replaced by its parts, so it is not "not changed".
+    ...(notChanged !== undefined && !replaces ? { notChanged } : {}),
     ...(replaces ? { replaces } : {}),
     leftBehind: left,
   };

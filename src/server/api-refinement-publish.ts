@@ -6,13 +6,14 @@ import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { UPDATE_COMMENT_MAX, chosenLabels, endsWithMarker, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, parseSourceChoice, planOf, refinedHash, refinedHashIn, refinedMarker, sameVersion, updateComment, updateMarker, versionHash, withoutSplits, type ChangedOnGithub, type IssueVersion, type LabelRules, type SourceChoice } from "../refinement/publish.js";
 import { architectWorking, settleSession } from "../refinement/architect.js";
 import { RefinementError, beginPublishing, endPublishing, getSession, logRoom, clearPendingUpdate, markOf, recordPendingUpdate, recordPublished, refreshSource, type Session } from "../refinement/store.js";
-import { commentOnIssue, createIssue, ghLogin, isBot, issueComments, listNewestIssues, repoLabels, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
+import { commentOnIssue, createIssue, findOwnComment, isBot, issueComments, listNewestIssues, repoLabels, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
 import type { PullKind } from "../refinement/issue-building.js";
 import { HttpError, readJson, send } from "./http.js";
 import { architectDeps, guardedAsync, limitsOf } from "./api-refinement.js";
 import { GH_TIMEOUT_MS, labelsOf as labelNamesOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { sessionUser } from "./api-auth.js";
-import { replacePlan } from "./api-refinement-replace.js";
+import { partsOf, replaceState } from "../refinement/replace-journal.js";
+import { auditLines, checkOriginal, leftBehindOf, newLedger, replaceOriginal, replacePlan, type Ledger } from "./api-refinement-replace.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
 import type { ApiContext, Route } from "./server.js";
 
@@ -124,8 +125,8 @@ interface UpdateInput {
   rules: LabelRules;
   /** What the person chose when the issue changed on GitHub. */
   keep?: SourceChoice;
-  /** Called as soon as GitHub confirmed the replacement, for the audit line. */
-  onWritten: () => void;
+  /** Every write GitHub confirmed is added as soon as it is confirmed. */
+  ledger: Ledger;
 }
 
 const versionOf = (i: RestIssue): IssueVersion => ({ title: typeof i.title === "string" ? i.title : "", body: typeof i.body === "string" ? i.body : "" });
@@ -266,7 +267,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
     }
     try {
       await updateIssue(s.repo, n, { title: o.text.title, body: text }, timeout);
-      o.onWritten();
+      o.ledger.add({ issue: n, what: "updated" });
     } catch (e) {
       // When GitHub did not answer in time the replacement may have landed: the record stays, and a retry finishes from it.
       if (!marked && (e as { killed?: boolean })?.killed !== true) {
@@ -276,29 +277,25 @@ async function updateOne(o: UpdateInput): Promise<Made> {
           /* the record stays; a retry replaces it */
         }
       }
-      throw new HttpError(502, `GitHub did not update issue #${n}: ${whatHappened(e)}. Fix the problem and publish again, after a moment.`);
+      throw new HttpError(502, `GitHub did not update issue #${n}: ${whatHappened(e)}; ${o.ledger.text()}. Fix the problem and publish again, after a moment.`);
     }
   }
 
   let commented = false;
   if (marked) {
     try {
-      let login: string | undefined;
-      for (const c of await issueComments(s.repo, n, timeout)) {
-        if (!endsWithMarker(c.body, marker)) continue;
-        // Only a comment of the account that publishes counts: the marker is public once the issue has it.
-        if (c.viewerDidAuthor === undefined) login ??= await ghLogin(timeout);
-        if (c.viewerDidAuthor === true || (c.viewerDidAuthor === undefined && c.author.login === login)) commented = true;
-      }
+      // Only a comment of the account that publishes counts: the marker is public once the issue has it.
+      commented = (await findOwnComment(await issueComments(s.repo, n, timeout), (c) => endsWithMarker(c.body, marker), timeout)) !== undefined;
     } catch (e) {
-      throw new HttpError(502, `Issue #${n} was updated, but its comments could not be read: ${whatHappened(e)}. ${again}`);
+      throw new HttpError(502, `Issue #${n} was updated, but its comments could not be read: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
     }
   }
   if (!commented) {
     try {
       await commentOnIssue(s.repo, n, comment, timeout);
+      o.ledger.add({ issue: n, what: "commented" });
     } catch (e) {
-      throw new HttpError(502, `Issue #${n} was updated, but the comment could not be added: ${whatHappened(e)}. ${again}`);
+      throw new HttpError(502, `Issue #${n} was updated, but the comment could not be added: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
     }
   }
 
@@ -308,8 +305,9 @@ async function updateOne(o: UpdateInput): Promise<Made> {
   for (const l of labels) {
     try {
       await setLabels(s.repo, n, l, [], timeout);
+      o.ledger.add({ issue: n, what: "labelled" });
     } catch (e) {
-      throw new HttpError(502, `Issue #${n} was updated, but the label "${l}" could not be added: ${whatHappened(e)}. ${again}`);
+      throw new HttpError(502, `Issue #${n} was updated, but the label "${l}" could not be added: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
     }
   }
 
@@ -318,7 +316,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
     recordPublished(o.actor, s.id, did, { issue: n, url });
   } catch (e) {
     ctx.diagLog?.(`refinement: publish could not record an issue (${e instanceof Error ? e.name : "error"})`);
-    throw new HttpError(500, `The issue ${url} was updated, but it could not be saved in the session. ${again}`);
+    throw new HttpError(500, `The issue ${url} was updated, but it could not be saved in the session; ${o.ledger.text()}. ${again}`);
   }
   return { draft: did, issue: n, url, found: marked };
 }
@@ -333,7 +331,8 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
   settleSession(architectDeps(ctx), id);
   if (!beginPublishing(id)) throw new HttpError(409, "this session is being published; try again in a moment");
   const done: Made[] = [];
-  let wrote: number | undefined;
+  // Every write of this publish: the issues made and changed, the comments, the labels. Error messages and audit lines come from it.
+  const ledger = newLedger();
   try {
     // Marked: nothing else changes the session now. What is read here is the settled session; a working architect is waited for.
     const settled = settleSession(architectDeps(ctx), id);
@@ -360,6 +359,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
       onGithub: new Map(s.drafts.flatMap((d) => (d.published ? [[d.id, d.published.issue] as const] : []))),
       by,
       date,
+      replaced: !!s.source?.replacedBy,
       ...(s.source ? { source: { issue: s.source.issue, ...(mark !== undefined ? { draft: mark } : {}) } } : {}),
       ...rules,
     });
@@ -381,14 +381,21 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     const labels = new Map(todo.map((did) => [did, labelsFor(choices.get(did), byId.get(did)!, rules)]));
     const untitled = todo.find((did) => did !== resumeId && !byId.get(did)!.title);
     if (untitled !== undefined) throw new HttpError(409, `the story draft ${untitled} has no title; give every ready draft a title first, nothing was written`);
-    if (todo.length > logRoom(s)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
+    // Whether this publish ends the replacement: it is due already, or it puts the last leaf part on GitHub (that needs one more log line).
+    const due = replaceState(s) === "due";
+    const leaves = new Set(planned.replaces ? partsOf(s.drafts, mark!).map((d) => d.id) : []);
+    const createsPart = willCreate.some((d) => leaves.has(d));
+    const finishes = due || (planned.replaces !== undefined && planned.replaces.ready && partsOf(s.drafts, mark!).every((d) => d.published || todo.includes(d.id)));
+    if (todo.length + (finishes ? 1 : 0) > logRoom(s)) throw new RefinementError("limit", "the log of this session is full; it can only be dropped");
     const notChanged = planned.notChanged !== undefined ? { notChanged: planned.notChanged } : {};
-    if (!todo.length) return { repo: s.repo, created: [] as Made[], state: s.state, ...notChanged, ...(planned.leftBehind.length ? { leftBehind: planned.leftBehind } : {}) };
+    if (!todo.length && !due) return { repo: s.repo, created: [] as Made[], state: s.state, ...notChanged, ...(planned.leftBehind.length ? { leftBehind: planned.leftBehind } : {}) };
 
     const numbers = new Map(s.drafts.flatMap((d) => (d.published ? [[d.id, d.published.issue] as const] : [])));
     const actor = { id: s.owner, admin: false };
-    const progress = () => (done.length ? ` Made so far: ${done.map((m) => `#${m.issue}`).join(", ")}.` : "");
     const numberOf = (other: string) => (numbers.has(other) ? { issue: numbers.get(other)! } : undefined);
+
+    // The original of a split issue is read before the first write: a closed or built one is refused while nothing was written.
+    const original = createsPart || due ? await checkOriginal(ctx, s, timeout) : undefined;
 
     // The issue the session came from is changed first, before any issue is made: a refusal then leaves nothing behind.
     let updated: Made | undefined;
@@ -396,8 +403,9 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     if (did0 !== undefined) {
       const d = byId.get(did0)!;
       const text = resumeId ? { title: pend!.newTitle!, body: pend!.newBody! } : issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf });
-      updated = await updateOne({ ctx, s, did: did0, text, labels: labels.get(did0)!, by, date, timeout, actor, rules, ...(keep ? { keep } : {}), onWritten: () => (wrote = s.source!.issue) });
+      updated = await updateOne({ ctx, s, did: did0, text, labels: labels.get(did0)!, by, date, timeout, actor, rules, ...(keep ? { keep } : {}), ledger });
       done.push(updated);
+      if (updated.found) ledger.add({ issue: updated.issue, what: "found" });
       numbers.set(did0, updated.issue);
     }
 
@@ -406,7 +414,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
       try {
         recent = await listNewestIssues(s.repo, timeout);
       } catch (e) {
-        throw new HttpError(502, `could not read the issues on GitHub: ${whatHappened(e)}; nothing was created.${progress()}`);
+        throw new HttpError(502, `could not read the issues on GitHub: ${whatHappened(e)}; ${ledger.text()}.`);
       }
       for (const did of willCreate) {
         const d = byId.get(did)!;
@@ -419,24 +427,32 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
           try {
             issue = await createIssue(s.repo, { title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout);
           } catch (e) {
-            throw new HttpError(502, `GitHub did not make the issue: ${whatHappened(e)}.${progress()} Fix the problem and publish again, after a moment.`);
+            throw new HttpError(502, `GitHub did not make the issue: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);
           }
           made = { draft: did, issue: issue.number, url: issueUrl(s.repo, issue.number, issue.html_url), found: false };
         }
         done.push(made);
+        ledger.add({ issue: made.issue, what: made.found ? "found" : "created" });
         numbers.set(did, made.issue);
         try {
           recordPublished(actor, id, did, { issue: made.issue, url: made.url });
         } catch (e) {
           ctx.diagLog?.(`refinement: publish could not record an issue (${e instanceof Error ? e.name : "error"})`);
-          throw new HttpError(500, `The issue ${made.url} was made, but it could not be saved in the session.${progress()} Publish again, after a moment: the issue is taken over, not made twice.`);
+          throw new HttpError(500, `The issue ${made.url} was made, but it could not be saved in the session; ${ledger.text()}. Publish again, after a moment: the issue is taken over, not made twice.`);
         }
       }
+    }
+    // Every part is on GitHub (also an old session, from before the replacement existed): the original is replaced, from a fresh read.
+    let replaced: Awaited<ReturnType<typeof replaceOriginal>> | undefined;
+    const now = getSession(id)!;
+    if (original && replaceState(now) === "due") {
+      replaced = await replaceOriginal({ ctx, s: now, by, timeout, actor, original, leftBehind: leftBehindOf(now), wrote: ledger.add, written: ledger.text, lastWrite: ledger.last });
     }
     return {
       repo: s.repo,
       created: done.filter((m) => m !== updated),
       ...(updated ? { updated: [updated] } : {}),
+      ...(replaced ? { replaced } : {}),
       state: getSession(id)?.state ?? s.state,
       ...notChanged,
       ...(planned.leftBehind.length ? { leftBehind: planned.leftBehind } : {}),
@@ -445,7 +461,6 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
   } finally {
     endPublishing(id);
     // Also a replacement that GitHub confirmed and a later step did not finish.
-    const numbers = [...new Set([...done.map((m) => m.issue), ...(wrote !== undefined ? [wrote] : [])])];
-    if (numbers.length) auditAction(ctx.diagLog, user.id, "refinement-publish", first.id, `${first.repo} ${numbers.map((n) => `#${n}`).join(",")}`);
+    for (const line of auditLines(first.repo, ledger.numbers())) auditAction(ctx.diagLog, user.id, "refinement-publish", first.id, line);
   }
 }

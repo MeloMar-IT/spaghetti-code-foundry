@@ -24,6 +24,8 @@ if [ -n "${FAKE_GH_EXPECT_TOKEN+x}" ] && [ "$GH_TOKEN" != "$FAKE_GH_EXPECT_TOKEN
 if [ -n "$FAKE_GH_SLEEP" ]; then sleep "$FAKE_GH_SLEEP"; fi
 # $FAKE_GH_HOLD=<file>: the call waits while that file exists; $FAKE_GH_HOLD_ON=<text>: only a call with this text waits (empty: every call).
 if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$FAKE_GH_HOLD" ]; do sleep 0.05; done ;; esac; fi
+# $FAKE_GH_HOLD2=<file> and $FAKE_GH_HOLD2_ON=<text>: the same, a second hold, so a test can release one call and keep another.
+if [ -n "$FAKE_GH_HOLD2" ]; then case "$*" in *"$FAKE_GH_HOLD2_ON"*) while [ -e "$FAKE_GH_HOLD2" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
@@ -175,7 +177,9 @@ case "$1 $2" in
                    *) printf '%s' "${FAKE_GH_ISSUES:-[]}" ;; esac ;;
   "pr list")     case "$*" in *"--state merged"*) printf '%s' "${FAKE_GH_MERGED_PRS:-[]}"; exit 0 ;; esac
                  if [ -n "$FAKE_GH_PRS" ]; then printf '%s' "$FAKE_GH_PRS"; elif [ -f "$FAKE_GH_LOG.prs.json" ]; then cat "$FAKE_GH_LOG.prs.json"; else echo '[]'; fi ;;
-  "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;; esac ;;
+  "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;; esac
+    # --add-label / --remove-label change the labels of an issue of $FAKE_GH_LOG.issues.json (an issue that is not there is left alone).
+    case "$*" in *-label*) node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i)process.exit(0);const a=process.argv.slice(3);for(let k=0;k<a.length;k++){if(a[k]==="--remove-label")i.labels=i.labels.filter(y=>y.name.toLowerCase()!==a[k+1].toLowerCase());if(a[k]==="--add-label"&&!i.labels.some(y=>y.name.toLowerCase()===a[k+1].toLowerCase()))i.labels.push({name:a[k+1]})}fs.writeFileSync(f,JSON.stringify(l))' "$FAKE_GH_LOG.issues.json" "$3" "$@" ;; esac ;;
   "label create") name=$3 # names are kept in $FAKE_GH_LOG.labels; without --force an existing one is an error
     case "$*" in *--force*) grep -qxF -- "$name" "$FAKE_GH_LOG.labels" 2>/dev/null || echo "$name" >> "$FAKE_GH_LOG.labels" ;;
       *) if grep -qxF -- "$name" "$FAKE_GH_LOG.labels" 2>/dev/null; then echo "label with name \"$name\" already exists; use --force to update its color and description" >&2; exit 1; fi
