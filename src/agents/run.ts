@@ -155,6 +155,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       const made = privateCodexHome(engine.summary.runDir);
       if ("refused" in made) return { ok: false, output: made.refused, error: made.refused, final: true };
       env.CODEX_HOME = made.CODEX_HOME; // over anything agent_env set
+      env.HOME = made.HOME; // the personal ~/.agents/skills is out of reach too
     }
     // 3. the folder this session lives in
     home = codexHomeId({ run: boxed || mode === "private", codexHome: seen("CODEX_HOME"), home: seen("HOME") });

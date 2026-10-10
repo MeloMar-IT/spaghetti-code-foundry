@@ -48,7 +48,7 @@ export interface CodexRunOptions {
   /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
   onProgress?: (msg: string) => void;
-  /** Read-only reviewer: ignore the personal Codex config and switch off MCP servers and hooks (the login is kept). */
+  /** Read-only reviewer: switch off MCP servers and hooks. It also passes `--ignore-user-config`, unless `ignoreUserConfig` says otherwise (the login is kept). */
   reviewer?: boolean;
   /** Put the agent note in `<instructions>` (an isolated session). */
   agentNote?: boolean;

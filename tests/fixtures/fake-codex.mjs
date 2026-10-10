@@ -9,7 +9,7 @@
 // With --help in the args it prints the options of `exec` and exits (before reading stdin); it lists --ignore-rules always
 // and --ignore-user-config unless FAKE_CODEX_NO_IGNORE_CONFIG is set.
 // "SHOWCODEXHOME" (a whole line) puts one line before the answer: codex_home=<path|unset> config=<read|ignored|none> mcp=<names|-> skills=<names|-> instructions=<yes|no> rules=<names|->.
-// It reads only $CODEX_HOME, never $HOME/.codex; config.toml is "ignored" (no MCP names) when --ignore-user-config is in the args.
+// It reads $CODEX_HOME (never $HOME/.codex) and $HOME/.agents/skills (the trailing agents_skills=<names|-> part, as the real CLI does); config.toml is "ignored" (no MCP names) when --ignore-user-config is in the args.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -48,7 +48,16 @@ function showCodexHome() {
   const cfg = `${dir}/config.toml`;
   const config = !existsSync(cfg) ? "none" : args.includes("--ignore-user-config") ? "ignored" : "read";
   const mcp = config === "read" ? [...readFileSync(cfg, "utf8").matchAll(/^\[mcp_servers\.([^\].]+)\]/gm)].map((m) => m[1]).sort().join(",") || "-" : "-";
-  return `codex_home=${dir} config=${config} mcp=${mcp} skills=${names("skills")} instructions=${existsSync(`${dir}/AGENTS.md`) ? "yes" : "no"} rules=${names("rules", ".rules")}`;
+  return `codex_home=${dir} config=${config} mcp=${mcp} skills=${names("skills")} instructions=${existsSync(`${dir}/AGENTS.md`) ? "yes" : "no"} rules=${names("rules", ".rules")} agents_skills=${agentsSkills()}`;
+}
+// Personal skills the real CLI also loads from $HOME/.agents/skills, whatever CODEX_HOME is.
+function agentsSkills() {
+  try {
+    const l = readdirSync(`${process.env.HOME}/.agents/skills`).sort();
+    return l.length ? l.join(",") : "-";
+  } catch {
+    return "-";
+  }
 }
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 const resumeAt = args.indexOf("resume");

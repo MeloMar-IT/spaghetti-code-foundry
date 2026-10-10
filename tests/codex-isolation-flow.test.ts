@@ -7,11 +7,13 @@ import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
+import { addSkillPins } from "../src/skills/lock.js";
+import { loadSkillPackage } from "../src/skills/package.js";
 import { CODEX_AGENT_NOTE, resetCodexFlagsCache } from "../src/steps/codex.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 const codexBin = resolve("tests/fixtures/fake-codex.mjs");
-const VARS = ["CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "FAKE_CODEX_NO_IGNORE_CONFIG"];
+const VARS = ["HOME", "CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "FAKE_CODEX_NO_IGNORE_CONFIG"];
 const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
 const FLAG = "--ignore-user-config";
 let tmp: string;
@@ -32,6 +34,9 @@ beforeEach(() => {
   writeFileSync(join(personal, "AGENTS.md"), "canary");
   writeFileSync(join(personal, "rules", "canary.rules"), "canary");
   process.env.CODEX_HOME = personal;
+  // personal skills Codex also reads from $HOME/.agents/skills, whatever CODEX_HOME is
+  process.env.HOME = join(tmp, "myhome");
+  mkdirSync(join(process.env.HOME, ".agents", "skills", "homecanary"), { recursive: true });
 });
 afterEach(() => {
   for (const k of VARS) {
@@ -42,10 +47,26 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-type Hist = { id: string; output: string; sessionId?: string; codexHome?: string };
+type Hist = { id: string; output: string; sessionId?: string; codexHome?: string; skills?: { loaded: string[]; role?: string } };
 const run = (steps: string, over: Record<string, unknown> = {}) =>
   runFlow(parseFlow(`\nname: t\nworkspace: inplace\nsteps:\n${steps}`), { task: "t", repo, runsDir: join(tmp, "runs"), claudeBin, codexBin, config: ConfigSchema.parse({ protected_branches: [], ...over }) });
 const step = (id: string, extra = "") => `  - {id: ${id}, type: claude, ${extra} prompt: "SHOWCODEXHOME"}\n`;
+const reviewer = (id: string) => step(id, "agent: codex, skill_role: reviewer, permission_mode: plan,");
+const count = (out: string) => out.split(FLAG).length - 1;
+const OVERRIDES = "-c mcp_servers={} -c features.codex_hooks=false";
+const REQUEST = 'SKILL_REQUEST: {"version":1,"skills":[{"id":"demo","reason":"Needed for the change","evidence":["catalogue:demo"]}]}';
+const gate = `  - id: risk_gate\n    type: shell\n    run: |\n      # /skill-request\n      echo READY\n      echo '${REQUEST}'\n`;
+/** A pinned skill `demo` with a review block; the coding block is longer than the review block. */
+function demoSkill(): string {
+  const root = join(tmp, "skills");
+  const d = join(root, "demo");
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, "SKILL.md"), `---\nname: demo\ndescription: A test skill.\n---\n\n${"Do it. ".repeat(60)}\n`);
+  writeFileSync(join(d, "skill.yaml"), "id: demo\nversion: 1.0.0\n");
+  writeFileSync(join(d, "REVIEW.md"), "Check the canary.\n");
+  addSkillPins([{ key: "demo@1.0.0", digest: loadSkillPackage(d).digest }]);
+  return root;
+}
 const get = (s: { history: Hist[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)!;
 const log = (s: { runDir: string }) => readFileSync(liveLogFile(s.runDir), "utf8");
 
@@ -57,13 +78,13 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(login.output).toContain(`--skip-git-repo-check ${FLAG} -c sandbox_mode=`);
     expect(login.output).toContain('approval_policy="never"');
     expect(login.output).not.toContain("--ignore-rules");
-    expect(login.output).toContain(`codex_home=${personal} config=ignored mcp=- skills=canary instructions=yes rules=canary`);
+    expect(login.output).toContain(`codex_home=${personal} config=ignored mcp=- skills=canary instructions=yes rules=canary agents_skills=homecanary`);
     expect(login.output).toContain(CODEX_AGENT_NOTE);
     expect(login.codexHome).toMatch(/^personal:/);
     expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
 
     const local = get(s, "local");
-    expect(local.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=-`);
+    expect(local.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=- agents_skills=-`);
     expect(local.output).not.toContain(FLAG);
     expect(local.codexHome).toBe("run");
     expect(log(s)).toContain(`    · ${codexIsolationLine("private")}`);
@@ -84,7 +105,7 @@ describe("Codex steps and the personal Codex setup", () => {
     const s = await run(step("a", "agent: codex,"));
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
-    expect(a.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=-`);
+    expect(a.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=- agents_skills=-`);
     expect(a.output).not.toContain(FLAG);
     expect(a.codexHome).toBe("run");
     expect(a.output).toContain(`PROMPT<<<instructions>\n${CODEX_AGENT_NOTE}`);
@@ -122,10 +143,53 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(log(s)).not.toContain("Codex:");
   });
 
-  it("a read-only reviewer is not isolated by its skill payload when isolate_agents is false", async () => {
-    const s = await run(step("a", "agent: codex, skill_role: reviewer, permission_mode: plan,"), { isolate_agents: false });
+  it("a reviewer in login mode gets the flag once and the reviewer overrides", async () => {
+    const s = await run(reviewer("a"));
+    expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
+    expect(count(a.output)).toBe(1);
+    expect(a.output).toContain(OVERRIDES);
+    expect(a.output).toContain(`codex_home=${personal} config=ignored`);
+    expect(a.output).toContain(CODEX_AGENT_NOTE);
+    expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
+  });
+
+  it("a reviewer in the private folder gets no flag but keeps the overrides", async () => {
+    process.env.CODEX_API_KEY = "k".repeat(20);
+    const s = await run(reviewer("a"));
+    expect(s.status, s.reason).toBe("succeeded");
+    const a = get(s, "a");
+    expect(count(a.output)).toBe(0);
+    expect(a.output).toContain(OVERRIDES);
+    expect(a.output).toContain(`codex_home=${s.runDir}/home/.codex config=none`);
+    expect(a.output).toContain(CODEX_AGENT_NOTE);
+    expect(a.codexHome).toBe("run");
+    expect(log(s)).toContain(`    · ${codexIsolationLine("private")}`);
+  });
+
+  it("a reviewer on a CLI without the flag gets no flag, keeps the overrides and logs a ! line", async () => {
+    process.env.FAKE_CODEX_NO_IGNORE_CONFIG = "1";
+    const s = await run(reviewer("a"));
+    expect(s.status, s.reason).toBe("succeeded");
+    const a = get(s, "a");
+    expect(count(a.output)).toBe(0);
+    expect(a.output).toContain(OVERRIDES);
+    expect(a.output).toContain("config=read");
+    expect(log(s)).toContain(`    ! ${codexIsolationLine("unsupported")}`);
+  });
+
+  it("a reviewer with a loaded review block is not isolated when isolate_agents is false", async () => {
+    const s = await run(gate + reviewer("a"), { isolate_agents: false, skills: { roots: [demoSkill()] } });
+    expect(s.status, s.reason).toBe("succeeded");
+    const a = get(s, "a");
+    expect(a.skills).toMatchObject({ loaded: ["demo@1.0.0"], role: "reviewer" });
+    expect(a.output).toContain('<foundry-skills count="1" role="reviewer">');
+    expect(a.output).toContain("Check the canary.");
+    expect(count(a.output)).toBe(1);
+    expect(a.output).toContain(OVERRIDES);
     expect(a.output).not.toContain("<instructions>");
+    expect(a.output).not.toContain(CODEX_AGENT_NOTE);
+    expect(a.codexHome).toMatch(/^personal:/);
     expect(log(s)).not.toContain("Codex:");
   });
 });
