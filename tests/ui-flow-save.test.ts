@@ -23,11 +23,11 @@ const doc = () => (globalThis as any).document;
 const entry = (name: string) => ({ name, scope: "repo", description: "" });
 const h1 = () => main().all("h1")[0]?.textContent;
 const errorsBox = () => main().all("div").find((d) => d.getAttribute("class") === "errors");
-const dot = () => main().all("span").find((s) => (s.getAttribute("class") ?? "").startsWith("dirty-dot"))!;
+const stateText = () => main().all("span").find((s) => s.getAttribute("class") === "flow-dirty")?.textContent;
 const saveButton = () => buttonIn(main(), "Save")!;
 const toastShown = () => toastEl().className.includes("show");
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const trash = () => main().all("button").find((b) => b.getAttribute("title") === "Delete flow")!;
+const trash = () => main().all("button").find((b) => b.textContent === "Delete flow")!;
 const startButton = () => root().all("button").find((b) => b.textContent.startsWith("▶"))!;
 const taskBox = () => root().all("textarea")[0]!;
 
@@ -71,7 +71,7 @@ describe("validation", () => {
     gate.resolve({ ok: true, flow: { name: "a", workspace: "worktree", vars: {} } });
     await vi.waitFor(() => expect(saveButton().disabled).toBe(false));
     expect(api.saveFlow).not.toHaveBeenCalled();
-    expect(dot().classList.contains("clean")).toBe(false);
+    expect(stateText()).toBe("Unsaved changes");
     expect(main().all("textarea")[0]!.value).toBe(ta.value);
   });
 
@@ -80,7 +80,7 @@ describe("validation", () => {
     click(main(), "YAML");
     const gate = held<any>();
     api.validate.mockReturnValueOnce(gate.promise);
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     edit(flowJson("a", { description: "typed meanwhile" }));
     gate.resolve({ ok: true, flow: { name: "a", workspace: "worktree", vars: {} } });
     await tick();
@@ -122,7 +122,7 @@ describe("save", () => {
     saveButton().click();
     await vi.waitFor(() => expect(alertsIn(main())).toHaveLength(1));
     expect(alertsIn(main())[0]!.textContent).toContain("was not saved");
-    expect(dot().classList.contains("clean")).toBe(false);
+    expect(stateText()).toBe("Unsaved changes");
     expect(saveButton().disabled).toBe(false);
     click(main(), "Retry");
     await vi.waitFor(() => expect(api.saveFlow).toHaveBeenCalledTimes(2));
@@ -130,7 +130,7 @@ describe("save", () => {
     await vi.waitFor(() => expect(alertsIn(main())).toHaveLength(0));
     expect(toastEl().textContent).toContain("Saved a");
     expect(toastShown()).toBe(true);
-    expect(dot().classList.contains("clean")).toBe(true);
+    expect(stateText()).toBe("Saved");
   });
 
   it("does not move the address or the page when the person went to another flow during the save", async () => {
@@ -180,7 +180,7 @@ describe("save", () => {
     edit(flowJson("b", { description: "typed during cleanup" }));
     gate.resolve({});
     await vi.waitFor(() => expect(toastEl().textContent).toContain("Saved b"));
-    expect(dot().classList.contains("clean")).toBe(false);
+    expect(stateText()).toBe("Unsaved changes");
   });
 
   it("retries the removal of the old name without throwing, and keeps the alert on a second failure", async () => {
@@ -303,7 +303,7 @@ describe("delete", () => {
     gate.resolve({});
     await vi.waitFor(() => expect(location.hash).toBe("#/new"));
     expect(main().all("textarea")[0]!.value).toBe(ta.value);
-    expect(dot().classList.contains("clean")).toBe(false);
+    expect(stateText()).toBe("Unsaved changes");
   });
 
   it("does not send another page to the list when the delete ends", async () => {
@@ -362,14 +362,14 @@ describe("run", () => {
   it("stops an invalid flow above the editor and opens no dialog", async () => {
     const { api } = await open();
     api.validate.mockResolvedValue({ ok: false, error: "steps: required" });
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(errorsBox()?.textContent).toContain("Fix these errors before running."));
     expect(root().children).toHaveLength(0);
   });
 
   it("asks once about an empty task, inline, and starts on the second click", async () => {
     const { api } = await open();
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(startButton()).toBeDefined());
     startButton().click();
     expect(api.startRun).not.toHaveBeenCalled();
@@ -382,7 +382,7 @@ describe("run", () => {
 
   it("asks again after the task text changes", async () => {
     const { api } = await open();
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(startButton()).toBeDefined());
     startButton().click();
     taskBox().fire("input", { target: taskBox() });
@@ -395,7 +395,7 @@ describe("run", () => {
     const { api } = await open();
     const gate = held<any>();
     api.startRun.mockReturnValueOnce(gate.promise);
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(startButton()).toBeDefined());
     taskBox().value = "do it";
     startButton().click();
@@ -410,7 +410,7 @@ describe("run", () => {
   it("explains a failed start and keeps the task", async () => {
     const { api } = await open();
     api.startRun.mockRejectedValueOnce(httpError(500));
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(startButton()).toBeDefined());
     taskBox().value = "my task";
     startButton().click();

@@ -232,6 +232,7 @@ describe("the flow page controller", () => {
   let mainEl: FakeElement;
   let sideEl: FakeElement;
   let toast: any;
+  let answer = true;
   let editorOpts: any;
   let graphOpts: any;
   let drawn: number;
@@ -239,7 +240,7 @@ describe("the flow page controller", () => {
   function load() {
     const deps: Record<string, any> = {
       "/vendor/yaml/index.js": { default: YAML },
-      "./dom.js": { ...real.dom, toast },
+      "./dom.js": { ...real.dom, toast, confirmDialog: async () => answer },
       "./editor.js": {
         cleanFlow: (x: unknown) => x,
         editable: (v: unknown) => !!v && typeof v === "object",
@@ -291,6 +292,7 @@ describe("the flow page controller", () => {
     drawn = 0;
     g.location = { hash: "#/flows/a" };
     g.confirm = vi.fn(() => true);
+    answer = true;
     g.document.querySelectorAll = () => [];
     (FakeElement.prototype as any).scrollIntoView = vi.fn();
     g.document.activeElement = null;
@@ -368,8 +370,7 @@ describe("the flow page controller", () => {
     const first = await open({ storage: memory(), api: fail });
     editorOpts.onChange();
     byText(mainEl, "Delete flow")!.click();
-    await tick();
-    expect(toast).toHaveBeenCalledWith("no way", "error");
+    await vi.waitFor(() => expect(text(mainEl)).toContain("was not deleted"));
     expect(first.s.cur).not.toBeNull();
     expect(first.s.cur.dirty).toBe(true);
     expect(first.onNavigate).not.toHaveBeenCalled();
@@ -382,7 +383,7 @@ describe("the flow page controller", () => {
 
   it("does not delete when the person says no", async () => {
     const { api } = await open({ storage: memory() });
-    g.confirm = vi.fn(() => false);
+    answer = false;
     byText(mainEl, "Delete flow")!.click();
     await tick();
     expect(api.deleteFlow).not.toHaveBeenCalled();

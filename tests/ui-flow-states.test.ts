@@ -197,7 +197,7 @@ describe("discard on navigation", () => {
 
   it("leaves a dialog that is open alone when the address changes", async () => {
     const { go } = await dirty();
-    click(main(), "▶ Run");
+    click(main(), "Test run");
     await vi.waitFor(() => expect(root().textContent).toContain("Run "));
     await go("#/flows/other");
     expect(location.hash).toBe("#/flows/a");
