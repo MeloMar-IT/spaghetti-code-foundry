@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { dataHome } from "./auth/store.js";
+import { prunePlanRecords } from "./skills/plan-record.js";
 import { listRunIds, loadRun, type RunSummary } from "./engine/state.js";
 
 export interface CleanOptions {
@@ -11,6 +14,8 @@ export interface CleanOptions {
   /** Also clean stopped / waiting / interrupted runs (they can no longer be resumed). */
   includePaused?: boolean;
   dryRun?: boolean;
+  /** The data folder whose plan records are cleaned with `purge`; default: the data folder when `runsDir` is its `runs` folder. */
+  planRecordsHome?: string;
   isActive?: (runId: string) => boolean;
 }
 
@@ -19,7 +24,14 @@ export interface CleanResult {
   runs: string[];
   freedMb: number;
   kept: { runId: string; why: string }[];
+  /** Plan records removed (or counted, on a dry run); set with `purge` when plan records are cleaned. */
+  planRecords?: number;
+  /** The plan records could not be cleaned (the store is locked or cannot be written). */
+  planRecordsFailed?: boolean;
 }
+
+/** Plan records are kept at least this long, so routine clean-up does not force a new plan. */
+const PLAN_RECORD_MIN_DAYS = 90;
 
 const PAUSED: RunSummary["status"][] = ["stopped", "waiting", "running"];
 
@@ -83,6 +95,14 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       res.freedMb += sizeMb(s.workdir!);
       res.workspaces.push(s.workdir!);
       if (!o.dryRun) removeWorkspace(s);
+    }
+  }
+  const home = o.planRecordsHome ?? (resolve(o.runsDir) === resolve(join(dataHome(), "runs")) ? dataHome() : undefined);
+  if (o.purge && home) {
+    try {
+      res.planRecords = prunePlanRecords({ olderThanMs: Math.max(o.olderThanDays, PLAN_RECORD_MIN_DAYS) * 86_400_000, dryRun: o.dryRun, home });
+    } catch {
+      res.planRecordsFailed = true;
     }
   }
   res.freedMb = Math.round(res.freedMb * 10) / 10;

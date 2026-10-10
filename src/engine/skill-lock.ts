@@ -32,7 +32,7 @@ export interface SkillLockDeps {
   commitOf?: (workdir: string) => string | undefined;
 }
 
-function headCommit(workdir: string): string | undefined {
+export function headCommit(workdir: string): string | undefined {
   try {
     const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workdir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     return /^[0-9a-f]{40,64}$/.test(sha) ? sha : undefined;

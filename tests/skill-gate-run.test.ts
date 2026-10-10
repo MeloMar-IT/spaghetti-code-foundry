@@ -6,6 +6,7 @@ import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { liveLogFile, loadRun, saveRun, type RunSummary } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
+import { readPlanRecords } from "../src/skills/plan-record.js";
 import { discoverSkills, pinSkill } from "../src/skills/registry.js";
 import { planHashOf } from "../src/skills/run-lock.js";
 import { planRunSkills, recheckRunSkills } from "../src/skills/run-plan.js";
@@ -252,5 +253,46 @@ describe("a run with skills in its plan", () => {
     expect(done.status).toBe("succeeded");
     expect(done.skillPlan).toMatchObject({ action: "continue" });
     expect(count(done, "post_plan")).toBe(2);
+  });
+});
+
+describe("a run that posts a plan record", () => {
+  const issueOf = () => String(100000 + ++n);
+  const flow = (ids: string[]) =>
+    parseFlow(
+      [
+        "name: t", "workspace: empty", "steps:",
+        "  - id: post_plan", "    type: shell", "    run: |",
+        "      echo 'https://github.com/acme/app/issues/5#issuecomment-9'",
+        `      echo 'PLAN_COMMENT_SHA256: sha256:${"d".repeat(64)}'`,
+        `      echo '${line(ids)}'`, "      # $FACTORY_TOOLS/skill-request $FACTORY_TOOLS/plan-comment",
+        "    on_success: end",
+        "  - id: implement", "    type: shell", "    run: echo done > marker.txt",
+      ].join("\n"),
+    );
+  const start = (ids: string[], c: Config, vars: Record<string, string>) => runFlow(flow(ids), { task: "t", repo, runsDir, claudeBin, config: c, vars });
+
+  it("writes the record even when the skills of the plan then stop the run", async () => {
+    const issue = issueOf();
+    const r = await start(["db-migrations"], cfg(), { github_repo: "acme/app", issue });
+    expect(r.status).toBe("stopped");
+    expect(r.reason).toMatch(/^skills not resolved: /);
+    expect(r.reason).not.toContain("plan record");
+    const rec = readPlanRecords("acme/app", issue);
+    expect(rec !== "invalid" && rec.records.map((x) => [x.runId, x.commentId])).toEqual([[r.runId, "9"]]);
+  });
+
+  it("stops at post_plan when the record cannot be written, with skills in play", async () => {
+    const r = await start(["db-migrations"], cfg(), { github_repo: "owner/repo/x", issue: issueOf() });
+    expect(r.status).toBe("stopped");
+    expect(r.reason).toMatch(/^skills not resolved: the plan record could not be written \(/);
+    expect(r.state.next).toBe("post_plan");
+    expect(r.skillPlan).toMatchObject({ action: "stop", gate: "post_plan" });
+  });
+
+  it("only warns when the record cannot be written and no skills are in play", async () => {
+    const r = await start([], cfg(), { github_repo: "owner/repo/x", issue: issueOf() });
+    expect(r.status).toBe("succeeded");
+    expect(readFileSync(liveLogFile(r.runDir), "utf8")).toContain("⚠ plan record not written: ");
   });
 });
