@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- UI redesign workspace 5a — Start work is a guided form: required first, the rest under "More options" (#354). `ui/user/start.js`, `ui/css/pages/start.css`. No server change; the request body `{ flow, task, vars }` is unchanged.
+  - **Flow choice.** With one published flow the page shows no flow choice and no flow name. With two or more, a picker ("What do you want to start?") shows only each flow's title and description. The numbered legends are gone.
+  - **Required first.** The repository (when the flow asks for one), the task and every `required: true` input come first, each marked "(required)". On Task and on an optional repository the mark is only a mark: validation is unchanged.
+  - **More options.** Optional inputs and fixed values are in a closed `<details class="start-more">` whose summary gives the count (for example "More options: 2 optional fields, 1 fixed value"). It is not drawn when empty, opens when the server refuses the start, and closes when you change flow. Flow radios are disabled while a start is in flight.
+  - **Repository state.** The repository row shows "Connected", "Not tested yet" or "Failed". A "Failed" repository shows a note with a link to `#/repos`.
+  - **Code.** New pure exports `splitFields(flow) → { required, optional, fixed }` and `moreSummary`, and constants `MORE_OPTIONS`, `REPO_FAILED_NOTE` and `PICK_FLOW`. `startProblem` and `startBody` are unchanged; `homeHash` no longer exists. Six new `.start-form` rules, also in `tests/fixtures/ui-style-baseline.css`.
+  - **Docs and tests.** "Start work as an admin" in `docs/USER_GUIDE.md`. `tests/ui-user-start.test.ts` is updated and extended; three titles in `tests/ui-user-start-states.test.ts` no longer say "step".
+
 - Skill safety 1a — skill packages may not hold credentials or live endpoints, and may name connectors (#428).
   - **Connectors.** `skill.yaml` accepts `connectors`: a list of slugs (at most 16, no duplicates, default `[]`). A package that names connectors needs `risk: medium` or `high`. `connectors` is in the parsed package, sorted. Nothing enforces it yet. Existing `skill.yaml` files parse as before and digests do not change.
   - **Scan.** `parseSkillPackage` scans every file name, the folder name and every file's content (`SKILL.md`, `skill.yaml`, `REVIEW.md` and all folder files). It runs before any file is parsed. There are four messages: `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value. On a hit only the scan's findings are shown, so no later message can repeat the value.

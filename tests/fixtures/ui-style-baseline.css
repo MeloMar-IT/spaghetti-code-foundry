@@ -429,6 +429,12 @@ button.icon { justify-content: center; }
 .start-form .choice span { grid-column: 2; }
 .start-form .req { color: var(--fail); }
 .start-form .empty { padding: 8px 0; }
+.start-form .start-main { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 14px; min-width: 0; }
+.start-form .start-repo { display: grid; gap: 12px; min-width: 0; }
+.start-form .start-label { font-weight: 600; }
+.start-form .start-note { margin: 0; color: var(--muted); font-size: var(--text-small); }
+.start-form .start-more { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
+.start-form .start-more-body { display: grid; gap: 12px; }
 
 /* My runs and the run page of a user (ui/user/runs.js) */
 .run-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }

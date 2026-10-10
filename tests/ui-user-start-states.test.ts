@@ -202,7 +202,7 @@ describe("renderStart: flows", () => {
 });
 
 describe("renderStart: repositories", () => {
-  it("shows a skeleton in the repository step, keeps Start off and typed values", async () => {
+  it("shows a skeleton in the repository part, keeps Start off and typed values", async () => {
     data.flows = [flow("a", [field("github_repo"), field("x")])];
     data.repos = [repo("1", "a/a")];
     gating.repos = true;
@@ -226,7 +226,7 @@ describe("renderStart: repositories", () => {
     expect(submitBtn(main).disabled).toBe(false);
   });
 
-  it("says what to do with no repository, with Add repository inside the step", async () => {
+  it("says what to do with no repository, with Add repository inside the repository part", async () => {
     data.flows = [flow("a", [field("github_repo")])];
     await open();
     const box = one(main, "div", { class: "empty" });
@@ -234,7 +234,7 @@ describe("renderStart: repositories", () => {
     expect(find(box, "button", { "data-focus": "add-repo" })).toHaveLength(1);
   });
 
-  it("explains a failed list in step 2 only; other flows still start", async () => {
+  it("explains a failed list in the repository part only; other flows still start", async () => {
     data.flows = [flow("a", [field("github_repo")]), flow("b")];
     reposAnswers = [err("repo list broken", 500)];
     await open();
