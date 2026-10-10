@@ -67,7 +67,7 @@ describe("privateCodexHome", () => {
   it("makes a 0700 folder under the run folder", () => {
     const dir = tmpDir();
     try {
-      expect(privateCodexHome(dir)).toEqual({ CODEX_HOME: join(dir, "home", ".codex") });
+      expect(privateCodexHome(dir)).toEqual({ CODEX_HOME: join(dir, "home", ".codex"), HOME: join(dir, "home") });
       expect(statSync(join(dir, "home", ".codex")).mode & 0o777).toBe(0o700);
     } finally {
       rmSync(dir, { recursive: true, force: true });

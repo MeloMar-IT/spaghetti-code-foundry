@@ -30,7 +30,7 @@ export function codexIsolationMode(o: { isolate: boolean; local: boolean; hasKey
 export const CODEX_HOME_REFUSED = "Codex isolation: ";
 
 /** Makes <runDir>/home and <runDir>/home/.codex (0700, a symlink at the path is replaced). */
-export function privateCodexHome(runDir: string, make: (path: string) => void = ownDir): { CODEX_HOME: string } | { refused: string } {
+export function privateCodexHome(runDir: string, make: (path: string) => void = ownDir): { CODEX_HOME: string; HOME: string } | { refused: string } {
   const home = join(runDir, "home");
   const dir = join(home, ".codex");
   try {
@@ -39,7 +39,8 @@ export function privateCodexHome(runDir: string, make: (path: string) => void = 
   } catch {
     return { refused: CODEX_HOME_REFUSED + "the private Codex folder could not be made" };
   }
-  return { CODEX_HOME: dir };
+  // HOME too: Codex also reads personal skills from $HOME/.agents/skills, whatever CODEX_HOME is
+  return { CODEX_HOME: dir, HOME: home };
 }
 
 /** The log line of a mode; undefined for "off". */

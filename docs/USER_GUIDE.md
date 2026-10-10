@@ -464,7 +464,7 @@ a **What happens next** block with **You** as who and the approval message as th
   | `--ignore-user-config` | A Codex login, no key, not local | Skipped | Still apply | The login stays |
   | Not isolated | The CLI has no `--ignore-user-config` | Used | Used | The login stays |
 
-  The private folder is `<run folder>/home/.codex`. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
+  The private folder is `<run folder>/home/.codex`, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. A Codex reviewer step (`skill_role: reviewer`) always switches off MCP servers and hooks; it gets `--ignore-user-config` in login mode and, as before, when `isolate_agents` is off. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).

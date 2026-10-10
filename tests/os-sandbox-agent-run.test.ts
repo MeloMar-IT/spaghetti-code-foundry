@@ -78,6 +78,7 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
         step("c2", "claude", "SHOWVARS HOME TMPDIR CLAUDE_CONFIG_DIR CODEX_HOME"),
         step("c3", "claude", "SHOWALLENV"),
         step("x1", "codex", "hello"),
+        step("xr", "codex", "hello", "    skill_role: reviewer\n    permission_mode: plan\n"),
         step("x2", "codex", "SHOWVARS HOME TMPDIR CLAUDE_CONFIG_DIR CODEX_HOME"),
         step("x3", "codex", "SHOWALLENV"),
       ),
@@ -92,6 +93,10 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "x1")).not.toContain("--ignore-user-config");
     expect(out(s, "x1")).not.toContain("<instructions>");
     expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
+    // a boxed reviewer keeps the MCP and hook overrides, but gets no flag or note
+    expect(out(s, "xr")).toContain("-c mcp_servers={} -c features.codex_hooks=false");
+    expect(out(s, "xr")).not.toContain("--ignore-user-config");
+    expect(out(s, "xr")).not.toContain("<instructions>");
     for (const id of ["c2", "x2"]) {
       const o = out(s, id);
       expect(o).toContain(`HOME=${s.runDir}/home`);
