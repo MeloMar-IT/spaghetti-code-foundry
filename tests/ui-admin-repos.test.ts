@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -382,6 +382,116 @@ describe("late answers", () => {
     older.forEach((f) => f());
     await Promise.all([first, second]);
     expect(main().textContent).toContain("No repositories yet.");
+  });
+});
+
+describe("the repository filter", () => {
+  const owner2 = { name: "Bob", email: "bob@example.com", role: "user", status: "active" };
+  const setup = () => {
+    repos = [rec({ url: "https://github.com/o/a" }), rec({ url: "git@github.com:O/A.git", account: owner2 }), rec({ url: "https://github.com/o/b" })];
+  };
+  const urls = () => byClass(main(), "mono").map((e) => e.textContent);
+  const setHash = (hash: string) => {
+    (globalThis as any).location = { hash };
+  };
+  const settings = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Settings");
+  const escape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
+
+  it("shows the matching records of all owners and the chip", async () => {
+    setup();
+    setHash("#/all-repos?repo=o%2Fa");
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    expect(urls().sort()).toEqual(["git@github.com:O/A.git", "https://github.com/o/a"]);
+    expect(main().textContent).toContain("Repository: o/a");
+  });
+
+  it("matches ssh:// and repeated .git addresses", async () => {
+    repos = [rec({ url: "ssh://git@github.com/o/a.git.git" }), rec({ url: "https://github.com/o/b" })];
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    expect(urls()).toEqual(["ssh://git@github.com/o/a.git.git"]);
+  });
+
+  it("draws the same page without a filter", async () => {
+    setup();
+    await show();
+    expect(byClass(main(), "filter-bar")).toHaveLength(0);
+    expect(urls()).toHaveLength(3);
+  });
+
+  it("says the repository is not in the list, also for an empty list, and clears without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await ui.renderAllRepos(main(), { query: { repo: "x/y" }, go });
+    expect(main().textContent).toContain("This repository is not in your list. It may have been removed, or you may not have access.");
+    expect(main().all("table")).toHaveLength(0);
+    press(button(main(), "Clear filters")); // the bar's button comes first
+    expect(go).toHaveBeenCalledWith("#/all-repos");
+    expect(urls()).toHaveLength(3);
+    expect(byClass(main(), "filter-bar")).toHaveLength(0);
+    repos = [];
+    await ui.renderAllRepos(main(), { query: { repo: "x/y" }, go });
+    expect(main().textContent).toContain("This repository is not in your list.");
+  });
+
+  it("removes the filter with the chip's ×, without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go });
+    const before = (globalThis as any).fetch;
+    let gets = 0;
+    (globalThis as any).fetch = (...a: any[]) => (gets++, before(...a));
+    press(button(main(), "×"));
+    expect(go).toHaveBeenCalledWith("#/all-repos");
+    expect(urls()).toHaveLength(3);
+    expect(gets).toBe(0);
+  });
+
+  it("keeps the filter on reload", async () => {
+    setup();
+    setHash("#/all-repos?repo=o%2Fa");
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    press(settings());
+    escape();
+    await flush();
+    await flush();
+    expect(urls()).toHaveLength(2);
+    expect(main().textContent).toContain("Repository: o/a");
+  });
+
+  it("a filter removed while a reload runs stays removed", async () => {
+    setup();
+    setHash("#/all-repos?repo=o%2Fa");
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    press(settings());
+    const gate: (() => void)[] = [];
+    heldGets.push(gate);
+    escape();
+    await flush();
+    await flush();
+    press(button(main(), "×")); // the old page is still drawn while the reload waits
+    expect(urls()).toHaveLength(3);
+    gate.forEach((r) => r());
+    await flush();
+    await flush();
+    expect(urls()).toHaveLength(3);
+    expect(byClass(main(), "filter-bar")).toHaveLength(0);
+  });
+
+  it("accepts an address with a query and still drops a late answer", async () => {
+    setup();
+    setHash("#/all-repos?repo=o%2Fa");
+    main().textContent = "old";
+    await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    expect(main().textContent).not.toBe("old");
+    const gate: (() => void)[] = [];
+    heldGets.push(gate);
+    const loading = ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
+    await flush();
+    setHash("#/runs?repo=o%2Fa");
+    main().textContent = "Runs page";
+    gate.forEach((r) => r());
+    await loading;
+    expect(main().textContent).toBe("Runs page");
   });
 });
 

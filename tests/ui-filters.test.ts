@@ -114,14 +114,68 @@ describe("filterBar and filterEmpty", () => {
   });
 });
 
+describe("githubOf, matchesRepo, filterGone", () => {
+  it("reads owner/name from every stored GitHub form", () => {
+    for (const url of ["https://github.com/o/n", "https://github.com/o/n.git", "git@github.com:o/n", "git@github.com:o/n.git", "ssh://git@github.com/o/n.git", "https://github.com/o/n/", "https://github.com/o/n.git.git"]) {
+      expect(f.githubOf(url), url).toBe("o/n");
+    }
+    expect(f.githubOf("https://github.com/O/N/")).toBe("O/N");
+  });
+
+  it("keeps a repository that is named .git", () => {
+    expect(f.githubOf("https://github.com/o/.git")).toBe("o/.git");
+    expect(f.githubOf("git@github.com:o/.git.git")).toBe("o/.git");
+    expect(f.matchesRepo({ url: "https://github.com/o/.git" }, "o/.git")).toBe(true);
+  });
+
+  it("gives an empty text for anything else", () => {
+    for (const url of ["https://gitlab.com/o/n", "https://github.com/o", "https://github.com/o/n/x", "https://evil.com/github.com/o/n", "", undefined, 5]) {
+      expect(f.githubOf(url), String(url)).toBe("");
+    }
+  });
+
+  it("matchesRepo prefers github, falls back to the address and ignores case", () => {
+    expect(f.matchesRepo({ github: "o/a", url: "https://github.com/o/b" }, "O/A")).toBe(true);
+    expect(f.matchesRepo({ github: "o/a", url: "https://github.com/o/b" }, "o/b")).toBe(false);
+    expect(f.matchesRepo({ url: "git@github.com:O/A.git" }, "o/a")).toBe(true);
+    expect(f.matchesRepo({}, "o/a")).toBe(false);
+    expect(f.matchesRepo({ url: "https://github.com/o/a" }, "")).toBe(false);
+  });
+
+  it("filterGone has a fixed text and clears", () => {
+    const onClear = vi.fn();
+    const el = f.filterGone({ onClear }) as FakeElement;
+    expect(el.textContent).toContain(f.NOT_IN_LIST);
+    expect(f.NOT_IN_LIST).toBe("This repository is not in your list. It may have been removed, or you may not have access.");
+    click(button(el, "Clear filters"));
+    expect(onClear).toHaveBeenCalledOnce();
+  });
+});
+
 describe("the routers", () => {
   it("every page that checks the address compares the path without the query", async () => {
     const { readFileSync } = await import("node:fs");
-    for (const file of ["refinement", "repos", "admin-repos", "admin-credentials", "users", "audit"]) {
+    for (const file of ["admin-credentials", "users", "audit"]) {
       const src = readFileSync(`ui/${file}.js`, "utf8");
       expect(src, file).toMatch(/location\.hash( \?\? "")?\)?\.split\("\?"\)\[0\]\.split\("\/"\)\[1\]/);
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\("\/"\)/);
     }
+    for (const file of ["refinement", "repos", "admin-repos"]) {
+      const src = readFileSync(`ui/${file}.js`, "utf8");
+      expect(src, file).toContain("splitHash(location.hash");
+      expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\(/);
+    }
+  });
+
+  it("the routers pass the query to the repository pages", async () => {
+    const { readFileSync } = await import("node:fs");
+    const app = readFileSync("ui/app.js", "utf8");
+    expect(app).toContain("renderAllRepos(main, { query: to.query, go })");
+    expect(app).toContain("renderRefinement(main, { admin: true, id: arg, query: to.query, go })");
+    expect(app).toContain("renderRepos(main, { admin: true, query: to.query, go })");
+    const user = readFileSync("ui/user/app.js", "utf8");
+    expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query })");
+    expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query })");
   });
 
   it("the admin router passes the query and a way to write the address", async () => {

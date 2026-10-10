@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -131,6 +131,167 @@ describe("pure functions", () => {
     expect(ui.errorText(new TypeError("x"))).toBe("Could not reach the server.");
     expect(ui.errorText(new Error("sentence"))).toBe("sentence");
     expect(ui.errorText({})).toBe("Something went wrong.");
+  });
+});
+
+describe("the repository filter", () => {
+  const titles = () => walk(main()).filter((e) => e.tag === "a" && (e.attrs.href ?? "").startsWith("#/refinement/s")).map((e) => e.textContent);
+  const bars = () => walk(main()).filter((e) => (e.attrs.class ?? "").split(" ").includes("filter-bar"));
+  const setup = () => {
+    repos = ["acme/app", "acme/other"];
+    sessions = [
+      session({ id: "s1", title: "App open", repo: "acme/app" }),
+      session({ id: "s2", title: "Other open", repo: "acme/other" }),
+      dropped({ id: "s3", title: "App dropped", repo: "acme/app" }),
+      dropped({ id: "s4", title: "Other dropped", repo: "acme/other" }),
+    ];
+  };
+  const show = async (repo: string, go: (h: string) => void = () => {}) => {
+    (globalThis as any).location = { hash: `#/refinement?repo=${encodeURIComponent(repo)}` };
+    await ui.renderRefinement(main(), { query: { repo }, go });
+  };
+  const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
+
+  it("lists only that repository, open and dropped, and keeps the filter on reload", async () => {
+    setup();
+    await show("acme/app");
+    expect(titles()).toEqual(["App open"]);
+    expect(main().textContent).toContain("Repository: acme/app");
+    gets = [];
+    press(button(main(), "Dropped")); // reloads
+    await flush();
+    expect(gets).toEqual(["/api/refinement"]);
+    expect(titles()).toEqual(["App dropped"]);
+    expect(bars()).toHaveLength(1);
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("draws the same page without a filter", async () => {
+    setup();
+    await showList();
+    expect(bars()).toHaveLength(0);
+    expect(titles()).toEqual(["App open", "Other open"]);
+  });
+
+  it("names the filter when the repository is known but the view is empty", async () => {
+    repos = ["acme/app"];
+    sessions = [];
+    await show("acme/app");
+    expect(main().textContent).toContain("No refinement sessions match Repository: acme/app.");
+    press(button(main(), "Dropped"));
+    await flush();
+    expect(main().textContent).toContain("No dropped sessions match Repository: acme/app.");
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("says the repository is not in the list, and clears without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await show("gone/repo", go);
+    expect(main().textContent).toContain(NOT_IN_LIST);
+    expect(titles()).toEqual([]);
+    gets = [];
+    press(button(main(), "Clear filters"));
+    expect(go).toHaveBeenCalledWith("#/refinement");
+    expect(titles()).toEqual(["App open", "Other open"]);
+    expect(bars()).toHaveLength(0);
+    expect(gets).toEqual([]);
+  });
+
+  it("removes the filter with the chip's ×", async () => {
+    setup();
+    const go = vi.fn();
+    await show("acme/app", go);
+    gets = [];
+    press(button(main(), "×"));
+    expect(go).toHaveBeenCalledWith("#/refinement");
+    expect(titles()).toEqual(["App open", "Other open"]);
+    expect(gets).toEqual([]);
+  });
+
+  it("lists a repository an admin does not own when a session has it", async () => {
+    setup();
+    repos = ["acme/mine"];
+    await show("acme/other");
+    expect(titles()).toEqual(["Other open"]);
+    expect(main().textContent).not.toContain(NOT_IN_LIST);
+  });
+
+  it("a filter removed while a reload runs stays removed", async () => {
+    setup();
+    await show("acme/app");
+    const gate = (() => {
+      const g: { release?: () => void; wait: Promise<void> } = { wait: Promise.resolve() };
+      g.wait = new Promise<void>((r) => (g.release = r));
+      return g;
+    })();
+    const base = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      await gate.wait;
+      return base(url, init);
+    };
+    press(button(main(), "Dropped")); // reload starts and waits
+    await flush();
+    press(button(main(), "×"));
+    gate.release!();
+    await flush();
+    await flush();
+    expect(bars()).toHaveLength(0);
+    expect(titles()).toEqual(["App dropped", "Other dropped"]);
+    expect(main().textContent).not.toContain("Repository:");
+    (globalThis as any).fetch = base;
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
+
+  it("preselects the repository in the new session dialog", async () => {
+    setup();
+    await show("Acme/Other");
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/other");
+  });
+
+  it("starts with the first repository when the filtered one is not in the list, or without a filter", async () => {
+    setup();
+    await show("gone/repo");
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/app");
+    root().replaceChildren();
+    await showList();
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("acme/app");
+  });
+
+  it("does not filter a session page", async () => {
+    setup();
+    (globalThis as any).location = { hash: "#/refinement/s2?repo=acme%2Fapp" };
+    await ui.renderRefinement(main(), { id: "s2", query: { repo: "acme/app" } });
+    expect(main().textContent).toContain("Other open");
+    expect(bars()).toHaveLength(0);
+  });
+
+  it("accepts an address with a query and drops a late answer after leaving", async () => {
+    setup();
+    main().textContent = "old";
+    await show("acme/app");
+    expect(main().textContent).not.toBe("old");
+    const base = (globalThis as any).fetch;
+    let release!: () => void;
+    const wait = new Promise<void>((r) => (release = r));
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      await wait;
+      return base(url, init);
+    };
+    const loading = ui.renderRefinement(main(), { query: { repo: "acme/app" }, go: () => {} });
+    await flush();
+    (globalThis as any).location = { hash: "#/runs?repo=acme%2Fapp" };
+    main().textContent = "Runs page";
+    release();
+    await loading;
+    expect(main().textContent).toBe("Runs page");
+    (globalThis as any).fetch = base;
   });
 });
 

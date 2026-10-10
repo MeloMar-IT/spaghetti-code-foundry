@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
 
 /**
@@ -303,18 +304,20 @@ let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "repos";
+    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === "repos";
   } catch {
     return false;
   }
 };
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice, readOnly = false } = {}) {
+export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo, view } = {}) {
   const mine = ++generation;
+  // one state for the page and its reloads, so a filter removed while a reload runs stays removed
+  view ??= { filters: query.repo ? { repo: query.repo } : {} };
   const [repos, options] = await Promise.all([api.repos(), api.repoMethods().catch(() => undefined)]);
   if (mine !== generation || !onPage()) return () => {};
-  const reload = (next) => renderRepos(main, { admin, notice: next, readOnly }).catch((e) => toast(plainError(e), "error"));
+  const reload = (next) => renderRepos(main, { admin, notice: next, readOnly, query: view.filters, go, view }).catch((e) => toast(plainError(e), "error"));
   const remove = async (id, again = false) => {
     try {
       await api.removeRepo(id);
@@ -392,21 +395,33 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         if (!confirm(`Remove ${repo.url}? ${repo.method === "ssh-deploy-key" ? "Its stored key is deleted too." : repo.method === "github-app" ? "The app stays installed on GitHub." : "Its stored token is deleted too."}`)) return;
         return whileBusy(btn, () => remove(repo.id));
       } }, "Remove")));
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
-      h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
-      h("span", { class: "spacer" }), readOnly ? null : h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
-    notice ? h("p", { class: "status bad", role: "alert" }, notice.text,
-      notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
-        const btn = e.currentTarget;
-        return whileBusy(btn, () => remove(notice.retryId, true));
-      } }, "Try again")] : null) : null,
-    repos.length
-      ? h("div", { class: "table-box" }, h("table", { class: "table" },
-        h("caption", { class: "sr-only" }, "My repositories"),
-        h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-        h("tbody", {}, repos.map(row))))
-      : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", readOnly ? null : h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
+  const setFilters = (next) => {
+    view.filters = next;
+    go(withQuery("#/repos", next));
+    draw();
+  };
+  const clear = () => setFilters({});
+  const draw = () => {
+    const shown = view.filters.repo ? repos.filter((r) => matchesRepo(r, view.filters.repo)) : repos;
+    mount(main,
+      h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
+        h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
+        h("span", { class: "spacer" }), readOnly ? null : h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository")),
+      filterBar(view.filters, { onRemove: clear, onClear: clear }),
+      notice ? h("p", { class: "status bad", role: "alert" }, notice.text,
+        notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
+          const btn = e.currentTarget;
+          return whileBusy(btn, () => remove(notice.retryId, true));
+        } }, "Try again")] : null) : null,
+      shown.length
+        ? h("div", { class: "table-box" }, h("table", { class: "table" },
+          h("caption", { class: "sr-only" }, "My repositories"),
+          h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
+          h("tbody", {}, shown.map(row))))
+        : view.filters.repo ? filterGone({ onClear: clear })
+          : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", readOnly ? null : h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
+  };
+  draw();
   return () => {
     generation++;
   };

@@ -753,6 +753,122 @@ describe("late answers", () => {
   });
 });
 
+describe("the repository filter", () => {
+  const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
+  const urls = () => byClass(main(), "mono").map((e) => e.textContent);
+  const bars = () => byClass(main(), "filter-bar");
+  const setHash = (hash: string) => {
+    (globalThis as any).location = { hash };
+  };
+  const setup = () => {
+    repos = [rec({ url: "https://github.com/o/a", github: "o/a" }), rec({ url: "https://github.com/o/b", github: "o/b" })];
+  };
+  const showFiltered = (repo: string, go: (h: string) => void = () => {}) => ui.renderRepos(main(), { admin: false, query: { repo }, go });
+
+  it("shows only the matching record and the chip", async () => {
+    setup();
+    setHash("#/repos?repo=O%2FA");
+    await showFiltered("O/A");
+    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(main().textContent).toContain("Repository: O/A");
+  });
+
+  it("matches a record without github through its address", async () => {
+    repos = [rec({ url: "git@github.com:o/a.git" }), rec({ url: "https://github.com/o/b" })];
+    await showFiltered("o/a");
+    expect(urls()).toEqual(["git@github.com:o/a.git"]);
+  });
+
+  it("draws the same page without a filter", async () => {
+    setup();
+    await show();
+    expect(bars()).toHaveLength(0);
+    expect(urls()).toHaveLength(2);
+    repos = [];
+    await show();
+    expect(main().textContent).toContain("No repositories yet.");
+  });
+
+  it("says the repository is not in the list, keeps Add repository, and clears without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await showFiltered("x/y", go);
+    expect(main().textContent).toContain(NOT_IN_LIST);
+    expect(button(main(), "+ Add repository")).toBeDefined();
+    gets = 0;
+    press(button(main(), "Clear filters"));
+    expect(go).toHaveBeenCalledWith("#/repos");
+    expect(urls()).toHaveLength(2);
+    expect(bars()).toHaveLength(0);
+    expect(gets).toBe(0);
+  });
+
+  it("removes the filter with the chip's ×, without a new request", async () => {
+    setup();
+    const go = vi.fn();
+    await showFiltered("o/a", go);
+    gets = 0;
+    press(button(main(), "×"));
+    expect(go).toHaveBeenCalledWith("#/repos");
+    expect(urls()).toHaveLength(2);
+    expect(gets).toBe(0);
+  });
+
+  it("keeps the filter on reload and draws the notice with the bar", async () => {
+    setup();
+    setHash("#/repos?repo=o%2Fa");
+    await showFiltered("o/a");
+    testResult = { ok: true };
+    press(button(main(), "Test connection"));
+    await flush();
+    await flush();
+    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(bars()).toHaveLength(1);
+    answers.push({ status: 500, error: "Could not clean up." });
+    (globalThis as any).confirm = () => true;
+    press(button(main(), "Remove"));
+    await flush();
+    await flush();
+    expect(main().textContent).toContain("Could not clean up.");
+    expect(bars()).toHaveLength(1);
+  });
+
+  it("a filter removed while a reload runs stays removed", async () => {
+    setup();
+    setHash("#/repos?repo=o%2Fa");
+    await showFiltered("o/a");
+    testResult = { ok: true };
+    const gate: (() => void)[] = [];
+    press(button(main(), "Test connection"));
+    heldGets.push(gate);
+    await flush();
+    await flush();
+    press(button(main(), "×"));
+    gate.forEach((r) => r());
+    await flush();
+    await flush();
+    expect(urls()).toHaveLength(2);
+    expect(bars()).toHaveLength(0);
+  });
+
+  it("accepts an address with a query and drops a late answer", async () => {
+    setup();
+    setHash("#/repos?repo=o%2Fa");
+    main().textContent = "old";
+    await showFiltered("o/a");
+    expect(main().textContent).not.toBe("old");
+    const gate: (() => void)[] = [];
+    heldGets.push(gate);
+    const loading = showFiltered("o/a");
+    await flush();
+    setHash("#/runs?repo=o%2Fa");
+    main().textContent = "Runs page";
+    gate.forEach((r) => r());
+    await loading;
+    expect(main().textContent).toBe("Runs page");
+  });
+});
+
 describe("the SSH deploy key", () => {
   const SSH = "git@github.com:o/a.git";
   const deployRec = (over: object = {}): ReturnType<typeof rec> & { publicKey?: string } => rec({ url: SSH, method: "ssh-deploy-key", publicKey: nextKey(), ...over });
