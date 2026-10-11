@@ -179,11 +179,10 @@ Count of `style:` occurrences per file (one line can hold more than one). Repeat
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 5 in 2 files. Lines that contain one: 5.
+Total 1 in 1 files. Lines that contain one: 1.
 
 | File | Uses |
 |---|---|
-| `ui/refinement-import.js` | 4 |
 | `ui/dashboard.js` | 1 |
 
-Three lines stay inline for good, all in `ui/dashboard.js`: `tip.style.left` and `tip.style.top` (the chart tip position, computed from the bar) and the `rate-fill` width (computed from the data). Only the last is a `style:` use, so the grep counts 1 for `ui/dashboard.js`. The runs, repositories and refinement pages (except `ui/refinement-import.js`) and the editor files are clean.
+Three lines stay inline for good, all in `ui/dashboard.js`: `tip.style.left` and `tip.style.top` (the chart tip position, computed from the bar) and the `rate-fill` width (computed from the data). Only the last is a `style:` use, so the grep counts 1 for `ui/dashboard.js`. The runs, repositories and refinement pages and the editor files are clean.

@@ -4,7 +4,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 
 Four mechanisms draw a dialog:
 
-- **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 18 files.
+- **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 25 sites in 17 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js`, the refinement pages and `adminRunActions`), `confirmDialog` in `ui/user/runs.js` (`:76`; a separate helper of the same name), `decisionDialog` in `ui/run-dialogs.js` (`:12`, re-exported by `ui/user/runs.js`), `withDialog` (`ui/user/runs.js:374`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **A dialog of its own:** the command palette in `ui/palette.js` (combobox and listbox, drawn in `#modal-root` next to any open dialog). The audit test requires a row for every file that builds its own `role="dialog"`.
 - **Native `confirm` and `prompt`:** 0 calls (the second table is empty).
@@ -49,13 +49,12 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/refinement-suggest.js` | Replace text | Accept on a suggestion for a field that has text | none | Replace | `confirmDialog` (`ui/dom.js`) |
 | `ui/refinement-talk.js` | Remove entry | Remove on a map entry | none | Remove | `confirmDialog` (`ui/dom.js`) |
 | `ui/refinement.js` | Drop this session | Drop on the session page | none | Drop | `confirmDialog` (`ui/dom.js`) |
-| `ui/refinement-import.js` | Refine an existing issue | Refine an existing issue on `#/refinement` | repository, issue number; with no repository it shows a link to `#/repos` | Refine issue | `modal` |
 | `ui/refinement-publish.js` | Publish to GitHub | Publish on the session page | per ready draft: labels, "Start building this story" | Create the issues | `modal` |
 | `ui/refinement-ready.js` | Accept anyway | Button on a failed ready check | reason (required) | Accept | `modal` |
 | `ui/refinement-suggest.js` | Edit and accept | Button on a suggestion | edited text | Accept | `modal` |
 | `ui/refinement-suggest.js` | Reject suggestion | Button on a suggestion | reason (optional) | Reject | `modal` |
 | `ui/refinement-talk.js` | Edit entry | Edit on a map entry | text | Save | `modal` |
-| `ui/refinement.js` | New refinement session | New session on `#/refinement` | repository, title (optional), idea; with no repository it shows a link to `#/repos` | Start session | `modal` |
+| `ui/refinement-new.js` | New refinement session | New session and Refine an existing issue on `#/refinement`; Refine an idea first and Refine an existing issue on `#/start` | repository, kind (an idea or an existing issue), then title (optional) and idea, or issue number; with no repository it shows a link to `#/repos` | Start session | `modal` |
 | `ui/refinement.js` | Rename session | Rename on the session page | title | Save | `modal` |
 | `ui/repos.js` | Add repository | Add repository on `#/repos` | address; method list from `methodsFor` (varies with admin and GitHub App); fields change with the method | Add | `modal` (`repoDialog`) |
 | `ui/repos.js` | Change authentication | Change button on a row | method; fields change with the method | Save | `modal` (`repoDialog` with `repo`) |
