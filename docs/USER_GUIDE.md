@@ -2556,7 +2556,7 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
 - **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
 - **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). The planner picks from the [skill catalogue](#skill-catalogue); the run checks the ids, locks them and loads them for the coder. A plan that picks nothing gives an empty request.
-- **`issue-code-daily`** does not get a request: it would have to trust a comment.
+- **`issue-code-daily`** has no plan gate, so it takes the request from the plan record, never from a comment; see [Skills from the plan to the coding run](#skills-from-the-plan-to-the-coding-run).
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
 ### Skill selection
@@ -2602,6 +2602,8 @@ When `issue-plan` posts a plan, the Foundry keeps its own record of the skill re
 - **Older plans:** if nothing is stored (plans made before this feature, on another machine, or run with a custom flow), the run codes without carried skills, as before. This includes the skills in `skills.selection.include`.
 - **The record lives on the planning machine.** To carry skills, plan and code on the same Foundry. A record for the same issue number in another repository is never used.
 - **Retention:** old records are cleaned up. A run that needs a cleaned-up record stops as above.
+- **Same skills as `issue-gitflow`.** For the same plan and commit, `issue-plan` + `issue-code-daily` lock the same skills (`id@version`, digests, load order) as one `issue-gitflow` run. A skill that cannot be used stops the coding run under `skills.unresolved`; resume checks again.
+- **On the run page.** The Skills card says in one sentence what the plan check found (record used, none found, cleaned up, comment edited or gone, newer plan, comments unreadable) and whether the run stopped. It never shows ids from the record or comment text.
 
 ### Missing and conflicting skills
 

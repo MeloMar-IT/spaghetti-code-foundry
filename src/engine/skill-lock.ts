@@ -125,8 +125,8 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
         ? `${SKILL_BLOCKED_PREFIX}the skills.selection lists are not valid`
         : `${SKILL_BLOCKED_PREFIX}${bad.id} (${bad.code})`;
     }
-    // An explicit flow was checked at its start under skills.unresolved; what the registry gives now must pass that policy again.
-    if (src.mode === "explicit" && resolution.decisions.some((d) => d.outcome === "rejected")) {
+    // An explicit flow was checked at its start (and a carry at plan_check) under skills.unresolved; what the registry gives now must pass that policy again.
+    if ((src.mode === "explicit" || !!carry) && resolution.decisions.some((d) => d.outcome === "rejected")) {
       const plan = assessSkills(resolution, reg, engine.config.skills.unresolved);
       if (plan.action === "stop") return plan.reason;
     }

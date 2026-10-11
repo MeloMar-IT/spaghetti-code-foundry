@@ -35,6 +35,33 @@ const status = (view) => {
   return null;
 };
 
+export const PLAN_RECORD_NOTES = {
+  none: "No plan record was found for this issue on this Foundry.",
+  "record-purged": "The plan record was cleaned up.",
+  "comment-missing": "The plan comment is gone.",
+  "comment-changed": "The plan comment was edited.",
+  "newer-plan": "A newer plan has no record on this Foundry.",
+  "check-unreadable": "The plan comments could not be read.",
+  invalid: "The plan records of this issue are not valid.",
+  failed: "The plan record could not be checked.",
+  record: "The skills come from the plan record of this issue.",
+};
+const CHANGE_NOTES = new Set(["comments", "code", "technology"]);
+
+/** One plain sentence for what the plan check of a coding run found; null for an unknown outcome. */
+export function planRecordNote(view) {
+  const rec = view?.planRecord;
+  const base = typeof rec?.outcome === "string" && Object.hasOwn(PLAN_RECORD_NOTES, rec.outcome) ? PLAN_RECORD_NOTES[rec.outcome] : null;
+  if (!base) return null;
+  if (rec.outcome === "record") {
+    const changes = Array.isArray(rec.changes) ? rec.changes.filter((c) => CHANGE_NOTES.has(c)) : [];
+    return changes.length ? `${base} Changed since the plan: ${changes.join(", ")}.` : base;
+  }
+  if (rec.outcome === "none") return `${base} The run codes without the plan's skills.`;
+  if (rec.outcome === "check-unreadable" && rec.stopped) return `${base} The run could not code. Make sure the comments can be read, then resume to check again.`;
+  return `${base} ${rec.stopped ? "Plan the issue again, then resume." : "The run goes on without the plan's skills."}`;
+}
+
 function requestedItem(r, repo) {
   const by = r.by === "administrator" ? "always included by the administrator" : "asked for by the plan";
   return h("li", {},
@@ -75,11 +102,13 @@ export function skillsCard(view, { admin = false, repo = "" } = {}) {
   const requested = Array.isArray(view.requested) ? view.requested : [];
   const resolved = Array.isArray(view.resolved) ? view.resolved : [];
   const note = status(view);
+  const recordNote = planRecordNote(view);
   const checked = typeof view.checkedAt === "string" ? `Integrity checked ${view.checkedAt}.` : null;
   const heads = ["Skill", "Category", "Why", "Context estimate", "Integrity", "In the session", ...(admin ? ["Source", "Digest"] : [])];
   return h("section", { class: "card mb-16", "aria-label": "Skills" },
     h("h2", {}, "Skills"),
     note ? h("p", { class: "muted" }, note) : null,
+    recordNote ? h("p", { class: "muted" }, recordNote) : null,
     typeof view.estimatedTokens === "number" && resolved.length ? h("p", { class: "muted" }, `About ${view.estimatedTokens} tokens of skill context.`) : null,
     checked ? h("p", { class: "muted" }, checked) : null,
     h("h3", {}, "Requested"),

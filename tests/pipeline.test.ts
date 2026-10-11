@@ -273,6 +273,9 @@ describe("label-driven issue pipeline", () => {
     const ids = run.history.map((h) => h.id);
     expect(ids).toEqual(["pull_ticket", "daily_branch", "plan_check", "baseline_tests", "implement", "guard", "run_tests", "review_1", "address_review_1",
       "run_tests_1", "review_2", "address_review_2", "run_tests_2", "docs", "final_guard", "commit", "push", "report"]);
+    // An issue planned before skills existed: no plan record, so no skills, as before.
+    expect(run.planCheck).toMatchObject({ outcome: "none", stopped: false });
+    expect(run.skillLock).toBeUndefined();
     expect(run.history.find((h) => h.id === "review_1")!.agent).toBe("codex:openai");
     expect(run.history.find((h) => h.id === "implement")!.agent).toBe("claude:anthropic:claude-sonnet-5-5");
     // Review fixes continue the coding session instead of re-reading the code; docs is a fresh, small session.

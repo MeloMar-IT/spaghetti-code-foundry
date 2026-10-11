@@ -62,6 +62,30 @@ describe("ensureSkillLock with a carry", () => {
     expect(t.logs.at(-1)).toMatch(/verified 1 skill$/);
   });
 
+  it("a plan gate and a carry with the same request lock the same skills in the same order", () => {
+    const registry = () => reg(sk("a"), sk("b", { version: "2.0.0", digest: digestOf("c") }));
+    const both: SkillRequest = { version: 1, skills: ["a", "b"].map((id) => ({ id, reason: "Needed", evidence: ["catalogue:" + id] })) };
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const viaGate = setup(gateOutput(["a", "b"]));
+    const viaCarry = setup(undefined, { skillCarry: { ...carry(), request: both } });
+    expect(ensureSkillLock(viaGate.engine, { discover: registry, commitOf, now })).toBeUndefined();
+    expect(ensureSkillLock(viaCarry.engine, { discover: registry, commitOf, now })).toBeUndefined();
+    const g = readRunSkillLock(viaGate.runDir);
+    const c = readRunSkillLock(viaCarry.runDir);
+    if (!g.ok || !c.ok) throw new Error("no lock");
+    expect(g.lock.skills.length).toBe(2);
+    expect(c.lock.skills).toEqual(g.lock.skills);
+    expect(c.lock.estimatedTokens).toBe(g.lock.estimatedTokens);
+    expect(c.lock.commit).toBe(g.lock.commit);
+  });
+
+  it("a carry is stopped by skills.unresolved when a skill is gone before the lock", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    const reason = ensureSkillLock(t.engine, { discover: () => reg(), commitOf });
+    expect(reason).toBeDefined();
+    expect(existsSync(file(t.runDir))).toBe(false);
+  });
+
   it("a plan gate wins over a carry", () => {
     const t = setup(gateOutput(["a"]), { skillCarry: carry() });
     expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
