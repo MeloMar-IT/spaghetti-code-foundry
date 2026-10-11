@@ -437,3 +437,146 @@ describe("owners on the board", () => {
     stop();
   });
 });
+
+describe("column picker", () => {
+  const main = () => new FakeElement("main");
+  const picker = (root: FakeElement) => root.all("select").find((s) => s.attrs["data-focus"] === "column-picker")!;
+  const optionTexts = (root: FakeElement) => picker(root).all("option").map((o) => o.textContent);
+  const pickedCols = (root: FakeElement) => find(root, "div", "board-col").filter((e) => e.attrs.class!.split(" ").includes("picked")).map((e) => e.attrs.class!.split(" ")[1]);
+  const inCol = (id: string, issue: number, owner?: string) =>
+    card({ key: `acme/app#${issue}`, issue, title: `T${issue}`, column: id, after: [], chain: [], ...(owner ? { owner } : {}) });
+  const cols = (cards: any[]) => COLS.map((id, i) => ({ id, title: TITLES[i], cards: cards.filter((c) => c.column === id) }));
+
+  it("pickColumn picks the wanted column, else the first with cards, else the first", () => {
+    expect(ui.pickColumn(cols([inCol("coding", 1)]), undefined)).toBe("coding");
+    expect(ui.pickColumn(cols([]), undefined)).toBe("your_turn");
+    expect(ui.pickColumn([], undefined)).toBeUndefined();
+    expect(ui.pickColumn(cols([inCol("coding", 1)]), "done")).toBe("done");
+    expect(ui.pickColumn(cols([inCol("coding", 1)]), "nope")).toBe("coding");
+    expect(ui.pickColumn(cols([inCol("queued", 1, "u2"), inCol("coding", 2, "u1")]), undefined, "u1")).toBe("coding");
+  });
+
+  it("shows the first column with cards by default", () => {
+    const root = view(board());
+    expect(pickedCols(root)).toEqual(["waiting"]);
+    const o = picker(root).all("option").find((x) => "selected" in x.attrs)!;
+    expect(o.textContent).toBe("Waiting for another story (1)");
+  });
+
+  it("lists every column with its card count, following the owner filter", () => {
+    expect(optionTexts(view(board()))).toEqual(TITLES.map((t) => `${t} (${t === "Waiting for another story" ? 1 : 0})`));
+    const d = board([inCol("coding", 1, "u1"), inCol("coding", 2, "u2")]);
+    const root = view(d, undefined, { ...handlers(), owner: "u1" } as any);
+    expect(optionTexts(root)).toEqual(TITLES.map((t) => `${t} (${t === "Coding" ? 1 : 0})`));
+    expect(root.all("h3").map((e) => e.textContent.replace(/^.* /, ""))).toEqual(TITLES.map((t) => (t === "Coding" ? "1" : "0")));
+  });
+
+  it("is labelled", () => {
+    const root = view(board());
+    const sel = picker(root);
+    expect(sel.attrs["aria-label"]).toBe("Show one column");
+    expect(sel.attrs["data-focus"]).toBe("column-picker");
+    const label = find(root, "label", "board-pick")[0]!;
+    expect(label.textContent).toContain("Column");
+    expect(label.all("select")).toHaveLength(1);
+  });
+
+  it("calls onColumn on change, and shows the chosen column", () => {
+    const onColumn = vi.fn();
+    const root = view(board(), undefined, { ...handlers(), onColumn } as any);
+    picker(root).listeners.change![0]!({ target: { value: "done" } });
+    expect(onColumn).toHaveBeenCalledWith("done");
+    expect(pickedCols(view(board(), undefined, { ...handlers(), column: "done" } as any))).toEqual(["done"]);
+  });
+
+  it("marks the columns of a highlighted chain", () => {
+    const h = handlers();
+    h.highlight = 89;
+    const root = view(board([card({ chain: [88] }), inCol("coding", 88), inCol("queued", 90)]), undefined, h);
+    expect(optionTexts(root).filter((t) => t.endsWith(" — in the chain"))).toEqual(["Waiting for another story (1) — in the chain", "Coding (1) — in the chain"]);
+    expect(optionTexts(view(board())).some((t) => t.includes("in the chain"))).toBe(false);
+  });
+
+  it("has no picker without a repository or when the owner matches nothing", () => {
+    expect(picker(view({ repos: [], empty: "x" }))).toBeUndefined();
+    expect(picker(view(board([inCol("coding", 1, "u1")]), undefined, { ...handlers(), owner: "u9" } as any))).toBeUndefined();
+  });
+
+  it("renderBoard keeps the choice on refresh without a request", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board());
+    await flush();
+    picker(m).listeners.change![0]!({ target: { value: "done" } });
+    expect(calls).toHaveLength(0);
+    expect(pickedCols(m)).toEqual(["done"]);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([card({ title: "Changed" })]));
+    await flush();
+    expect(m.textContent).toContain("Changed");
+    expect(pickedCols(m)).toEqual(["done"]);
+    cleanup();
+  });
+
+  it("renderBoard falls back to the first column with cards when the choice is gone", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board());
+    await flush();
+    picker(m).listeners.change![0]!({ target: { value: "done" } });
+    await vi.advanceTimersByTimeAsync(5000);
+    const d = board([inCol("coding", 5)]);
+    d.repos[0]!.columns = d.repos[0]!.columns.filter((c) => c.id !== "done");
+    calls.shift()!.answer(d);
+    await flush();
+    expect(pickedCols(m)).toEqual(["coding"]);
+    cleanup();
+  });
+
+  it("renderBoard keeps the default column when an earlier column gains a card", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board([inCol("coding", 5)]));
+    await flush();
+    expect(pickedCols(m)).toEqual(["coding"]);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([inCol("coding", 5), inCol("waiting", 6)]));
+    await flush();
+    expect(pickedCols(m)).toEqual(["coding"]);
+    cleanup();
+  });
+
+  it("renderBoard keeps the fallback column and does not bring the old choice back", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board([inCol("coding", 5)]));
+    await flush();
+    picker(m).listeners.change![0]!({ target: { value: "done" } });
+    await vi.advanceTimersByTimeAsync(5000);
+    const without = board([inCol("coding", 5)]);
+    without.repos[0]!.columns = without.repos[0]!.columns.filter((c) => c.id !== "done");
+    calls.shift()!.answer(without);
+    await flush();
+    expect(pickedCols(m)).toEqual(["coding"]);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([inCol("coding", 5), inCol("waiting", 6), inCol("done", 7)]));
+    await flush();
+    expect(pickedCols(m)).toEqual(["coding"]);
+    cleanup();
+  });
+
+  it("renderBoard keeps the chosen column while a chain is highlighted and cleared", async () => {
+    const m = main();
+    const cleanup = ui.renderBoard(m, undefined);
+    calls.shift()!.answer(board());
+    await flush();
+    picker(m).listeners.change![0]!({ target: { value: "done" } });
+    m.all("button").find((b) => b.textContent === "What is in the way of #89?")!.listeners.click![0]!();
+    expect(m.textContent).toContain("In the way of #89:");
+    expect(pickedCols(m)).toEqual(["done"]);
+    m.all("button").find((b) => b.textContent === "Show all")!.listeners.click![0]!();
+    expect(m.textContent).not.toContain("In the way of");
+    expect(pickedCols(m)).toEqual(["done"]);
+    cleanup();
+  });
+});

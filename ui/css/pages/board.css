@@ -1,5 +1,5 @@
 /* pages/board.css — the board and its cards.
-   Belongs here: board columns and board cards.
+   Belongs here: board columns and board cards, and the column picker of narrow screens.
    Does not belong here: card variants (components.css). */
 
 .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }
@@ -14,3 +14,11 @@
 .board-step { font-weight: 550; }
 .board-deps { font-size: var(--text-meta); }
 .board-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.board-pick { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: var(--text-small); }
+.board-pick select { width: auto; flex: 1 1 auto; }
+@media (min-width: 768px) {
+  .board-pick { display: none; }
+}
+@media (max-width: 767px) {
+  .board-col:not(.picked) { display: none; }
+}
