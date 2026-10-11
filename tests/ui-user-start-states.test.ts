@@ -4,9 +4,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let draft: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/user/start.js" as string);
+  draft = await import("../ui/user/start-draft.js" as string);
 });
 afterAll(() => restore());
 
@@ -27,6 +29,12 @@ const submitBtn = (root: FakeElement) => one(root, "button", { type: "submit" })
 const submit = async (root: FakeElement) => {
   one(root, "form").fire("submit", { preventDefault() {} });
   await flush();
+  // "Review" opens the review; "Start" there sends
+  const start = find(root, "button", { "data-focus": "start-run" })[0];
+  if (start) {
+    start.fire("click");
+    await flush();
+  }
 };
 const radios = (root: FakeElement) => find(root, "input", { name: "flow" });
 const failBoxes = (root: FakeElement) => find(root, "div", { role: "alert" });
@@ -77,6 +85,7 @@ async function open(opts: object = {}, wait = true) {
 }
 
 beforeEach(() => {
+  draft.clearDraft();
   go = vi.fn();
   data = { flows: [], repos: [] };
   calls = { flows: 0, repos: 0, start: [] };

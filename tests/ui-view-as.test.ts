@@ -273,7 +273,7 @@ describe("renderers with readOnly", () => {
     // control
     const again = div();
     await start.renderStart(again, { a });
-    expect(texts(again)).toEqual(["Add repository", "Start"]);
+    expect(texts(again)).toEqual(["Add repository", "Review", "Clear"]);
   });
 
   it("My runs: no Remove for a queued run", async () => {

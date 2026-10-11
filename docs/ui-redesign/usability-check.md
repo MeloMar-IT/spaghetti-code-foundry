@@ -8,7 +8,7 @@ Goal: the redesigned UI is not harder to use than the old one, for the five task
 
 Two tasks are not green yet. Both are `test.fixme`, and each is an open gate for the default rollout:
 
-- **Task 1, Start work:** 2 / 3 / 1 against a baseline of 1 / 2 / 1. One more step and one more click. Follow-up issue: "UI quality 4c follow-up — Start work takes one more step and click than the baseline".
+- **Task 1, Start work:** 2 / 4 / 1 against a baseline of 1 / 2 / 1. One more step and two more clicks (the Review step adds one click). Follow-up issue: "UI quality 4c follow-up — Start work takes one more step and click than the baseline".
 - **Task 2, Approve a waiting run:** not measured. "Show request" is only offered for a run that a watcher started for a GitHub issue; the harness runs without watchers. It needs a watcher-backed fixture.
 
 The redesign counts below are what the test is written to measure. They were taken from reading the UI code and are not yet confirmed by a browser run. Check them against the first `npm run test:ui` run.
@@ -45,7 +45,7 @@ Effort is navigation steps / clicks / typed fields. The effort columns come from
 
 | Task | Baseline: done | Baseline: seconds | Baseline: errors | Baseline: confidence | Baseline: effort | Redesign: done | Redesign: seconds | Redesign: errors | Redesign: confidence | Redesign: clarity | Redesign: effort |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 Start work | | | | | 1 / 2 / 1 | | | | | | 2 / 3 / 1 (above, `test.fixme`) |
+| 1 Start work | | | | | 1 / 2 / 1 | | | | | | 2 / 4 / 1 (above, `test.fixme`) |
 | 2 Approve a waiting run | | | | | 1 / 2 / 0 | | | | | | 1 / 2 / 0 (not measured, `test.fixme`) |
 | 3 Diagnose a failed run | | | | | 2 / 3 / 0 | | | | | | 2 / 3 / 0 |
 | 4 Add a repository | | | | | 2 / 5 / 2 | | | | | | 2 / 4 / 2 |
