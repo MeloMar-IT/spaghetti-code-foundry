@@ -649,7 +649,7 @@ On a small screen some pages show their content but not the controls that change
 | Credentials, Audit, Dashboard | read-only (the note only; they have nothing to change) | full |
 | Overview, Watchers, one watcher | read-only | full |
 | All repositories, Models, Problems, Maintenance | full for now | full |
-| Flows and the flow editor | full for now | full for now |
+| Flows and the flow editor | view and run (below 1024 px) | full from 1024 px |
 | Every other page, the Library included | full | full |
 
 On a read-only page:
@@ -661,6 +661,7 @@ On a read-only page:
 - **One watcher:** the settings text stays; there is no Check now, Edit, Enable/Disable or Delete.
 - **The monitor's page:** the findings table stays; there is no "Switch bug stories…" button, no "Mute a detector" row, no Actions column and no "End mute".
 - **Overview:** a problem that was closed elsewhere shows no "Cancel run" button. The health panel in the header and the Problems page are unchanged.
+- **Flows (below 1024 px):** the note says "Editing a flow needs a wider screen (1024 px or more)." You can open a flow, read it in Visual or YAML mode and start a **Test run**. There is no Save, no More menu, no add-step bar and no "Draft flow" or "Blank flow"; fields can be selected and scrolled but not changed, and Ctrl/Cmd+S does nothing. `#/new` says it needs a wider screen, unless you have an unsaved draft; then the draft shows read-only. If the window gets narrower, an unsaved flow keeps its edits (the note says "unsaved changes are kept") and you can save it after widening the window again. The same holds in the other direction.
 
 Resizing the window across 768 px redraws the page only when its level changes. If a dialog is open, it stays and the page is redrawn when you close it. **Unsaved Settings fields are lost when the width crosses 768 px.** The lock is in the page only; the server still accepts changes made from a wider screen or through the API.
 

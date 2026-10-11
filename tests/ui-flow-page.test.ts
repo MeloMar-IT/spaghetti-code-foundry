@@ -135,6 +135,32 @@ describe("renderHeader", () => {
   });
 });
 
+describe("renderHeader and renderNavigator read-only", () => {
+  const draw = (cur: object) => mountAll(shell.renderHeader(state.editorState(cur, []), { mode: "visual", overviewOpen: false, saveScope: "repo", canDelete: true, readOnly: true, onMode: vi.fn(), onRun: vi.fn() }));
+
+  it.each([["dirty", clean({ dirty: true })], ["clean", clean()]])("has no Save and no More, and Test run is primary (%s)", (_n, cur) => {
+    const root = draw(cur);
+    expect(byText(root, "Save")).toBeUndefined();
+    expect(root.all("details")).toHaveLength(0);
+    expect(withClass(root, "button", "primary").map(text)).toEqual(["Test run"]);
+  });
+
+  it("keeps the title, the pill, the switch, Overview and the state line", () => {
+    const root = draw(clean({ dirty: true, validation: { ok: false }, problems: [{}] }));
+    expect(root.all("h1").map(text)).toEqual(["a"]);
+    for (const t of ["Visual", "YAML", "Overview"]) expect(byText(root, t)).toBeDefined();
+    for (const t of ["repo", "Unsaved changes", "1 problem", "Saves to this repo"]) expect(text(root)).toContain(t);
+  });
+
+  it("has no start buttons in the list, but the search, the links and the unsaved row", () => {
+    const flows = [{ name: "alpha", scope: "repo" }];
+    const root = mountAll(shell.renderNavigator({ flows, current: { name: null, obj: { name: "n" } }, query: "", readOnly: true }));
+    expect(buttons(root)).toHaveLength(0);
+    expect(root.all("input")[0]!.getAttribute("aria-label")).toBe("Search flows");
+    expect(root.all("a").map((a) => a.getAttribute("href"))).toEqual(["#/new", "#/flows/alpha"]);
+  });
+});
+
 describe("filterFlows and renderNavigator", () => {
   const flows = [
     { name: "alpha", description: "Builds things", scope: "repo", published: true },
@@ -278,12 +304,12 @@ describe("the flow page controller", () => {
     deleteFlow: vi.fn(async () => ({})),
     ...over,
   });
-  async function open(opts: { storage?: any; narrow?: boolean; api?: any; cur?: any } = {}) {
+  async function open(opts: { storage?: any; narrow?: boolean; api?: any; cur?: any; ro?: () => boolean } = {}) {
     const createFlowPage = await load();
     const s: any = { info: { repo: "r" }, flows: [{ name: "a", scope: "repo" }], flowsLoaded: true, cur: opts.cur ?? null };
     const onNavigate = vi.fn();
     const api = opts.api ?? apiFor();
-    const page = createFlowPage({ main: mainEl, sidebar: sideEl, state: s, api, onNavigate, storage: opts.storage, isNarrow: () => !!opts.narrow });
+    const page = createFlowPage({ main: mainEl, sidebar: sideEl, state: s, api, onNavigate, storage: opts.storage, isNarrow: () => !!opts.narrow, isReadOnly: opts.ro });
     await page.openFlow("a");
     await tick();
     return { page, s, onNavigate, api };
@@ -303,6 +329,69 @@ describe("the flow page controller", () => {
     g.document.querySelectorAll = () => [];
     (FakeElement.prototype as any).scrollIntoView = vi.fn();
     g.document.activeElement = null;
+  });
+
+  describe("read-only", () => {
+    const area = () => mainEl.all("textarea")[0]!;
+
+    it("draws the editor read-only, the list without create buttons, and sends nothing", async () => {
+      const { page, onNavigate, api } = await open({ ro: () => true });
+      expect(editorOpts.readOnly).toBe(true);
+      expect(buttons(sideEl).map(text)).toEqual([]);
+      expect(byText(mainEl, "Save")).toBeUndefined();
+      expect(byText(mainEl, "Test run")).toBeDefined();
+      const checks = api.validate.mock.calls.length;
+      await page.save();
+      await page.newBlank();
+      await page.generateDialog(false);
+      await page.generateDialog(true);
+      expect(api.validate.mock.calls.length).toBe(checks);
+      expect(api.saveFlow).not.toHaveBeenCalled();
+      expect(onNavigate).not.toHaveBeenCalled();
+      expect(g.document.getElementById("modal-root")?.children?.length ?? 0).toBe(0);
+    });
+
+    it("makes the YAML read-only and leaves Tab alone", async () => {
+      await open({ ro: () => true });
+      byText(mainEl, "YAML")!.click();
+      expect(area().getAttribute("readonly")).not.toBeNull();
+      expect(area().listeners.keydown?.length ?? 0).toBe(0);
+      expect(area().listeners.input?.length ?? 0).toBe(0);
+    });
+
+    it("keeps the edits in both directions", async () => {
+      let ro = false;
+      const { page, s, api } = await open({ ro: () => ro });
+      editorOpts.onChange();
+      const edited = s.cur.yaml;
+      s.cur.obj = { ...s.cur.obj, description: "changed" };
+      editorOpts.onChange();
+      const yaml = s.cur.yaml;
+      expect(s.cur.dirty).toBe(true);
+      expect(edited).not.toBe(yaml);
+      ro = true;
+      await page.openFlow("a");
+      expect(api.flow).toHaveBeenCalledTimes(1);
+      expect(s.cur.dirty).toBe(true);
+      expect(s.cur.yaml).toBe(yaml);
+      expect(byText(mainEl, "Save")).toBeUndefined();
+      expect(editorOpts.readOnly).toBe(true);
+      ro = false;
+      await page.openFlow("a");
+      expect(byText(mainEl, "Save")).toBeDefined();
+      expect(s.cur.yaml).toBe(yaml);
+      expect(editorOpts.readOnly).toBe(false);
+    });
+
+    it("inserts no block after the window shrank", async () => {
+      let ro = false;
+      library.pickBlock.mockResolvedValue({ block: { name: "b" } });
+      await open({ ro: () => ro });
+      const pick = editorOpts.onLibrary(0);
+      ro = true;
+      await pick;
+      expect(library.insertBlock).not.toHaveBeenCalled();
+    });
   });
 
   it("opens with the overview closed, draws the state line, and opens it on request", async () => {
@@ -531,6 +620,6 @@ describe("the source", () => {
   it("app.js uses the flow page and no longer holds the editor", () => {
     const src = readFileSync("ui/app.js", "utf8");
     expect(src).not.toContain("renderEditor(");
-    expect(src).toContain("createFlowPage({ main, sidebar, state: S, api, onNavigate");
+    expect(src).toContain("createFlowPage({ main, sidebar, state: S, api, isReadOnly: flowsReadOnly, onNavigate");
   });
 });

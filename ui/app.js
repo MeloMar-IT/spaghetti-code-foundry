@@ -30,7 +30,7 @@ import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
 import { renderAdminHome } from "./home-admin.js";
 import { startBadge, startHash } from "./turn.js";
-import { levelNotice, mediaFor, supportLevel } from "./viewport.js";
+import { BREAKPOINTS, levelNotice, mediaFor, supportLevel } from "./viewport.js";
 
 const sidebar = document.getElementById("sidebar");
 const main = document.getElementById("main");
@@ -38,9 +38,12 @@ const healthEl = document.getElementById("health");
 const levelNote = document.getElementById("level-note");
 
 // Pages not wired to the support level yet: they keep their controls and get no notice.
-const NOT_YET = new Set(["flows", "flow", "new-flow", "all-repos", "models", "model", "problems", "problem", "maintenance"]);
+const NOT_YET = new Set(["all-repos", "models", "model", "problems", "problem", "maintenance"]);
 const levelOf = (id) => (NOT_YET.has(id) ? "full" : supportLevel(id, globalThis.innerWidth));
-let drawn = null; // { id, level } of the page route() drew last
+// The flow pages are view-and-run below 1024 px; asked at the moment of every draw and every change.
+const flowsReadOnly = () => supportLevel("flow", globalThis.innerWidth) === "read-only";
+let drawn = null; // { id, level, dest } of the page route() drew last
+let sideLocked = null; // whether the flow list in the sidebar was drawn without create buttons
 let missed = false; // the width crossed a breakpoint while a dialog was open
 
 /**
@@ -50,12 +53,13 @@ let missed = false; // the width crossed a breakpoint while a dialog was open
 const S = { info: null, flows: [], flowsLoaded: false, cur: null, cleanup: null, lastHash: "", me: "" };
 
 // The flow page changes the address through this: "go" is a navigation, the others only write the address.
-const flowPage = createFlowPage({ main, sidebar, state: S, api, onNavigate(hash, how) {
+const flowPage = createFlowPage({ main, sidebar, state: S, api, isReadOnly: flowsReadOnly, onNavigate(hash, how) {
   if (how === "go") { location.hash = hash; return; }
   if (how === "push") {
     history.pushState(null, "", hash);
     S.lastHash = hash;
     loadHealth(healthEl); // pushState fires no hashchange
+    markDrawn(resolve("admin", hash)); // the flow page now shows: its level and notice follow it
     return;
   }
   history.replaceState(null, "", hash);
@@ -64,11 +68,25 @@ const flowPage = createFlowPage({ main, sidebar, state: S, api, onNavigate(hash,
 
 // ── routing ──
 
-function welcome() {
+/** Records the page now on screen with its support level, and shows or hides the notice. Returns true when the page is read-only. */
+function markDrawn(to) {
+  const level = levelOf(to.page.id);
+  drawn = { id: to.page.id, level, dest: to.dest };
+  sideLocked = flowsReadOnly();
+  const readOnly = level === "read-only";
+  const note = readOnly ? levelNotice(to.page.id, { dirty: !!S.cur?.dirty }) : null;
+  levelNote.textContent = note ?? "";
+  levelNote.hidden = !note;
+  return readOnly;
+}
+
+function welcome(readOnly) {
   mount(main, h("div", { class: "empty" },
     h("h1", { class: "mb-8" }, "Welcome to Spaghetti Code Foundry"),
-    h("p", {}, "Build your own coding flows: pick a flow on the left, start from a blank one, or describe what you want and let Claude draft it."),
-    h("div", { class: "row center mt-16" },
+    readOnly
+      ? h("p", {}, "Pick a flow from the list to read it or to start a test run. Creating and editing flows needs a wider screen.")
+      : h("p", {}, "Build your own coding flows: pick a flow on the left, start from a blank one, or describe what you want and let Claude draft it."),
+    readOnly ? null : h("div", { class: "row center mt-16" },
       h("button", { class: "primary", onClick: () => flowPage.generateDialog(false) }, "✨ Draft flow with Claude"),
       h("button", { onClick: () => flowPage.newBlank() }, "+ Blank flow"))));
 }
@@ -128,12 +146,7 @@ async function route() {
   S.lastHash = hash;
   S.cleanup?.();
   S.cleanup = null;
-  const level = levelOf(to.page.id);
-  drawn = { id: to.page.id, level };
-  const readOnly = level === "read-only";
-  const note = readOnly ? levelNotice(to.page.id, { dirty: !!S.cur?.dirty }) : null;
-  levelNote.textContent = note ?? "";
-  levelNote.hidden = !note;
+  const readOnly = markDrawn(to);
   showPage("admin", to);
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
@@ -203,13 +216,20 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "new") S.cur && !S.cur.name ? flowPage.renderFlowView() : flowPage.openNew();
+    else if (section === "new") {
+      if (S.cur && !S.cur.name) flowPage.renderFlowView();
+      else if (readOnly) mount(main, h("div", { class: "empty" },
+        h("p", {}, `A new flow needs a wider screen (${BREAKPOINTS.medium + 1} px or more).`),
+        h("p", {}, h("a", { href: "#/flows" }, "Back to flows"))));
+      else flowPage.openNew();
+    }
     else if (section === "flows" && arg) await flowPage.openFlow(arg, () => mine === routeGen);
-    else welcome();
+    else welcome(readOnly);
   } catch (e) {
     if (mine !== routeGen) return; // a late error must not replace the page that is shown now
     mount(main, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
   }
+  sideLocked = flowsReadOnly();
   flowPage.renderSidebar();
 }
 
@@ -232,6 +252,9 @@ window.addEventListener("hashchange", route);
 
 /** The width crossed a breakpoint: redraw only when the level of the drawn page changed; wait for an open dialog. */
 function onWidth() {
+  // The flow list in the sidebar follows the 1024 px limit by itself, also next to a page that stays as it is (the Library).
+  const locked = flowsReadOnly();
+  if (drawn?.dest === "flows" && locked !== sideLocked) { sideLocked = locked; flowPage.renderSidebar(); }
   if (!drawn || levelOf(drawn.id) === drawn.level) { missed = false; return; }
   if (flowPage.dialogOpen()) { missed = true; return; }
   missed = false;

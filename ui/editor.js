@@ -1,5 +1,5 @@
 import { glyph, h } from "./dom.js";
-import { field, list, select, setKey, text } from "./fields.js";
+import { field, list, lockReadOnly, select, setKey, text } from "./fields.js";
 import { STEP_TYPES, stepBody } from "./step-types.js";
 import { subtitle } from "./graph.js";
 import { markProblems } from "./flow-problems.js";
@@ -184,7 +184,7 @@ function structureList(flow, sel, ctx) {
     ]));
   });
   return {
-    el: h("div", { class: "structure" }, h("h3", { class: "mb-4" }, "Structure"), rows, insertBar(flow, sel, ctx)),
+    el: h("div", { class: "structure" }, h("h3", { class: "mb-4" }, "Structure"), rows, ctx.readOnly ? null : insertBar(flow, sel, ctx)),
     sync: () => syncs.forEach((f) => f()),
   };
 }
@@ -198,7 +198,10 @@ export function editable(flow) {
   return ["defaults", "vars", "limits", "sandbox", "publish"].every((k) => flow[k] == null || isObject(flow[k]));
 }
 
-/** Visual editor for a flow object. Field edits call onChange; structural edits call rerender. */
+/**
+ * Visual editor for a flow object. Field edits call onChange; structural edits call rerender.
+ * `ctx.readOnly`: no add-step bar, and the inspector shows without changing anything.
+ */
 export function renderEditor(flow, ctx) {
   flow.steps ??= [];
   const sel = Number.isInteger(ctx.selected) && flow.steps[ctx.selected] ? ctx.selected : "settings";
@@ -206,8 +209,12 @@ export function renderEditor(flow, ctx) {
   const inner = { ...ctx, selected: sel, onChange: () => { ctx.onChange(); structure.sync(); } };
   structure = structureList(flow, sel, inner);
   markProblems(structure.el, ctx.problems ?? []);
-  return h("div", { class: "flow-form" }, structure.el,
-    sel === "settings" ? settingsCard(flow, inner.onChange, ctx.rerender) : stepInspector(flow, flow.steps[sel], sel, inner));
+  const card = sel === "settings" ? settingsCard(flow, inner.onChange, ctx.rerender) : stepInspector(flow, flow.steps[sel], sel, inner);
+  if (ctx.readOnly) {
+    lockReadOnly(card);
+    card.classList.add("read-only");
+  }
+  return h("div", { class: "flow-form" }, structure.el, card);
 }
 
 /** Strip empty values so the YAML stays tidy. */

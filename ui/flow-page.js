@@ -47,8 +47,9 @@ function browserStorage() {
  * `state` is the shared { info, flows, cur, ... } of the app; cur is the flow being edited:
  * { name: saved name | null, scope, saveScope, yaml, obj, mode: "visual"|"yaml", dirty, selected ("settings", a step index or null), validation, problems, problemsFor (the YAML they describe), checking }
  * `onNavigate(hash, "go" | "push" | "replace")` changes the address. `storage` and `isNarrow` can be replaced in tests.
+ * `isReadOnly()` is asked at every draw and before every change: true below 1024 px (view and test run only).
  */
-export function createFlowPage({ main, sidebar, state, api, onNavigate, storage = browserStorage(), isNarrow = () => !!globalThis.matchMedia?.("(max-width: 1100px)")?.matches, watchNarrow = (fn) => globalThis.matchMedia?.("(max-width: 1100px)")?.addEventListener?.("change", fn) }) {
+export function createFlowPage({ main, sidebar, state, api, onNavigate, storage = browserStorage(), isNarrow = () => !!globalThis.matchMedia?.("(max-width: 1100px)")?.matches, watchNarrow = (fn) => globalThis.matchMedia?.("(max-width: 1100px)")?.addEventListener?.("change", fn), isReadOnly = () => false }) {
   let ui = {};
   let overview = null; // null until the first flow is drawn
   let store = overviewStoreFor(storage, false);
@@ -113,6 +114,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       onQuery: (q) => { query = q; renderSidebar(); },
       onDraft: () => generateDialog(false),
       onBlank: newBlank,
+      readOnly: isReadOnly(),
       status: listStatus(),
       empty: emptyState("No flows yet."),
       note: L.state === "error" ? staleNote(L.at, { failed: true, onRetry: refreshFlows }) : null,
@@ -120,7 +122,8 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   }
 
   async function newBlank() {
-    if (await confirmDiscard()) openNew();
+    if (isReadOnly()) return;
+    if (await confirmDiscard() && !isReadOnly()) openNew();
   }
 
   // A dialog is open when the modal root has content. The router leaves the page alone then, so no dialog is replaced or bypassed.
@@ -225,6 +228,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       canDelete: !!c.name && c.scope !== "builtin",
       saving: !!c.saving,
       deleting: !!c.deleting,
+      readOnly: isReadOnly(),
       onMode: setMode,
       onSave: () => save(),
       onRun: () => runDialog(),
@@ -247,9 +251,10 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
 
   function drawBody() {
     const c = state.cur;
+    const ro = isReadOnly();
     if (c.mode === "yaml") {
-      mount(ui.body, h("textarea", {
-        class: "yaml-editor", spellcheck: "false", "aria-label": "Flow YAML", value: c.yaml,
+      // Read-only: no input handler, and no Tab handler, so Tab leaves the field.
+      const edit = ro ? { readonly: true } : {
         onInput: (e) => {
           c.yaml = e.target.value;
           const obj = tryParse(c.yaml);
@@ -261,13 +266,15 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
           e.preventDefault();
           document.execCommand("insertText", false, "  ");
         },
-      }));
+      };
+      mount(ui.body, h("textarea", { class: "yaml-editor", spellcheck: "false", "aria-label": "Flow YAML", value: c.yaml, ...edit }));
       return;
     }
     const lostComments = /^\s*#/m.test(c.yaml);
     mount(ui.body,
-      lostComments ? h("p", { class: "muted mt-0" }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
+      lostComments && !ro ? h("p", { class: "muted mt-0" }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
       renderEditor(c.obj, {
+        readOnly: ro,
         selected: c.selected,
         problems: c.problemsFor === c.yaml ? (c.problems ?? []) : [],
         onChange: () => {
@@ -282,7 +289,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
         onSelect: (i, scroll = true) => select(i, scroll),
         onLibrary: async (at) => {
           const picked = await pickBlock(c.obj).catch((e) => toast(e.message, "error"));
-          if (!picked?.block) return;
+          if (!picked?.block || isReadOnly()) return;
           const { count, renamed } = insertBlock(c.obj, picked.block, at);
           c.selected = at;
           c.yaml = YAML.stringify(cleanFlow(c.obj), { lineWidth: 0 });
@@ -380,12 +387,12 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   /** An inline explanation of a failed action, with Retry. A flow that is not on the page (another page keeps the draft in memory) gets a toast instead. */
   function showFailure(c, info, retry) {
     if (c !== state.cur || !main.contains(ui.failure)) return toast(info.what, "error");
-    mount(ui.failure, errorState(info, { onRetry: retry }));
+    mount(ui.failure, errorState(info, { onRetry: isReadOnly() ? undefined : retry }));
   }
 
   async function save() {
     const c = state.cur;
-    if (!c || c.saving) return;
+    if (!c || c.saving || isReadOnly()) return;
     c.saving = true;
     drawHeader();
     try {
@@ -413,6 +420,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       const exists = state.flows.find((f) => f.name === name);
       if (exists && exists.scope !== "builtin" && !(await askOverwrite(name))) return;
     }
+    if (isReadOnly()) return; // the window shrank while the checks ran: the draft stays unsaved
     let saved;
     try {
       saved = await api.saveFlow(name, yaml, scope);
@@ -469,6 +477,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
 
   /** Removes the file of the old name after a rename. Returns the error, or null. Never throws. */
   async function removeOld(old) {
+    if (isReadOnly()) return new Error("Removing the old flow needs a wider screen.");
     try {
       await api.deleteFlow(old);
       return null;
@@ -480,7 +489,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   function showRemoveOld(c, old, e) {
     let busy = false;
     const retry = async () => {
-      if (busy) return;
+      if (busy || isReadOnly()) return;
       busy = true;
       const again = await removeOld(old);
       busy = false;
@@ -493,14 +502,14 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
 
   async function remove() {
     const c = state.cur;
-    if (!c?.name || c.deleting) return;
+    if (!c?.name || c.deleting || isReadOnly()) return;
     const text = `Delete flow "${c.name}"? This removes the file.${c.dirty ? " Your unsaved changes will be lost." : ""}`;
     if (dialogOpen() || !(await confirmDialog({ title: "Delete flow?", text, confirm: "Delete" }))) return;
     await doRemove(c);
   }
 
   async function doRemove(c) {
-    if (c.deleting) return;
+    if (c.deleting || isReadOnly()) return;
     c.deleting = true;
     if (c === state.cur && ui.head) drawHeader();
     const name = c.name;
@@ -550,8 +559,9 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   }
 
   async function generateDialog(modify) {
-    if (dialogOpen()) return;
+    if (dialogOpen() || isReadOnly()) return;
     if (!modify && !(await confirmDiscard())) return;
+    if (isReadOnly()) return;
     let working = false;
     const result = await modal(modify ? "Ask Claude to change this flow" : "Draft a flow with Claude", (close) => {
       const ta = h("textarea", {
@@ -563,7 +573,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       });
       const status = h("div", { class: "row" });
       const go = h("button", { class: "primary", onClick: async () => {
-        if (!ta.value.trim() || working) return;
+        if (!ta.value.trim() || working || isReadOnly()) return;
         working = true;
         go.disabled = ta.disabled = true;
         mount(status, h("span", { class: "spinner" }), h("span", { class: "muted" }, "Claude is drafting… usually 20–60 seconds"));

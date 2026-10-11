@@ -464,6 +464,14 @@ describe("support levels", () => {
     expect(note().hidden).toBe(true);
   });
 
+  it("shows the flow notice below 1024 px and none at 1024", async () => {
+    await load("#/flows", 800);
+    await vi.waitFor(() => expect(note().hidden).toBe(false));
+    expect(note().textContent).toBe("Editing a flow needs a wider screen (1024 px or more).");
+    await load("#/flows", 1024);
+    await vi.waitFor(() => expect(note().hidden).toBe(true));
+  });
+
   it("passes readOnly to the user page and Settings", async () => {
     const renderUserDetail = page();
     await load("#/users/u1", 360, { "./user-detail.js": { renderUserDetail } });
@@ -487,7 +495,7 @@ describe("support levels", () => {
   });
 
   it("shows no notice on pages that are not wired yet", async () => {
-    for (const hash of ["#/problems", "#/models", "#/flows"]) {
+    for (const hash of ["#/problems", "#/models"]) {
       note().hidden = true;
       await load(hash, 360, { "./problems.js": { renderProblems: page() } });
       await tick();
@@ -604,10 +612,10 @@ describe("support levels", () => {
     expect(renderWatchers.mock.calls[1]![1].readOnly).toBe(true);
   });
 
-  it("keeps NOT_YET to the nine pages not wired yet", () => {
+  it("keeps NOT_YET to the six pages not wired yet", () => {
     const src = readFileSync("ui/app.js", "utf8");
     const ids = [...src.match(/const NOT_YET = new Set\(\[([^\]]*)\]/)![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect([...ids].sort()).toEqual(["all-repos", "flow", "flows", "maintenance", "model", "models", "new-flow", "problem", "problems"]);
+    expect([...ids].sort()).toEqual(["all-repos", "maintenance", "model", "models", "problem", "problems"]);
     const known = real.ia.PAGES.map((p: { id: string }) => p.id);
     for (const id of ids) expect(known).toContain(id);
   });
