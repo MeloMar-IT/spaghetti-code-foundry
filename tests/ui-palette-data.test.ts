@@ -22,8 +22,8 @@ const UUID = "123e4567-e89b-12d3-a456-426614174000";
 describe("filterCommands", () => {
   const list = () => ia.commandsFor("admin").goTo;
   it("keeps everything for an empty query", () => {
-    expect(d.filterCommands(list(), "")).toHaveLength(16);
-    expect(d.filterCommands(list(), "   ")).toHaveLength(16);
+    expect(d.filterCommands(list(), "")).toHaveLength(list().length);
+    expect(d.filterCommands(list(), "   ")).toHaveLength(list().length);
   });
   it("needs every word, in any case", () => {
     expect(d.filterCommands(list(), "all REPO").map((c: any) => c.id)).toEqual(["all-repos"]);

@@ -204,7 +204,8 @@ describe("the dialogs match the code", () => {
     expect(total).toBeGreaterThanOrEqual(23);
     const keys = dialogs.map((r) => `${code(r[0]!)}|${r[1]}`);
     expect(new Set(keys).size).toBe(keys.length);
-    for (const r of dialogs) expect(files, `unknown file in dialogs: ${r[0]}`).toContain(code(r[0]!));
+    const everywhere = allUiJs();
+    for (const r of dialogs) expect(everywhere, `unknown file in dialogs: ${r[0]}`).toContain(code(r[0]!));
   });
 
   it("has no native confirm left in the administration pages that use the shared dialog", () => {

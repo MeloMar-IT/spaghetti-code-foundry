@@ -82,6 +82,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./dom.js": { ...real.dom, debounce: (fn: () => unknown) => { debounced.push(fn); return () => undefined; } },
     "./ia.js": real.ia,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
+    "./palette.js": { initPalette: vi.fn() },
     "./states.js": real.states,
     "./icons.js": { flowNameMark: (f: { name: string }) => f.name },
     "./editor.js": { renderEditor: () => real.dom.h("div"), cleanFlow: (x: unknown) => x, editable: (x: unknown) => !!x && typeof x === "object" && !Array.isArray(x) },

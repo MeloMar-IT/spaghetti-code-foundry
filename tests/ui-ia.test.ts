@@ -267,9 +267,11 @@ describe("the grouped shell", () => {
 describe("commandsFor", () => {
   const keys = (list: any[]) => list.filter((c) => c.key).map((c) => c.key).sort();
 
-  it("lists 16 pages for an admin, in the order of PAGES", () => {
+  it("lists every primary and secondary page of an admin, in the order of PAGES", () => {
     const { goTo } = ia.commandsFor("admin");
-    expect(goTo).toHaveLength(16);
+    const shown = ia.PAGES.filter((p: any) => p.roles.includes("admin") && (p.nav === "primary" || p.nav === "secondary"));
+    expect(goTo.map((c: any) => c.id)).toEqual(shown.map((p: any) => p.id));
+    expect(goTo.length).toBeGreaterThanOrEqual(16);
     const order = ia.PAGES.map((p: any) => p.id);
     const at = goTo.map((c: any) => order.indexOf(c.id));
     expect(at).toEqual([...at].sort((a: number, b: number) => a - b));
