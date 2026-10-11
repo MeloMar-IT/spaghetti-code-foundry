@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill experience 3d — skills guide for administrators and skill authors (#440). New "Automatic skills" in `docs/USER_GUIDE.md` (what is automatic, what policy decides, writing a skill, budgets, trust, both pipelines, stop reasons and fixes), "Skills in your own flow" in `docs/FLOW_AUTHORING.md` and "The skill path" in `docs/DESIGN.md`; stale sentences corrected. New guide tests check the reason codes and fixes against the code. No behaviour change.
 - Refinement 10 — checked with real situations, and documented (#83). Last part of the Refinement epic (#73).
   - **Next step.** New `ui/refinement-next.js`: the session page starts with a "What happens next" card, one sentence that says who takes the next step (you, the architect or nobody). It redraws only when the sentence changes. The "Ask the architect to look at the code" text is now one shared constant.
   - **Tests.** New scenario tests walk whole sessions with the fakes (a small clear idea, a vague idea, a big idea split into three stories published in order, an existing issue refined and updated), and rule tests prove the epic's rules (no unaccepted text published, architect steps cannot write, an implementation plan fails the check, users cannot see or publish another user's session, issue text does not steer the architect). New `tests/helpers/refinement-world.ts`, `tests/refinement-scenarios.test.ts`, `tests/refinement-rules.test.ts` and `tests/ui-refinement-next.test.ts`.

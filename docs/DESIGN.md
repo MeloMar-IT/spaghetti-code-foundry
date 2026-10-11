@@ -153,6 +153,24 @@ is how untrusted text travels: as environment variables, never pasted into a com
 pieces (plan phase, test-and-fix loop, review loop, merge). The YAML files are never edited by
 hand.
 
+### The skill path
+
+Skills reach an agent in a fixed order. Each stage has its own module:
+
+- **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
+- **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
+- **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
+- **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
+- **Lock:** `ensureSkillLock` in `src/engine/skill-lock.ts` and `src/skills/run-lock.ts`.
+- **Session:** `skillSession` in `src/engine/skill-lock.ts`, `src/skills/payload.ts` and `src/agents/run.ts`.
+- **Run page:** `src/server/skill-view.ts` and `ui/run-skills.js`.
+
+Design rules:
+
+- The resolver and the policy are pure modules: same input, same answer.
+- Nothing is written to the workspace, so no skill file appears in a diff.
+- Messages are built from validated fields, never from request text.
+
 ![The flow editor with a built-in flow](images/flows.png)
 
 ---
@@ -281,6 +299,8 @@ flowchart LR
 **Human-in-the-loop pipeline** — for teams that want a person at each stage:
 `issue-plan` (plan, person approves) → `issue-code-daily` (code on the day's branch) →
 `daily-pr` (one pull request per day).
+
+For the same plan and commit, both pipelines lock the same skills; see [The skill path](#the-skill-path).
 
 A flow that a watcher uses cannot be deleted.
 
