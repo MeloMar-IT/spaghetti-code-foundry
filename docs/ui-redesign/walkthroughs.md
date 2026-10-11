@@ -19,8 +19,8 @@ Each row is walked in the prototype and compared with the baseline of `journeys.
 | Task | Role | Variant | Path in the prototype | Nav | Clicks | Fields | Baseline | Source |
 |---|---|---|---|---|---|---|---|---|
 | 1 Start work | user | Empty | Home shows the form inline: click the box, type, Start | 1 | 2 | 1 | 1 / 2 / 1 | `journeys.md` J1 |
-| 1 Start work | user | Base | Start work (panel, box focused), type, Review, Start | 2 | 2 | 1 | 2 / 4 / 1 | `journeys.md` J1 |
-| 1 Start work | admin | Base | Start work (panel, box focused), type, Review, Start | 2 | 2 | 1 | 2 / 4 / 1 | `journeys.md` J1 |
+| 1 Start work | user | Base | Start work (panel, box focused), type, Review, Start | 2 | 2 | 1 | 2 / 3 / 1 | `journeys.md` J1 |
+| 1 Start work | admin | Base | Start work (panel, box focused), type, Review, Start | 2 | 2 | 1 | 2 / 3 / 1 | `journeys.md` J1 |
 | 2 Approve | admin | — | Home, Review request (panel), Approve | 1 | 2 | 0 | 1 / 2 / 0 | `journeys.md` J2 |
 | 2 Approve | user | — | Home, Review request (panel), Approve | 1 | 2 | 0 | 2 / 3 / 0 | `journeys.md` J2 |
 | 3 Diagnose | admin | — | Home, "See what failed" (run page, failing step open) | 1 | 1 | 0 | 2 / 3 / 0 | `journeys.md` J4 |
