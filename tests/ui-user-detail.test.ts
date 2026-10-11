@@ -508,3 +508,19 @@ describe("late answers", () => {
     }
   });
 });
+
+describe("read-only account page", () => {
+  const texts = () => main().all("button").map((b) => b.textContent);
+  const headings = () => main().all("h2").map((h) => h.textContent);
+  it("offers only View as user and keeps the Account card", async () => {
+    await show("u1", { readOnly: true });
+    expect(headings()).toEqual(["Account", "Actions"]);
+    expect(texts()).toEqual(["View as user"]);
+    expect(fact("E-mail")).toBe("ann@example.com");
+  });
+  it("offers nothing for an admin account", async () => {
+    await show("me", { readOnly: true });
+    expect(headings()).toEqual(["Account"]);
+    expect(texts()).toEqual([]);
+  });
+});

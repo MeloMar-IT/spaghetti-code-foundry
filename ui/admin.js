@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
-import { check, input } from "./fields.js";
+import { check, input, lockReadOnly } from "./fields.js";
 import { loadingState } from "./states.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
@@ -34,7 +34,7 @@ export function serverFrom(v) {
 
 // ── settings ──
 
-export async function renderSettings(main) {
+export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Settings")), loadingState("Loading settings…", { rows: 6, shape: "detail" }));
   const [c, info] = await Promise.all([api.config(), api.info()]);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
@@ -127,7 +127,7 @@ export async function renderSettings(main) {
 
   const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), saveNote, saveBtn),
+    h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])),
     err,
     section("Budget & capacity",
       limits.row,
@@ -179,4 +179,5 @@ export async function renderSettings(main) {
         f("App name (slug)", appSlug, "The last part of https://github.com/apps/<name>. Needed for the method “GitHub App” on My repositories."),
         f("Private key file", keyPath, "The .pem file of the app, readable only by the server's account."),
         f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))));
+  if (readOnly) lockReadOnly(main);
 }
