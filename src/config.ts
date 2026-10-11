@@ -442,7 +442,7 @@ export const ConfigSchema = z
           .prefault({}),
         /** What to do with a requested skill that cannot be used. */
         unresolved: UnresolvedPolicySchema,
-        /** Which tools a skill may ask for. Decides which skills load; it never limits a session. */
+        /** Which tools a skill may ask for. Decides whether a run may go past the plan gate with a skill; it never limits a session. */
         tools: ToolPolicySchema,
       })
       .strict()

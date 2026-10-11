@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill safety 1c — a run stops at the plan gate when a skill needs a tool or connector it may not use (#430).
+  - **Behaviour change.** A pinned skill that needs `network`, or more than the flow gives, now stops the run until `skills.tools` allows it. Recover with the config and a resume.
+  - **Record.** `run.skillPlan.tools` has `action`, `met`, `missing`, `leftOut` and `warnings`. It is absent on older runs, when the resolver already stopped, when no skill was selected and when the check failed (which fails closed with `skills not resolved: the skills could not be checked`).
+  - **Codes.** `tool-not-approved`, `tool-not-in-flow` and `connector-unavailable`.
+  - **`degrade`.** The run goes on with a warning. A mandatory skill, or one a mandatory skill needs, still stops.
+  - **Log.** `· skill tools: <key> <need> — <sources>` and `⚠ skill … [code]`.
+  - **Not filtered yet.** Under `degrade` a left-out skill is only marked and warned about; it stays in the run's lock and its text still reaches sessions until a later part.
+  - **Modes.** Planned, explicit and `plan_check` runs are checked, also on resume. Older run files stay valid.
+  - **Docs and tests.** New "Skills, tools and connectors" in `docs/USER_GUIDE.md`, one line in `docs/THREAT_MODEL.md`; new cases in `tests/skill-gate-run.test.ts` and `tests/skill-gate-tools.test.ts`.
 - Skill experience 3d — skills guide for administrators and skill authors (#440). New "Automatic skills" in `docs/USER_GUIDE.md` (what is automatic, what policy decides, writing a skill, budgets, trust, both pipelines, stop reasons and fixes), "Skills in your own flow" in `docs/FLOW_AUTHORING.md` and "The skill path" in `docs/DESIGN.md`; stale sentences corrected. New guide tests check the reason codes and fixes against the code. No behaviour change.
 - Refinement 10 — checked with real situations, and documented (#83). Last part of the Refinement epic (#73).
   - **Next step.** New `ui/refinement-next.js`: the session page starts with a "What happens next" card, one sentence that says who takes the next step (you, the architect or nobody). It redraws only when the sentence changes. The "Ask the architect to look at the code" text is now one shared constant.
