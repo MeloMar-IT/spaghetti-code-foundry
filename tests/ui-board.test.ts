@@ -580,3 +580,49 @@ describe("column picker", () => {
     cleanup();
   });
 });
+
+describe("the board page frame", () => {
+  const one = (d: unknown, owner = "") => {
+    const nodes = ui.boardView(d, undefined, { ...handlers(), owner }) as FakeElement[];
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]!.attrs.class).toBe("page page-board");
+    return nodes[0]!;
+  };
+  const inside = (page: FakeElement, cls: string) => find(page, "div", cls)[0]!;
+
+  it("is one board page on all three paths", () => {
+    one({ repos: [], empty: "Nothing yet" });
+    one(board([card({ owner: "u1" })]), "u2");
+    const page = one(board(), "");
+    const scroll = page.all("div").find((e) => e.attrs["data-scroll"] === "board")!;
+    expect(scroll.parent!.attrs.class).toBe("page-columns");
+  });
+
+  it("puts the filter bar, chain line and column picker in the filters region, and the toolbar before them", () => {
+    const h = { ...handlers(), highlight: 89 };
+    const page = (ui.boardView(board(), undefined, h) as FakeElement[])[0]!;
+    const filters = inside(page, "page-filters");
+    expect(find(filters, "label", "board-pick")).toHaveLength(1);
+    expect(find(filters, "div", "board-chain")).toHaveLength(1);
+    const head = find(page, "div", "page-head")[0]!;
+    expect(head.children.map((c: any) => c.tag)).toEqual(["h1", "span", "select"]);
+  });
+
+  it("puts the empty state in the columns region", () => {
+    const page = one({ repos: [], empty: "Nothing yet" });
+    expect(inside(page, "page-columns").textContent).toBe("Nothing yet");
+  });
+
+  it("mounts the page while loading, and keeps a first-load error inside it", async () => {
+    const m = new FakeElement("main");
+    const cleanup = ui.renderBoard(m, undefined);
+    expect(m.children).toHaveLength(3);
+    const page = m.children[1]!.children[0]!;
+    expect(page.attrs.class).toBe("page page-board");
+    expect(find(inside(page, "page-columns"), "div", "skeleton").length + inside(page, "page-columns").all("div").filter((d) => d.attrs["aria-busy"] === "true").length).toBeGreaterThan(0);
+    calls.shift()!.answer({}, false);
+    await flush();
+    expect(find(page, "div", "state-error").length).toBeGreaterThan(0);
+    cleanup();
+  });
+});

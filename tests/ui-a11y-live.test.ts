@@ -649,7 +649,7 @@ describe("Admin run page", () => {
     answers["/api/users"] = [];
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1");
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     handlers.update!({ data: JSON.stringify({ summary: RUN("r1", { next: undefined }) }) });
     const s = RUN("r1", { status: "waiting" });
     handlers.update!({ data: JSON.stringify({ summary: s }) });
@@ -666,7 +666,7 @@ describe("Admin run page", () => {
     const handlers = stubEventSource();
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(stopped());
     const select = named(head, "act-retry-from");
@@ -692,7 +692,7 @@ describe("Admin run page", () => {
     };
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1");
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(stopped());
     named(head, "act-retry-from").focus();

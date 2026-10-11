@@ -4,6 +4,7 @@ import { defaultGo, filterBar, filterEmpty, withQuery } from "./filters.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
+import { boardPage } from "./templates.js";
 
 // The board page: where every story is, from GET /api/board. No wording or rules of its own
 // except labels; the sentence on each card comes from its next-step record.
@@ -81,18 +82,16 @@ export function boardView(data, wanted, { highlight, owner = "", column, onOwner
   const filter = h("select", { class: "small-select", title: "Show the cards of one account", "aria-label": "Show the cards of one account", "data-focus": "owner-filter", onChange: (e) => onOwner?.(e.target.value) },
     h("option", { value: "" }, "All owners"),
     owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${o.name} (${o.cards})`)));
-  const toolbar = h("div", { class: "toolbar" },
-    h("h1", {}, "Board"),
-    repos.length > 1
-      ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: withQuery(boardHash(r.repo), owner ? { owner } : {}), "data-focus": `repo-${r.repo}` }, r.repo))
-      : picked ? h("span", { class: "muted" }, picked.repo) : null,
-    filter);
+  const repoPart = repos.length > 1
+    ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: withQuery(boardHash(r.repo), owner ? { owner } : {}), "data-focus": `repo-${r.repo}` }, r.repo))
+    : picked ? h("span", { class: "muted" }, picked.repo) : null;
+  const page = (top, columns) => [boardPage({ title: "Board", actions: [repoPart, filter], filters: top, columns })];
   const filters = owner ? { owner } : {};
   const labels = { owner: owners.find((o) => o.id === owner)?.name || owner };
   const clearOwner = () => onOwner?.("");
   const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner });
   const none = () => filterEmpty("cards", filters, { labels, onClear: clearOwner });
-  if (!picked) return [toolbar, bar, owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null];
+  if (!picked) return page(bar, owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null);
 
   const target = highlight == null ? undefined : all.find((c) => c.issue === highlight);
   const lit = target ? new Set([target.issue, ...target.chain]) : null;
@@ -126,8 +125,8 @@ export function boardView(data, wanted, { highlight, owner = "", column, onOwner
       h("h3", {}, col.title, " ", h("span", { class: "muted" }, String(shown.length))),
       ...body);
   });
-  if (owner && !all.some((c) => c.owner === owner)) return [toolbar, bar, chainLine, none()];
-  return [toolbar, bar, chainLine, picker, h("div", { class: "board", "data-scroll": "board" }, ...cols)];
+  if (owner && !all.some((c) => c.owner === owner)) return page([bar, chainLine], none());
+  return page([bar, chainLine, picker], h("div", { class: "board", "data-scroll": "board" }, ...cols));
 }
 
 /** Opens the page and returns at once a function that closes it. */
@@ -139,14 +138,15 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
   let live;
   const body = h("div");
+  const slot = h("div");
   const states = liveStates({
-    body,
-    heading: () => h("div", { class: "toolbar" }, h("h1", {}, "Board")),
+    body: slot,
     label: "Loading the board", rows: 6, shape: "cards",
     what: "Could not load the board.",
     retry: () => live.refresh(),
     focus: "board",
   });
+  mount(body, boardPage({ title: "Board", columns: slot }));
   mount(main, states.alert, body, states.note);
 
   const redraw = () => keepScroll(body, () => mount(body, boardView(data, wanted, {

@@ -163,6 +163,9 @@ describe("renderBoard with the poller", () => {
     const now = find(m, "div", "board")[0]!;
     expect(now).not.toBe(old);
     expect(now.attrs["data-scroll"]).toBe("board");
+    expect(now.parent!.attrs.class).toBe("page-columns");
+    expect(m.children[1]!.children).toHaveLength(1);
+    expect(m.children[1]!.children[0]!.attrs.class).toBe("page page-board");
     expect((now as any).scrollLeft).toBe(120);
     expect(doc().documentElement.scrollTop).toBe(300);
     stop();

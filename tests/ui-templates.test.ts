@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
+import { parseCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -120,6 +121,18 @@ describe("the templates", () => {
   it("draws no page-body when its slots are empty", () => {
     expect((t.masterDetailPage({ title: "T" }) as FakeElement).children).toHaveLength(1);
     expect(walk(t.editorPage({ title: "T", main: [] })).filter((e) => /page-body/.test(cls(e) ?? ""))).toEqual([]);
+  });
+});
+
+describe("the board grid", () => {
+  it("is scoped to .page-board in templates.css and gone from pages/board.css", () => {
+    const own = parseCss(readFileSync("ui/css/templates.css", "utf8")).filter((r) => r.selector === ".page-board .board");
+    expect(own).toHaveLength(1);
+    expect(own[0]!.context).toBe("");
+    expect(own[0]!.declarations).toEqual([
+      "display: grid", "grid-auto-flow: column", "grid-auto-columns: minmax(210px, 1fr)", "gap: 12px", "overflow-x: auto", "align-items: start",
+    ]);
+    expect(parseCss(readFileSync("ui/css/pages/board.css", "utf8")).filter((r) => r.selector === ".board")).toEqual([]);
   });
 });
 
