@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill safety 1d — every Claude session checks the locked skills against the policy and the real step, and records what it was given (#431).
+  - **Behaviour change.** A skill that needs a shell is no longer loaded into a Claude step without one, for example a read-only step. The step is not refused; the log says `· skill tools: <key> not loaded in this step [tool-not-in-step]`.
+  - **Policy changes after the lock.** If the policy no longer allows a locked skill, or a locked version needs `network` and the gate never saw it, the session is refused with `skill tools: <key> [tool-not-approved]: …`. With `skills.tools.missing: degrade` the skill is left out (`! skill tools: <key> left out [tool-not-approved]`). A dependant is left out with its dependency. Every call checks again, so retries and resume decide again.
+  - **Record.** The step record has `skills.grant`: mode, approved rules, sandbox, capabilities with their sources, `connectors: []`, `met` and `leftOut`. The log has a line `· skill tools: mode …; … approved rule(s) …; sandbox …; shell …, network …, files …; connectors: none`.
+  - **Isolation and resume.** A session stays isolated when a skill was left out. A step does not resume an earlier session when a skill was left out of it.
+  - **`allowed-tools`.** `allowed-tools` in a skill's SKILL.md is never passed on to Claude.
+  - **Failure hint.** A `skill tools: …` failure says: allow it under `skills.tools`, or set `skills.tools.missing: degrade`, then resume the run.
+  - **Not changed.** Codex sessions, reviewer steps, `--allowedTools` and the permission mode behave as before. The capabilities are an estimate; they decide only which skills are loaded, never what a session gets.
 - Skill safety 1c — a run stops at the plan gate when a skill needs a tool or connector it may not use (#430).
   - **Behaviour change.** A pinned skill that needs `network`, or more than the flow gives, now stops the run until `skills.tools` allows it. Recover with the config and a resume.
   - **Record.** `run.skillPlan.tools` has `action`, `met`, `missing`, `leftOut` and `warnings`. It is absent on older runs, when the resolver already stopped, when no skill was selected and when the check failed (which fails closed with `skills not resolved: the skills could not be checked`).

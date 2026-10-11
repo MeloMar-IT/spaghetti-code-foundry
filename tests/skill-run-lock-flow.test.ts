@@ -33,11 +33,11 @@ afterEach(() => {
 });
 
 /** A valid package `demo`, pinned. Version 1 lives in a lower source: the data folder always comes first. */
-function demo(version: string, root = low, body = "Do it.", frontmatter = ""): string {
+function demo(version: string, root = low, body = "Do it.", frontmatter = "", manifest = ""): string {
   const d = join(root, "demo");
   mkdirSync(d, { recursive: true });
   writeFileSync(join(d, "SKILL.md"), `---\nname: demo\ndescription: A test skill.\n${frontmatter}---\n\n${body}\n`);
-  writeFileSync(join(d, "skill.yaml"), `id: demo\nversion: ${version}\n`);
+  writeFileSync(join(d, "skill.yaml"), `id: demo\nversion: ${version}\n${manifest}`);
   addSkillPins([{ key: `demo@${version}`, digest: loadSkillPackage(d).digest }]);
   return d;
 }
@@ -301,6 +301,106 @@ ${fixLine}    prompt: |
       expect(count(out(s, "fix").prompt)).toBe(1);
       expect(rec(s, "fix")).toMatchObject({ state: "reloaded", loaded: ["demo@1.0.0"] });
       expect(rec(s, "fix2")).toMatchObject({ state: "reused" });
+    });
+  });
+
+  describe("skill tools", () => {
+    const toolFlow = (implTools: string, fixTools?: string, fixExtra = "") =>
+      parseFlow(`
+name: t
+workspace: inplace
+steps:
+  - id: risk_gate
+    type: shell
+    run: |
+      # /skill-request
+      echo READY
+      echo '${REQUEST}'
+  - id: impl
+    type: claude
+    allowed_tools: ${implTools}
+    prompt: |
+      WRITE ran.txt yes
+      SHOWPROMPT
+${fixTools === undefined ? "" : `  - id: fix
+    type: claude
+    resume: impl
+    allowed_tools: ${fixTools}
+${fixExtra}    prompt: |
+      SHOWPROMPT
+  - id: sentinel
+    type: shell
+    jump_only: true
+    run: echo failed > failure-branch.txt
+`}`);
+    const last = (s: { history: { id: string; output: string; skills?: unknown }[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)!;
+    // versions of their own: pins of earlier tests stay in the data folder
+    const shellSkill = (v: string) => demo(v, low, "Use the shell.", "", "risk: medium\ntool_profile: {shell: true}\n");
+    const noIso = () => ConfigSchema.parse({ skills: { roots: [low] }, isolate_agents: false });
+    const logOf = (s: { runDir: string }) => readFileSync(join(s.runDir, "live.log"), "utf8");
+
+    it("never grants allowed-tools of SKILL.md, and records what the session was given", async () => {
+      demo("5.0.0", low, "Do it.", "allowed-tools: Bash(rm *)\n");
+      const s = await runFlow(toolFlow("[Read]"), { ...runOpts(), config: noIso() });
+      expect(s.status).toBe("succeeded");
+      const rec = last(s, "impl");
+      expect(rec.skills).toMatchObject({
+        loaded: ["demo@5.0.0"],
+        grant: {
+          mode: { value: "acceptEdits", source: "default" },
+          approved: { rules: ["Read"], source: "flow:step:impl" },
+          sandbox: false,
+          capabilities: { shell: false, network: false },
+          connectors: [],
+          met: [],
+          leftOut: [],
+        },
+      });
+      expect(rec.output).toContain("--allowedTools Read");
+      expect(rec.output).toContain("--strict-mcp-config");
+      expect(rec.output).not.toContain("Bash(rm");
+      expect(logOf(s)).toContain("skill tools: mode acceptEdits (default); 1 approved rule(s)");
+    });
+
+    it("leaves a shell skill out of a step without shell and does not continue the session that got it", async () => {
+      shellSkill("5.1.0");
+      const s = await runFlow(toolFlow("[Bash]", "[Read]"), { ...runOpts(), config: noIso() });
+      expect(s.status).toBe("succeeded");
+      expect(last(s, "impl").skills).toMatchObject({ loaded: ["demo@5.1.0"], grant: { met: [{ key: "demo@5.1.0", need: "shell" }] } });
+      const fix = last(s, "fix");
+      const { args, prompt } = split(fix.output);
+      expect(args).not.toContain("--resume");
+      expect(args).toContain("--strict-mcp-config");
+      expect(args).toContain("--setting-sources project,local");
+      expect(prompt).not.toContain("<foundry-skills");
+      expect(prompt).not.toContain("Use the shell.");
+      expect(fix.skills).toMatchObject({ loaded: [], grant: { capabilities: { shell: false }, met: [], leftOut: [{ key: "demo@5.1.0", code: "tool-not-in-step" }], settingSources: ["project", "local"] } });
+      expect(logOf(s)).toContain("not loaded in this step [tool-not-in-step]");
+      expect(logOf(s)).toContain("not resuming impl:");
+    });
+
+    it("a policy change after the lock leaves the skill out under degrade and stops the session otherwise", async () => {
+      shellSkill("5.2.0");
+      const s = await runFlow(toolFlow("[Bash]", "[Bash]", "    on_failure: sentinel\n"), { ...runOpts(), config: noIso() });
+      expect(s.status).toBe("succeeded");
+      expect(split(last(s, "fix").output).args).toContain("--resume");
+      expect(last(s, "fix").skills).toMatchObject({ state: "reused" });
+      const cfg = (tools: object) => ConfigSchema.parse({ skills: { roots: [low], tools }, isolate_agents: false });
+
+      const a = await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin, config: cfg({ shell: false, missing: "degrade" }), from: "fix" });
+      expect(a.status).toBe("succeeded");
+      const fix = last(a, "fix");
+      expect(split(fix.output).args).not.toContain("--resume");
+      expect(split(fix.output).prompt).not.toContain("<foundry-skills");
+      expect(fix.skills).toMatchObject({ grant: { leftOut: [{ key: "demo@5.2.0", code: "tool-not-approved" }] } });
+      expect(logOf(s)).toContain("! skill tools: demo@5.2.0 left out [tool-not-approved]");
+
+      const b = await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin, config: cfg({ shell: false }), from: "fix" });
+      expect(b.status).toBe("failed");
+      expect(b.reason).toMatch(/skill tools: 1 skill\(s\) cannot be used — demo \[tool-not-approved\]/);
+      expect(last(b, "fix").sessionId).toBeUndefined();
+      expect(existsSync(join(repo, "failure-branch.txt"))).toBe(false);
+      expect(logOf(s)).toContain("skill context: rejected (skill tools:");
     });
   });
 

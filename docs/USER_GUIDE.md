@@ -2824,7 +2824,7 @@ A skill can say what it needs: a shell, network access, write access or a connec
 | Shell or network | What the flow gives its Claude steps | `tool-not-in-flow` |
 | A connector | Nothing: no connector can be granted yet | `connector-unavailable` |
 
-> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and the text of that skill can still reach Claude sessions. Leaving it out of sessions is not done yet. No connector is granted in either case.
+> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and Claude coder sessions leave the skill out (see below). Codex sessions and reviewer steps are not checked yet. No connector is granted in either case.
 
 ```yaml
 skills:
@@ -2846,8 +2846,18 @@ It decides whether a run may go on with a skill. It does not limit what a sessio
   - The run goes on with a `⚠` warning.
   - The skill, the skills that depend on it and the dependencies only it needed are listed in `skillPlan.tools.leftOut`.
   - A mandatory skill still stops the run, and so does a skill that a mandatory skill needs, directly or through other skills.
-  - "Left out" is a record and a warning in this version: the skill stays in the run's lock and its text can still reach sessions. Use `stop` when the skill must not be used at all.
+  - "Left out" is a record and a warning at the plan gate. Claude coder sessions then leave the skill out; Codex sessions and reviewer steps are not checked yet. Use `stop` when the skill must not be used at all.
 - **Where to see it:** the stop reason, `run.json` → `skillPlan.tools` (`action`, `met`, `missing`, `leftOut`, `warnings`), and the log line `· skill tools: <key> <need> — <sources>`.
+
+**In a Claude session.** Before every Claude coder session the locked skills are checked again against `skills.tools` and against what that step gives.
+
+- **Loaded only where it fits.** A skill that needs a shell is loaded only into a step that has one. In a step without it (for example a read-only step) the skill is not loaded and the step is not refused. The log says `· skill tools: <key> not loaded in this step [tool-not-in-step]`.
+- **Policy changed after the lock.** The session is refused with `skill tools: <key> [tool-not-approved]: …`. Allow it under `skills.tools`, or set `skills.tools.missing: degrade`, then resume the run. With `degrade` the skill is left out and the log says `! skill tools: <key> left out [tool-not-approved]`. A skill that depends on it is left out too.
+- **Isolation.** A session stays without your personal Claude setup when a skill was left out. A step with `resume:` starts a new session instead of continuing one that may hold the skill.
+- **What the run records.** The step record has `skills.grant`: the permission mode, the approved tool rules, the sandbox, the capabilities (shell, network, files) with where each came from, `connectors: []`, what was met and what was left out. The log has one line with the same counts.
+- **It is an estimate.** It is built from the step's settings and decides only which skills are loaded. It does not limit the session. The repository's own `.claude/settings.json` can approve more tools than the record lists.
+- **`allowed-tools` in SKILL.md is never granted.** Tools come only from the step's `allowed_tools` and the permission mode.
+- Codex sessions and reviewer steps are not checked this way.
 
 ### Skills on the run page
 
