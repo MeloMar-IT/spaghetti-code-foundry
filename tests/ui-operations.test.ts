@@ -253,6 +253,12 @@ describe("Cancel run", () => {
     expect(calls).toHaveLength(7);
   });
 
+  it("has no button when read-only, and sends nothing", async () => {
+    await ui.renderOperations(main(), { readOnly: true });
+    expect(cancelButton().map((b) => b.textContent)).toEqual([]);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
   it("posts the cancel and asks everything again", async () => {
     await show();
     cancelButton()[0]!.click();

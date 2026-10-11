@@ -78,7 +78,7 @@ export function muteForm(target, detectors, { notProblem = false } = {}) {
 let isOpen = false;
 let shown = PAGE;
 
-export const mutesTable = (m, reload) => {
+export const mutesTable = (m, reload, { readOnly = false } = {}) => {
   const end = async (x) => {
     try {
       await api.unmuteMonitor(x.id);
@@ -89,13 +89,13 @@ export const mutesTable = (m, reload) => {
     await reload();
   };
   return tableBox(h("table", { class: "table compact", "aria-label": "Mutes" },
-    h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
+    h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", ...(readOnly ? [] : [h("span", { class: "sr-only" }, "Actions")])].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, m.mutes.map((x) => h("tr", {},
       h("td", {}, x.kind === "finding" ? `${x.detector}: ${x.summary ?? x.finding}` : x.detector),
       h("td", {}, x.reason),
       h("td", {}, when(x.since)),
       h("td", {}, x.until ? when(x.until) : "for good"),
-      h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute")))))));
+      readOnly ? null : h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute")))))));
 };
 
 // A row has no buttons: each finding's page (#/problems/:id) has its actions.
@@ -118,15 +118,17 @@ const findingsTable = (m, redraw) => {
 };
 
 /** The findings and mutes of the monitor's card; null when `m` has no `findings` list. */
-export function monitorLists(m, reload) {
+export function monitorLists(m, reload, { readOnly = false } = {}) {
   if (!m || !Array.isArray(m.findings)) return null;
   const body = h("div", {});
   const redraw = () => {
-    body.replaceChildren(
-      h("div", { class: "row" },
+    // replaceChildren turns null into the text "null": leave absent children out
+    body.replaceChildren(...[
+      readOnly ? null : h("div", { class: "row" },
         h("button", { class: "small", onClick: async () => { if (await muteForm({ pick: true }, m.detectors)) await reload(); } }, "Mute a detector")),
-      m.mutes.length ? mutesTable(m, reload) : null,
-      m.findings.length ? findingsTable(m, redraw) : h("p", { class: "muted" }, "No findings."));
+      m.mutes.length ? mutesTable(m, reload, { readOnly }) : null,
+      m.findings.length ? findingsTable(m, redraw) : h("p", { class: "muted" }, "No findings."),
+    ].filter(Boolean));
   };
   redraw();
   return h("details", { open: isOpen, onToggle: (e) => { isOpen = !!e.target.open; } },

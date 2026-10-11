@@ -101,6 +101,14 @@ describe("renderHealth", () => {
     expect(onCancel).toHaveBeenCalledWith("r1");
   });
 
+  it("has no Cancel run button when read-only, and keeps the problem's text", () => {
+    const e = el();
+    ui.renderHealth(e, bad, { onCancel: vi.fn(), readOnly: true });
+    expect(e.all("button")).toHaveLength(0);
+    expect(e.all("li")).toHaveLength(2);
+    expect(e.all("li")[1]!.textContent).not.toBe("");
+  });
+
   it("shows the last successful check of each repository, also when all is good", () => {
     for (const h of [bad, { ...good, repos: bad.repos }]) {
       const e = el();

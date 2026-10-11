@@ -80,6 +80,16 @@ const drawDetail = async (id: string) => {
   await watchersMod.renderWatcherDetail(main, id);
   return main;
 };
+const drawRO = async () => {
+  const main = new FakeElement("div");
+  await watchersMod.renderWatchers(main, { readOnly: true });
+  return main;
+};
+const drawDetailRO = async (id: string) => {
+  const main = new FakeElement("div");
+  await watchersMod.renderWatcherDetail(main, id, { readOnly: true });
+  return main;
+};
 const group = (main: FakeElement, name: string) => walk(main).find((e) => e.tag === "section" && String(e.attrs.class).includes(name))!;
 /** The help "?" of a state mark is a button too: only the buttons of the Actions and Danger groups count as actions. */
 const actionButtons = (main: FakeElement) => walk(main).filter((e) => e.tag === "section").flatMap((s) => buttons(s));
@@ -200,6 +210,49 @@ describe("the page", () => {
     const main = await draw();
     expect(main.textContent).toContain("No watchers yet.");
     expect(buttons(main).filter((b) => b === "+ Add watcher")).toHaveLength(2);
+  });
+});
+
+describe("read-only (a small screen)", () => {
+  it("the list keeps ↻ and the rows, and has no add buttons", async () => {
+    watchers = [stored()];
+    const main = await drawRO();
+    expect(buttons(main)).toContain("↻");
+    expect(buttons(main)).not.toContain("+ Add watcher");
+    expect(buttons(main)).not.toContain("+ Add the monitor");
+    expect(walk(main).some((e) => e.tag === "a" && e.attrs.href === "#/watchers/w")).toBe(true);
+  });
+
+  it("an empty list has no action, and ↻ redraws it read-only", async () => {
+    const main = await drawRO();
+    expect(main.textContent).toContain("No watchers yet.");
+    expect(buttons(main)).toEqual(["↻"]);
+    press(button(main, "↻"));
+    await flush();
+    expect(main.textContent).toContain("No watchers yet.");
+    expect(buttons(main)).toEqual(["↻"]);
+  });
+
+  it("a repository watcher has no Actions and no Danger group; ↻ redraws it read-only", async () => {
+    watchers = [stored()];
+    const main = await drawDetailRO("w");
+    expect(actionButtons(main)).toEqual([]);
+    expect(walk(main).some((e) => e.tag === "section" && String(e.attrs.class).includes("action-group"))).toBe(false);
+    expect(main.textContent).toContain("every 5m · max 1 per check");
+    press(button(main, "↻"));
+    await flush();
+    expect(actionButtons(main)).toEqual([]);
+    expect(main.textContent).toContain("every 5m · max 1 per check");
+  });
+
+  it("a file watcher and a watcher of a gone repository have no Check now or Delete", async () => {
+    watchers = [{ id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }, stored({ id: "g", repoId: "nope" })];
+    for (const id of ["f", "g"]) {
+      const main = await drawDetailRO(id);
+      expect(buttons(main)).not.toContain("Check now");
+      expect(buttons(main)).not.toContain("Delete");
+      expect(actionButtons(main)).toEqual([]);
+    }
   });
 });
 

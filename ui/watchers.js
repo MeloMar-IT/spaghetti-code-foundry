@@ -30,7 +30,7 @@ export function storiesLine(m, now = new Date()) {
 }
 
 /** The line and the switch button for the monitor's page; null without a state. */
-export function storiesRow(m, reload) {
+export function storiesRow(m, reload, { readOnly = false } = {}) {
   if (!m) return null;
   const isOn = m.state === "on" || m.state === "quiet";
   const wantOn = m.state === "off" || m.state === "unreadable" || m.state === "breaker";
@@ -44,6 +44,7 @@ export function storiesRow(m, reload) {
     }
     await reload();
   };
+  if (readOnly) return h("div", { class: "row" }, h("span", { class: isOn ? "status ok" : "status bad" }, storiesLine(m)));
   return h("div", { class: "row" },
     h("span", { class: isOn ? "status ok" : "status bad" }, storiesLine(m)),
     h("span", { class: "spacer" }),
@@ -115,7 +116,8 @@ async function loadWatchers() {
   return { watchers, flows, repos };
 }
 
-export async function renderWatchers(main, { data } = {}) {
+/** `readOnly`: no controls that change things (a small screen). */
+export async function renderWatchers(main, { data, readOnly = false } = {}) {
   if (!data) {
     mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Watchers")), loadingState("Loading watchers…", { rows: 4, shape: "cards" }));
     data = await loadWatchers(); // a failure goes to the router, which draws the error with Retry
@@ -132,7 +134,7 @@ export async function renderWatchers(main, { data } = {}) {
       if (my === reloads) mount(note, staleNote(at, { failed: true, onRetry: reload }));
       return;
     }
-    if (my === reloads) await renderWatchers(main, { data: fresh });
+    if (my === reloads) await renderWatchers(main, { data: fresh, readOnly });
   };
   const { groups, gone, monitor, file } = watcherGroups(watchers, repos);
   const saveMonitor = (entry) =>
@@ -165,8 +167,8 @@ export async function renderWatchers(main, { data } = {}) {
       h("span", { class: "muted" }, "Poll GitHub and start runs automatically while this server runs"),
       h("span", { class: "spacer" }),
       h("button", { onClick: reload, "aria-label": "Reload" }, "↻"),
-      monitor.length ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor)) && reload() }, "+ Add the monitor"),
-      h("button", { class: "primary", onClick: addWatcher }, "+ Add watcher")),
+      monitor.length || readOnly ? null : h("button", { onClick: async () => (await monitorDialog(null, saveMonitor)) && reload() }, "+ Add the monitor"),
+      readOnly ? null : h("button", { class: "primary", onClick: addWatcher }, "+ Add watcher")),
     note,
     watchers.length ? [
       ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
@@ -175,7 +177,7 @@ export async function renderWatchers(main, { data } = {}) {
       section("The Foundry itself", monitor, "monitor"),
       section("From config.yaml", file, "file", h("p", { class: "muted flush mb-6" }, FILE_NOTE)),
     ] : emptyState("No watchers yet. A watcher checks a GitHub repo on a schedule and runs a flow: for labelled issues, review comments, red CI on the default branch, or a recurring chore.",
-      { label: "+ Add watcher", onClick: addWatcher }),
+      readOnly ? undefined : { label: "+ Add watcher", onClick: addWatcher }),
     h("p", { class: "muted mt-16" },
       "Watchers run inside this server. To keep them running after you close the terminal or restart your Mac: ",
       h("code", {}, "scf service install")));
@@ -184,7 +186,7 @@ export async function renderWatchers(main, { data } = {}) {
 let detailReloads = 0;
 
 /** One watcher: its full state, its routine actions, and Delete apart in a Danger group. */
-export async function renderWatcherDetail(main, id, { data } = {}) {
+export async function renderWatcherDetail(main, id, { data, readOnly = false } = {}) {
   const back = { href: "#/watchers", label: "Back to Watchers" };
   if (!data) {
     mount(main, h("h1", {}, "Watcher"), loadingState("Loading the watcher…", { rows: 4, shape: "detail" }));
@@ -225,7 +227,7 @@ export async function renderWatcherDetail(main, id, { data } = {}) {
       if (my === detailReloads) mount(note, staleNote(at, { failed: true, onRetry: reload }));
       return;
     }
-    if (my === detailReloads) await renderWatcherDetail(main, id, { data: fresh });
+    if (my === detailReloads) await renderWatcherDetail(main, id, { data: fresh, readOnly });
   };
   // a failed call shows the server's sentence as it is; the page is drawn again either way
   const act = async (fn) => {
@@ -281,6 +283,10 @@ export async function renderWatcherDetail(main, id, { data } = {}) {
     }
     del = remove(() => api.removeRepoWatcher(w.repoId, w.id));
   }
+  if (readOnly) {
+    actions = [];
+    del = null;
+  }
   const hasActions = actions.some(Boolean);
 
   mount(main,
@@ -299,7 +305,7 @@ export async function renderWatcherDetail(main, id, { data } = {}) {
     w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted text-sm mt-6" }, "What happens next:"), nextList(watcherNext(w))) : null,
     w.source !== "monitor" ? null : monError
       ? errorState(explainError(monError, { what: "Could not load the monitor's state.", safe: "The watcher is shown and keeps checking." }), { onRetry: reload })
-      : [storiesRow(mon, reload), monitorLists(mon, reload)],
+      : [storiesRow(mon, reload, { readOnly }), monitorLists(mon, reload, { readOnly })],
     watcherNotes(st),
     st?.lastError ? h("details", {}, h("summary", {}, "Error details"), h("pre", { class: "mono" }, st.lastError)) : null,
     st?.lastActions?.length ? h("details", {}, h("summary", {}, `Recent activity (${st.lastActions.length})`), h("pre", { class: "mono" }, st.lastActions.join("\n"))) : null,
