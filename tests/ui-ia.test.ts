@@ -28,6 +28,22 @@ describe("resolve with a query", () => {
     expect(a("#/runs?x=1&repo=bad")).toMatchObject({ page: { id: "runs" }, query: {} });
   });
 
+  it("keeps the address for repo=all and leaves repo out of the query", () => {
+    for (const role of ["admin", "user"]) {
+      expect(ia.resolve(role, "#/runs?repo=all")).toMatchObject({ hash: "#/runs?repo=all", redirected: false, page: { id: "runs" }, query: {} });
+      expect(ia.resolve(role, "#/runs?repo=all&owner=u1")).toMatchObject({ hash: "#/runs?repo=all&owner=u1", redirected: false, query: { owner: "u1" } });
+    }
+    expect(a("#/board?repo=all")).toMatchObject({ page: { id: "board" }, query: {} });
+    expect(a("#/runs?repo=ALL")).toMatchObject({ page: { id: "runs" }, query: {} });
+    expect(ia.resolve("user", "#/all-repos?repo=all")).toMatchObject({ hash: "#/runs", redirected: true });
+  });
+
+  it("marks exactly six pages with scope and exports ALL_REPOS", () => {
+    expect(ia.ALL_REPOS).toBe("all");
+    expect(ia.PAGES.filter((p: any) => p.scope).map((p: any) => p.id).sort()).toEqual(["all-repos", "board", "board-repo", "refinement", "repos", "runs"]);
+    for (const p of ia.PAGES.filter((x: any) => !["all-repos", "board", "board-repo", "refinement", "repos", "runs"].includes(x.id))) expect(p.scope, p.id).toBeUndefined();
+  });
+
   it("gives an empty query to every address without one", () => {
     for (const p of ia.PAGES) expect(a(p.path.replace(":id", "x").replace(":name", "x")).query, p.path).toEqual({});
   });

@@ -2,6 +2,8 @@
 // resolves. No imports, so both displays and the tests can load it.
 
 export const MAX_PRIMARY = 7;
+// "all" in `?repo=` means the unfiltered list; resolve() removes it, so pages never see it.
+export const ALL_REPOS = "all";
 export const FALLBACK = { admin: "#/home", user: "#/runs" };
 
 export const AREAS = [
@@ -17,19 +19,19 @@ const A = ["admin"];
 const AU = ["admin", "user"];
 
 // nav: "primary" | "secondary" | "action" | "detail". dest: destination id, null for the Start work action.
-// section: id from SECTIONS, optional (administration pages only).
+// section: id from SECTIONS, optional (administration pages only). scope: true = the page follows the repository context.
 const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "administration", dest: "administration", parent: null, nav: "secondary", label: { admin: title }, roles: A, section });
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
-  { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
-  { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A },
-  { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU },
+  { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
+  { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
+  { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU, scope: true },
   { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "start", path: "#/start", title: "Start work", area: "work", dest: null, parent: null, nav: "action", label: { admin: "Start work", user: "Start work" }, roles: AU },
-  { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU },
+  { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU, scope: true },
   { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
-  { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU },
+  { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU, scope: true },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
@@ -44,7 +46,7 @@ export const PAGES = [
   adminPage("dashboard", "Dashboard", "operations"),
   adminPage("users", "Users", "access"),
   { id: "user", path: "#/users/:id", title: (id) => id, area: "administration", dest: "administration", parent: "users", nav: "detail", label: {}, roles: A },
-  adminPage("all-repos", "All repositories", "access"),
+  { ...adminPage("all-repos", "All repositories", "access"), scope: true },
   adminPage("credentials", "Credentials", "access"),
   adminPage("audit", "Audit", "access"),
   adminPage("settings", "Settings", "system"),
@@ -129,7 +131,7 @@ function describe(role, page, arg, hash, reason) {
 
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
-const VALID = { repo: (v) => v.length <= 200 && REPO_OK.test(v), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
+const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */
 export function splitHash(hash) {
@@ -138,7 +140,7 @@ export function splitHash(hash) {
   return i < 0 ? { path: text, query: "" } : { path: text.slice(0, i), query: text.slice(i + 1) };
 }
 
-/** The known filters of a query text ("?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
+/** The known filters of a query text (`repo` is "owner/name" or "all";"?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
 export function parseQuery(text) {
   const out = {};
   const raw = typeof text === "string" ? text.replace(/^\?/, "") : "";
@@ -179,7 +181,9 @@ export function resolve(role, hash) {
   if (alias) return { ...resolve(role, alias.to), hash: alias.to, redirected: true, reason: "alias" };
   const m = match(role, parts);
   if (!m) return fallback("unknown");
-  return { ...describe(role, m.page, m.arg, hash, null), query: parseQuery(query) };
+  const q = parseQuery(query);
+  if (q.repo === ALL_REPOS) delete q.repo; // "all" is the unfiltered list: pages never see it
+  return { ...describe(role, m.page, m.arg, hash, null), query: q };
 }
 
 /** The letter after `g` for a page ("g r" goes to Runs). Only the pages a role has are offered. */
