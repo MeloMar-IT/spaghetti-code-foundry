@@ -35,7 +35,7 @@ describe("skill catalogue in the shipped planners", () => {
   beforeEach(() => {
     gh = fakeGithub();
     root = mkdtempSync(join(tmpdir(), "flow-skills-"));
-    config = ConfigSchema.parse({ protected_branches: ["main"], concurrency: 3, skills: { builtin: false, roots: [root] } });
+    config = ConfigSchema.parse({ protected_branches: ["main"], concurrency: 3, skills: { builtin: false, releases: { allow_unreleased: true }, roots: [root] } });
     process.env.FACTORY_LOCK_DIR = join(gh.tmp, "locks");
     scheduler = new Scheduler({ runsDir: runsDir(), config: () => config, claudeBin });
     for (const k of FAKES) delete process.env[k];

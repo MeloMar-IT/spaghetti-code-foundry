@@ -8,6 +8,7 @@ import { ConfigSchema } from "../src/config.js";
 import { readSkillLock } from "../src/skills/lock.js";
 import { discoverSkills } from "../src/skills/registry.js";
 import { skillsCommand } from "../src/skills/cli.js";
+import { releaseDigest, type ReleaseManifest } from "../src/skills/release.js";
 
 const CLI = resolve("dist/cli.js");
 let base: string;
@@ -44,11 +45,12 @@ const tamper = (dir: string) => {
   mkdirSync(join(dir, "references"), { recursive: true });
   writeFileSync(join(dir, "references", "x.md"), "changed");
 };
-const digestOf = (key: string) => discoverSkills(ConfigSchema.parse({}).skills, { home, builtinRoot: builtin, userHome: join(base, "u"), env: {} }).byKey.get(key)!.digest;
+const dev = () => ConfigSchema.parse({ skills: { releases: { allow_unreleased: true } } }).skills;
+const digestOf = (key: string) => discoverSkills(dev(), { home, builtinRoot: builtin, userHome: join(base, "u"), env: {} }).byKey.get(key)!.digest;
 
-async function sk(positionals: string[], values: Record<string, unknown> = {}) {
+async function sk(positionals: string[], values: Record<string, unknown> = {}, skills = dev()) {
   const lines: string[] = [];
-  const code = await skillsCommand({ positionals, values }, (l) => lines.push(l), { home, builtinRoot: builtin, userHome: join(base, "u"), env: {}, skills: ConfigSchema.parse({}).skills });
+  const code = await skillsCommand({ positionals, values }, (l) => lines.push(l), { home, builtinRoot: builtin, userHome: join(base, "u"), env: {}, skills });
   return { code, out: lines.join("\n") };
 }
 
@@ -143,6 +145,67 @@ describe("skillsCommand", () => {
     writeFileSync(lockFile(), "{");
     await expect(sk(["unpin", "garbage"])).rejects.toThrow("not a skill key");
   });
+
+  describe("catalogue releases", () => {
+    const strict = (approved: unknown[] = [], roots = [join(base, "rel")]) => ConfigSchema.parse({ skills: { roots, releases: { approved } } }).skills;
+    const manifest = (root: string, over: Record<string, unknown> = {}): ReleaseManifest => {
+      const m = {
+        schema: 1,
+        catalogue: "acme-skills",
+        version: "1.0.0",
+        createdAt: "2026-01-02T03:04:05Z",
+        source: { repository: "github.com/acme/scf-skills", commit: "a".repeat(40) },
+        skills: [{ id: "a", version: "1.0.0", digest: digestIn(root, "a@1.0.0") }],
+        ...over,
+      } as ReleaseManifest;
+      writeFileSync(join(root, "catalogue-release.json"), JSON.stringify(m));
+      return m;
+    };
+    const digestIn = (root: string, key: string) =>
+      discoverSkills(ConfigSchema.parse({ skills: { roots: [root], releases: { allow_unreleased: true } } }).skills, { home, builtinRoot: builtin, userHome: join(base, "u"), env: {} }).byKey.get(key)!.digest;
+
+    it("prints the RELEASE line of an approved release and exits 0", async () => {
+      const root = join(base, "rel");
+      pkg(root, "a");
+      const m = manifest(root);
+      const digest = releaseDigest(m);
+      const r = await sk([], {}, strict([{ catalogue: m.catalogue, version: m.version, digest }]));
+      expect(r.out).toContain(`RELEASE skills.roots[0] acme-skills@1.0.0 ${digest} approved`);
+      expect(r.out).not.toContain("NOTE");
+      expect(r.code).toBe(0);
+    });
+
+    it("prints the digest of an unapproved release and exits 1", async () => {
+      const root = join(base, "rel");
+      pkg(root, "a");
+      const m = manifest(root);
+      const r = await sk([], {}, strict());
+      expect(r.out).toContain(`RELEASE skills.roots[0] acme-skills@1.0.0 ${releaseDigest(m)} unapproved`);
+      expect(r.out).toContain("is not in skills.releases.approved");
+      expect(r.code).toBe(1);
+    });
+
+    it("says so in a NOTE line when a folder without a manifest is loaded in development", async () => {
+      const root = join(base, "rel");
+      pkg(root, "a");
+      const dev2 = ConfigSchema.parse({ skills: { roots: [root], releases: { allow_unreleased: true } } }).skills;
+      const r = await sk([], {}, dev2);
+      expect(r.out).toContain("NOTE skills.roots[0] is loaded without an approved release");
+      expect(r.out).toContain("allow_unreleased");
+      expect(r.code).toBe(0);
+    });
+
+    it("prints no RELEASE line and no value for a manifest that looks like a credential", async () => {
+      const root = join(base, "rel");
+      pkg(root, "a");
+      const key = "sk-ant-" + "a".repeat(20);
+      manifest(root, { catalogue: key });
+      const r = await sk([], {}, strict());
+      expect(r.out).not.toContain("RELEASE");
+      expect(r.out).not.toContain(key);
+      expect(r.code).toBe(1);
+    });
+  });
 });
 
 describe("scf skills (spawned)", () => {
@@ -159,6 +222,7 @@ describe("scf skills (spawned)", () => {
 
   it("four pins at once all succeed and the same key is pinned once", async () => {
     const root = join(home, "skills");
+    writeFileSync(join(home, "config.yaml"), "skills:\n  releases:\n    allow_unreleased: true\n");
     for (const id of ["a", "b", "c"]) pkg(root, id);
     const run = (key: string) =>
       new Promise<{ code: number | null; out: string }>((done) => {

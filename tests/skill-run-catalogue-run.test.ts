@@ -23,7 +23,7 @@ beforeEach(() => {
   repo = join(tmp, "repo");
   mkdirSync(repo);
   low = join(tmp, "skills");
-  config = ConfigSchema.parse({ skills: { roots: [low] } });
+  config = ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low] } });
   const d = join(low, "demo");
   mkdirSync(d, { recursive: true });
   writeFileSync(join(d, "SKILL.md"), "---\nname: demo\ndescription: A test skill.\n---\n\nDo it.\n");

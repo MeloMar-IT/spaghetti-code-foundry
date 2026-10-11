@@ -52,7 +52,7 @@ function setup(): Env {
   for (const d of [home, builtin, userHome]) mkdirSync(d);
   return { home, builtin, userHome, root: (n) => join(base, `root${n}`) };
 }
-const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ skills: over }).skills;
+const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, ...over } }).skills;
 const run = (e: Env, over: Record<string, unknown> = {}, extra: { repo?: string; env?: NodeJS.ProcessEnv } = {}): SkillRegistry =>
   discoverSkills(cfg(over), { home: e.home, builtinRoot: e.builtin, userHome: e.userHome, env: {}, ...extra });
 const keys = (r: SkillRegistry) => r.skills.map((s) => `${s.key}@${s.label}`);
@@ -352,7 +352,7 @@ describe("cache and config", () => {
 
   it("an old config gets the defaults; an unknown key is rejected", () => {
     expect(ConfigSchema.parse({}).skills).toEqual({
-      builtin: true, roots: [], repository: false, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
+      builtin: true, roots: [], repository: false, releases: { allow_unreleased: false, approved: [] }, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
       selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] },
       review: { max_tokens: 3000, max_skill_tokens: 1000 },
       unresolved: {

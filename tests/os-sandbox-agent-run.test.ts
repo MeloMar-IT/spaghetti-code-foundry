@@ -120,7 +120,7 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     addSkillPins([{ key: "demo@1.0.0", digest: loadSkillPackage(d).digest }]);
     const request = 'SKILL_REQUEST: {"version":1,"skills":[{"id":"demo","reason":"Needed for the change","evidence":["catalogue:demo"]}]}';
     const gate = `  - id: risk_gate\n    type: shell\n    run: |\n      # /skill-request\n      echo READY\n      echo '${request}'\n`;
-    const s = await go(flowOf(gate + step("x", "codex", "hello")), user.id, { config: config({ skills: { roots: [low] } }) });
+    const s = await go(flowOf(gate + step("x", "codex", "hello")), user.id, { config: config({ skills: { releases: { allow_unreleased: true }, roots: [low] } }) });
     expect(s.status, s.reason).toBe("succeeded");
     const o = out(s, "x");
     expect(o).toContain('<foundry-skills count="1">');

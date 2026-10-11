@@ -191,7 +191,7 @@ describe("Codex steps and the personal Codex setup", () => {
   });
 
   it("a reviewer with a loaded review block is isolated even when isolate_agents is false", async () => {
-    const s = await run(gate + reviewer("a"), { isolate_agents: false, skills: { roots: [demoSkill()] } });
+    const s = await run(gate + reviewer("a"), { isolate_agents: false, skills: { releases: { allow_unreleased: true }, roots: [demoSkill()] } });
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
     expect(a.skills).toMatchObject({ loaded: ["demo@1.0.0"], role: "reviewer" });

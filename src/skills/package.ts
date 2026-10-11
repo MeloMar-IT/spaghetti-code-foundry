@@ -330,7 +330,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
 export function readRegular(path: string, limit: number): Uint8Array | "link" | "other" | "large" {
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === "ELOOP" ? "link" : "other";
   }

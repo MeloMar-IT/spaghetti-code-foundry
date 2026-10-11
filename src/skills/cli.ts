@@ -1,7 +1,8 @@
 import { loadConfig, type Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
-import { discoverSkills, pinBuiltinSkills, pinSkill, type DiscoverOptions } from "./registry.js";
+import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
+import { releaseProblemText } from "./release.js";
 import { SKILL_DIGEST_RE } from "./schema.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
@@ -79,6 +80,13 @@ export async function skillsCommand(
 
   for (const s of reg.skills) {
     out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+  }
+  for (const r of reg.sources) {
+    const rel = r.release;
+    if (rel && rel.state !== "none" && rel.state !== "invalid") out(`RELEASE ${r.label} ${rel.catalogue}@${rel.version} ${rel.digest} ${rel.state}`);
+  }
+  for (const r of unreleasedSources(reg)) {
+    out(`NOTE ${r.label} is loaded without an approved release (${releaseProblemText(r.release)}): skills.releases.allow_unreleased is on (development only).`);
   }
   for (const n of reg.notes) out(`NOTE ${n.text}`);
   const lockPath = skillLockPath(discover.home ?? dataHome());

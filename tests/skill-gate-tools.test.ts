@@ -21,7 +21,7 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
 const cfg = (unresolved: Record<string, unknown> = {}, include: string[] = [], tools: Record<string, unknown> = {}): Config =>
-  ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, roots: [root], unresolved, selection: { include }, tools } });
+  ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, releases: { allow_unreleased: true }, roots: [root], unresolved, selection: { include }, tools } });
 /** A unique id per call: the pin lock lives in the shared test home. */
 const uid = (base: string) => `${base}-${++n}-x${process.pid}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
 const install = (id: string, tail = "") => {
