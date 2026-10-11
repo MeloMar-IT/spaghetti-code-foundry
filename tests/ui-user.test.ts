@@ -116,7 +116,7 @@ describe("ui/style.css", () => {
   it("hides the shell when signed out and turns the sidebar into a drawer on a narrow screen", () => {
     const shellCss = css;
     expect(shellCss).toContain(".signed-out .side");
-    expect(shellCss).toMatch(/@media \(max-width: 760px\) \{[^@]*\.side \{ display: none; position: fixed;/);
+    expect(shellCss).toMatch(/@media \(max-width: 767px\) \{[^@]*\.side \{ display: none; position: fixed;/);
     expect(shellCss).toContain("body.drawer-open .side");
   });
   it("has the shared state styles", () => {

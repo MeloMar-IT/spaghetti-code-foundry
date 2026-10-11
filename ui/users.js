@@ -483,10 +483,10 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
       h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
       h("button", { class: "primary", onClick: add }, "+ Add user")),
     note,
-    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : h("table", { class: "table" },
+    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : h("div", { class: "table-box" }, h("table", { class: "table" },
       h("caption", { class: "sr-only" }, "Users"),
       h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-      h("tbody", {}, users.map(row))));
+      h("tbody", {}, users.map(row)))));
   return () => {
     generation++;
   };

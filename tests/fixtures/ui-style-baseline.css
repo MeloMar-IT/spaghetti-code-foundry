@@ -309,7 +309,7 @@ pre.diff .file { font-weight: 700; display: block; }
   .overview-pane, .editor-body { grid-column: auto; grid-row: auto; }
   .overview-pane { position: static; max-height: none; }
 }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .brand-full { display: none; }
   .brand-short { display: inline; }
   .layout { grid-template-columns: 1fr; }
@@ -415,7 +415,7 @@ button.icon { justify-content: center; }
 .view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
 .view-bar[hidden] { display: none; }
 .view-as .top { position: static; }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .user-display .top { position: static; overflow-x: visible; }
 }
 
@@ -556,7 +556,7 @@ body.side-closed .side { display: none; }
 
 .signed-out .side, .signed-out .menu-btn, .signed-out .page-title, .signed-out .top a[data-nav], .signed-out .health-chip, .signed-out .account, .signed-out .skip, .signed-out .top-actions { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .side { display: none; position: fixed; top: 0; left: 0; bottom: 0; height: auto; width: min(280px, 85vw); z-index: calc(var(--layer-menu) + 1); }
   body.drawer-open .side, body.drawer-open.side-closed .side { display: flex; }
   body.side-closed:not(.drawer-open) .side { display: none; }
@@ -568,10 +568,6 @@ body.side-closed .side { display: none; }
   .health-chip { max-width: 9ch; }
   .account-name { max-width: 9ch; }
   aside { max-height: 35vh; overflow: auto; }
-}
-
-@media (pointer: coarse) {
-  .side a, .top button, .top a[data-nav], .account summary { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -620,7 +616,7 @@ body.side-closed .side { display: none; }
 .span-all { grid-column: 1 / -1; }
 .cols-2 { grid-template-columns: 1fr 1fr; }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
   main { overflow-wrap: break-word; }
   main pre { max-width: 100%; overflow-x: auto; }
@@ -682,7 +678,7 @@ body.side-closed .side { display: none; }
 .work-panel h3 { margin: 0; font-size: var(--text-small); }
 .work-panel p { margin: 0; }
 .work-panel-chain { display: grid; gap: var(--space-sm); margin: 0; padding-left: 20px; }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .work-board { grid-auto-columns: 85vw; scroll-snap-type: x mandatory; }
   .work-col { scroll-snap-align: start; }
   .work-card a, .work-card button, .work-bar .seg button, .work-display summary { display: inline-flex; align-items: center; min-height: 44px; }
@@ -693,3 +689,24 @@ body.side-closed .side { display: none; }
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filter-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); padding: 1px 4px 1px 10px; border-radius: var(--radius-pill); background: var(--panel-2); border: 1px solid var(--border); }
 .filter-chip button { padding: 0 6px; }
+.log, pre.diff { max-width: 100%; min-width: 0; }
+.modal { overflow-wrap: anywhere; }
+select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand { min-height: var(--size-touch-min); min-width: var(--size-touch-min); }
+@media (pointer: coarse) {
+  :is(button, .btn, select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand, .table a, .modal .row > a, .modal > a):not([hidden]) { min-width: var(--size-touch); min-height: var(--size-touch); }
+  .subnav a, .top a[data-nav], .modal .row > a, .modal > a { display: inline-flex; align-items: center; }
+  label:has(> input[type="checkbox"]), label:has(> input[type="radio"]), .check-row, .scf-checkbox { display: flex; align-items: center; min-height: var(--size-touch); }
+  .side, .subnav, .top-actions, .row.tight, .row.tighter, .filter-bar, .chips, .stack.tight, .seg, .checks { gap: var(--space-md); }
+  .table td > button, .table td > .btn { margin: var(--space-xs); }
+}
+@media (max-width: 1023px) {
+  main { overflow-wrap: anywhere; }
+}
+@media (max-width: 767px) {
+  .backdrop { place-items: end stretch; padding: 0; }
+  .modal, .modal:has(.block-grid) { width: 100%; max-height: 90vh; padding-top: 0; border-radius: var(--radius-xl) var(--radius-xl) var(--radius-none) var(--radius-none); overscroll-behavior: contain; }
+  .modal-head { position: sticky; top: 0; z-index: var(--layer-sticky); padding: var(--space-lg) 0; background: var(--panel); }
+  .toolbar > h1 { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+  .toolbar > :not(button, .btn, a, select, input) { min-width: 0; max-width: 100%; }
+  .toolbar > .spacer { display: none; }
+}

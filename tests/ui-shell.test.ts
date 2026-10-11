@@ -206,6 +206,19 @@ describe("initShell, wide", () => {
     expect(() => byId("menu-btn").click()).not.toThrow();
   });
 
+  it("asks for the compact layout from ui/viewport.js by default", () => {
+    const g = globalThis as any;
+    const had = Object.getOwnPropertyDescriptor(g, "matchMedia");
+    const asked: string[] = [];
+    g.matchMedia = (q: string) => { asked.push(q); return mkMedia(false); };
+    try {
+      stop = shell.initShell("admin", { store: mkStore(null) });
+    } finally {
+      if (had) Object.defineProperty(g, "matchMedia", had); else delete g.matchMedia;
+    }
+    expect(asked).toEqual(["(max-width: 767px)"]);
+  });
+
   it("works with no matchMedia and with every element missing", () => {
     const real = doc().getElementById;
     doc().getElementById = () => null;

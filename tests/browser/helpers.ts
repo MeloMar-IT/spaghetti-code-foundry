@@ -28,6 +28,8 @@ export interface OpenOptions {
   fixedNow?: string;
   /** `openAs` signs in to the large server (UI_TEST_SEED_LARGE) */
   large?: boolean;
+  /** a touch device: `(pointer: coarse)` matches */
+  touch?: boolean;
   /** installs the fake clock before navigation; time keeps flowing, `page.clock.fastForward` jumps it */
   clock?: boolean;
   /** runs first on the new page, before the clock and the other setup (for init scripts that must see the page first) */
@@ -38,6 +40,7 @@ function newContextFor(browser: Browser, width: number, opts: OpenOptions): Prom
   return browser.newContext({
     viewport: { width, height: VIEW_HEIGHT },
     deviceScaleFactor: 1,
+    ...(opts.touch ? { hasTouch: true, isMobile: true } : {}),
     ...(opts.theme ? { colorScheme: opts.theme, locale: "en-US", timezoneId: "UTC", reducedMotion: "reduce" as const } : {}),
   });
 }
@@ -115,6 +118,19 @@ export async function apiAs(role: Role): Promise<Api> {
   };
 }
 
+/** The elements whose right edge is past the viewport (tag, id, classes), deepest first, at most 10. */
+export async function overflowing(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const view = document.documentElement.clientWidth;
+    const depth = (e: Element): number => (e.parentElement ? 1 + depth(e.parentElement) : 0);
+    return [...document.querySelectorAll("body *")]
+      .filter((e) => e.getBoundingClientRect().right > view + 0.5 && e.getClientRects().length > 0)
+      .sort((a, b) => depth(b) - depth(a))
+      .slice(0, 10)
+      .map((e) => `${e.tagName.toLowerCase()}${e.id ? "#" + e.id : ""}${typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/).join(".") : ""}`);
+  });
+}
+
 /** Fails when the document is wider than the viewport. */
 export async function expectNoSidewaysScroll(page: Page): Promise<void> {
   const { doc, body, view } = await page.evaluate(() => ({
@@ -122,7 +138,8 @@ export async function expectNoSidewaysScroll(page: Page): Promise<void> {
     body: document.body.scrollWidth,
     view: document.documentElement.clientWidth,
   }));
-  expect(Math.max(doc, body), `the document is ${Math.max(doc, body)} px wide in a ${view} px viewport`).toBeLessThanOrEqual(view);
+  const wide = Math.max(doc, body) > view ? await overflowing(page) : [];
+  expect(Math.max(doc, body), `the document is ${Math.max(doc, body)} px wide in a ${view} px viewport; past the edge: ${wide.join(", ")}`).toBeLessThanOrEqual(view);
 }
 
 /** The primary links and actions of a role, from ui/ia.js. */

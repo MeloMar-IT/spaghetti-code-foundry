@@ -5,6 +5,7 @@ import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
 import { DEFAULTS, applyFilters, boardPrefs, columnsOf, facets, groupItems, isFiltered, keyOf, workItems } from "./work-model.js";
 import { PANEL_ID, panelView } from "./work-panel.js";
+import { mediaFor } from "./viewport.js";
 import { cleanPrefs, loadPrefs, savePrefs } from "./work-prefs.js";
 
 // The Work page (redesign): every story as a board or a list, from GET /api/board. Status, column, sentence and
@@ -67,7 +68,7 @@ export function workView(data, prefs, handlers) {
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderWork(main, wantedRepo, { user, store, now, media = globalThis.matchMedia?.("(max-width: 760px)") } = {}) {
+export function renderWork(main, wantedRepo, { user, store, now, media = mediaFor("compact") } = {}) {
   let closed = false;
   let data;
   let last;

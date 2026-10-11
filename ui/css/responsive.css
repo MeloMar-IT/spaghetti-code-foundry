@@ -1,0 +1,32 @@
+/* responsive.css — touch-sized targets, bottom-sheet dialogs and wrapping page actions.
+   Belongs here: the 44 px / 24 px target minimums, the compact (below 768 px) dialog sheet and toolbar wrapping, and the "own box" rules for logs, diffs and long names.
+   Does not belong here: a width rule for one page (keep it next to that page's base rule) or a new breakpoint (see ui/viewport.js and docs/DESIGN.md "Breakpoints"). */
+
+/* logs, diffs and long text stay inside their own box */
+.log, pre.diff { max-width: 100%; min-width: 0; }
+.modal { overflow-wrap: anywhere; }
+
+/* fine pointers: at least 24 px */
+select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand { min-height: var(--size-touch-min); min-width: var(--size-touch-min); }
+
+/* coarse pointers: 44 px, and 8 px between neighbours. The :not([hidden]) adds the weight to beat shrink rules such as `.top > *`. */
+@media (pointer: coarse) {
+  :is(button, .btn, select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand, .table a, .modal .row > a, .modal > a):not([hidden]) { min-width: var(--size-touch); min-height: var(--size-touch); }
+  .subnav a, .top a[data-nav], .modal .row > a, .modal > a { display: inline-flex; align-items: center; }
+  label:has(> input[type="checkbox"]), label:has(> input[type="radio"]), .check-row, .scf-checkbox { display: flex; align-items: center; min-height: var(--size-touch); }
+  .side, .subnav, .top-actions, .row.tight, .row.tighter, .filter-bar, .chips, .stack.tight, .seg, .checks { gap: var(--space-md); }
+  .table td > button, .table td > .btn { margin: var(--space-xs); }
+}
+
+@media (max-width: 1023px) {
+  main { overflow-wrap: anywhere; }
+}
+
+@media (max-width: 767px) {
+  .backdrop { place-items: end stretch; padding: 0; }
+  .modal, .modal:has(.block-grid) { width: 100%; max-height: 90vh; padding-top: 0; border-radius: var(--radius-xl) var(--radius-xl) var(--radius-none) var(--radius-none); overscroll-behavior: contain; }
+  .modal-head { position: sticky; top: 0; z-index: var(--layer-sticky); padding: var(--space-lg) 0; background: var(--panel); }
+  .toolbar > h1 { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+  .toolbar > :not(button, .btn, a, select, input) { min-width: 0; max-width: 100%; }
+  .toolbar > .spacer { display: none; }
+}
