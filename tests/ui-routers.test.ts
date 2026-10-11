@@ -35,7 +35,8 @@ let hashchange: (() => unknown) | undefined;
 const g = globalThis as any;
 function setup(hash: string) {
   g.location = { hash, search: "", reload: vi.fn() };
-  g.history = { replaceState: vi.fn() };
+  // as a browser: replaceState changes the address (without a hashchange)
+  g.history = { replaceState: vi.fn((_s: unknown, _t: string, url: string) => { g.location.hash = url; }) };
   g.window = { addEventListener: (t: string, fn: () => unknown) => { if (t === "hashchange") hashchange = fn; } };
   hashchange = undefined;
   g.document.getElementById("main").replaceChildren();
@@ -213,6 +214,27 @@ describe("user router", () => {
     expect(g.history.replaceState).not.toHaveBeenCalled();
   });
 
+  it("sends filter changes of the three pages through context.keep, writing the address only", async () => {
+    const ctx = contextStub({ keep: (h: string) => (h.includes("repo=") ? h : h.replace("#/runs", "#/runs?repo=all").replace(/\?repo=all\?/, "?repo=all&")) });
+    const renderMyRuns = vi.fn();
+    const renderRepos = vi.fn();
+    const renderRefinement = vi.fn();
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/repos.js": { renderRepos }, "/refinement.js": { renderRefinement }, "/context.js": ctx }));
+    const go = renderMyRuns.mock.calls[0]![1].go;
+    g.history.replaceState.mockClear();
+    go("#/runs?owner=u1");
+    expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/runs?repo=all&owner=u1");
+    expect(g.location.hash).toBe("#/runs?repo=all&owner=u1");
+    await tick();
+    expect(renderMyRuns).toHaveBeenCalledTimes(1); // the address changed, the page did not draw again
+    for (const [hash, fn] of [["#/repos", renderRepos], ["#/refinement", renderRefinement]] as const) {
+      setup(hash);
+      await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/repos.js": { renderRepos }, "/refinement.js": { renderRefinement }, "/context.js": ctx }));
+      await vi.waitFor(() => expect(fn).toHaveBeenCalled());
+      expect(typeof fn.mock.calls.at(-1)![1].go, hash).toBe("function");
+    }
+  });
+
   it("keeps the generation check", () => {
     const src = readFileSync("ui/user/app.js", "utf8");
     expect(src).toContain("mine === generation && !stopped");
@@ -325,6 +347,29 @@ describe("admin router", () => {
     await vi.waitFor(() => expect(renderBoard).toHaveBeenCalledTimes(1));
     expect(renderBoard.mock.calls[0]![1]).toBe("a/b");
     expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/board/a%2Fb");
+  });
+
+  it("sends filter changes of the Runs list, the classic board and the redesigned board through context.keep", async () => {
+    const keep = vi.fn((h: string) => (h.includes("repo=") ? h : `${h}${h.includes("?") ? "&" : "?"}repo=all`));
+    for (const [hash, redesign] of [["#/runs", false], ["#/board", false], ["#/board", true]] as const) {
+      setup(hash);
+      const renderRunsList = vi.fn();
+      const renderBoard = vi.fn();
+      const renderWork = vi.fn();
+      await loadRouter("app.js", stub({
+        "./context.js": contextStub({ keep }),
+        "./runs.js": { renderRunsList }, "./board.js": { renderBoard }, "./work.js": { renderWork },
+        "./api.js": { api: { info: async () => ({ repo: "r", redesign }), flows: async () => [] } },
+      }));
+      const fn = hash === "#/runs" ? renderRunsList : redesign ? renderWork : renderBoard;
+      await vi.waitFor(() => expect(fn).toHaveBeenCalledTimes(1));
+      const call = fn.mock.calls[0]!;
+      const go = (call[2] ?? call[1]).go;
+      g.history.replaceState.mockClear();
+      go(`${hash}?owner=u1`);
+      expect(g.history.replaceState, `${hash} ${redesign}`).toHaveBeenCalledWith(null, "", `${hash}?owner=u1&repo=all`);
+      expect(g.location.hash).toBe(`${hash}?owner=u1&repo=all`);
+    }
   });
 
   it("gives the redesigned board the address filters", async () => {

@@ -331,7 +331,11 @@ part of the address, so you can share it, and Back and Forward restore it:
 
 - `#/runs?repo=owner%2Fname&owner=<account>` (admin Runs). `repo` and `owner` are the only keys;
   anything else is ignored. A repository must look like `owner/name`.
-- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`.
+- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`. The classic Board
+  matches the repository name without regard to case. For `#/board/<name>` with a name that is not
+  in your list (for example an old link) it shows "This repository is not in your list…", all
+  repository buttons and a button to `#/board?repo=all`; it no longer opens the first repository.
+  Without a name in the address it still shows the first repository.
 - On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
   there: a user only ever sees their own runs.
 
@@ -341,6 +345,17 @@ part of the address, so you can share it, and Back and Forward restore it:
 Above the list a filter bar shows one chip per active filter, each with a remove button, and
 **Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
 and offers **Clear filters**; this also happens for a repository your account cannot see.
+
+With a repository context set, **Clear filters** and the remove button on the repository chip write
+`?repo=all` (an `owner` filter stays), so the next page does not put your context back. For
+example `#/runs?owner=u1` becomes `#/runs?repo=all&owner=u1`. An address that names a repository,
+`#/board/<name>?owner=…` and pages that do not follow the context are not changed.
+
+**Use as my context.** When the page shows another repository from your list than your context, or
+all repositories while a context is set, the filter bar shows **Use as my context** and names the
+scope ("All repositories" or "Repository: owner/name"), even with no chips. One click makes it your
+context, updates the switcher and hides the button. It is not shown for the same repository, a
+repository that is not in your list, without a context, or on pages that do not follow the context.
 
 The browser filters what the server already sent; no call gets a new parameter. The Runs list
 holds the newest 200 runs, so with a repository filter on a full list you see "Only the newest

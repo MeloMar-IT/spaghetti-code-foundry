@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, tabStops, toast, trapTarget } from "./dom.js";
+import { contextOffer, defaultGo, watchContextOffer, withQuery } from "./filters.js";
 import { workBoard } from "./work-board.js";
 import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
@@ -45,10 +46,16 @@ export function workView(data, prefs, handlers) {
   const { onChange } = handlers;
   const status = new Set(prefs.status);
   const toggle = (id) => onChange({ status: columnsOf(data).map((c) => c.id).filter((x) => (x === id ? !status.has(id) : status.has(x))) });
+  const offer = contextOffer({ repo: prefs.repo });
+  const useButton = offer
+    ? h("button", { type: "button", class: "small", "data-focus": "work-context", title: offer.label, onClick: () => { offer.onUse(); useButton.hidden = true; } }, "Use as my context")
+    : null;
+  if (useButton) watchContextOffer({ repo: prefs.repo }, () => { useButton.hidden = true; });
   const toolbar = h("div", { class: "toolbar work-bar" },
     h("h1", {}, "Work"),
     pick("work-repo", "Show one repository", prefs.repo, withAll("All repositories", f.repos), (repo) => onChange({ repo })),
     pick("work-owner", "Show the stories of one account", prefs.owner, withAll("All owners", f.owners), (owner) => onChange({ owner })),
+    useButton,
     pick("work-who", "Show the stories by who has the next move", prefs.who, withAll("Any next move", f.who), (who) => onChange({ who })),
     columnsOf(data).map((c) => h("button", {
       class: status.has(c.id) ? "small primary" : "small", "data-focus": `work-status-${c.id}`, "aria-pressed": status.has(c.id) ? "true" : "false",
@@ -68,7 +75,7 @@ export function workView(data, prefs, handlers) {
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderWork(main, wantedRepo, { user, store, now, query = {}, media = mediaFor("compact") } = {}) {
+export function renderWork(main, wantedRepo, { user, store, now, query = {}, media = mediaFor("compact"), go = defaultGo } = {}) {
   let closed = false;
   let data;
   let last;
@@ -91,12 +98,19 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
   if (addressOwner) prefs = { ...prefs, owner: addressOwner };
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
 
+  // The address follows the repository and owner filters, so a reload shows the same page (and Clear is not undone by the context).
+  const writeAddress = () => {
+    const owner = prefs.owner ? { owner: prefs.owner } : {};
+    go(prefs.repo ? withQuery(`#/board/${encodeURIComponent(prefs.repo)}`, owner) : withQuery("#/board", { repo: "all", ...owner }));
+  };
+
   const handlers = {
     onChange: (patch) => {
       if (Object.entries(patch).every(([k, v]) => JSON.stringify(prefs[k]) === JSON.stringify(v))) return; // nothing changed: no redraw
       prefs = { ...prefs, ...patch };
       if ("owner" in patch) addressOwner = "";
       savePrefs(user, prefs, store);
+      if ("repo" in patch || "owner" in patch) writeAddress();
       draw();
     },
     onText: (value) => {
@@ -108,6 +122,7 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
       addressOwner = "";
       prefs = { ...prefs, repo: DEFAULTS.repo, owner: DEFAULTS.owner, status: [], who: DEFAULTS.who, text: DEFAULTS.text };
       savePrefs(user, prefs, store);
+      writeAddress();
       draw();
     },
     stops,

@@ -118,7 +118,8 @@ async function route() {
   const [, section, arg] = path.split("/").map(decodeURIComponent);
   const leavingDraft = S.cur?.dirty && (section !== "flows" || arg !== S.cur.name) && path !== "#/new";
   // Filters change the address without a navigation; the page keeps the address in step.
-  const go = (next) => { history.replaceState(null, "", next); S.lastHash = next; };
+  // With a repository context, clearing the repository filter writes repo=all (context.keep), so the context does not come back.
+  const go = (next) => { const kept = context ? context.keep(next) : next; history.replaceState(null, "", kept); S.lastHash = kept; };
   // Only warn when opening a *different* flow; other pages keep the draft in memory.
   if (leavingDraft && section === "flows" && arg) {
     history.replaceState(null, "", S.lastHash);
@@ -145,7 +146,7 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me, query: { ...to.query, ...(parseQuery(splitHash(hash).query).repo === "all" ? { repo: "all" } : {}) } }) : renderBoard(main, arg, { query: to.query, go });
+    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me, go, query: { ...to.query, ...(parseQuery(splitHash(hash).query).repo === "all" ? { repo: "all" } : {}) } }) : renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);

@@ -106,7 +106,7 @@ describe("ui/user/app.js", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
     expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
-    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query })");
+    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query, go })");
     expect(app.indexOf('resolve("user", page.hash)')).toBeLessThan(app.indexOf('showPage("user", to)'));
     for (const c of calls) expect(c, c).toContain("readOnly");
     expect(app).not.toContain('"/runs.js"');

@@ -5,9 +5,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let c: any;
+let fl: any;
 beforeAll(async () => {
   restore = installFakeDom();
   c = await import("../ui/context.js" as string);
+  fl = await import("../ui/filters.js" as string);
 });
 afterAll(() => restore());
 
@@ -288,6 +290,54 @@ describe("goneText and switcherSections", () => {
   });
 });
 
+describe("clearedHash", () => {
+  const ctx = { active: true, repo: "a/b", own: true };
+  it("writes repo=all and keeps owner", () => {
+    const to = (role: string, hash: string) => c.clearedHash(role, hash, ctx);
+    expect(to("admin", "#/runs")).toBe("#/runs?repo=all");
+    expect(to("admin", "#/runs?owner=u1")).toBe("#/runs?repo=all&owner=u1");
+    expect(to("admin", "#/board?owner=u1")).toBe("#/board?repo=all&owner=u1");
+    for (const p of ["#/refinement", "#/repos", "#/all-repos"]) expect(to("admin", p), p).toBe(`${p}?repo=all`);
+    expect(to("user", "#/runs")).toBe("#/runs?repo=all");
+  });
+  it("leaves everything else alone", () => {
+    for (const [role, hash] of [
+      ["admin", "#/runs?repo=a%2Fb"], ["admin", "#/runs?repo=all&owner=u1"], ["admin", "#/board/a%2Fb?owner=u1"], ["admin", "#/home"],
+      ["admin", "#/runs/r1"], ["admin", "#/refinement/s1"], ["admin", "#/nope"], ["user", "#/board"],
+    ]) expect(c.clearedHash(role, hash, ctx), `${role} ${hash}`).toBe(hash);
+    expect(c.clearedHash("admin", "#/runs", { ...ctx, active: false })).toBe("#/runs");
+    expect(c.clearedHash("admin", undefined, ctx)).toBeUndefined();
+  });
+});
+
+describe("offerFor", () => {
+  const ctx = { active: true, repo: "a/b", own: true };
+  const list = [{ name: "a/b", own: true }, { name: "c/d", own: false }];
+  const all = { repo: "", label: "All repositories" };
+  it("offers another known repository, in the spelling of the list", () => {
+    expect(c.offerFor("admin", "#/runs?repo=c%2Fd", ctx, list)).toEqual({ repo: "c/d", label: "Repository: c/d" });
+    expect(c.offerFor("admin", "#/runs?repo=C%2FD", ctx, list)).toEqual({ repo: "c/d", label: "Repository: c/d" });
+    expect(c.offerFor("admin", "#/board/c%2Fd?owner=u1", ctx, list)).toEqual({ repo: "c/d", label: "Repository: c/d" });
+    expect(c.offerFor("admin", "#/board?repo=all", ctx, list, "c/d")).toEqual({ repo: "c/d", label: "Repository: c/d" });
+  });
+  it("offers All while a context repository is set", () => {
+    expect(c.offerFor("admin", "#/runs?repo=all", ctx, list)).toEqual(all);
+    expect(c.offerFor("admin", "#/runs?owner=u1", ctx, list)).toEqual(all);
+  });
+  it("offers nothing otherwise", () => {
+    expect(c.offerFor("admin", "#/runs?repo=A%2FB", ctx, list)).toBeNull();
+    expect(c.offerFor("admin", "#/runs?repo=x%2Fy", ctx, list)).toBeNull();
+    expect(c.offerFor("admin", "#/runs?repo=c%2Fd", { ...ctx, active: false }, list)).toBeNull();
+    expect(c.offerFor("admin", "#/home", ctx, list)).toBeNull();
+    expect(c.offerFor("admin", "#/runs/r1", ctx, list)).toBeNull();
+    expect(c.offerFor("admin", "#/runs?repo=all", { active: true, repo: "", own: false }, list)).toBeNull();
+    expect(c.offerFor("admin", "#/repos?repo=all", { ...ctx, own: false }, list)).toBeNull();
+    expect(c.offerFor("admin", "#/repos?repo=all", ctx, list)).toEqual(all);
+    expect(c.offerFor("admin", "#/repos?repo=c%2Fd", ctx, list)).toBeNull();
+    expect(c.offerFor("admin", undefined, ctx, list)).toBeNull();
+  });
+});
+
 describe("initContext", () => {
   const tick = () => new Promise<void>((r) => setTimeout(r, 0));
   const box = () => (globalThis as any).document.getElementById("context") as FakeElement;
@@ -391,6 +441,100 @@ describe("initContext", () => {
     expect(t.ctx.scoped("#/runs")).toBe(c.scopedHash("user", "#/runs", t.ctx.current()));
     expect(t.ctx.scoped("#/runs")).toContain("repo=all");
     expect(t.ctx.keep("#/x")).toBe("#/x");
+  });
+  it("keep writes repo=all with a context; it is the identity before load, with one repository and after stop", async () => {
+    let release: (v: unknown) => void = () => {};
+    const early = make("user", fakeA(() => new Promise((r) => { release = r; })));
+    early.store.choose("a/b");
+    expect(early.ctx.keep("#/runs")).toBe("#/runs");
+    release(two);
+    await early.ctx.ready;
+    const t = make("user", fakeA(two));
+    t.store.choose("a/b");
+    await t.ctx.ready;
+    expect(t.ctx.keep("#/runs?owner=u1")).toBe("#/runs?repo=all&owner=u1");
+    expect(t.ctx.keep("#/runs?repo=c%2Fd")).toBe("#/runs?repo=c%2Fd");
+    const one = make("user", fakeA([gh("a/b")]));
+    await one.ctx.ready;
+    expect(one.ctx.keep("#/runs")).toBe("#/runs");
+    t.ctx.stop();
+    expect(t.ctx.keep("#/runs")).toBe("#/runs");
+  });
+  describe("the offer", () => {
+    afterEach(() => fl.setContextOffer(null));
+    it("offers the shown repository; a click stores it, redraws the switcher and ends the offer", async () => {
+      const t = make("user", fakeA(two), { where: () => "#/runs?repo=c%2Fd" });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      expect(fl.contextOffer().label).toBe("Repository: c/d");
+      fl.contextOffer().onUse();
+      expect(t.store.get().repo).toBe("c/d");
+      expect(text()).toContain("c/d");
+      expect(fl.contextOffer()).toBeNull();
+    });
+    it("offers All on a page without a repository, and a click chooses All", async () => {
+      const t = make("user", fakeA(two), { where: () => "#/runs?repo=all" });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      expect(fl.contextOffer().label).toBe("All repositories");
+      fl.contextOffer().onUse();
+      expect(t.store.get().repo).toBe("");
+    });
+    it("takes the repository the page really shows", async () => {
+      const t = make("admin", fakeA(two), { where: () => "#/board?repo=all" });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      expect(fl.contextOffer({ repo: "c/d" }).label).toBe("Repository: c/d");
+      expect(fl.contextOffer({ repo: "a/b" })).toBeNull();
+    });
+    it("a bar already on the page loses its offer when the switcher chooses that repository", async () => {
+      let here = "#/repos?repo=c%2Fd";
+      const t = make("user", fakeA(two), { where: () => here });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      const bar = fl.filterBar({ repo: "c/d" }) as FakeElement;
+      const use = bar.all("button").find((b) => b.textContent === "Use as my context")!;
+      expect(use.hidden).toBeFalsy();
+      focusOf("context-btn").click();
+      focusOf("context-item-c/d").click();
+      expect(use.hidden).toBe(true);
+      here = "#/repos?repo=c%2Fd";
+    });
+    it("a repository that goes from the list ends the offer, and a stale click does not store it", async () => {
+      const t = make("user", fakeA(two, [gh("a/b"), gh("e/f")]), { where: () => "#/repos?repo=c%2Fd" });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      const stale = fl.contextOffer();
+      const bar = fl.filterBar({ repo: "c/d" }) as FakeElement;
+      const use = bar.all("button").find((b) => b.textContent === "Use as my context")!;
+      await t.ctx.refresh();
+      expect(use.hidden).toBe(true);
+      stale.onUse();
+      expect(t.store.get().repo).toBe("a/b");
+    });
+    it("a button of the page registered with watchContextOffer is hidden when the context matches", async () => {
+      const t = make("user", fakeA(two), { where: () => "#/repos?repo=c%2Fd" });
+      t.store.choose("a/b");
+      await t.ctx.ready;
+      const hide = vi.fn();
+      fl.watchContextOffer({ repo: "c/d" }, hide);
+      focusOf("context-btn").click();
+      focusOf("context-item-c/d").click();
+      expect(hide).toHaveBeenCalledOnce();
+    });
+    it("stop clears the offer, but not the one of a newer context", async () => {
+      const a = make("user", fakeA(two), { where: () => "#/runs?repo=all" });
+      a.store.choose("a/b");
+      await a.ctx.ready;
+      a.ctx.stop();
+      expect(fl.contextOffer()).toBeNull();
+      const old = make("user", fakeA(two), { where: () => "#/runs?repo=all" });
+      const newer = make("user", fakeA(two), { where: () => "#/runs?repo=all" });
+      newer.store.choose("a/b");
+      await newer.ctx.ready;
+      old.ctx.stop();
+      expect(fl.contextOffer()).not.toBeNull();
+    });
   });
   it("scoped is null with fewer than two and after stop", async () => {
     const one = make("user", fakeA([gh("a/b")]));

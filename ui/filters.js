@@ -63,18 +63,74 @@ export function filterGone({ onClear } = {}) {
 
 const describe = (filters, labels) => KEYS.filter((k) => filters?.[k]).map((k) => `${NAMES[k]}: ${labels?.[k] ?? filters[k]}`);
 
-/** The bar above a list: one chip per active filter with a remove button, and Clear filters. Null when no filter is active. `focus` is the prefix of the `data-focus` names of its buttons. */
-export function filterBar(filters, { labels = {}, onRemove, onClear, focus = "filter" } = {}) {
+// The context offer: "Use as my context". The source is null, an offer { label, onUse } or a function (given `{ repo }`
+// when the page names the repository it shows) that returns one or null. The live context registers a function, so the
+// offer is worked out when a bar is drawn. Module-level state: tests must clear it.
+let offerSource = null;
+const mounted = new Set(); // the bars drawn with an offer, to hide it again when the context changes without a redraw
+
+export function setContextOffer(source) {
+  offerSource = source ?? null;
+  if (!offerSource) mounted.clear();
+}
+
+/** The offer for the page now, or null. A source that throws is no offer. `arg` = { repo } names the repository the page really shows. */
+export function contextOffer(arg) {
+  try {
+    const o = typeof offerSource === "function" ? offerSource(arg) : offerSource;
+    return o && typeof o.label === "string" && typeof o.onUse === "function" ? o : null;
+  } catch {
+    return null;
+  }
+}
+
+/** For a page with its own button: calls `hide` once the registered offer for `arg` ({ repo } or undefined) is gone after a context change. */
+export function watchContextOffer(arg, hide) {
+  mounted.add({ update: () => { if (contextOffer(arg)) return true; hide(); return false; } });
+  if (mounted.size > 20) mounted.delete(mounted.values().next().value);
+}
+
+/** Hides the offer of the bars already on the page that no longer have one. */
+export function refreshContextOffer() {
+  for (const m of [...mounted]) if (!m.update()) mounted.delete(m);
+}
+
+/**
+ * The bar above a list: one chip per active filter with a remove button, and Clear filters (only with a chip). With a
+ * context offer it also names the scope (when no repository chip does) and has "Use as my context". `onContext` is
+ * undefined for the registered offer, null for none, or an offer object; `shown` names the repository the page really
+ * shows when the address does not. Null when there is no chip and no offer. `focus` is the prefix of the `data-focus` names of its buttons.
+ */
+export function filterBar(filters, { labels = {}, onRemove, onClear, onContext, shown, focus = "filter" } = {}) {
   const active = filters ?? {};
   const keys = KEYS.filter((k) => active[k]);
-  if (!keys.length) return null;
-  return h("div", { class: "filter-bar", role: "group", "aria-label": "Active filters" },
+  const own = onContext === undefined;
+  const arg = shown === undefined ? undefined : { repo: shown };
+  const offer = own ? contextOffer(arg) : onContext;
+  if (!keys.length && !offer) return null;
+  const extra = [];
+  let bar;
+  if (offer) {
+    const scope = active.repo ? null : h("span", { class: "muted" }, offer.label);
+    const hide = () => {
+      if (scope) scope.hidden = true;
+      button.hidden = true;
+      if (!keys.length && bar) bar.hidden = true;
+    };
+    const button = h("button", { type: "button", class: "small", "data-focus": `${focus}-context`, onClick: () => { offer.onUse(); hide(); } }, "Use as my context");
+    if (scope) extra.push(scope);
+    extra.push(button);
+    if (own) watchContextOffer(arg, hide);
+  }
+  bar = h("div", { class: "filter-bar", role: "group", "aria-label": "Active filters" },
     keys.map((key) => {
       const text = `${NAMES[key]}: ${labels[key] ?? active[key]}`;
       return h("span", { class: "filter-chip" }, text,
         h("button", { type: "button", class: "ghost small", "aria-label": `Remove filter ${text}`, "data-focus": `${focus}-remove-${key}`, onClick: () => onRemove?.(key) }, "×"));
     }),
-    h("button", { type: "button", class: "small", "data-focus": `${focus}-clear`, onClick: () => onClear?.() }, "Clear filters"));
+    keys.length ? h("button", { type: "button", class: "small", "data-focus": `${focus}-clear`, onClick: () => onClear?.() }, "Clear filters") : null,
+    extra);
+  return bar;
 }
 
 /** What a list shows when the filters match nothing: names them and offers Clear filters. `what` is "runs" or "cards". `focus` is the prefix of the button name. */

@@ -5,9 +5,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let filters: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/board.js" as string);
+  filters = await import("../ui/filters.js" as string);
 });
 afterAll(() => restore());
 
@@ -97,9 +99,15 @@ describe("boardView", () => {
     expect(view({ repos: [], empty: "No stories yet." }).textContent).toContain("No stories yet.");
   });
 
-  it("falls back to the first repository", () => {
-    expect(ui.pickRepo(board(), "nope").repo).toBe("acme/app");
+  it("finds the wanted repository ignoring case, and does not fall back for an unknown one", () => {
+    expect(ui.pickRepo(board(), "nope")).toBeUndefined();
+    expect(ui.pickRepo(board(), "ACME/App").repo).toBe("acme/app");
     expect(ui.pickRepo({ repos: [] }, "x")).toBeUndefined();
+  });
+
+  it("shows the first repository when none is wanted", () => {
+    expect(ui.pickRepo(board(), undefined).repo).toBe("acme/app");
+    expect(ui.pickRepo(board(), "").repo).toBe("acme/app");
   });
 });
 
@@ -299,13 +307,13 @@ describe("renderBoard", () => {
     cleanup();
   });
 
-  it("falls back to the first repository for an unknown argument", async () => {
+  it("shows the not-in-your-list state for an unknown argument", async () => {
     const m = main();
     const cleanup = ui.renderBoard(m, "unknown/repo");
     calls.shift()!.answer(board());
     await flush();
-    expect(m.textContent).toContain("acme/app");
-    expect(m.textContent).toContain("Eighty-nine");
+    expect(m.textContent).toContain(filters.NOT_IN_LIST);
+    expect(m.textContent).not.toContain("Eighty-nine");
     cleanup();
   });
 });
@@ -624,5 +632,48 @@ describe("the board page frame", () => {
     await flush();
     expect(find(page, "div", "state-error").length).toBeGreaterThan(0);
     cleanup();
+  });
+});
+
+describe("an unknown repository and the context offer", () => {
+  const buttonsOf = (root: FakeElement, text: string) => root.all("button").filter((b) => b.textContent === text);
+  afterEach(() => filters.setContextOffer(null));
+
+  it("shows the not-in-your-list text, the repository buttons and a way to all repositories", () => {
+    const loc = { hash: "" };
+    (globalThis as any).location = loc;
+    const root = view(board(), "nope/x");
+    expect(root.textContent).toContain(filters.NOT_IN_LIST);
+    expect(find(root, "a", "btn").map((a) => a.attrs.href)).toEqual(["#/board/acme%2Fapp"]);
+    expect(find(root, "div", "board-col")).toHaveLength(0);
+    buttonsOf(root, "Clear filters")[0]!.listeners.click![0]!();
+    expect(loc.hash).toBe("#/board?repo=all");
+  });
+
+  it("keeps the owner when it goes to all repositories", () => {
+    const loc = { hash: "" };
+    (globalThis as any).location = loc;
+    const root = new FakeElement("div");
+    root.append(...(ui.boardView(board(), "nope/x", { ...handlers(), owner: "u1" }) as unknown[]).filter(Boolean) as FakeElement[]);
+    buttonsOf(root, "Clear filters").at(-1)!.listeners.click![0]!();
+    expect(loc.hash).toBe("#/board?repo=all&owner=u1");
+  });
+
+  it("shows the not-in-your-list text for an empty list too", () => {
+    expect(view({ repos: [], empty: "No stories yet." }, "x/y").textContent).toContain(filters.NOT_IN_LIST);
+    expect(view({ repos: [], empty: "No stories yet." }).textContent).toContain("No stories yet.");
+  });
+
+  it("shows the first repository when none is wanted", () => {
+    expect(cardEl(view(board())).length).toBeGreaterThan(0);
+  });
+
+  it("offers the repository it shows: the wanted one, or the first when none is wanted", () => {
+    const seen: unknown[] = [];
+    filters.setContextOffer((arg: unknown) => { seen.push(arg); return { label: "Repository: acme/app", onUse: () => {} }; });
+    expect(buttonsOf(view(board(), "acme/app"), "Use as my context")).toHaveLength(1);
+    expect(buttonsOf(view(board()), "Use as my context")).toHaveLength(1);
+    expect(seen).toEqual([undefined, { repo: "acme/app" }]);
+    expect(buttonsOf(view({ repos: [], empty: "x" }), "Use as my context")).toHaveLength(0);
   });
 });
