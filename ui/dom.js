@@ -55,7 +55,8 @@ export function mount(target, ...nodes) {
   const same = [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name);
   if (same) return same.focus();
   // The control is gone: the heading of this part takes the focus, so it never drops to `<body>`.
-  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3") ?? target;
+  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3")
+    ?? target.closest?.(".page")?.querySelector("h1, h2, h3") ?? target;
   heading.setAttribute("tabindex", "-1");
   heading.focus();
 }

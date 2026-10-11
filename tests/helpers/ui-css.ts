@@ -103,6 +103,73 @@ export function parseCss(text: string): CssRule[] {
   return rules;
 }
 
+// Which selectors belong to the shared components (ui/css/components.css), so the page and template files stay out of them.
+
+export interface SharedSelectors { classes: Set<string>; controls: Set<string>; ids: Set<string> }
+
+const CONTROLS = ["button", "input", "select", "textarea"];
+
+/** The selectors of one rule, split on commas outside brackets. */
+const splitSelectors = (selector: string): string[] => {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const c of selector) {
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    if (c === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += c;
+  }
+  out.push(cur.trim());
+  return out.filter(Boolean);
+};
+
+/** The first compound of a selector: `(...)` groups removed, then the text up to the first space, `>`, `+` or `~`. */
+function firstCompound(selector: string): string {
+  let s = selector;
+  for (let prev = ""; prev !== s;) {
+    prev = s;
+    s = s.replace(/\([^()]*\)/g, "");
+  }
+  return s.trim().split(/[\s>+~]/)[0] ?? "";
+}
+
+const leadingClass = (compound: string): string | undefined => /\.([\w-]+)/.exec(compound)?.[1];
+
+/** From components.css: the leading class of the first compound of every selector; the bare controls; `#toast`. */
+export function sharedSelectors(componentsCss: string): SharedSelectors {
+  const classes = new Set<string>();
+  for (const rule of parseCss(componentsCss)) {
+    if (rule.selector.startsWith("@")) continue;
+    for (const sel of splitSelectors(rule.selector)) {
+      const cls = leadingClass(firstCompound(sel));
+      if (cls) classes.add(cls);
+    }
+  }
+  return { classes, controls: new Set(CONTROLS), ids: new Set(["#toast"]) };
+}
+
+/**
+ * The selectors of `cssText` that compete with a shared component: any `.scf-` class, a bare control, a shared id, or a
+ * first compound whose leading class is shared. `@keyframes` is skipped; rules inside `@media` are checked.
+ */
+export function competingSelectors(cssText: string, shared: SharedSelectors): string[] {
+  const out: string[] = [];
+  for (const rule of parseCss(cssText)) {
+    if (rule.selector.startsWith("@")) continue;
+    for (const sel of splitSelectors(rule.selector)) {
+      const compound = firstCompound(sel);
+      const tag = /^[a-z][\w-]*/i.exec(compound)?.[0];
+      const cls = leadingClass(compound);
+      const id = /^[a-z]*(#[\w-]+)/i.exec(compound)?.[1];
+      if (sel.includes(".scf-") || (tag && shared.controls.has(tag)) || (id && shared.ids.has(id)) || (cls && shared.classes.has(cls))) out.push(sel);
+    }
+  }
+  return out;
+}
+
 // Checks for the component kit (ui/kit/, #325).
 
 const COLOR_NAMES = new Set(("aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue " +

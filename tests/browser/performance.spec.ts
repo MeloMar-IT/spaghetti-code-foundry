@@ -20,7 +20,7 @@ const RUNS_READY: Ready = { selector: "#main", text: "Seeded failed run" };
 const HOME_READY: Ready = { selector: "#main", text: "Seeded gate run" };
 const BOARD_READY: Ready = { selector: "#main", text: "acme/app" };
 const HOME_MARKER: Marker = { selector: "#main .home > div > section.home-section", startsWith: "Active" };
-const RUNS_MARKER: Marker = { selector: "#main > .toolbar" };
+const RUNS_MARKER: Marker = { selector: "#main .toolbar" };
 
 /** Opens a fresh context, runs `fn` on its page and closes the context. */
 async function onFreshPage<T>(browser: Browser, hash: string, ready: Ready, opts: { large?: boolean; clock?: boolean }, fn: (page: import("@playwright/test").Page) => Promise<T>): Promise<T> {
@@ -35,7 +35,7 @@ async function onFreshPage<T>(browser: Browser, hash: string, ready: Ready, opts
 const load = (key: string, browser: Browser, hash: string, ready: Ready, opts: { large?: boolean } = {}) =>
   collect(key, () => medianOf(() => onFreshPage(browser, hash, ready, opts, async (page) => {
     const m = await loadMetrics(page);
-    const rows = await page.evaluate(() => document.querySelectorAll("#main > .table-box tbody tr").length);
+    const rows = await page.evaluate(() => document.querySelectorAll("#main .table-box tbody tr").length);
     return { ...m, rows };
   })));
 
@@ -114,7 +114,7 @@ test.describe("budgets", () => {
     return n;
   });
 
-  const bigRuns = (b: Browser) => load("large-runs", b, "#/runs", { selector: "#main > .table-box tbody", children: 200 }, { large: true });
+  const bigRuns = (b: Browser) => load("large-runs", b, "#/runs", { selector: "#main .table-box tbody", children: 200 }, { large: true });
   budgetTest("LARGE_RUNS_MS", BUDGETS.LARGE_RUNS_MS, async (b) => (await bigRuns(b)).renderMs);
   budgetTest("LARGE_RUNS_ROWS", BUDGETS.LARGE_RUNS_ROWS, async (b) => (await bigRuns(b)).rows);
 

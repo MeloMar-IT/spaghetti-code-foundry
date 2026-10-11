@@ -19,7 +19,11 @@ beforeAll(async () => {
     states: await import("../ui/states.js" as string),
   };
 });
-afterAll(() => restore());
+// The page validates 300 ms after the last edit; let a pending timer fire while the fake DOM is still installed.
+afterAll(async () => {
+  await new Promise((r) => setTimeout(r, 350));
+  restore();
+});
 
 const g = globalThis as any;
 const text = (el: FakeElement) => el.textContent;

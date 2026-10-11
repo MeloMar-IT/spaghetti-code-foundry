@@ -108,12 +108,12 @@ export class FakeElement extends FakeNode {
     walk(this);
     return out;
   }
-  /** The nearest element from this one upwards that matches `tag[attr]` or `tag`. */
+  /** The nearest element from this one upwards that matches `tag`, `.class` and `[attr]` (each optional, in that order). */
   closest(selector: string): FakeElement | null {
-    const m = /^([a-z0-9]*)(?:\[([a-z-]+)\])?$/.exec(selector);
+    const m = /^([a-z0-9]*)(?:\.([\w-]+))?(?:\[([a-z-]+)\])?$/.exec(selector);
     if (!m || !selector) throw new Error(`fake closest: unsupported selector "${selector}"`);
     for (let el: FakeElement | undefined = this; el; el = el.parent) {
-      if ((!m[1] || m[1] === el.tag) && (!m[2] || m[2] in el.attrs)) return el;
+      if ((!m[1] || m[1] === el.tag) && (!m[2] || el.classList.names.has(m[2])) && (!m[3] || m[3] in el.attrs)) return el;
     }
     return null;
   }

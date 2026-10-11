@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Page templates 5a — the template module, the toolbar layout of `pageHeader`, the guard, and the dashboard and settings pages (#447). Part 1 of 3 of #341. Nothing changes for the eye.
+  - **Templates.** New `ui/templates.js` exports `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` with its regions as plain `div`s in a fixed order; an empty slot (`null`, `false`, `[]`) draws no region. The head is `pageHeader` in its toolbar layout (options `title`, `back`, `status`, `actions`), or a ready node in `head` (not together with `title`). It imports only `./dom.js` and `./kit/product.js`.
+  - **`pageHeader` option `layout`.** `"header"` (default, unchanged) or `"toolbar"`; any other value throws. The toolbar layout draws the flat `div.toolbar.page-head` of the existing pages (back link `a.btn.ghost` with "←", `h1`, meta, actions). It uses the old classes on purpose, until the pages move to the `scf-` header. Documented in `docs/UI_COMPONENTS.md`; a variant in the gallery.
+  - **CSS.** New `ui/css/templates.css`, imported right after `layout.css`. `.dash-grid` moved there from `layout.css`, scoped under `.page-overview`.
+  - **Pages.** `renderDashboard` and `renderSettings` (loading and loaded) mount one `overviewPage` and one `settingsPage`. Order and content of the nodes are as before.
+  - **`mount()`.** When the focused control is gone, the fallback heading is looked for in the target, then its parent, then the nearest `.page` ancestor, then the target itself.
+  - **Guard.** New `competingSelectors(cssText, shared)` in `tests/helpers/ui-css.ts`; the test "keeps shared component classes out of the page files" now also checks `templates.css`.
+  - **Tests and docs.** New `tests/ui-templates.test.ts`; cases in the kit, dashboard, settings, dom and css tests; new baseline CSS order. Visual cases `admin-dashboard` and `admin-settings` are added to the browser matrix; their baselines still need `npm run test:ui` on a machine with Chromium. "UI styles" and the new "Page templates" in `docs/DESIGN.md`.
+
 - Skill experience 3d — skills guide for administrators and skill authors (#440). New "Automatic skills" in `docs/USER_GUIDE.md` (what is automatic, what policy decides, writing a skill, budgets, trust, both pipelines, stop reasons and fixes), "Skills in your own flow" in `docs/FLOW_AUTHORING.md` and "The skill path" in `docs/DESIGN.md`; stale sentences corrected. New guide tests check the reason codes and fixes against the code. No behaviour change.
 - Refinement 10 — checked with real situations, and documented (#83). Last part of the Refinement epic (#73).
   - **Next step.** New `ui/refinement-next.js`: the session page starts with a "What happens next" card, one sentence that says who takes the next step (you, the architect or nobody). It redraws only when the sentence changes. The "Ask the architect to look at the code" text is now one shared constant.

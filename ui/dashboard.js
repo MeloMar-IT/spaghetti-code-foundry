@@ -3,6 +3,7 @@ import { h, mount, svg } from "./dom.js";
 import { needsYou, nextList, waitingGroups } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { errorState, explainError, loadingState, staleNote } from "./states.js";
+import { overviewPage } from "./templates.js";
 
 const usd = (n, d = 2) => `$${(n ?? 0).toFixed(d)}`;
 const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "—");
@@ -139,7 +140,7 @@ export const partNote = (what, error, onRetry) =>
   errorState(explainError(error, { what: `Could not load ${what}.`, safe: "The rest of the dashboard is shown." }), { onRetry });
 
 export async function renderDashboard(main) {
-  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Dashboard")), loadingState("Loading the dashboard…", { rows: 6, shape: "cards" }));
+  mount(main, overviewPage({ title: "Dashboard", sections: loadingState("Loading the dashboard…", { rows: 6, shape: "cards" }) }));
   const parts = await Promise.all([api.stats(), api.info(), api.evals(), api.watchers(), api.runs(), api.clarity()].map(part));
   const [ps, pinfo, pevals, pwatchers, pruns, pclarity] = parts;
   const retry = () => renderDashboard(main);
@@ -156,13 +157,15 @@ export async function renderDashboard(main) {
   const t = s?.totals;
   const budget = info?.dailyBudget;
   const statsNote = note(ps, "the statistics");
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Dashboard"), h("span", { class: "muted" }, "last 30 days"), h("span", { class: "spacer" }), staleNote(Date.now())),
-    h("div", { class: "tiles" },
+  mount(main, overviewPage({
+    title: "Dashboard",
+    actions: [h("span", { class: "muted" }, "last 30 days"), h("span", { class: "spacer" }), staleNote(Date.now())],
+    summary: h("div", { class: "tiles" },
       tile("Spent today", info ? usd(info.spentToday) : "—", info ? (info.costLimits === false ? "estimate at API prices · no limits enforced" : budget ? `of ${usd(budget)} daily budget` : "no daily budget set") : null),
       tile("Spent (30 days)", t ? usd(t.costUsd) : "—", t ? `${t.runs} runs` : null),
       tile("Success rate", t ? pct(t.succeeded, t.runs) : "—", t ? `${t.succeeded} succeeded · ${t.failed} failed` : null),
       tile("Needs a human", pruns.error ? "—" : String(needsYou(runs).length), h("a", { href: "#/runs" }, "see Needs you on the Runs page"))),
+    sections: [
     note(pinfo, "today's spending"),
     note(pruns, "the runs"),
     pclarity.error ? partNote("your turn in numbers", pclarity.error, retry) : clarity ? clarityCard(clarity) : null,
@@ -198,5 +201,7 @@ export async function renderDashboard(main) {
       s ? h("div", { class: "card" }, h("h3", {}, "Most loops (fix cycles)"),
         s.loops.length ? h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Extra visits"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits))))) : h("p", { class: "muted" }, "No retries yet.")) : null));
+          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits))))) : h("p", { class: "muted" }, "No retries yet.")) : null),
+    ],
+  }));
 }
