@@ -178,7 +178,19 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(log(s)).toContain(`    ! ${codexIsolationLine("unsupported")}`);
   });
 
-  it("a reviewer with a loaded review block is not isolated when isolate_agents is false", async () => {
+  it("a reviewer without a lock keeps the old behaviour when isolate_agents is false", async () => {
+    const s = await run(reviewer("a"), { isolate_agents: false });
+    expect(s.status, s.reason).toBe("succeeded");
+    const a = get(s, "a");
+    expect(count(a.output)).toBe(1);
+    expect(a.output).toContain(OVERRIDES);
+    expect(a.output).not.toContain("<instructions>");
+    expect(a.output).not.toContain(CODEX_AGENT_NOTE);
+    expect(a.codexHome).toMatch(/^personal:/);
+    expect(log(s)).not.toContain("Codex:");
+  });
+
+  it("a reviewer with a loaded review block is isolated even when isolate_agents is false", async () => {
     const s = await run(gate + reviewer("a"), { isolate_agents: false, skills: { roots: [demoSkill()] } });
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
@@ -187,9 +199,8 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(a.output).toContain("Check the canary.");
     expect(count(a.output)).toBe(1);
     expect(a.output).toContain(OVERRIDES);
-    expect(a.output).not.toContain("<instructions>");
-    expect(a.output).not.toContain(CODEX_AGENT_NOTE);
+    expect(a.output).toContain(CODEX_AGENT_NOTE);
     expect(a.codexHome).toMatch(/^personal:/);
-    expect(log(s)).not.toContain("Codex:");
+    expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
   });
 });
