@@ -235,14 +235,11 @@ steps:
     model: claude-opus-5-5
     effort: high
     permission_mode: dontAsk
+    skills: catalog
     allowed_tools:
       - Read
       - Glob
       - Grep
-      - Bash(git log*)
-      - Bash(git show*)
-      - Bash(git grep*)
-      - Bash(ls*)
     prompt: |-
       You are the lead architect for this repository. Plan the work for the GitHub issue below so that
       another engineer can implement it without having to make design decisions. Do NOT modify files.
@@ -396,14 +393,11 @@ steps:
     jump_only: true
     description: "Fresh session: check only the reviewer's points, then write the final plan (falls back to the draft on failure)"
     permission_mode: dontAsk
+    skills: catalog
     allowed_tools:
       - Read
       - Glob
       - Grep
-      - Bash(git log*)
-      - Bash(git show*)
-      - Bash(git grep*)
-      - Bash(ls*)
     prompt: |-
       You are the lead architect for this repository. Below are a GitHub issue, the implementation plan
       you drafted for it, and a second reviewer's check of that plan against the code. Do NOT modify files.

@@ -6,6 +6,7 @@ import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "..
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { skillSession } from "../engine/skill-lock.js";
+import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
@@ -29,7 +30,7 @@ type Iso = { who: CommitIdentity };
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, catalogue?: RunCatalogue): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
@@ -75,7 +76,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, catalogue });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
@@ -98,6 +99,8 @@ interface WithOptions {
   skills?: SkillPayload;
   /** Not the first session of this step: a retry or a fallback. */
   again?: boolean;
+  /** The skill catalogue of a `skills: catalog` step: put before the prompt on both agents. */
+  catalogue?: RunCatalogue;
 }
 
 /** Which session a step with `resume:` asks to continue, and the digest of the skill block that session received. */
@@ -125,6 +128,10 @@ function skillsRecord(s?: SkillPayload, attach?: ReturnType<typeof attachSkillPa
   return s ? { skills: { loaded: s.loaded, ...(s.omitted.length ? { omitted: s.omitted } : {}), bytes: s.bytes, estimatedTokens: s.estimatedTokens, ...(s.role ? { role: s.role } : {}), ...(attach ? { state: attach.state, digest: attach.digest, attachedBytes: attach.attachedBytes, attachedEstimatedTokens: attach.attachedEstimatedTokens } : {}) } } : {};
 }
 
+function catalogueRecord(o: WithOptions): Pick<StepResult, "skillCatalogue"> {
+  return o.catalogue?.record ? { skillCatalogue: o.catalogue.record } : {};
+}
+
 async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<Ran> {
   const { isolated, short, boxed, profile, bin } = o;
   const { ctx, flow } = scope;
@@ -138,9 +145,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
   let resumeId = askedId;
   if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
-  if (resumeId && step.skills === "off") {
+  if (resumeId && (step.skills === "off" || step.skills === "catalog")) {
     resumeId = undefined;
-    engine.log(`    · not resuming ${step.resume}: this step has skills: off and a resumed session may hold a skill block`);
+    engine.log(`    · not resuming ${step.resume}: this step has skills: ${step.skills} and a resumed session may hold a skill block`);
   }
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
   // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
@@ -172,7 +179,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     if (line) engine.log(`    ${mode === "unsupported" ? "!" : "·"} ${line}`);
   }
   const common = {
-    prompt: render(step.prompt, ctx),
+    prompt: withSkillPayload(render(step.prompt, ctx), o.catalogue?.text ?? ""),
     systemPrompt: step.system_prompt ? render(step.system_prompt, ctx) : undefined,
     cwd: engine.summary.workdir!,
     logFile,
@@ -204,7 +211,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined), ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
@@ -245,6 +252,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     agent: t.label,
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
     ...skillsRecord(o.skills, attach),
+    ...catalogueRecord(o),
   };
 }
 
@@ -283,16 +291,22 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   let blips = 0;
   let models = 0;
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
+  // Built once: one log line and the same bytes for every try, retries and fallbacks included.
+  const catalogue =
+    step.skills === "catalog"
+      ? runSkillCatalogue({ workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) })
+      : undefined;
+  if (catalogue) engine.log(`    · ${catalogue.log}`);
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
-    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder", step.skills !== "off");
+    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog");
     if ("refused" in session) {
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
     tried.add(target.label);
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0);
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, catalogue);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

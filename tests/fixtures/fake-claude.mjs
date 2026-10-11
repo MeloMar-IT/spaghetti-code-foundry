@@ -3,6 +3,8 @@
 // Prompt directives: "WRITE <file> <text>" writes a file; "SAY <text>" sets the result;
 // "ERROR" returns an error result; "DENY <Tool> <text>" adds a refused tool call to the result's
 // permission_denials (command for Bash, file_path otherwise); "SHOWPROMPT" answers with the arguments and the whole prompt (as `args=…` and `PROMPT<<…>>`); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
+// Plans that ask for a skill request: a line "REQUEST_SKILLS <id> [<id>…]" requests those ids; a line "REQUEST_CATALOGUE_SKILLS" requests every id of the
+// <foundry-skill-catalogue> block of the prompt (the empty request without one); FAKE_SKILL_REQUEST wins when set. The lines come from the issue body.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
@@ -235,7 +237,17 @@ if (canned && prompt.includes("RISK_SCORE: <0-100>") && /PLAN_STATUS: READY/.tes
 }
 // Plans asked for a skill request get one (FAKE_SKILL_REQUEST, default the empty request; NONE writes no line) before the PLAN_STATUS line.
 if (canned && prompt.includes('SKILL_REQUEST: {"version":1') && /PLAN_STATUS: READY/.test(canned) && !/^SKILL_REQUEST:/m.test(canned) && process.env.FAKE_SKILL_REQUEST !== "NONE") {
-  canned = canned.replace(/PLAN_STATUS: READY/, `SKILL_REQUEST: ${process.env.FAKE_SKILL_REQUEST ?? '{"version":1,"skills":[]}'}\nPLAN_STATUS: READY`);
+  // A directive line of the issue text picks the request: REQUEST_SKILLS <id>… or REQUEST_CATALOGUE_SKILLS (every id of the catalogue in the prompt).
+  const asked = (ids, why, evidence) => JSON.stringify({ version: 1, skills: ids.map((id) => ({ id, reason: why, evidence: [evidence(id)] })) });
+  const named = /^REQUEST_SKILLS +(.+)$/m.exec(prompt)?.[1].trim().split(/\s+/);
+  const block = /<foundry-skill-catalogue>\n([\s\S]*?)\n<\/foundry-skill-catalogue>/.exec(prompt)?.[1] ?? "";
+  const listed = block.split("\n").filter((l) => l.startsWith("{")).map((l) => JSON.parse(l).id);
+  const request = named
+    ? asked(named, "needed", () => "issue:asks for it")
+    : /^REQUEST_CATALOGUE_SKILLS$/m.test(prompt)
+      ? asked(listed, "needed", (id) => `catalogue:${id}`)
+      : undefined;
+  canned = canned.replace(/PLAN_STATUS: READY/, `SKILL_REQUEST: ${process.env.FAKE_SKILL_REQUEST ?? request ?? '{"version":1,"skills":[]}'}\nPLAN_STATUS: READY`);
 }
 const resumed = args[args.indexOf("--resume") + 1];
 const isError = prompt.includes("ERROR");
