@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, mount, toast } from "../dom.js";
 import { clearInvalid, markInvalid } from "../fields.js";
+import { onWish, takeWish } from "../palette-data.js";
 import { connectionStatus, repoDialog } from "../repos.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "../states.js";
 
@@ -95,9 +96,14 @@ export function moreSummary(optional, fixed) {
 const fixedField = (f, label) =>
   h("div", { class: "field" }, h("span", {}, label), h("span", { class: "mono" }, f.value === "" ? "—" : f.value), f.help ? h("small", {}, f.help) : null);
 
+// Only the newest render may take or register a wish: an older one that finishes late must not.
+let renders = 0;
+
 /** The Start work page. Returns a cleanup. */
 export async function renderStart(main, { a = api, dialog = repoDialog, go = (hash) => { location.hash = hash; }, admin = false, readOnly = false } = {}) {
+  const newest = ++renders;
   let gone = false;
+  let off = () => {};
   const heading = () => h("h1", {}, "Start work");
 
   async function load() {
@@ -113,18 +119,20 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       return;
     }
     if (gone) return;
+    // Taken before the empty-list return, so a wish is always used up.
+    const wished = newest === renders ? takeWish("start") : null;
     if (!Array.isArray(flows) || flows.length === 0) {
       const box = emptyState(admin ? NO_FLOWS_ADMIN : NO_FLOWS);
       if (admin) box.append(h("a", { href: "#/flows" }, "Open the flow editor"));
       mount(main, heading(), box);
       return;
     }
-    await showForm(flows);
+    await showForm(flows, wished);
   }
 
-  async function showForm(flows) {
+  async function showForm(flows, wished) {
     let busy = false;
-    const state = { flow: flows[0], task: "", values: {} };
+    const state = { flow: flows.find((f) => f.name === wished?.flow) ?? flows[0], task: "", values: {} };
     for (const f of flows) state.values[f.name] = Object.fromEntries(f.fields.filter((x) => x.mode === "input").map((x) => [x.name, x.value]));
 
     // Repositories are only asked for when the chosen flow needs one, so a failing list cannot block other flows.
@@ -285,6 +293,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     }
 
     const radios = [];
+    const radioOf = new Map();
     function flowStep() {
       if (flows.length < 2) return null;
       return h("fieldset", {}, h("legend", {}, PICK_FLOW),
@@ -292,6 +301,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
           const radio = h("input", { type: "radio", name: "flow", value: f.name, checked: f === state.flow });
           radio.addEventListener("change", () => choose(f));
           radios.push(radio);
+          radioOf.set(f.name, radio);
           return h("label", { class: "choice" }, radio, h("b", {}, f.title), f.description ? h("span", { class: "muted" }, f.description) : null);
         }));
     }
@@ -369,9 +379,24 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
       flowStep(), rest, failBox, err, readOnly ? null : h("div", { class: "row" }, submitBtn));
     mount(main, heading(), form);
+    /** The palette chose a flow: the radios and the page follow; typed text is kept. */
+    const pick = (name) => {
+      const flow = flows.find((f) => f.name === name);
+      if (!flow || flow === state.flow) return;
+      for (const [n, radio] of radioOf) radio.checked = n === name;
+      choose(flow);
+    };
+    if (newest === renders) {
+      off = onWish("start", (w) => pick(w?.flow));
+      // A wish that came while the flows were loading waited for this handler.
+      pick(takeWish("start")?.flow);
+    }
     await first;
   }
 
   await load();
-  return () => { gone = true; };
+  return () => {
+    gone = true;
+    off();
+  };
 }

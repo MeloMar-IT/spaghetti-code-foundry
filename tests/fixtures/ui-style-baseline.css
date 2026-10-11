@@ -736,3 +736,13 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
   .toolbar > :not(button, .btn, a, select, input) { min-width: 0; max-width: 100%; }
   .toolbar > .spacer { display: none; }
 }
+
+.search-btn { color: var(--muted); }
+.palette { align-self: start; margin-top: 10vh; gap: var(--space-md); }
+.palette-input { width: 100%; }
+.palette-list { max-height: 50vh; overflow: auto; display: grid; gap: var(--space-xs); }
+.palette-head { font-size: var(--text-meta); color: var(--muted); padding: var(--space-xs) var(--space-md); }
+.palette-opt { display: flex; gap: var(--space-md); align-items: baseline; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); cursor: pointer; }
+.palette-opt[aria-selected="true"] { background: var(--panel-2); outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.palette-meta { margin-left: auto; color: var(--muted); font-size: var(--text-meta); }
+.palette-key { font-family: var(--mono); font-size: var(--text-meta); color: var(--muted); }

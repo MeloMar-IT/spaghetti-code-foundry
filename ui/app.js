@@ -3,6 +3,7 @@ import { enterDisplay, linkToken } from "./auth.js";
 import { h, mount } from "./dom.js";
 import { createFlowPage } from "./flow-page.js";
 import { resolve, splitHash } from "./ia.js";
+import { initPalette } from "./palette.js";
 import { initShell, namePage, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
@@ -193,6 +194,7 @@ document.addEventListener("keydown", (e) => {
 const me = await enterDisplay("admin");
 S.me = me.id;
 initShell("admin", { user: me });
+initPalette({ role: "admin", user: me });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 await startAdmin();

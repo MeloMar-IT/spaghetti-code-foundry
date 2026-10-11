@@ -2,10 +2,11 @@
 
 Read from the code at commit `27479e3`. Part of the audit in `README.md`; the routes are in `inventory.md`.
 
-Three mechanisms draw a dialog:
+Four mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 18 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js`, the refinement pages and `adminRunActions`), `confirmDialog` in `ui/user/runs.js` (`:76`; a separate helper of the same name), `decisionDialog` in `ui/run-dialogs.js` (`:12`, re-exported by `ui/user/runs.js`), `withDialog` (`ui/user/runs.js:374`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **A dialog of its own:** the command palette in `ui/palette.js` (combobox and listbox, drawn in `#modal-root` next to any open dialog). The audit test requires a row for every file that builds its own `role="dialog"`.
 - **Native `confirm` and `prompt`:** 0 calls (the second table is empty).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
@@ -29,6 +30,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/flow-page.js` | Delete flow | Delete in the More menu of the flow editor | none | Delete | `confirmDialog` |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
 | `ui/health.js` | Cancel this run | Cancel run on a problem of the health line | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
+| `ui/palette.js` | Search | Search button, Ctrl/⌘+K, `/` | search text; Single-key shortcuts checkbox | Enter opens the active result | own dialog |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; category; one card per block with its scope. Then a preview: steps, variables added, renamed ids | **Insert** in the preview (closes with that block); **Back** returns to the list. An invalid block cannot be picked | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |

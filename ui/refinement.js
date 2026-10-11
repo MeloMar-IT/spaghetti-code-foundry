@@ -1,6 +1,7 @@
 import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, timeAgo, toast } from "./dom.js";
+import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { dialogOpen } from "./live.js";
 import { announcer, failState } from "./refinement-states.js";
@@ -321,8 +322,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     if (onPage() && (openPage.id === undefined || openPage.id === sid)) await openPage.reload();
   };
   let leaveDrafts = () => {};
+  let unwish = () => {};
   const cleanup = () => {
     if (reloaded) return reloaded();
+    unwish();
     leaveDrafts(); // text that waits for its timer is sent now
     keepPage(null);
     generation++;
@@ -638,5 +641,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   mount(main, head, note, body);
   mount(head, toolbar(false));
   await load(true);
+  if (!readOnly && current()) {
+    // The palette's "New refinement session": a wish that came before this page, or one for the page as it is.
+    if (takeWish("refinement")) void newSessionDialog(repos, opened);
+    unwish = onWish("refinement", () => void newSessionDialog(repos, opened));
+  }
   return cleanup;
 }
