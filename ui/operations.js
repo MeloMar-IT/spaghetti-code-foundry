@@ -1,7 +1,7 @@
 import { actorText, targetText, timeText } from "./audit.js";
 import { api } from "./api.js";
 import { tile } from "./dashboard.js";
-import { h, mount, timeAgo, toast } from "./dom.js";
+import { h, mount, tableBox, timeAgo, toast } from "./dom.js";
 import { askCancelRun, renderHealth } from "./health.js";
 import { ownerLabel } from "./runs.js";
 import { loadingState } from "./states.js";
@@ -73,10 +73,10 @@ const spendText = (s) => (s.enforced === false
   ? `Spent today ${usd(s.spentToday)} (estimate at API prices). No limits are enforced.`
   : s.dailyBudget ? `Spent today ${usd(s.spentToday)} of ${usd(s.dailyBudget)} daily budget.` : `Spent today ${usd(s.spentToday)}. No daily budget set.`);
 const spendSub = (s) => (s.enforced === false ? "estimate at API prices · no limits enforced" : s.dailyBudget ? `of ${usd(s.dailyBudget)} daily budget` : "no daily budget set");
-const table = (caption, heads, rows) => h("table", { class: "table compact" },
+const table = (caption, heads, rows) => tableBox(h("table", { class: "table compact" },
   h("caption", { class: "sr-only" }, caption),
   h("thead", {}, h("tr", {}, heads.map((t) => h("th", { scope: "col" }, t)))),
-  h("tbody", {}, rows));
+  h("tbody", {}, rows)));
 
 /** The Overview page of Administration: what needs attention, on one page. Returns a cleanup. */
 export async function renderOperations(main) {

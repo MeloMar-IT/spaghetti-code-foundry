@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { confirmDialog, h, mount, timeAgo, toast } from "./dom.js";
+import { confirmDialog, h, mount, tableBox, timeAgo, toast } from "./dom.js";
 import { confirmUnreadable, monitorLists } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
@@ -154,9 +154,9 @@ export async function renderWatchers(main, { data } = {}) {
   };
   const section = (title, list, kind, sub) => (list.length
     ? h("div", {}, h("h3", {}, title), sub ?? null,
-      h("table", { class: "table compact", "aria-label": title },
+      tableBox(h("table", { class: "table compact", "aria-label": title },
         h("thead", {}, h("tr", {}, ["Watcher", "State", "What it does", "Last successful check"].map((c) => h("th", { scope: "col" }, c)))),
-        h("tbody", {}, list.map((w) => row(w, kind)))))
+        h("tbody", {}, list.map((w) => row(w, kind))))))
     : null);
   const addWatcher = async () => (await repoWatcherDialog({ repos, flows, existing: null })) && reload();
 

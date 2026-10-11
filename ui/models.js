@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, toast } from "./dom.js";
+import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, tableBox, toast } from "./dom.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "./states.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
@@ -112,13 +112,13 @@ function changeConfig(change) {
 function agentsCard(agents) {
   return section("Coding agents",
     h("p", { class: "muted flush" }, "Agent steps run on Claude Code or on OpenAI's Codex CLI (with your ChatGPT account). Pick one per step, per flow, or with routing rules below."),
-    h("table", { class: "table compact", "aria-label": "Coding agents" },
+    tableBox(h("table", { class: "table compact", "aria-label": "Coding agents" },
       h("thead", {}, h("tr", {}, ["Agent", "Status", "Version", "Detail"].map((x) => h("th", { scope: "col" }, h("span", { class: "sr-only" }, x))))),
       h("tbody", {}, agents.map((a) => h("tr", {},
         h("td", {}, h("b", {}, a.agent === "claude" ? "Claude Code" : "Codex (ChatGPT)")),
         h("td", {}, okPill(a.installed && a.loggedIn !== false, !a.installed ? "not installed" : a.loggedIn === false ? "not logged in" : "ready")),
         h("td", { class: "mono muted" }, a.version ?? ""),
-        h("td", { class: "muted" }, a.detail))))),
+        h("td", { class: "muted" }, a.detail)))))),
     agents.find((a) => a.agent === "codex" && (!a.installed || a.loggedIn === false))
       ? h("p", { class: "muted flush" }, "To use ChatGPT: run ", h("code", {}, "npm i -g @openai/codex"), " then ", h("code", {}, "codex login"), " in a terminal, and reload this page.")
       : null);
@@ -164,14 +164,14 @@ function providersCard(cfg, providers, reload, problem) {
   const table = problem
     ? errorState(problem, { onRetry: reload })
     : providers.length
-      ? h("table", { class: "table compact", "aria-label": "Providers" },
+      ? tableBox(h("table", { class: "table compact", "aria-label": "Providers" },
         h("thead", {}, h("tr", {}, ["Provider", "Status", "Used by", "Models"].map((x) => h("th", { scope: "col" }, x)))),
         h("tbody", {}, providers.map((p) => h("tr", {},
           h("td", {}, h("a", { href: `#/models/${encodeURIComponent(p.name)}` }, h("b", { class: "mono" }, p.name)), h("div", { class: "muted mono text-3xs" }, p.base_url ?? p.kind)),
           h("td", {}, okPill(p.ok), h("div", { class: "muted text-2xs" }, p.detail),
             marks.get(p.name)),
           h("td", { class: "muted" }, p.agents.join(", ")),
-          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—"))))))
+          h("td", {}, p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—")))))))
       : emptyState("No providers.");
   return section("Providers",
     h("p", { class: "muted flush" }, "Where models run. Local providers cost nothing and keep code on your Mac; runs record them at $0."),
@@ -267,7 +267,7 @@ function routingCard(cfg, specs, localSpec) {
     h("div", {}, h("div", { class: "row mb-6" }, h("b", {}, "Rules"), h("span", { class: "spacer" }),
       ...PRESETS(localSpec).map((p) => h("button", { class: "small", onClick: () => { rules.push(...p.rules.map((r) => ({ ...r }))); draw(); } }, `+ ${p.label}`)),
       h("button", { class: "small", onClick: () => { rules.push({ model: "" }); draw(); } }, "+ Rule")),
-      h("table", { class: "table compact", "aria-label": "Routing rules" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Model", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))), body)),
+      tableBox(h("table", { class: "table compact", "aria-label": "Routing rules" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Model", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))), body))),
     f("Fallback models", fallback, "Comma-separated, tried in order."),
     h("div", { class: "row" },
       h("label", { class: "row tight" }, onRate, h("span", {}, "Use them when a model hits a rate or usage limit")),

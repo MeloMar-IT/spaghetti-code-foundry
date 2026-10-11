@@ -259,6 +259,33 @@ describe("pure functions", () => {
 });
 
 describe("the page", () => {
+  it("repoWebUrl turns the supported address formats into the GitHub page, and nothing else", () => {
+    const page = "https://github.com/o/a";
+    for (const url of ["https://github.com/o/a", "https://github.com/o/a.git", "https://github.com/o/a/", "https://user@github.com/o/a.git", "git@github.com:o/a.git", "ssh://git@github.com/o/a.git", "git@github.com:o/a"]) expect(ui.repoWebUrl(url), url).toBe(page);
+    for (const url of ["", undefined, "https://gitlab.com/o/a", "https://github.com.evil.test/o/a", "https://github.com/o", "https://github.com/o/a/b", "javascript:alert(1)", "https://github.com/../a", "file:///tmp/x", "git@github.com:o/a b"]) expect(ui.repoWebUrl(url), String(url)).toBe("");
+  });
+
+  it("is a card table: labelled cells, the repository link first and the actions last", async () => {
+    repos = [rec({ url: "git@github.com:o/a.git" }), rec({ url: "https://example.test/x/y" })];
+    await show();
+    const table = walk(main()).find((e) => e.tag === "table")!;
+    expect(table.attrs.class).toBe("table cards");
+    expect(table.parent!.attrs.class).toBe("table-box");
+    expect(walk(table).find((e) => e.tag === "caption")!.textContent).toBe("My repositories");
+    const [first, second] = walk(table).filter((e) => e.tag === "tr" && e.parent!.tag === "tbody");
+    const cells = (tr: FakeElement) => tr.children.filter((c): c is FakeElement => c instanceof FakeElement);
+    expect(cells(first!).map((c) => c.attrs["data-label"])).toEqual(["Repository", "Authentication", "Connection", "Actions"]);
+    const link = cells(first!)[0]!.children[0] as FakeElement;
+    expect(link.tag).toBe("a");
+    expect(link.attrs.href).toBe("https://github.com/o/a");
+    expect(link.attrs.rel).toContain("noopener");
+    expect(link.textContent).toBe("git@github.com:o/a.git");
+    expect(walk(cells(first!)[3]!).some((e) => e.tag === "button")).toBe(true);
+    // an address that is not understood stays plain text
+    expect(walk(cells(second!)[0]!).some((e) => e.tag === "a")).toBe(false);
+    expect(cells(second!)[0]!.textContent).toBe("https://example.test/x/y");
+  });
+
   it("lists the repositories without per-repository settings", async () => {
     repos = [rec(), rec({ url: "https://git.example.com/a/b", method: "https-token", username: "ann" })];
     await show();
@@ -1234,7 +1261,7 @@ describe("the GitHub App", () => {
     await show();
     expect(main().textContent).toContain("GitHub App");
     expect(main().textContent).toContain("Install the app on this repository, or change which repositories it may use. Then press Test connection.");
-    expect(anchors(main())[0]!.attrs.href).toBe(APP_URL);
+    expect(anchors(main()).filter((a) => a.attrs.class !== "repo-link")[0]!.attrs.href).toBe(APP_URL);
     expect(errLine(main())).toEqual([]);
   });
 
@@ -1243,7 +1270,7 @@ describe("the GitHub App", () => {
     repos = [rec({ method: "github-app", installationId: "42" })];
     await show();
     expect(errLine(main()).map((e) => e.textContent)).toEqual(["The administrator removed the GitHub App. Choose another authentication."]);
-    expect(anchors(main())).toEqual([]);
+    expect(anchors(main()).filter((a) => a.attrs.class !== "repo-link")).toEqual([]);
   });
 
   it("tells that the app stays installed when the repository is removed", async () => {

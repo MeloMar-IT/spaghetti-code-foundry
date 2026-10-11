@@ -134,12 +134,14 @@ button.icon { justify-content: center; }
 }
 
 /* ── a wide table scrolls in its own box ── */
-.table-box { overflow-x: auto; }
+.table-box { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; }
 @media (max-width: 767px) {
   .table { display: block; overflow-x: auto; }
   .table-box > .table { display: table; overflow: hidden; }
 }
 .table tr.link td > a { text-decoration: none; }
+.table td > a.repo-link { color: inherit; }
+.table td > a.repo-link:hover { text-decoration: underline; }
 .modal ol.plan li { margin-bottom: 12px; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }

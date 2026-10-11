@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, svg } from "./dom.js";
+import { h, mount, svg, tableBox } from "./dom.js";
 import { needsYou, nextList, waitingGroups } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { errorState, explainError, loadingState, staleNote } from "./states.js";
@@ -51,8 +51,8 @@ export function costChart(days) {
 /** Every bar of the cost chart as a table row: day, cost and runs. */
 export function costTable(days) {
   return h("details", {}, h("summary", {}, "Show as table"),
-    h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Cost"), h("th", {}, "Runs"))),
-      h("tbody", {}, days.map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", { class: "mono" }, usd(d.costUsd, 3)), h("td", {}, d.runs))))));
+    tableBox(h("table", { class: "table compact" }, h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "Cost"), h("th", {}, "Runs"))),
+      h("tbody", {}, days.map((d) => h("tr", {}, h("td", { class: "mono" }, d.day), h("td", { class: "mono" }, usd(d.costUsd, 3)), h("td", {}, d.runs)))))));
 }
 
 export const rateText = (ok, total) => `${ok} of ${total}, ${pct(ok, total)}`;
@@ -119,18 +119,18 @@ export function byUserCard(list) {
       h("td", { class: "mono" }, of(usd(u.today?.costUsd), lim.dailyBudgetUsd, lim.dailyBudgetUsd === undefined ? "" : usdLimit(lim.dailyBudgetUsd))));
   };
   return h("div", { class: "card span-all" }, h("h3", {}, "By user"),
-    list.length ? h("table", { class: "table compact" },
+    list.length ? tableBox(h("table", { class: "table compact" },
       h("thead", {}, h("tr", {}, ["Name", "Runs", "Cost", "Runs today", "Active now", "Cost today"].map((x) => h("th", {}, x)))),
-      h("tbody", {}, list.map(row))) : h("p", { class: "muted" }, "No runs yet."));
+      h("tbody", {}, list.map(row)))) : h("p", { class: "muted" }, "No runs yet."));
 }
 
 /** "By repository": runs and cost over 30 days, plus today's runs and cost. */
 export function byRepoCard(list) {
   return h("div", { class: "card" }, h("h3", {}, "By repository"),
-    list.length ? h("table", { class: "table compact" },
+    list.length ? tableBox(h("table", { class: "table compact" },
       h("thead", {}, h("tr", {}, ["Repository", "Runs", "Cost", "Runs today", "Cost today"].map((x) => h("th", {}, x)))),
       h("tbody", {}, list.map((r) => h("tr", {}, h("td", { class: "mono" }, r.repo), h("td", {}, r.runs), h("td", { class: "mono" }, usd(r.costUsd)),
-        h("td", {}, r.today?.runs ?? 0), h("td", { class: "mono" }, usd(r.today?.costUsd)))))) : h("p", { class: "muted" }, "No runs yet."));
+        h("td", {}, r.today?.runs ?? 0), h("td", { class: "mono" }, usd(r.today?.costUsd))))))) : h("p", { class: "muted" }, "No runs yet."));
 }
 
 const part = (p) => p.then((value) => ({ value }), (error) => ({ error }));
@@ -176,32 +176,32 @@ export async function renderDashboard(main) {
     s ? h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay), costTable(s.byDay)) : statsNote,
     h("div", { class: "dash-grid" },
       s ? h("div", { class: "card" }, h("h3", {}, "By flow"),
-        s.byFlow.length ? h("table", { class: "table compact" },
+        s.byFlow.length ? tableBox(h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Flow", "Runs", "Success", "Avg time", "Cost"].map((x) => h("th", {}, x)))),
           h("tbody", {}, s.byFlow.map((f) => h("tr", {},
             h("td", {}, h("a", { href: `#/flows/${encodeURIComponent(f.flow)}` }, f.flow)),
             h("td", {}, f.runs), h("td", {}, rateBar(f.succeeded, f.runs)),
-            h("td", { class: "mono" }, `${f.avgMinutes}m`), h("td", { class: "mono" }, usd(f.costUsd)))))) : h("p", { class: "muted" }, "No runs yet.")) : null,
+            h("td", { class: "mono" }, `${f.avgMinutes}m`), h("td", { class: "mono" }, usd(f.costUsd))))))) : h("p", { class: "muted" }, "No runs yet.")) : null,
       s ? byRepoCard(s.byRepo) : null,
       s ? byUserCard(s.byUser ?? []) : null,
       s ? h("div", { class: "card" }, h("h3", {}, "Where runs fail"),
-        s.failingSteps.length ? h("table", { class: "table compact" },
+        s.failingSteps.length ? tableBox(h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Failures", "Runs"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")) : null,
+          h("tbody", {}, s.failingSteps.map((f) => h("tr", {}, h("td", { class: "mono" }, f.step), h("td", {}, f.failures), h("td", {}, f.runs)))))) : h("p", { class: "muted" }, "Nothing failed. 🎉")) : null,
       h("div", { class: "card span-all" }, h("h3", {}, "Evaluations"),
-        pevals.error ? partNote("evals", pevals.error, retry) : evals.length ? h("table", { class: "table compact" },
+        pevals.error ? partNote("evals", pevals.error, retry) : evals.length ? tableBox(h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Suite", "When", "Variant", "Runs", "Pass", "Quality", "Skills", "Avg cost", "Avg tokens", "Avg time", "Fix loops"].map((x) => h("th", {}, x)))),
           h("tbody", {}, evals.flatMap((e) => e.summary.map((v, i) => h("tr", {},
             h("td", {}, i === 0 ? h("b", {}, e.suite) : ""), h("td", { class: "muted" }, i === 0 ? new Date(e.startedAt).toLocaleString() : ""),
             h("td", { class: "mono" }, v.variant), h("td", {}, v.runs), h("td", {}, rateBar(Math.round(v.passRate * v.runs), v.runs)),
             h("td", { class: "mono" }, pct(Math.round((v.qualityRate ?? v.passRate) * v.runs), v.runs)),
             h("td", { class: "mono" }, v.skills ? `selection ${pct(v.skills.selectionRate, 1)} · context ${pct(v.skills.contextRate, 1)} · activation ${pct(v.skills.activationRate, 1)}` : "—"),
-            h("td", { class: "mono" }, usd(v.avgCostUsd, 3)), h("td", { class: "mono" }, v.avgTokens ? `${Math.round(v.avgTokens / 1000)}k` : "—"), h("td", { class: "mono" }, `${v.avgMinutes}m`), h("td", {}, v.avgFixLoops))))))
+            h("td", { class: "mono" }, usd(v.avgCostUsd, 3)), h("td", { class: "mono" }, v.avgTokens ? `${Math.round(v.avgTokens / 1000)}k` : "—"), h("td", { class: "mono" }, `${v.avgMinutes}m`), h("td", {}, v.avgFixLoops)))))))
           : h("p", { class: "muted" }, "No evaluations yet. Run: ", h("code", {}, "scf eval evals/example.yaml"))),
       s ? h("div", { class: "card" }, h("h3", {}, "Most loops (fix cycles)"),
-        s.loops.length ? h("table", { class: "table compact" },
+        s.loops.length ? tableBox(h("table", { class: "table compact" },
           h("thead", {}, h("tr", {}, ["Step", "Extra visits"].map((x) => h("th", {}, x)))),
-          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits))))) : h("p", { class: "muted" }, "No retries yet.")) : null),
+          h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits)))))) : h("p", { class: "muted" }, "No retries yet.")) : null),
     ],
   }));
 }

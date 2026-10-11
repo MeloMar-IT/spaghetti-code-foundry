@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, showError, toast } from "./dom.js";
+import { h, mount, showError, tableBox, toast } from "./dom.js";
 import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 
@@ -149,9 +149,9 @@ function findingsTable(m, redraw) {
     h("td", {}, storyCell(f.story, f.needsYou))));
   const left = m.findings.length - rows.length;
   return h("div", {},
-    h("table", { class: "table compact", "aria-label": "Findings" },
+    tableBox(h("table", { class: "table compact", "aria-label": "Findings" },
       h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story"].map((c) => h("th", { scope: "col" }, c)))),
-      h("tbody", {}, body)),
+      h("tbody", {}, body))),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
 
@@ -193,9 +193,9 @@ function detectorsTable(m, reload) {
         ? h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(mute.id), () => "Mute ended", reload) }, "End mute")
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
-  return h("table", { class: "table compact", "aria-label": "Detectors" },
+  return tableBox(h("table", { class: "table compact", "aria-label": "Detectors" },
     h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
-    h("tbody", {}, rows));
+    h("tbody", {}, rows)));
 }
 
 // The newest reload wins: an older answer that arrives later is dropped.

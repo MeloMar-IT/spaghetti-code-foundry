@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
-import { confirmDialog, fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, modal, mount, showError, table, timeAgo, toast } from "./dom.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 
@@ -77,7 +77,16 @@ export const appInstallUrl = (options) => {
   return typeof url === "string" && /^https:\/\/github\.com\/apps\/[A-Za-z0-9-]+\/installations\/new$/.test(url) ? url : "";
 };
 
-const appAvailable = (options) => options?.githubApp?.available === true;
+/**
+ * The page of a repository on GitHub for its https, `git@github.com:owner/name` or `ssh://git@github.com/owner/name`
+ * address (with or without `.git`); "" for any other host or shape, so no link is made from text we do not understand.
+ */
+export function repoWebUrl(url) {
+  const m = /^(?:https:\/\/(?:[^@/\s]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i.exec(text(url).trim());
+  return m && m[1] !== "." && m[1] !== ".." && m[2] !== "." && m[2] !== ".." ? `https://github.com/${m[1]}/${m[2]}` : "";
+}
+
+const appAvailable =(options) => options?.githubApp?.available === true;
 
 const installLink = (options) => {
   const href = appInstallUrl(options);
@@ -455,8 +464,9 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const row = (repo) => {
     const testError = state.testErrors.get(repo.id);
     const failed = !!testError || (repo.connection && !repo.connection.ok);
+    const webUrl = repoWebUrl(repo.url);
     return h("tr", { "data-repo": repo.id },
-      h("td", { class: "mono" }, repo.url),
+      h("td", { class: "mono" }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, repo.url) : repo.url),
       h("td", {}, methodLabel(repo, admin),
         repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
         repo.method === "github-app" ? appBlock() : null),
@@ -505,10 +515,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
           return whileBusy(btn, () => remove(state.notice.retryId, true));
         } }, "Try again")] : null) : null,
       shown.length
-        ? h("div", { class: "table-box" }, h("table", { class: "table" },
-          h("caption", { class: "sr-only" }, "My repositories"),
-          h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, shown.map(row))))
+        ? table(["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")], shown.map(row), { cards: true, caption: "My repositories" })
         : state.filters.repo ? filterGone({ onClear: clear })
         : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
   };

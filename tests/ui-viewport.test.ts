@@ -62,6 +62,48 @@ describe("widths in the UI files", () => {
   });
 });
 
+describe("tables", () => {
+  const css = readUiCss();
+  const compact = css.slice(css.indexOf("@media (max-width: 767px) {\n  .table-box > .table.cards"));
+
+  it("turns the critical tables into cards below 768 px", () => {
+    expect(compact).toContain(".table-box > .table.cards { display: block");
+    expect(compact).toMatch(/\.table\.cards thead \{[^}]*position: absolute/);
+    expect(compact).toMatch(/\.table\.cards td\[data-label\]::before \{[^}]*content: attr\(data-label\)/);
+    expect(compact).toMatch(/\.table\.cards tbody tr \{[^}]*display: flex/);
+    expect(compact).toMatch(/\.table\.cards td\.actions \{[^}]*order: 1/);
+    expect(compact).toMatch(/\.table\.cards td \{[^}]*overflow-wrap: anywhere/);
+  });
+
+  it("decorates only the body rows, so the clipped header row keeps no box of its own", () => {
+    expect(compact).not.toMatch(/\.table\.cards tr \{/);
+  });
+
+  it("puts the link of a run card first below 768 px", () => {
+    expect(compact).toMatch(/\.run-card \.row > \.run-link \{[^}]*order: -1/);
+    expect(compact).toMatch(/\.run-card \.pill \{[^}]*white-space: normal;[^}]*max-width: 100%/);
+    expect(compact).toMatch(/\.run-card \[data-label\]::before \{[^}]*content: attr\(data-label\)/);
+  });
+
+  it("lets a table box shrink inside a grid card and holds its screen-reader-only text inside", () => {
+    expect(css).toMatch(/\.table-box \{[^}]*position: relative;[^}]*overflow-x: auto;[^}]*min-width: 0/);
+  });
+
+  it("puts every table of a page in a .table-box", () => {
+    // `h("table"` must follow `tableBox(` (or the old `class: "table-box" }, `) directly.
+    const bare: string[] = [];
+    for (const f of walk("ui").filter((p) => p.endsWith(".js") && !p.includes(join("ui", "kit")))) {
+      const text = read(f);
+      for (const m of text.matchAll(/h\("table"/g)) {
+        const before = text.slice(Math.max(0, m.index! - 40), m.index);
+        if (!/tableBox\($|class: "table-box" \}, $/.test(before)) bare.push(`${f}:${text.slice(0, m.index).split("\n").length}`);
+      }
+    }
+    // The table in ui/dom.js is the helper itself; ui/monitor.js boxes its `table` variable on the next lines.
+    expect(bare.filter((b) => !b.startsWith(join("ui", "dom.js")) && !b.startsWith(join("ui", "monitor.js")))).toEqual([]);
+  });
+});
+
 describe("touch targets and sheets", () => {
   const css = readUiCss();
   const tokens = read("ui/tokens.css");

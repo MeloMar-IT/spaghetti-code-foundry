@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount } from "./dom.js";
+import { h, mount, tableBox } from "./dom.js";
 import { loadFailed } from "./repos.js";
 import { emptyState, loadingState } from "./states.js";
 
@@ -45,9 +45,9 @@ export async function renderCredentials(main) {
   const draw = (list) => mount(main,
     head(),
     list.length
-      ? h("table", { class: "table" },
+      ? tableBox(h("table", { class: "table" },
         h("thead", {}, h("tr", {}, ["Owner", "Name", "Type", "Fingerprint", "Created", "Last used"].map((t) => h("th", {}, t)))),
-        h("tbody", {}, list.map(row)))
+        h("tbody", {}, list.map(row))))
       : emptyState("No stored credentials yet."));
   await load();
   return () => {

@@ -118,6 +118,25 @@ describe("Runs list states", () => {
     stop();
   });
 
+  it("draws the runs as a card table: boxed, labelled cells, the status link first, Started last", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open();
+    const table = main.all("table")[0]!;
+    expect(table.attrs.class).toBe("table cards");
+    expect(table.parent!.attrs.class).toBe("table-box");
+    const cells = main.all("tbody")[0]!.all("td");
+    expect(cells.map((c) => c.attrs["data-label"])).toEqual(["Status", "Flow", "Task / what happens next", "Owner", "Steps", "Cost", "Started"]);
+    expect(cells[0]!.all("a")[0]!.attrs.href).toBe("#/runs/r1");
+    stop();
+  });
+
+  it("a user's card table has no Owner or Cost cell", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open({ admin: false });
+    expect(main.all("tbody")[0]!.all("td").map((c) => c.attrs["data-label"])).toEqual(["Status", "Flow", "Task / what happens next", "Steps", "Started"]);
+    stop();
+  });
+
   it("does not redraw when the refreshed answer is the same", async () => {
     good();
     const { main, stop } = await open();
