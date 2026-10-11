@@ -277,11 +277,13 @@ In `ui/kit/product.js`, styled in `ui/kit/product.css`. They are built only from
 
 ### pageHeader
 
-`pageHeader({ title, back, meta, actions })`
+`pageHeader({ title, back, meta, actions, layout })`
 
 - Returns a `<header>` with the page's one `<h1>`. `title` is required.
 - `back` is `{ label, href }` and draws a link above the title. `meta` (a node) goes under the title. `actions` (a node) is the actions area.
 - An unsafe or missing back `href` throws.
+- `layout` is `"header"` (default) or `"toolbar"`; any other value throws.
+- **Toolbar layout.** Draws a flat `div.toolbar.page-head` with, in this order: the back link, a bare `<h1>`, the `meta` nodes, the `actions` nodes. No spacer, no wrapper. The back link is `a.btn.ghost` with the text "←", `aria-label` = `back.label`, and `data-focus` = `back.focus` when given. This layout uses the old page classes (styled by `components.css`, not by kit CSS) **on purpose**, as a transition until the pages move to the `scf-` header. The page templates in `ui/templates.js` use it.
 
 ### statusSummary
 

@@ -5,6 +5,7 @@ import { h, mount, timeAgo, toast } from "./dom.js";
 import { askCancelRun, renderHealth } from "./health.js";
 import { ownerLabel } from "./runs.js";
 import { loadingState } from "./states.js";
+import { overviewPage } from "./templates.js";
 
 export const QUEUE_SHOWN = 5;
 export const AUDIT_SHOWN = 8;
@@ -155,14 +156,14 @@ export async function renderOperations(main) {
         : h("p", { class: "muted" }, "No entries.")
       : notAvailable(audit);
 
-    mount(main, head(), tiles, h("div", { class: "dash-grid" },
+    mount(main, overviewPage({ head: head(), summary: tiles, sections: h("div", { class: "dash-grid" },
       card("Health", "card span-all", healthBody, null),
       card("Problems", "card", ok(health) ? h("p", {}, findingsText) : notAvailable(health), link("#/problems", "Problems")),
       card("Providers", "card", providersBody, link("#/models", "Models")),
       card("Queue", "card", queueBody, link("#/runs", "Runs")),
       card("Watchers", "card", watchersBody, link("#/watchers", "Watchers")),
       card("Limits", "card", limitsBody, h("p", {}, link("#/settings", "Settings"), " · ", link("#/users", "Users"))),
-      card("Recent audit", "card span-all", auditBody, link("#/audit", "Audit"))));
+      card("Recent audit", "card span-all", auditBody, link("#/audit", "Audit"))) }));
   };
 
   const load = async () => {

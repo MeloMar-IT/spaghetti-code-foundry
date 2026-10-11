@@ -49,6 +49,16 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+describe("Settings page frame", () => {
+  it("mounts one settings page: toolbar head, notices, sections", async () => {
+    const { main } = await render({});
+    expect(main.children).toHaveLength(1);
+    const root = main.children[0] as FakeElement;
+    expect(root.getAttribute("class")).toBe("page page-settings");
+    expect(root.children.map((c) => (c as FakeElement).getAttribute("class"))).toEqual(["toolbar page-head", "page-notices", "page-sections"]);
+  });
+});
+
 describe("Settings → Network", () => {
   it("shows the settings and the plain-HTTP warning", async () => {
     const { card } = await render({ listen: "::1", allowed_hosts: ["a.test", "b.test"], allow_insecure_http: true });

@@ -240,6 +240,24 @@ describe("mount", () => {
     expect(doc().activeElement).toBe(alone);
     expect(alone.attrs.tabindex).toBe("-1");
   });
+  it("uses the heading of the nearest .page ancestor when the target and its parent have none", () => {
+    const target = dom.h("div", {});
+    const page = dom.h("div", { class: "page" }, dom.h("h1", {}, "Page"), dom.h("div", { class: "page-notices" }, target));
+    dom.mount(target, draw("add"));
+    (target.querySelector("button") as FakeElement).focus();
+    dom.mount(target, draw("other"));
+    const h1 = page.querySelector("h1") as FakeElement;
+    expect(doc().activeElement).toBe(h1);
+    expect(h1.attrs.tabindex).toBe("-1");
+  });
+  it("finds an ancestor by class in the fake closest, and still rejects an unsupported selector", () => {
+    const inner = dom.h("span", {});
+    const outer = dom.h("div", { class: "page x", "data-x": "1" }, dom.h("p", {}, inner));
+    expect(inner.closest(".page")).toBe(outer);
+    expect(inner.closest("div[data-x]")).toBe(outer);
+    expect(inner.closest(".nope")).toBeNull();
+    expect(() => inner.closest("a b")).toThrow();
+  });
   it("does nothing when the focus was outside, or the control has no name", () => {
     const target = dom.h("div", {});
     dom.mount(target, draw("add"));

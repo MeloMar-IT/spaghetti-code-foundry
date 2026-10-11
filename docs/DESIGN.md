@@ -555,20 +555,27 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 | `tokens.css` | Only a pointer: the custom properties (colours, type, spacing, density, the `--layer-*` scale, `--size-form`) are in `ui/tokens.css`, which is linked before `/style.css`. No selectors. |
 | `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
 | `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
+| `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
 | `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+
+**Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
+- **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
+- **Regions.** Plain `div`s in a fixed order, with no grid and no gap, so margins collapse as before. An empty slot (`null`, `false`, `[]`, `[null, false]`) draws no region. Slots: overview `summary`, `sections`; settings `sections`; collection `filters`, `list`, `empty`; board `filters`, `columns`; master-detail `master`, `detail` in `.page-body`; editor `main`, `side` in `.editor.page-body` (side first); conversation `thread`, `composer`, `side`; detail `meta`, `sections`, `side` (`.page-body` gets `with-side` only when `side` is filled).
+- **Used by** the dashboard (`overviewPage`) and the settings page (`settingsPage`). The other pages move over in later parts of #341.
+- **Focus after a redraw.** `mount()` in `ui/dom.js` looks for the fallback heading in the target, then its parent, then the nearest `.page` ancestor, then the target itself.
 
 **Where a new rule goes.**
 1. A custom property: `tokens.css`.
 2. A bare element: `reset.css`.
 3. A control or box used on more than one page, or a variant of one: `components.css`.
 4. A one-purpose helper: `utilities.css`.
-5. Anything else: the page file of the area that uses it. A page file does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page.
+5. Anything else: the page file of the area that uses it. A page file (and `templates.css`) does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page. A test (`competingSelectors` in `tests/helpers/ui-css.ts`) enforces this; a class whose base rule a page file owns goes on a short allow-list with a reason.
 
 Use a token, not a number, for z-index and for the widths below. Keep rules that override each other in the same module and in the same order.
 
-**Import order, and why.** Tokens, reset, layout, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. The shell rules at the end of `pages/shell.css` (for example `.spacer`) come after `utilities.css` on purpose.
+**Import order, and why.** Tokens, reset, layout, templates, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. The shell rules at the end of `pages/shell.css` (for example `.spacer`) come after `utilities.css` on purpose.
 
 **z-index scale** (`--layer-*` in `ui/tokens.css`; a test fails on a `z-index` that is not a layer token):
 

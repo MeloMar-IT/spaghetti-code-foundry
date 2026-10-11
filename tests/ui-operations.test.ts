@@ -173,6 +173,12 @@ describe("the page", () => {
     expect(calls).toHaveLength(7);
   });
 
+  it("mounts one overview page", async () => {
+    await show();
+    expect(main().children).toHaveLength(1);
+    expect((main().children[0] as FakeElement).getAttribute("class")).toBe("page page-overview");
+  });
+
   it("shows a skeleton and no card while the answers are out", async () => {
     const waits: (() => void)[][] = Array.from({ length: 7 }, () => []);
     holdAll = [...waits];

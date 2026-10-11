@@ -330,6 +330,7 @@ export const sections = [
     examples: [
       { name: "Title only", build: () => pageHeader({ title: "Runs" }) },
       { name: "Back, meta and actions", build: () => pageHeader({ title: "Run 42", back: { label: "Back to runs", href: "#button" }, meta: [badge({ tone: "run", label: "Running" }), "Started 2 minutes ago"], actions: [button({}, "Pause"), button({ variant: "primary" }, "Approve")] }) },
+      { name: "Toolbar layout", build: () => pageHeader({ layout: "toolbar", title: "Run 42", back: { label: "Back to runs", href: "#button" }, meta: badge({ tone: "run", label: "Running" }), actions: button({}, "Pause") }) },
       { name: "Long content", build: () => pageHeader({ title: LONG, back: { label: LONG, href: "#button" }, meta: LONG, actions: button({}, LONG) }) },
       { name: "Error", build: () => pageHeader({ title: "Run 43", meta: badge({ tone: "fail", label: "Failed" }), actions: button({ variant: "primary" }, "Try again") }) },
       { name: "Notes", build: () => notes("the back link and the actions are in tab order; there is one h1 per page.", "a long title, back label and meta wrap.", "the actions wrap under the title.") },

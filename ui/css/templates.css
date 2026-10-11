@@ -1,0 +1,10 @@
+/* templates.css — the page templates of ui/templates.js.
+   Belongs here: the .page root, the .page-<name> roots and their regions, and grids scoped under a template root.
+   Does not belong here: components (components.css); the page frame (layout.css); rules of one page area (pages/*.css). */
+
+.page { min-width: 0; }
+.page-overview, .page-collection, .page-board, .page-master-detail, .page-editor, .page-settings, .page-conversation, .page-detail { max-width: none; }
+.page-overview .dash-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); margin-top: 14px; }
+@media (max-width: 1100px) {
+  .page-overview .dash-grid { grid-template-columns: 1fr; }
+}
