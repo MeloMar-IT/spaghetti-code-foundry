@@ -2662,7 +2662,7 @@ risk: medium
 connectors: [kafka, oracle]
 ```
 
-- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. Connectors are recorded only; no run connects to anything.
+- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. No run connects to anything. A skill that names one stops the run at the plan gate, or gets a warning under `degrade`; see [Skills, tools and connectors](#skills-tools-and-connectors).
 - **Refused:** credential files by name (`.env`, `*.pem`, `id_rsa`, `*.key`, `*.p12` and similar; `.example`, `.sample` and `.template` copies are fine), credentials and live endpoints in any file, and file or folder names that look like a credential.
 - **Write endpoints like this:** `kafka://<broker>:9092`, `redis://${REDIS_HOST}:6379`, `amqp://mq.example.com`, `localhost`, the words `host`, `hostname`, `server`, `broker` or `db`, and names ending in `.example`, `.test` or `.invalid`. A placeholder user or password does not help when the host is real.
 - **Messages:** `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value.
@@ -2813,6 +2813,41 @@ A Codex step, also on a local model, gets the same `<foundry-skills>` block as a
 - **Every session.** Codex never reuses the block: a resumed session, a retry and a fallback each get the full text again. The log says "the full block is sent again".
 - **Review steps.** A review step on Codex gets the review checks of the run's lock.
 - **No lock, no block.** A run without a lock is unchanged.
+
+### Skills, tools and connectors
+
+A skill can say what it needs: a shell, network access, write access or a connector. The plan gate compares that with `skills.tools` and with what the flow gives.
+
+| What the skill needs | Checked against | Code when it fails |
+|---|---|---|
+| Shell, network or write access | `skills.tools` (the policy) | `tool-not-approved` |
+| Shell or network | What the flow gives its Claude steps | `tool-not-in-flow` |
+| A connector | Nothing: no connector can be granted yet | `connector-unavailable` |
+
+> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and the text of that skill can still reach Claude sessions. Leaving it out of sessions is not done yet. No connector is granted in either case.
+
+```yaml
+skills:
+  tools:
+    shell: true        # a skill may ask for a shell
+    network: false     # a skill may ask for network access
+    filesystem: write  # read or write
+    missing: stop      # stop or degrade
+```
+
+It decides whether a run may go on with a skill. It does not limit what a session can do.
+
+- **When it is checked:** after the plan gate, at the start of an explicit flow, and again on resume. It applies to planned, explicit and `plan_check` runs. A run with no skills is not checked, and older run files stay valid.
+- **"The flow has it":** a Claude step gives a shell or network through its permission mode, its `allowed_tools` (`Bash…`, `WebFetch`, `WebSearch`) or the sandbox. A flow with a `flow` step is not checked for `tool-not-in-flow`.
+- **`tool-not-approved`:** allow the tool in `skills.tools`, or plan without the skill; then resume.
+- **`tool-not-in-flow`:** give a Claude step the tool, or use another flow; then start again.
+- **`connector-unavailable`:** no connector can be granted in this version. Remove the skill from the plan, or take it off `skills.selection.include`.
+- **`degrade`:**
+  - The run goes on with a `⚠` warning.
+  - The skill, the skills that depend on it and the dependencies only it needed are listed in `skillPlan.tools.leftOut`.
+  - A mandatory skill still stops the run, and so does a skill that a mandatory skill needs, directly or through other skills.
+  - "Left out" is a record and a warning in this version: the skill stays in the run's lock and its text can still reach sessions. Use `stop` when the skill must not be used at all.
+- **Where to see it:** the stop reason, `run.json` → `skillPlan.tools` (`action`, `met`, `missing`, `leftOut`, `warnings`), and the log line `· skill tools: <key> <need> — <sources>`.
 
 ### Skills on the run page
 

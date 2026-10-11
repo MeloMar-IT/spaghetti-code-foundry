@@ -5,11 +5,13 @@ import { FlowSkillsSchema } from "../flow/schema.js";
 import { planHashOf } from "./run-lock.js";
 import { PLAN_CHECK_STEP, PLAN_PHASE_STEPS, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError, type SkillRequest } from "./request.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
+import { SKILL_TOOLS_PREFIX, assessSkillTools, flowTools, type SkillToolNeed, type SkillToolPlan } from "./tool-policy.js";
 import { assessSkills, type SkillPlan } from "./unresolved.js";
 
 // The engine's use of the skill resolver: check the skills a run asks for and decide whether the run may go on.
 // Three modes (flow `skills.mode`): planned (after the plan gate, from its request), explicit (at run start, from the
 // ids the flow names) and off (no check). All logic lives here; the runner only calls these functions.
+// The check also compares the tool needs of the skills with `skills.tools` and the flow, and it decides only whether the run goes on.
 
 /** The gate name of an explicit flow: not a step id (ids start with a letter). */
 export const EXPLICIT_SKILL_GATE = "(flow)";
@@ -46,6 +48,8 @@ export interface RunSkillPlan extends SkillPlan {
   planHash?: string;
   /** How many times the request was checked (a resume checks again). */
   checks: number;
+  /** What the selected skills need (shell, network, write, connectors) against skills.tools and the flow. Absent on older runs and when the plan stopped before this check. */
+  tools?: SkillToolPlan;
 }
 
 interface Deps {
@@ -76,6 +80,7 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
     }
   }
   let plan: SkillPlan;
+  let tools: SkillToolPlan | undefined;
   if (!ids) {
     // No validated request. An older run or a flow without the check goes on; a run that stopped for skills must not.
     if (!recheck) {
@@ -91,14 +96,28 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
       const registry = (deps.discover ?? discoverSkills)(config.skills, { repo: run.workdir ?? run.repo });
       const resolution = resolveSkills(registry, ids, { role: "coder", ...resolveOptionsFrom(config.skills) });
       plan = assessSkills(resolution, registry, config.skills.unresolved);
+      if (plan.action !== "stop" && resolution.selected.length > 0) {
+        const needs: SkillToolNeed[] = resolution.selected.map((s) => {
+          const key = `${s.id}@${s.version}`;
+          return { key, id: s.id, selection: s.reason, requiredBy: s.requiredBy, pkg: registry.byKey.get(key)!.pkg };
+        });
+        const t = assessSkillTools(needs, flowTools(run.flowDef ?? {}, config.sandbox.claude), config.skills.tools);
+        if (t.action === "stop") plan = { ...plan, action: "stop", reason: t.reason };
+        else if (t.action === "degrade") plan = { ...plan, action: plan.action === "continue" ? "warn" : plan.action, warnings: [...plan.warnings, ...t.warnings] };
+        tools = t;
+      }
     } catch {
       plan = failClosed(CHECK_FAILED);
     }
   }
   const gate = planGateRecord(run);
   run.skillPlan = {
-    ...plan, gate: stepId, at: new Date().toISOString(), ...(src.mode === "explicit" ? { planHash: src.planHash } : gate && gate.id === stepId ? { planHash: planHashOf(gate.output) } : {}), checks: (previous?.checks ?? 0) + 1,
+    ...plan, ...(tools ? { tools } : {}), gate: stepId, at: new Date().toISOString(), ...(src.mode === "explicit" ? { planHash: src.planHash } : gate && gate.id === stepId ? { planHash: planHashOf(gate.output) } : {}), checks: (previous?.checks ?? 0) + 1,
   };
+  if (tools) {
+    const out = new Set(tools.leftOut.map((l) => l.key));
+    for (const m of tools.met) if (!out.has(m.key)) log(`· ${SKILL_TOOLS_PREFIX}${m.key} ${m.need} — ${m.sources.join(", ")}`);
+  }
   for (const w of plan.warnings) log(`⚠ ${w}`);
   if (plan.action !== "stop") return undefined;
   log(`■ ${plan.reason}`);
