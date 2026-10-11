@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries foundation 2 — allowlisted upstream skill sources and owner onboarding (#198).
+  - **Source manifest.** `skill-sources.yaml` (`schema: 1`) lists sources with `id`, `repository`, `status`, `reason`, `ref`, `paths`, `adapter`, `trust`, `licence.allow`, `update.cadence` and `owner`. `src/skills/sources.ts` parses it (`parseSources`, `readSources`, `usableSources`); only `enabled` sources are usable. Nothing reads it in a run yet, and nothing is fetched.
+  - **Refs.** An approved release needs a full commit id in `ref.approved`; a branch or tag is allowed only in `ref.track`, for update discovery.
+  - **Status.** `disabled`, `quarantined` and `retired` are explicit and need a `reason`. An enabled source needs an owner, an approved ref and an update cadence.
+  - **CLI.** `scf skills sources check [<file>]` checks the file offline, without choosing or moving the data folder. Each problem names the field and says how to fix it.
+  - **Docs.** "Skill library sources" in `docs/USER_GUIDE.md` describes the format and the pull-request workflow.
+
 - Page templates 5b — the runs list, the board and the run page (#448). Part 2 of 3 of #341. Nothing changes for the eye; focus and scroll behave as before.
   - **Runs list.** `renderRunsList` mounts one `collectionPage` in every state (loading, first-load error, 403, data). With data the slots are `actions` (queue text, owner filter, spacer, note, Refresh), `notices`, `filters`, `list` and `empty`.
   - **Board.** `boardView` returns one node, a `boardPage`, on all three return paths; `data-scroll="board"` sits in `.page-columns`. `renderBoard` still mounts the banner, the body and the note into `main` in that order. `.board` moved from `ui/css/pages/board.css` to `ui/css/templates.css` as `.page-board .board`, with the same declarations.

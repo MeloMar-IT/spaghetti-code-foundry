@@ -217,6 +217,39 @@ describe("data folder", () => {
     expect(scf(["--help"], home).status).toBe(0);
   });
 
+  it("scf skills sources check does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const file = join(home, "skill-sources.yaml");
+    writeFileSync(
+      file,
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/example/skills",
+        "    status: enabled",
+        "    ref: {track: main, approved: '0123456789abcdef0123456789abcdef01234567'}",
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: {allow: [MIT]}",
+        "    update: {cadence: weekly}",
+        "    owner: '@octocat'",
+        "",
+      ].join("\n"),
+    );
+    const r = scf(["skills", "sources", "check", file], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK 1 sources, 1 enabled");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    expect(existsSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"))).toBe(false);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    expect(scf(["flows"], home).status).toBe(1);
+    expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
+  });
+
   it("--help shows the old folder while only that exists, and does not move it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);
