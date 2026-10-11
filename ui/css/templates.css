@@ -8,3 +8,4 @@
 @media (max-width: 1100px) {
   .page-overview .dash-grid { grid-template-columns: 1fr; }
 }
+.page-board .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }

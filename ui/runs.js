@@ -12,6 +12,7 @@ import { adminRunActions } from "./run-dialogs.js";
 import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "./run-states.js";
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
+import { collectionPage, detailPage } from "./templates.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 export { failedStepIndex, stepEntry } from "./run-timeline.js";
@@ -103,10 +104,12 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   const wanted = () => (admin ? filters.owner ?? "" : "");
   const refresh = () => live.refresh();
 
+  const slot = h("div");
   const states = runsLiveStates({
-    body: main, heading: () => h("div", { class: "toolbar" }, h("h1", {}, "Runs")),
+    body: slot,
     label: "Loading runs", rows: 6, shape: "table", what: "Could not load the runs.", retry: refresh, focus: "runs",
   });
+  mount(main, collectionPage({ title: "Runs", list: slot }));
 
   // Asks the server (owner filter included). Undefined when a newer request started meanwhile: that one is the answer.
   const fetchAll = async () => {
@@ -169,29 +172,33 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
     // A queued job that matches is a result too.
     const found = shown.length > 0 || (filters.repo && pending.length > 0);
 
-    mount(main,
-      h("div", { class: "toolbar" }, h("h1", {}, "Runs"),
+    mount(main, collectionPage({
+      title: "Runs",
+      actions: [
         admin && queue ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
         filter,
         h("span", { class: "spacer" }),
         states.note,
-        h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")),
-      states.alert,
-      filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
-      admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
-      note && found ? h("p", { class: "muted" }, note) : null,
-      !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
-        : pending.length ? h("div", { class: "card mb-16" },
-          h("h3", {}, "Queue"),
-          pending.map((p) => queueRow(p, async () => {
-            await api.cancelRun(p.runId);
-            gen++; // an answer asked before the cancel still shows the job
-            refresh();
-          }))) : null,
-      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
-      shown.length ? table(shown, "run")
-        : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
-          : noRuns());
+        h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh"),
+      ],
+      notices: states.alert,
+      filters: filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
+      list: [
+        admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
+        note && found ? h("p", { class: "muted" }, note) : null,
+        !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
+          : pending.length ? h("div", { class: "card mb-16" },
+            h("h3", {}, "Queue"),
+            pending.map((p) => queueRow(p, async () => {
+              await api.cancelRun(p.runId);
+              gen++; // an answer asked before the cancel still shows the job
+              refresh();
+            }))) : null,
+        yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
+        shown.length ? table(shown, "run") : null,
+      ],
+      empty: shown.length ? null : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear })) : noRuns(),
+    }));
   };
 
   // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
@@ -341,7 +348,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     onLost: () => load(),
     onReopen: () => log.clear(),
   });
-  mount(main, head, stream.el, alertEl, status.el, tabsBox);
+  mount(main, detailPage({ head, sections: [stream.el, alertEl, status.el, tabsBox] }));
 
   const showState = (error) => {
     const key = `${runLoadKind(error)}|${error?.message ?? ""}`;

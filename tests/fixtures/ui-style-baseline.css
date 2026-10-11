@@ -306,6 +306,7 @@ pre.diff .file { font-weight: 700; display: block; }
 @media (max-width: 1100px) {
   .page-overview .dash-grid { grid-template-columns: 1fr; }
 }
+.page-board .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }
 .table.compact th, .table.compact td { padding: 6px 10px; font-size: var(--text-small); }
 .rate { display: inline-flex; gap: 8px; align-items: center; }
 .rate-track { width: 70px; height: 6px; border-radius: var(--radius-sm); background: var(--panel-2); overflow: hidden; display: inline-block; }
@@ -398,7 +399,6 @@ td > .help > .help-mark { margin-left: 6px; }
 .help-text[hidden] { display: none; }
 .meta dd .muted { font-family: var(--sans); word-break: normal; }
 
-.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }
 .board-col { display: grid; gap: 8px; align-content: start; min-width: 0; }
 .board-col h3 { margin: 0; font-size: var(--text-small); }
 .board-sub { font-size: var(--text-meta); text-transform: uppercase; letter-spacing: .04em; }

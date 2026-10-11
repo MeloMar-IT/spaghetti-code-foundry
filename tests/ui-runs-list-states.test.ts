@@ -338,3 +338,67 @@ describe("Runs list states", () => {
     expect(body).not.toContain("setInterval");
   });
 });
+
+describe("Runs list page frame", () => {
+  const root = (main: FakeElement) => {
+    expect(main.children).toHaveLength(1);
+    const page = main.children[0] as FakeElement;
+    expect(page.attrs.class).toBe("page page-collection");
+    return page;
+  };
+
+  it("mounts one collection page while loading, with the skeleton in the list", async () => {
+    good();
+    const release = gateOn();
+    const main = connected();
+    const p = runs.renderRunsList(main);
+    await flush();
+    const page = root(main);
+    expect(page.all("h1")).toHaveLength(1);
+    expect(withClass(withClass(page, "page-list")[0]!, "skeleton-table")).toHaveLength(1);
+    release();
+    (await p)();
+  });
+
+  it("fills the slots with data", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open();
+    const page = root(main);
+    const bar = withClass(page, "page-head")[0]!;
+    expect(bar.attrs.class).toBe("toolbar page-head");
+    const after = bar.children.slice(1) as FakeElement[];
+    expect(after[0]!.textContent).toContain("0/2 running");
+    expect(after[1]!.attrs["data-focus"]).toBe("owner-filter");
+    expect(after[2]!.attrs.class).toBe("spacer");
+    expect(after[after.length - 1]!.attrs["data-focus"]).toBe("refresh");
+    expect(withClass(page, "page-list")[0]!.all("table").length).toBeGreaterThan(0);
+    expect(withClass(page, "page-empty")).toHaveLength(0);
+    stop();
+  });
+
+  it.each([[500, "state-error"], [403, "state-permission"]])("keeps the first-load state %i inside the page", async (status, cls) => {
+    good();
+    fails["/api/runs"] = status as number;
+    const { main, stop } = await open();
+    const page = root(main);
+    expect(withClass(page, cls as string).length).toBeGreaterThan(0);
+    stop();
+  });
+
+  it("puts the no-runs state in the empty region", async () => {
+    good([]);
+    const { main, stop } = await open();
+    const page = root(main);
+    expect(withClass(page, "page-empty")).toHaveLength(1);
+    expect(withClass(page, "page-list")).toHaveLength(0);
+    stop();
+  });
+
+  it("puts the no-match state of a filter in the empty region", async () => {
+    good([RUN("r1", { vars: { github_repo: "o/a" } })]);
+    const { main, stop } = await open({ query: { repo: "o/zzz" } });
+    const page = root(main);
+    expect(withClass(page, "page-empty")).toHaveLength(1);
+    stop();
+  });
+});
