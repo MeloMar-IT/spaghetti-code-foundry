@@ -10,7 +10,7 @@ export const ASK_BRIEF = "Ask the architect to look at the code";
 const many = (n, one, other) => `${n} ${n === 1 ? one : other}`;
 
 /** Ready drafts the publish plan can offer: one that depends on a draft that is neither ready, on GitHub nor split is held back, and so is what depends on it. */
-function publishable(drafts) {
+export function publishable(drafts) {
   let ok = drafts.filter((d) => d.state === "ready" && !d.published);
   const settled = (id) => {
     const o = drafts.find((x) => x.id === id);
