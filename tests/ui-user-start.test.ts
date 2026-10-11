@@ -6,9 +6,11 @@ import { readUiCss } from "./helpers/ui-css.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let draft: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/user/start.js" as string);
+  draft = await import("../ui/user/start-draft.js" as string);
 });
 afterAll(() => restore());
 
@@ -29,6 +31,12 @@ const submitBtn = (root: FakeElement) => one(root, "button", { type: "submit" })
 const submit = async (root: FakeElement) => {
   one(root, "form").fire("submit", { preventDefault() {} });
   await flush();
+  // "Review" opens the review; "Start" there sends
+  const start = find(root, "button", { "data-focus": "start-run" })[0];
+  if (start) {
+    start.fire("click");
+    await flush();
+  }
 };
 
 let main: FakeElement;
@@ -66,6 +74,7 @@ async function open(admin?: boolean) {
 }
 
 beforeEach(() => {
+  draft.clearDraft();
   calls = { repos: 0, start: [], flows: [] };
   go = vi.fn();
   dialog = vi.fn(async () => undefined);
@@ -288,7 +297,7 @@ describe("renderStart: repository", () => {
     await open();
     expect(main.textContent).toContain("me/fixed");
     expect(find(main, "select")).toHaveLength(0);
-    expect(find(main, "button", { type: "button" })).toHaveLength(0);
+    expect(find(main, "button", { type: "button" }).map((b) => b.textContent)).toEqual(["Clear"]);
     expect(calls.repos).toBe(0);
     await submit(main);
     expect(calls.start[0].vars).toEqual({});
@@ -428,21 +437,25 @@ describe("renderStart: fields and start", () => {
     expect(one(box, "p", { class: "state-next" }).textContent).toBe(ui.START_UNSURE_NEXT);
   });
 
-  it("switches the button off while the call runs, ignores a second submit and keeps it off on success", async () => {
+  it("switches Start and Back off while the call runs, sends once for two clicks and keeps the form off on success", async () => {
     data.flows = [flow("a")];
     data.hold = true;
     await open();
     await submit(main);
-    expect(submitBtn(main).disabled).toBe(true);
-    await submit(main);
+    const startBtn = one(main, "button", { "data-focus": "start-run" });
+    startBtn.fire("click");
+    startBtn.fire("click");
+    await flush();
+    expect(startBtn.disabled).toBe(true);
+    expect(one(main, "button", { "data-focus": "start-back" }).disabled).toBe(true);
     expect(calls.start).toHaveLength(1);
     release();
     await flush();
     expect(go).toHaveBeenCalledWith("#/runs/r1");
-    expect(submitBtn(main).disabled).toBe(true);
+    expect(startBtn.disabled).toBe(true);
   });
 
-  it("sends with Ctrl+Enter in the Task box", async () => {
+  it("opens the review with Ctrl+Enter in the Task box", async () => {
     data.flows = [flow("a")];
     await open();
     const box = one(main, "textarea");
@@ -450,6 +463,9 @@ describe("renderStart: fields and start", () => {
     await flush();
     expect(calls.start).toHaveLength(0);
     box.fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await flush();
+    expect(calls.start).toHaveLength(0);
+    one(main, "button", { "data-focus": "start-run" }).fire("click");
     await flush();
     expect(calls.start).toHaveLength(1);
   });
@@ -465,7 +481,7 @@ describe("renderStart: fields and start", () => {
       while (p && p.tag !== "label") p = p.parent;
       expect(p, `${el.tag} ${el.attrs.name}`).toBeDefined();
     }
-    expect(submitBtn(main).textContent).toBe("Start");
+    expect(submitBtn(main).textContent).toBe("Review");
     expect(one(main, "button", { "data-focus": "add-repo" }).attrs.type).toBe("button");
   });
 
@@ -560,9 +576,9 @@ describe("renderStart: required first, More options", () => {
     data.hold = true;
     await open();
     one(main, "input", { name: "o" }).value = "typed";
+    const radios = find(main, "input", { name: "flow" });
     const sent = submit(main);
     await flush();
-    const radios = find(main, "input", { name: "flow" });
     expect(radios.every((r) => (r as any).disabled)).toBe(true);
     radios[1]!.fire("change");
     expect(find(main, "input", { name: "p" })).toHaveLength(0);

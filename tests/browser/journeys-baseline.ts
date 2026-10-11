@@ -24,7 +24,7 @@ export const BASELINE: Record<TaskId, Counts> = {
 
 /** What journeys.spec.ts measures (it asserts exact equality, so this stays true). */
 export const REDESIGN: Record<TaskId, Counts> = {
-  1: { nav: 2, clicks: 3, fields: 1 },
+  1: { nav: 2, clicks: 4, fields: 1 },
   2: { nav: 1, clicks: 2, fields: 0 },
   3: { nav: 2, clicks: 2, fields: 0 },
   4: { nav: 2, clicks: 4, fields: 2 },
@@ -33,7 +33,7 @@ export const REDESIGN: Record<TaskId, Counts> = {
 
 /** Tasks that are above the baseline and have a named follow-up: their case is `test.fixme` with this text. */
 export const KNOWN_OVER: Partial<Record<TaskId, string>> = {
-  1: 'Start work: 2 / 3 / 1 against a baseline of 1 / 2 / 1 — follow-up issue "UI quality 4c follow-up — Start work takes one more step and click than the baseline"',
+  1: 'Start work: 2 / 4 / 1 against a baseline of 1 / 2 / 1 — follow-up issue "UI quality 4c follow-up — Start work takes one more step and click than the baseline"',
 };
 
 /** The measures that are above the baseline, e.g. ["nav 2 > 1", "clicks 3 > 2"]; [] when none. */

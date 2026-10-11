@@ -46,6 +46,7 @@ test.describe("the five tasks", () => {
       const task = page.locator('textarea[name="task"]');
       await j.click(task);
       await j.fill(task, "Journey 1 start work");
+      await j.click(page.getByRole("button", { name: "Review", exact: true }));
       await j.click(page.getByRole("button", { name: "Start", exact: true }), { opens: "page" });
       try {
         await expect(page).toHaveURL(/#\/runs\/[\w-]+$/);
