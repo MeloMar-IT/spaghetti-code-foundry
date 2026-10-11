@@ -357,6 +357,30 @@ been removed, or you may not have access." with **Clear filters**; the text is t
 the repository exists for another account or not. Refreshes keep the filter. The server gets no
 new parameter.
 
+### Repository context
+
+The switcher sits at the start of the top bar, on both displays. It shows your current repository
+so that you do not filter each page yourself.
+
+- **No repository:** the switcher shows a short text. **One repository:** a plain label. **Two or
+  more:** a button that opens a panel. When you add or remove a repository, the switcher loads
+  again and changes by itself.
+- **The panel** lists **All repositories** first, then **Favourites** (use the star), **Recent**
+  and the rest. As an admin the rest is grouped by owner. From eight repositories the panel has a
+  search box. Escape or a choice closes it.
+- **Pages that follow it:** Runs, Refinement, Board, My repositories and, as an admin, All
+  repositories. With two or more repositories they open on your current repository
+  (`?repo=<name>`, `#/board/<name>`, or `?repo=all` for All repositories). If you choose another
+  repository on one of these pages, the address changes and the page draws again; an `owner`
+  filter stays. On other pages only the label changes.
+- **The address wins.** An address that already names a repository, or has any filter, is not
+  changed (see "Filters in the address"). With fewer than two repositories no address is changed.
+- **Where the choice is kept:** per account, in this browser. In the read-only preview (`?as=`) it
+  is not read or written.
+- **Problems.** If the stored repository is no longer in your list, a notice says so and the
+  switcher shows All repositories. If the list cannot be loaded, the switcher shows "Repositories
+  could not be loaded." with **Retry**; the pages still open.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.

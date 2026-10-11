@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, fieldFor, h, modal, mount, showError, table, timeAgo, toast } from "./dom.js";
 import { onWish, takeWish } from "./palette-data.js";
@@ -296,6 +297,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
           save.disabled = false;
           return;
         }
+        if (!repo) void reposChanged();
         toast(repo ? "Authentication changed" : "Repository added");
         if (!closed) close(true);
       })();
@@ -397,8 +399,13 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       await api.removeRepo(id);
     } catch (e) {
       // a repeat that finds no repository: the first try removed it, and the old key is gone now
-      if (!(again && e.status === 404)) return reload({ text: plainError(e), retryId: e.status === 500 ? id : undefined });
+      if (!(again && e.status === 404)) {
+        // a 500 comes from the cleanup after the record is gone: the switcher must not keep the repository
+        if (e.status === 500) void reposChanged();
+        return reload({ text: plainError(e), retryId: e.status === 500 ? id : undefined });
+      }
     }
+    void reposChanged();
     state.repos = state.repos.filter((r) => r.id !== id);
     toast("Repository removed");
     return reload();

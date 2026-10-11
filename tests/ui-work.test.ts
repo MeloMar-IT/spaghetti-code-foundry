@@ -245,10 +245,10 @@ describe("toolbar", () => {
 
 describe("renderWork", () => {
   const main = () => new FakeElement("main");
-  const open = async (d: unknown, wanted?: string, store: any = mem(), user = "u1") => {
+  const open = async (d: unknown, wanted?: string, store: any = mem(), user = "u1", query: Record<string, string> = {}) => {
     if (!store.data["scf.work.u1"]) store.data["scf.work.u1"] = JSON.stringify({ layout: "list" });
     const m = main();
-    const cleanup = ui.renderWork(m, wanted, { user, store, now: () => NOW });
+    const cleanup = ui.renderWork(m, wanted, { user, store, now: () => NOW, query });
     calls.shift()!.answer(d);
     await flush();
     return { m, cleanup, store };
@@ -406,6 +406,42 @@ describe("renderWork", () => {
     b.cleanup();
   });
 
+  it("lets the address say All, and keeps its owner, over the saved choices", async () => {
+    const store = mem();
+    store.data["scf.work.u1"] = JSON.stringify({ layout: "list", repo: "acme/lib", owner: "" });
+    const d = board([card()], "acme/app", { "acme/lib": [] });
+    const a = await open(d, undefined, store, "u1", { repo: "all", owner: "u1" });
+    expect(selected(a.m, "work-repo")).toBe("");
+    expect(selected(a.m, "work-owner")).toBe("u1");
+    a.cleanup();
+    const b = await open(d, undefined, store, "u1", {});
+    expect(selected(b.m, "work-repo")).toBe("acme/lib");
+    b.cleanup();
+  });
+
+  it("keeps an owner of the address that has no cards: an empty list, also after a refresh", async () => {
+    const { m, cleanup } = await open(board(), undefined, mem(), "u1", { repo: "all", owner: "u2" });
+    expect(rows(m)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([card(), card({ issue: 7, key: "acme/app#7" })]));
+    await flush();
+    expect(rows(m)).toHaveLength(0);
+    pickValue(m, "work-owner", "");
+    expect(rows(m).length).toBeGreaterThan(0);
+    cleanup();
+  });
+
+  it("keeps an owner of the address whose last card disappears during a refresh", async () => {
+    const d = board([card(), card({ issue: 5, key: "acme/app#5", owner: "u2", ownerName: "Bob" })]);
+    const { m, cleanup } = await open(d, undefined, mem(), "u1", { owner: "u2" });
+    expect(rows(m)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board());
+    await flush();
+    expect(rows(m)).toHaveLength(0);
+    cleanup();
+  });
+
   it("applies the saved choices of the account only", async () => {
     const store = mem();
     store.data["scf.work.u1"] = JSON.stringify({ group: "repo" });
@@ -458,7 +494,7 @@ describe("renderWork", () => {
 describe("source", () => {
   const read = (f: string) => readFileSync(f, "utf8");
   it("switches the board route on the setting", () => {
-    expect(read("ui/app.js")).toContain("S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go })");
+    expect(read("ui/app.js")).toContain('S.info.redesign ? renderWork(main, arg, { user: S.me, query: { ...to.query, ...(parseQuery(splitHash(hash).query).repo === "all" ? { repo: "all" } : {}) } }) : renderBoard(main, arg, { query: to.query, go })');
   });
   it("uses no inline style", () => {
     for (const f of ["ui/work.js", "ui/work-list.js", "ui/work-model.js", "ui/work-prefs.js", "ui/work-board.js", "ui/work-display.js"]) expect(read(f), f).not.toMatch(/style\s*:/);

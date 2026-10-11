@@ -53,6 +53,9 @@ const alerts = () => main().all("div").filter((d) => d.getAttribute("role") === 
 const buttons = () => main().all("button");
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const never = new Proxy({}, { get: () => vi.fn() });
+const contextStub = (over: Record<string, any> = {}) => ({
+  initContext: vi.fn(() => ({ ready: Promise.resolve(), scoped: () => null, keep: (h: string) => h, current: () => ({ active: false, repo: "", own: false }), refresh: async () => {}, stop: vi.fn(), ...over })),
+});
 
 describe("loadRouter", () => {
   it("fails loudly on an import form it does not know", () => {
@@ -75,6 +78,7 @@ describe("user router", () => {
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "/palette.js": { initPalette: vi.fn(() => () => {}) },
+    "/context.js": contextStub(),
     "/home.js": never,
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -144,6 +148,71 @@ describe("user router", () => {
     expect(initPalette).not.toHaveBeenCalled();
   });
 
+  it("scopes a bare page", async () => {
+    const scoped = vi.fn((h: string) => (h === "#/runs" ? "#/runs?repo=a%2Fb" : null));
+    const renderMyRuns = vi.fn();
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/context.js": contextStub({ scoped }) }));
+    expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/runs?repo=a%2Fb");
+    expect(renderMyRuns.mock.calls[0]![1].query).toEqual({ repo: "a/b" });
+  });
+
+  it("does not scope an address that was replaced", async () => {
+    setup("#/nope");
+    const scoped = vi.fn(() => "#/runs?repo=a%2Fb");
+    const renderMyRuns = vi.fn();
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/context.js": contextStub({ scoped }) }));
+    expect(scoped).not.toHaveBeenCalled();
+    expect(renderMyRuns.mock.calls[0]![1].query).toEqual({});
+  });
+
+  it("starts the context with readOnly, stops it when the view ends, and starts none when the view cannot be shown", async () => {
+    const stop = vi.fn();
+    const ctx = contextStub({ stop });
+    let onEnded!: () => void;
+    const beginView = (_as: string, _me: unknown, opts: { onEnded: () => void }) => { onEnded = opts.onEnded; return { readOnly: true, ready: true }; };
+    await loadRouter("user/app.js", deps({ "/context.js": ctx, "/view-as.js": { beginView } }));
+    expect(ctx.initContext).toHaveBeenCalledWith("user", { id: "u1" }, { readOnly: true, go: expect.any(Function) });
+    onEnded();
+    expect(stop).toHaveBeenCalledTimes(1);
+    const none = contextStub();
+    await loadRouter("user/app.js", deps({ "/context.js": none, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
+    expect(none.initContext).not.toHaveBeenCalled();
+  });
+
+  it("draws the first page only after the context is ready, and draws the latest address once", async () => {
+    let settle!: () => void;
+    const ready = new Promise<void>((r) => { settle = r; });
+    const renderMyRuns = vi.fn();
+    const renderRepos = vi.fn();
+    const started = loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/repos.js": { renderRepos }, "/context.js": contextStub({ ready }) }));
+    await tick();
+    expect(renderMyRuns).not.toHaveBeenCalled();
+    expect(hashchange).toBeUndefined();
+    g.location.hash = "#/repos";
+    settle();
+    await started;
+    expect(renderMyRuns).not.toHaveBeenCalled();
+    expect(renderRepos).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the context a go that navigates, or only rewrites the address", async () => {
+    const ctx = contextStub();
+    const renderMyRuns = vi.fn();
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/context.js": ctx }));
+    const go = (ctx.initContext.mock.calls[0] as any)[2].go;
+    g.history.replaceState.mockClear();
+    go("#/repos?repo=all", { replace: true, draw: false });
+    expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/repos?repo=all");
+    expect(renderMyRuns).toHaveBeenCalledTimes(1);
+    go("#/runs", { replace: true });
+    await tick();
+    expect(renderMyRuns).toHaveBeenCalledTimes(2);
+    g.history.replaceState.mockClear();
+    go("#/repos");
+    expect(g.location.hash).toBe("#/repos");
+    expect(g.history.replaceState).not.toHaveBeenCalled();
+  });
+
   it("keeps the generation check", () => {
     const src = readFileSync("ui/user/app.js", "utf8");
     expect(src).toContain("mine === generation && !stopped");
@@ -166,6 +235,7 @@ describe("admin router", () => {
       "./viewport.js": real.viewport,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./palette.js": { initPalette: vi.fn() },
+      "./context.js": contextStub(),
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
       "./work.js": never,
@@ -248,6 +318,69 @@ describe("admin router", () => {
     expect(initPalette).toHaveBeenCalledWith({ role: "admin", user: { id: "a1" } });
   });
 
+  it("scopes #/board and gives the repository to the board", async () => {
+    setup("#/board");
+    const renderBoard = vi.fn();
+    await loadRouter("app.js", stub({ "./board.js": { renderBoard }, "./context.js": contextStub({ scoped: () => "#/board/a%2Fb" }) }));
+    await vi.waitFor(() => expect(renderBoard).toHaveBeenCalledTimes(1));
+    expect(renderBoard.mock.calls[0]![1]).toBe("a/b");
+    expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/board/a%2Fb");
+  });
+
+  it("gives the redesigned board the address filters", async () => {
+    setup("#/board?repo=all&owner=me");
+    const renderWork = vi.fn();
+    await loadRouter("app.js", stub({
+      "./work.js": { renderWork },
+      "./api.js": { api: { info: async () => ({ repo: "r", redesign: true }), flows: async () => [] } },
+    }));
+    await vi.waitFor(() => expect(renderWork).toHaveBeenCalledTimes(1));
+    expect(renderWork.mock.calls[0]![2].query).toEqual({ repo: "all", owner: "me" });
+  });
+
+  it("does not scope a redirected address, and starts the context for the admin", async () => {
+    setup("#/nope");
+    const scoped = vi.fn(() => "#/board/a%2Fb");
+    const ctx = contextStub({ scoped });
+    await loadRouter("app.js", stub({ "./context.js": ctx }));
+    await tick();
+    expect(scoped).not.toHaveBeenCalled();
+    expect(ctx.initContext).toHaveBeenCalledWith("admin", { id: "a1" }, { go: expect.any(Function) });
+  });
+
+  it("waits for the context, and a navigation meanwhile is drawn once afterwards", async () => {
+    setup("#/dashboard");
+    let settle!: () => void;
+    const ready = new Promise<void>((r) => { settle = r; });
+    const renderDashboard = vi.fn();
+    const renderProblems = vi.fn();
+    void loadRouter("app.js", stub({ "./dashboard.js": { renderDashboard }, "./problems.js": { renderProblems }, "./context.js": contextStub({ ready }) }));
+    await tick();
+    expect(renderDashboard).not.toHaveBeenCalled();
+    g.location.hash = "#/problems";
+    hashchange!();
+    await tick();
+    expect(renderProblems).not.toHaveBeenCalled();
+    settle();
+    await vi.waitFor(() => expect(renderProblems).toHaveBeenCalledTimes(1));
+    expect(renderDashboard).not.toHaveBeenCalled();
+  });
+
+  it("gives the context a go that only rewrites the address, or draws again", async () => {
+    setup("#/dashboard");
+    const renderDashboard = vi.fn();
+    const ctx = contextStub();
+    await loadRouter("app.js", stub({ "./dashboard.js": { renderDashboard }, "./context.js": ctx }));
+    await vi.waitFor(() => expect(renderDashboard).toHaveBeenCalledTimes(1));
+    const go = (ctx.initContext.mock.calls[0] as any)[2].go;
+    g.history.replaceState.mockClear();
+    go("#/dashboard?repo=all", { replace: true, draw: false });
+    expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/dashboard?repo=all");
+    expect(renderDashboard).toHaveBeenCalledTimes(1);
+    go("#/dashboard", { replace: true });
+    await vi.waitFor(() => expect(renderDashboard).toHaveBeenCalledTimes(2));
+  });
+
   it("keeps the generation check before the error state", () => {
     const lines = readFileSync("ui/app.js", "utf8").split("\n");
     const i = lines.findIndex((l) => l.includes("errorState(explainError(e,"));
@@ -270,6 +403,7 @@ describe("support levels", () => {
     "./viewport.js": real.viewport,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./context.js": contextStub(),
     "./states.js": real.states,
     "./icons.js": { flowNameMark: () => "" },
     "./work.js": never,
