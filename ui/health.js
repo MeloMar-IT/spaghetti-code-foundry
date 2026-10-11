@@ -52,9 +52,12 @@ function drawHealth(el, health) {
   showHealth(el, document.getElementById("health-btn"), health);
 }
 
+/** Asks in the Foundry's own dialog whether to cancel a run. */
+export const askCancelRun = () => confirmDialog({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" });
+
 /** Asks in the Foundry's own dialog; on yes cancels the run and asks health again. */
 async function cancelRun(el, runId) {
-  if (!(await confirmDialog({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" }))) return;
+  if (!(await askCancelRun())) return;
   await api.cancelRun(runId).catch((e) => toast(e.message, "error"));
   loadHealth(el);
 }

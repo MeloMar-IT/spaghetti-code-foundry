@@ -775,3 +775,22 @@ describe("Settings", () => {
     await vi.waitFor(() => expect(invalid(main())).toEqual([]));
   });
 });
+
+describe("Overview", () => {
+  it("has no violations, named tables and a read-out failure notice", async () => {
+    const operations = await import("../ui/operations.js" as string);
+    (globalThis as any).location = { hash: "#/operations" };
+    routes["GET /api/health"] = { ok: true, summary: "All good", problems: [], repos: [] };
+    routes["GET /api/stats"] = { byUser: [] };
+    routes["GET /api/info"] = { spentToday: 0 };
+    routes["GET /api/queue"] = { active: [], pending: [], concurrency: 1 };
+    routes["GET /api/watchers"] = [];
+    routes["GET /api/providers"] = { agents: [{ agent: "claude", installed: true, detail: "1" }], providers: [] };
+    routes["GET /api/audit"] = { entries: [{ time: "2026-10-01T08:00:00.000Z", actor: { type: "system" }, action: "x", target: null }] };
+    fail("GET", "/api/queue", 500, "queue broke");
+    await operations.renderOperations(main());
+    noViolations(main());
+    tablesOk(main());
+    expect(alerts(main()).map((a) => a.textContent)).toEqual(["Not available. queue broke"]);
+  });
+});

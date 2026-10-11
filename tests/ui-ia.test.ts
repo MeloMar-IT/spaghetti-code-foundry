@@ -63,8 +63,8 @@ describe("the navigation lists", () => {
 
   it("lists the secondary pages of a destination", () => {
     const adm = ia.subnavFor("admin", "administration");
-    expect(adm.map((l: any) => l.label)).toEqual(["Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
-    expect(adm.map((l: any) => l.section)).toEqual([...Array(4).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
+    expect(adm.map((l: any) => l.label)).toEqual(["Overview", "Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
+    expect(adm.map((l: any) => l.section)).toEqual([...Array(5).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
     expect(ia.subnavFor("admin", "flows").map((l: any) => l.href)).toEqual(["#/flows", "#/library"]);
     expect(ia.subnavFor("admin", "flows").every((l: any) => l.section === undefined)).toBe(true);
     expect(ia.subnavFor("admin", "repos")).toEqual([]);
@@ -111,11 +111,13 @@ describe("resolve for an admin", () => {
     const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
     expect(crumbs("#/runs/r1")).toEqual([["Runs", "#/runs"], ["Run r1", null]]);
     expect(r("#/runs/r1").back).toBe("#/runs");
-    expect(crumbs("#/users")).toEqual([["Administration", "#/users"], ["Users", null]]);
+    expect(crumbs("#/operations")).toEqual([["Administration", "#/operations"], ["Overview", null]]);
+    expect(ia.primaryFor("admin").find((p: any) => p.id === "administration")).toMatchObject({ href: "#/operations" });
+    expect(crumbs("#/users")).toEqual([["Administration", "#/operations"], ["Users", null]]);
     expect(r("#/users").back).toBeNull();
-    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/users"], ["All repositories", null]]);
-    expect(crumbs("#/credentials")).toEqual([["Administration", "#/users"], ["Credentials", null]]);
-    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/users"], ["Maintenance", null]]);
+    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/operations"], ["All repositories", null]]);
+    expect(crumbs("#/credentials")).toEqual([["Administration", "#/operations"], ["Credentials", null]]);
+    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/operations"], ["Maintenance", null]]);
     expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
     expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/users"], ["Models", "#/models"], ["ollama", null]]);
     expect(r("#/models/ollama")).toMatchObject({ back: "#/models", title: "ollama", dest: "administration" });
@@ -161,13 +163,13 @@ describe("resolve for a user", () => {
   });
 
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/operations", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
     expect(auth.isUserHash("#/models/ollama")).toBe(false);
   });
 
   it("has no link to the admin-only pages in the user HTML", () => {
     const html = read("ui/user/index.html");
-    for (const h of ["#/maintenance", "#/all-repos", "#/credentials"]) expect(html).not.toContain(h);
+    for (const h of ["#/maintenance", "#/all-repos", "#/credentials", "#/operations"]) expect(html).not.toContain(h);
   });
 
   it("builds crumbs", () => {

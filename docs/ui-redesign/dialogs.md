@@ -18,6 +18,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/admin-repos.js` | Definition of Ready | Button on a row of `#/all-repos` | checklist items | Save | `modal` |
 | `ui/admin-repos.js` | Transfer repository | Transfer button on a row | new owner e-mail | Transfer | `modal` |
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
+| `ui/operations.js` | Cancel this run | Cancel run in the Health card of the Overview | none | Cancel the run | `confirmDialog` (`ui/health.js`) |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
 | `ui/monitor.js` | Switch on with a fresh state file | Switch on button when the state file cannot be read (`#/watchers` and `#/problems`, through `confirmUnreadable`) | none | Switch on | `confirmDialog` |
 | `ui/flow-page.js` | Run <flow> | Test run button in the flow editor | task, repository, one input per flow variable | Run (also Cmd+Enter); with an empty task the first click only warns and the button becomes "Run without a task" (inline, no second dialog) | `modal` |

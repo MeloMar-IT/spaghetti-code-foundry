@@ -14,6 +14,7 @@ import { renderProblems } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
 import { renderCredentials } from "./admin-credentials.js";
+import { renderOperations } from "./operations.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
@@ -126,6 +127,11 @@ async function route() {
     }
     else if (section === "credentials") {
       const off = await renderCredentials(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
+    else if (section === "operations") {
+      const off = await renderOperations(main);
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

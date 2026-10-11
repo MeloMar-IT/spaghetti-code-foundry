@@ -820,7 +820,7 @@ describe("wiring", () => {
   it("is wired into the page", async () => {
     const ia = (await import("../ui/ia.js" as string)) as { subnavFor: (r: string, d: string) => { href: string; label: string }[] };
     expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "users", href: "#/users", label: "Users", section: "access" });
-    expect(read("index.html")).toContain('href="#/users" data-nav="administration"');
+    expect(read("index.html")).toContain('href="#/operations" data-nav="administration"');
     expect(read("app.js")).toContain('from "./users.js"');
     expect(read("app.js")).toContain('section === "users"');
     expect(read("user/index.html")).not.toContain("#/users");
