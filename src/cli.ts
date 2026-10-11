@@ -45,6 +45,7 @@ Usage:
   scf skills pin <id@version> <digest> [--replace]   Pin a listed skill package (copy the digest from the list)
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
+  scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
   scf validate <flow|file.yaml>                  Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
@@ -197,8 +198,11 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
-  if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
+  // `scf skills sources …` only checks a file: it runs without choosing or moving the data folder.
+  if (!(cmd === "skills" && arg === "sources")) {
+    const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
+    if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
+  }
 
   switch (cmd) {
     case "run": {

@@ -1,19 +1,45 @@
+import { resolve } from "node:path";
 import { loadConfig, type Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { SKILL_DIGEST_RE } from "./schema.js";
+import { readSources, SOURCES_FILE } from "./sources.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
-       scf skills unpin <id@version>                             Remove a pin`;
+       scf skills unpin <id@version>                             Remove a pin
+       scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
+  /** Where a relative source file is looked for (default: the current folder). */
+  cwd?: string;
+}
+
+/** `scf skills sources check`: offline, prints checked fields only. */
+function sourcesCheck(file: string, out: (line: string) => void): number {
+  const r = readSources(file);
+  if (r.state === "none") {
+    out("PROBLEM the skill source file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  let enabled = 0;
+  for (const s of r.manifest.sources) {
+    if (s.status === "enabled") enabled++;
+    const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
+    out(s.reason ? `${head} (${s.reason})` : head);
+  }
+  out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
+  return 0;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${SKILLS_USAGE}`);
@@ -49,8 +75,12 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills unpin: expects one skill (id@version)");
     if (!parseSkillKey(operands[0]!)) throw syntax(`scf skills unpin: ${operands[0]} is not a skill key (id@version)`);
   }
+  if (sub === "sources") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
+    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
+  }
 
-  const { skills, ...discover } = opts;
+  const { skills, cwd: _cwd, ...discover } = opts;
   if (sub === "unpin") {
     const key = operands[0]!;
     if (removeSkillPin(key)) {

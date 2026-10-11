@@ -2733,6 +2733,34 @@ A pin ties one skill version to the exact content you looked at. If the content 
 - **Runs** must name the exact version (`id@version`). A newer or older version is never used instead. Repository skills can never be selected for unattended runs.
 - **Limit:** the lock detects a change after the pin, not a bad first copy. Anyone who can write the data folder can also change the lock.
 
+### Skill library sources
+
+An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run yet, and nothing is fetched from the network.
+
+```yaml
+schema: 1
+sources:
+  - id: example-skills
+    repository: https://github.com/example/skills
+    status: enabled
+    ref:
+      approved: 0123456789abcdef0123456789abcdef01234567   # full commit id
+      track: main                                          # only to look for updates
+    paths: [skills]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT, Apache-2.0] }
+    update: { cadence: weekly }
+    owner: "@octocat"
+```
+
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`) and `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`).
+- **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
+- **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
+- **Owner and policy.** Every source has an owner and an update cadence.
+- **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
+- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
