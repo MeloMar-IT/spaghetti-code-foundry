@@ -41,9 +41,6 @@ async function expectInside(page: Page, selector: string) {
 for (const role of ["admin", "user"] as const) {
   for (const width of WIDTHS) {
     test(`${role} display at ${width} px: every primary link works without sideways scroll`, async ({ browser }) => {
-      // A case that fails for real is marked here, with the measured width and a pointer to part 1b.
-      test.fixme(role === "admin" && width === 360, "sideways scroll at 360 px (486 px wide on Home, 671 px on Administration > Users) — fixed in UI quality 1b (part 2 of #264)");
-      test.fixme(role === "admin" && width === 768, "sideways scroll at 768 px (887 px wide on Administration > Users) — fixed in UI quality 1b (part 2 of #264)");
       const drawer = usesDrawer(width);
       const page = await openAs(browser, role, width);
       try {

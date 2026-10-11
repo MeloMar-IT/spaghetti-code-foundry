@@ -454,3 +454,84 @@ describe("runSkillView: flow skill modes", () => {
     expect(view(runOf(planReq, { flowDef }), { readLock: missing })).toBeUndefined();
   });
 });
+
+describe("runSkillView: a coding run with a plan record", () => {
+  const CHECK_DEF = { id: "plan_check", type: "shell", run: "x $FACTORY_TOOLS/plan-comment" };
+  const carryOf = (req: SkillRequest, lockHash = digestOf("1")) => ({ request: req, planHash: digestOf("1"), lockHash, commentId: "7", changes: [], at: "2026-01-01T00:00:00Z" });
+  function codeRun(req: SkillRequest, r: ReturnType<typeof reg>, over: any = {}): RunSummary {
+    const lock = lockOf(r, req, { planHash: digestOf("1") });
+    return {
+      runId: "run-1", runDir: "/srv/runs/run-1", workdir: "/srv/work/run-1", repo: "/srv/repo",
+      flowDef: { name: "f", steps: [CHECK_DEF] }, skillCarry: carryOf(req), planCheck: { outcome: "record", stopped: false, at: "x" },
+      skillLock: summaryOf(lock),
+      history: [
+        rec("implement", { skills: { loaded: ["a@1.0.0"], role: "coder" } }),
+        rec("plan_check"),
+        rec("implement", { skills: { loaded: ["a@1.0.0"], state: "loaded" } }),
+        rec("review_1", { skills: { loaded: ["a@1.0.0"], role: "reviewer" } }),
+      ],
+      ...over,
+    } as unknown as RunSummary;
+  }
+  const r1 = reg(sk("a"));
+  const req = request({ id: "a", reason: "From the record" });
+
+  it("shows requested skills, the session state and the review from after plan_check only", () => {
+    const run = codeRun(req, r1);
+    const v = view(run, { readLock: () => read(lockOf(r1, req, { planHash: digestOf("1") })) })!;
+    expect(v.lock).toBe("ok");
+    expect(v.planChanged).toBeUndefined();
+    expect(v.requested[0]).toMatchObject({ id: "a", state: "selected", reason: "From the record" });
+    expect(v.requested[0]!.evidence).toBeDefined();
+    expect(v.resolved[0]).toMatchObject({ context: "loaded", contextStep: "implement", review: true });
+  });
+
+  it("ignores a session from before plan_check", () => {
+    const run = codeRun(req, r1, { history: [rec("implement", { skills: { loaded: ["a@1.0.0"] } }), rec("plan_check")] });
+    const v = view(run, { readLock: () => read(lockOf(r1, req, { planHash: digestOf("1") })) })!;
+    expect(v.resolved[0]!.context).toBeUndefined();
+  });
+
+  it("calls a lock of an older carry hash a plan change", () => {
+    const run = codeRun(req, r1, { skillCarry: carryOf(req, digestOf("2")) });
+    const v = view(run, { readLock: () => read(lockOf(r1, req, { planHash: digestOf("1") })) })!;
+    expect(v.planChanged).toBe(true);
+  });
+
+  it("shows the stop action of the plan_check resolution", () => {
+    const r0 = reg();
+    const run = codeRun(req, r0, { skillLock: undefined, skillPlan: planOf(r0, req, { gate: "plan_check" }) });
+    const v = view(run, { readLock: missing })!;
+    expect(v.action).toBe("stop");
+    expect(v.requested[0]).toMatchObject({ id: "a", state: "missing" });
+  });
+
+  it("shows only a note when the plan check found nothing, and says whether it stopped", () => {
+    const none = { runId: "run-1", runDir: "/x", flowDef: { name: "f", steps: [CHECK_DEF] }, history: [rec("plan_check")], planCheck: { outcome: "none", stopped: false, at: "x", junk: 1 } } as unknown as RunSummary;
+    expect(view(none, { readLock: missing })).toMatchObject({ lock: "none", planRecord: { outcome: "none" }, requested: [], resolved: [] });
+    expect(view(none, { readLock: missing })!.planRecord).not.toHaveProperty("junk");
+    const edited = { ...none, planCheck: { outcome: "comment-changed", stopped: true, at: "x" } } as unknown as RunSummary;
+    const v = view(edited, { readLock: missing })!;
+    expect(v.planRecord).toEqual({ outcome: "comment-changed", stopped: true });
+    expect(v.action).toBeUndefined();
+  });
+
+  it("shows no card for a record with an empty request", () => {
+    const run = { runId: "run-1", runDir: "/x", flowDef: { name: "f", steps: [CHECK_DEF] }, history: [rec("plan_check")], skillCarry: carryOf(request()), planCheck: { outcome: "record", stopped: false, at: "x" } } as unknown as RunSummary;
+    expect(view(run, { readLock: missing })).toBeUndefined();
+  });
+
+  it("ignores malformed values and never throws", () => {
+    const base = { runId: "run-1", runDir: "/x", flowDef: { name: "f", steps: [CHECK_DEF] }, history: [rec("plan_check")] };
+    for (const bad of [{ planCheck: { outcome: "bogus" } }, { planCheck: "x" }, { skillCarry: { lockHash: 5, request: req } }, { skillCarry: { lockHash: "h", request: { version: 9 } } }]) {
+      expect(view({ ...base, ...bad } as unknown as RunSummary, { readLock: missing })).toBeUndefined();
+    }
+  });
+
+  it("lets a plan gate win over a carry and a plan check", () => {
+    const run = runOf(req, { skillCarry: carryOf(request({ id: "zzz" })), planCheck: { outcome: "none", stopped: false, at: "x" } });
+    const v = view(run, { readLock: missing })!;
+    expect(v.planRecord).toBeUndefined();
+    expect(v.requested.map((x) => x.id)).toEqual(["a"]);
+  });
+});

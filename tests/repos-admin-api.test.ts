@@ -55,7 +55,7 @@ async function call(who: TestSession, method: string, path: string, body?: unkno
   seen.push(text);
   return { status: r.status, text, json: () => JSON.parse(text), error: () => JSON.parse(text).error as string };
 }
-type Row = { id: string; url: string; method: string; owner: string; settings: Record<string, unknown>; account: { name: string; email: string; role: string; status: string } | null };
+type Row = { id: string; url: string; method: string; owner: string; settings: Record<string, unknown>; account: { name: string; email: string; role: string; status: string } | null; github?: string };
 const all = async () => (await call(admin, "GET", "/api/admin/repos")).json() as Row[];
 const mine = async (who: TestSession) => (await call(who, "GET", "/api/repos")).json() as Record<string, unknown>[];
 const creds = async (who: TestSession) => (await call(who, "GET", "/api/credentials")).json() as unknown[];
@@ -83,6 +83,7 @@ describe("admin repositories API", () => {
     expect(a.account).toEqual({ name: "Ann", email: "ann@example.com", role: "user", status: "active" });
     expect(a.settings).toEqual({});
     expect(rows.find((r) => r.id === adminRepo.id)!.account?.role).toBe("admin");
+    expect(a.github).toBe("acme/app");
   });
 
   it("sets settings; a user's list never has them", async () => {
@@ -175,6 +176,11 @@ describe("admin repositories API", () => {
     // not on GitHub
     const other = addRepo(admin.user.id, { url: "https://git.example.com/acme/app.git" });
     expect((await withProblem(other.id)).watcherProblem).toBe("a watcher needs a GitHub repository");
+    // github: lower case "owner/name" for GitHub repositories, no key otherwise
+    expect((await withProblem(key.id)).github).toBe("acme/deploy-only");
+    expect("github" in (await withProblem(other.id))).toBe(false);
+    const mixed = addRepo(admin.user.id, { url: "https://github.com/Acme/Mixed.git" });
+    expect((await withProblem(mixed.id)).github).toBe("acme/mixed");
     // "none" of a user needs an owner who is an admin
     expect((await withProblem(bobRepo.id)).watcherProblem).toBe('a watcher on a repository with the server\'s own access ("none") needs an owner who is an admin');
     // "none" of an admin can

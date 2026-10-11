@@ -1,15 +1,20 @@
 // Start work: required decisions first (repository, task, required inputs), the rest under "More options"; a flow
 // picker only with several flows. The server does every real check
-// (published flow, inputs, ownership); this page only shows its answer. Relative imports, so a test can load it:
+// (published flow, inputs, ownership); this page only shows its answer. "Review" shows what will be sent, "Start" sends
+// it; the draft is kept in page memory (start-draft.js). The choices of how to begin (start-entry.js) come above. Relative imports, so a test can load it:
 // in the browser "../api.js" from /user/start.js is the same module as "/api.js". The admin display uses the page too.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, mount, toast } from "../dom.js";
 import { clearInvalid, markInvalid } from "../fields.js";
+import { onWish, takeWish } from "../palette-data.js";
 import { connectionStatus, repoDialog } from "../repos.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "../states.js";
 
-export const REPO_FIELD = "github_repo";
+import { entryChoices } from "./start-entry.js";
+import { clearDraft, draftRevision, DRAFT_LINE, readDraft, REPO_FIELD, restoreDraft, reviewView, writeDraft } from "./start-draft.js";
+
+export { REPO_FIELD };
 export const NO_FLOWS = "No flows yet. Ask your administrator to publish one.";
 export const NO_FLOWS_ADMIN = "No published flows yet. Publish one in the flow editor.";
 export const NO_REPOS = "You have no GitHub repository yet. Add the repository you work in.";
@@ -95,37 +100,59 @@ export function moreSummary(optional, fixed) {
 const fixedField = (f, label) =>
   h("div", { class: "field" }, h("span", {}, label), h("span", { class: "mono" }, f.value === "" ? "—" : f.value), f.help ? h("small", {}, f.help) : null);
 
+// Only the newest render may take or register a wish: an older one that finishes late must not.
+let renders = 0;
+
 /** The Start work page. Returns a cleanup. */
 export async function renderStart(main, { a = api, dialog = repoDialog, go = (hash) => { location.hash = hash; }, admin = false, readOnly = false } = {}) {
+  const newest = ++renders;
   let gone = false;
+  let off = () => {};
   const heading = () => h("h1", {}, "Start work");
+  // The choices of how to begin: drawn in every state, so a refinement can start without a published flow.
+  // `gone` is only set when the page is left after it has finished loading, so the address is checked too.
+  const onPage = () => typeof location === "undefined" || /^#\/start(?:[/?]|$)/.test(location.hash ?? "#/start");
+  const choices = (opts = {}) => entryChoices({ a, go, readOnly, isGone: () => gone || !onPage(), ...opts });
+  const entryNode = () => choices().node;
 
   async function load() {
-    mount(main, heading(), loadingState("Loading the flows…", { rows: 4, shape: "detail" }));
+    mount(main, heading(), entryNode(), loadingState("Loading the flows…", { rows: 4, shape: "detail" }));
     let flows;
     try {
       flows = admin ? await a.flows(true) : await a.flows();
     } catch (e) {
       if (gone) return;
-      mount(main, heading(), e?.status === 403
+      mount(main, heading(), entryNode(), e?.status === 403
         ? permissionState(FLOWS_DENIED)
         : errorState(explainError(e, { what: FLOWS_FAILED }), { onRetry: load }));
       return;
     }
     if (gone) return;
+    // Taken before the empty-list return, so a wish is always used up.
+    const wished = newest === renders ? takeWish("start") : null;
     if (!Array.isArray(flows) || flows.length === 0) {
       const box = emptyState(admin ? NO_FLOWS_ADMIN : NO_FLOWS);
       if (admin) box.append(h("a", { href: "#/flows" }, "Open the flow editor"));
-      mount(main, heading(), box);
+      mount(main, heading(), entryNode(), box);
       return;
     }
-    await showForm(flows);
+    await showForm(flows, wished);
   }
 
-  async function showForm(flows) {
+  async function showForm(flows, wished) {
     let busy = false;
-    const state = { flow: flows[0], task: "", values: {} };
-    for (const f of flows) state.values[f.name] = Object.fromEntries(f.fields.filter((x) => x.mode === "input").map((x) => [x.name, x.value]));
+    const from = restoreDraft(flows, readOnly ? null : readDraft());
+    // A wish from another page chooses the flow; the rest of the draft is kept.
+    const state = { flow: flows.find((f) => f.name === wished?.flow) ?? from.flow, task: from.task, values: from.values };
+    let dirty = from.restored;
+    let started = false;
+    let sentRev = -1;
+    let reviewing = null;
+    // A preview never writes a draft. Every change is kept at once, so leaving the page at any time loses nothing.
+    const persist = () => {
+      if (!readOnly && !gone && dirty && !started) writeDraft({ flow: state.flow.name, task: state.task, values: state.values });
+    };
+    const touch = () => { dirty = true; keep(); };
 
     // Repositories are only asked for when the chosen flow needs one, so a failing list cannot block other flows.
     const repoData = { repos: undefined, options: undefined, error: null, pending: null };
@@ -142,7 +169,11 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
           repoData.repos = githubRepos(repos);
           repoData.options = options ?? repoData.options;
           const wanted = addedRepo(created, repos);
-          if (wanted) state.values[state.flow.name][REPO_FIELD] = wanted;
+          if (wanted) {
+            state.values[state.flow.name][REPO_FIELD] = wanted;
+            dirty = true;
+            persist();
+          }
         } catch (e) {
           repoData.error = e;
         }
@@ -155,6 +186,8 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     }
 
     const taskBox = h("textarea", { name: "task", rows: 5 });
+    taskBox.value = state.task;
+    taskBox.addEventListener("input", touch);
     taskBox.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault?.();
@@ -179,16 +212,23 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     /** Typing in, or choosing for, the marked field takes the mark off. */
     const edited = (el) => () => { if (invalid === el) unmark(); };
     const failBox = h("div", {});
-    const submitBtn = h("button", { class: "primary", type: "submit" }, "Start");
+    const entry = choices({
+      hasDraft: from.restored && !readOnly,
+      onTask: readOnly ? undefined : () => (state.flow.usesTask !== false ? taskBox : submitBtn).focus(),
+    });
+    const submitBtn = h("button", { class: "primary", type: "submit", "data-focus": "start-review" }, "Review");
+    const clearBtn = h("button", { type: "button", onClick: () => clear() }, "Clear");
+    const draftBox = h("div", {}, from.restored && !readOnly ? h("p", { class: "start-note", role: "status" }, DRAFT_LINE) : null);
     const rest = h("div", { class: "start-rest" });
     const repoBox = h("div", {});
 
-    /** Copies what is typed into the state, before every redraw and at submit. */
+    /** Copies what is typed into the state, before every redraw and at submit; keeps a changed draft. */
     function keep() {
       state.task = taskBox.value;
       const mine = state.values[state.flow.name];
       for (const [name, el] of Object.entries(controls)) mine[name] = el.value;
       if (repoSelect) mine[REPO_FIELD] = repoSelect.value;
+      persist();
     }
 
     const retryRepos = () => {
@@ -226,10 +266,12 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         repoGroup = h("div", { role: "group", "aria-label": "Repository", tabindex: "-1" }, failed, box, failed ? addRow : null);
         return h("div", { class: "start-repo" }, label(), repoGroup);
       }
-      repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null, onChange: () => { if (invalid === repoSelect) unmark(); drawNote(); } },
+      repoSelect = h("select", { name: REPO_FIELD, "aria-required": field.required ? "true" : null, onChange: () => { if (invalid === repoSelect) unmark(); drawNote(); touch(); } },
         list.map((r) => h("option", { value: r.github }, `${r.github} — ${connectionStatus(r)}`)));
       const mine = state.values[state.flow.name];
-      repoSelect.value = pickRepo(list, mine[REPO_FIELD]);
+      // a kept repository that is no longer listed falls back to the flow's default
+      const listed = list.some((r) => r.github.toLowerCase() === String(mine[REPO_FIELD] ?? "").toLowerCase());
+      repoSelect.value = pickRepo(list, listed ? mine[REPO_FIELD] : field.value);
       mine[REPO_FIELD] = repoSelect.value;
       drawNote();
       return h("div", { class: "start-repo" }, failed,
@@ -252,6 +294,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     function inputRow(f) {
       const input = h("input", { name: f.name, type: "text", autocomplete: "off", "aria-required": f.required ? "true" : null, value: state.values[state.flow.name][f.name] ?? "" });
       input.addEventListener("input", edited(input));
+      input.addEventListener("input", touch);
       controls[f.name] = input;
       return h("label", { class: "field" }, h("span", {}, f.label, f.required ? req() : null), input, f.help ? h("small", {}, f.help) : null);
     }
@@ -285,6 +328,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     }
 
     const radios = [];
+    const radioOf = new Map();
     function flowStep() {
       if (flows.length < 2) return null;
       return h("fieldset", {}, h("legend", {}, PICK_FLOW),
@@ -292,6 +336,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
           const radio = h("input", { type: "radio", name: "flow", value: f.name, checked: f === state.flow });
           radio.addEventListener("change", () => choose(f));
           radios.push(radio);
+          radioOf.set(f.name, radio);
           return h("label", { class: "choice" }, radio, h("b", {}, f.title), f.description ? h("span", { class: "muted" }, f.description) : null);
         }));
     }
@@ -301,6 +346,8 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       keep();
       mount(failBox);
       state.flow = flow;
+      dirty = true;
+      persist();
       moreOpen = false;
       if (needsRepos(flow)) loadRepos();
       syncStart();
@@ -343,12 +390,34 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         }
         return;
       }
+      // the review shows this very object and Start sends it unchanged
+      const body = startBody(flow, state.task, values);
+      if (admin) body.likeUser = true;
+      reviewing = reviewView({ flow, body, repos: repoData.repos ?? [], onStart: () => send(flow, body), onBack: back });
+      mount(main, heading(), reviewing.node);
+      reviewing.heading.focus();
+    }
+
+    function back() {
+      if (busy) return;
+      reviewing = null;
+      mount(main, heading(), entry.node, form);
+      submitBtn.focus();
+    }
+
+    async function send(flow, body) {
+      if (busy) return;
       busy = true;
+      const view = reviewing;
+      if (view) view.startBtn.disabled = view.backBtn.disabled = true;
       submitBtn.disabled = true;
       for (const r of radios) r.disabled = true;
+      sentRev = draftRevision();
       try {
-        const body = startBody(flow, state.task, values);
-        const run = await a.startRun(admin ? { ...body, likeUser: true } : body);
+        const run = await a.startRun(body);
+        started = true;
+        // only the draft this start was made from: newer work in another page instance stays
+        if (draftRevision() === sentRev) clearDraft();
         if (gone) return toast("Run started");
         go("#/runs/" + run.runId);
       } catch (e) {
@@ -360,18 +429,55 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         more?.setAttribute("open", "");
         mount(failBox, errorState(explainStart(e)));
         syncStart();
+        reviewing = null;
+        mount(main, heading(), entry.node, form);
+        submitBtn.focus();
       }
+    }
+
+    function clear() {
+      if (busy) return;
+      clearDraft();
+      dirty = false;
+      const blank = restoreDraft(flows, null);
+      state.flow = blank.flow;
+      state.task = "";
+      state.values = blank.values;
+      taskBox.value = "";
+      for (const r of radios) r.checked = r.value === state.flow.name;
+      mount(failBox);
+      mount(draftBox);
+      entry.setDraft(false);
+      moreOpen = false;
+      if (needsRepos(state.flow)) loadRepos();
+      syncStart();
+      drawRest();
     }
 
     const first = needsRepos(state.flow) ? loadRepos() : undefined;
     syncStart();
     drawRest();
     const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
-      flowStep(), rest, failBox, err, readOnly ? null : h("div", { class: "row" }, submitBtn));
-    mount(main, heading(), form);
+      draftBox, flowStep(), rest, failBox, err, readOnly ? null : h("div", { class: "row" }, submitBtn, clearBtn));
+    mount(main, heading(), entry.node, form);
+    /** The palette chose a flow: the radios and the page follow; typed text is kept. */
+    const pick = (name) => {
+      const flow = flows.find((f) => f.name === name);
+      if (!flow || flow === state.flow) return;
+      for (const [n, radio] of radioOf) radio.checked = n === name;
+      choose(flow);
+    };
+    if (newest === renders) {
+      off = onWish("start", (w) => pick(w?.flow));
+      // A wish that came while the flows were loading waited for this handler.
+      pick(takeWish("start")?.flow);
+    }
     await first;
   }
 
   await load();
-  return () => { gone = true; };
+  return () => {
+    gone = true;
+    off();
+  };
 }

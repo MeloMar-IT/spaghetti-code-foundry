@@ -6,4 +6,4 @@ export type Width = (typeof WIDTHS)[number];
 export const VIEW_HEIGHT = 900;
 
 /** True where the navigation sits in the drawer behind the menu button (the narrowest width only). */
-export const usesDrawer = (width: number): boolean => width <= 760;
+export const usesDrawer = (width: number): boolean => width <= 767; // BREAKPOINTS.compact in ui/viewport.js

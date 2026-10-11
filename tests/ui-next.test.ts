@@ -225,10 +225,11 @@ describe("timing in the UI", () => {
 describe("the changed UI modules", () => {
   it("load", async () => {
     const dashboard = await import("../ui/dashboard.js" as string);
-    const admin = await import("../ui/admin.js" as string);
+    const watchers = await import("../ui/watchers.js" as string);
     const runs = await import("../ui/runs.js" as string);
     expect(typeof dashboard.renderDashboard).toBe("function");
-    expect(typeof admin.renderWatchers).toBe("function");
+    expect(typeof watchers.renderWatchers).toBe("function");
+    expect(typeof watchers.renderWatcherDetail).toBe("function");
     expect(typeof runs.renderRunsList).toBe("function");
     expect(typeof runs.renderRunDetail).toBe("function");
   });
@@ -255,6 +256,14 @@ describe("plain error text in the UI", () => {
     expect(opened.textContent).toContain("exit code 1");
     const ok = runs.stepEntry("r", { id: "a", type: "shell", ok: true, visit: 1, durationMs: 5, output: "" }, 0, { open: true }) as FakeElement;
     expect(ok.textContent).not.toContain("Details");
+  });
+
+  it("the run page block adds the server's sentence only for a record that waits for you", () => {
+    const n = { ...you(), text: "Sentinel sentence from the server." };
+    const p = (ui.nextBlock(n) as FakeElement).all("p");
+    expect(p.map((e) => e.textContent)).toContain("Sentinel sentence from the server.");
+    expect((ui.nextBlock(found()) as FakeElement).all("p")).toHaveLength(0);
+    expect((ui.nextBlock({ ...you(), text: "" }) as FakeElement).all("p")).toHaveLength(0);
   });
 
   it("the run page block and the watcher card show the plain text, action first", () => {

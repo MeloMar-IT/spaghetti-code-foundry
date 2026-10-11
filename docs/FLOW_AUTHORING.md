@@ -234,7 +234,7 @@ Skills are optional. Leave the fields out and the flow works as before: a plan g
 | Value | What happens |
 |---|---|
 | `selected` | The step gets the locked skills. This is the default. |
-| `catalog` | Marks a planner step. The step must be read-only. It runs like `selected` for now. |
+| `catalog` | A planner step: it gets the skill catalogue before its prompt and no skill block. The step must be read-only. The lock is still verified. |
 | `off` | This session gets no skill block. The lock is still verified. A step with `skills: off` always starts a new session: it does not resume another step's session, because that one may hold a skill block. |
 
 Step `skills` cannot be set together with `skill_role: reviewer`.
@@ -256,6 +256,39 @@ skills:
   prompt: Summarise the change in three lines.
   skills: off
 ```
+
+### Skills in your own flow
+
+- **No skill fields:** the flow works as before.
+- **`mode: explicit` with `ids`:** the normal choice for your own flow. The ids are checked when the run starts and locked at the first agent step.
+- **`mode: off`:** for a flow that must never get skills.
+- **`mode: planned`:** only does something when the flow has the plan gate of the shipped flows: a top-level shell step with the id `risk_gate` or `post_plan` that runs the `skill-request` check, whose plan ends with a `SKILL_REQUEST` line. Copy the check command of a shipped flow and print its checked request in the output of the gate. A matching id and a request line are not enough. Copy a shipped flow for this.
+
+```yaml
+name: typed-change
+steps:
+  - id: implement
+    type: claude
+    prompt: "Implement this: {{task}}"
+  - id: review
+    type: claude
+    skill_role: reviewer
+    permission_mode: dontAsk
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+    prompt: Review the change in this repository. Do not change files.
+  - id: summary
+    type: claude
+    prompt: Summarise the change in three lines.
+    skills: off
+skills:
+  mode: explicit
+  ids: [typescript]
+```
+
+With the default policy, ids that are not installed or not pinned stop the run at its start with `skills not resolved: …`; `skills.unresolved` can allow a warning for low-risk skills (see "Missing and conflicting skills" in the user guide). A skill never grants tools. See "Automatic skills" in `docs/USER_GUIDE.md`.
 
 ## Publishing a flow to users
 

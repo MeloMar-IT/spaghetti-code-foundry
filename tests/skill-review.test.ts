@@ -195,8 +195,8 @@ describe("skillSession for a reviewer", () => {
   it("filters by role and REVIEW.md; the coder payload is unchanged", () => {
     const d = { discover: () => reg(sk("a", { review: "Review a." }), sk("b", { roles: ["coder"] }), sk("c", { roles: ["coder", "reviewer"], review: "Review c." })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["a", "b", "c"]))]);
-    const coder = payloadOf(skillSession(t.engine, "claude", d))!;
-    const rev = payloadOf(skillSession(t.engine, "claude", d, "reviewer"))!;
+    const coder = payloadOf(skillSession(t.engine, d))!;
+    const rev = payloadOf(skillSession(t.engine, d, "reviewer"))!;
     expect(coder.loaded).toEqual(["a@1.0.0", "b@1.0.0", "c@1.0.0"]);
     expect(rev.loaded).toEqual(["a@1.0.0", "c@1.0.0"]);
     expect(rev.text).not.toContain("Do it.");
@@ -206,11 +206,11 @@ describe("skillSession for a reviewer", () => {
   it("a Kafka review checks delivery and ordering; a database review checks data and migrations", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA }), sk("postgres", { review: PG })), commitOf: () => "f".repeat(40) };
     const k = setup([gateRec(gateOut(["kafka"]))]);
-    const kp = payloadOf(skillSession(k.engine, "codex", d, "reviewer"))!;
+    const kp = payloadOf(skillSession(k.engine, d, "reviewer"))!;
     expect(kp.text).toContain(KAFKA);
     expect(kp.text).not.toContain(PG);
     const p = setup([gateRec(gateOut(["postgres"]))]);
-    const pp = payloadOf(skillSession(p.engine, "claude", d, "reviewer"))!;
+    const pp = payloadOf(skillSession(p.engine, d, "reviewer"))!;
     expect(pp.text).toContain(PG);
     expect(pp.text).not.toContain(KAFKA);
   });
@@ -218,18 +218,18 @@ describe("skillSession for a reviewer", () => {
   it("a skill in the registry but not in the lock never appears", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA }), sk("postgres", { review: PG })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    expect(payloadOf(skillSession(t.engine, "claude", d, "reviewer"))!.loaded).toEqual(["kafka@1.0.0"]);
+    expect(payloadOf(skillSession(t.engine, d, "reviewer"))!.loaded).toEqual(["kafka@1.0.0"]);
   });
 
   it("is smaller than the coding bundle and within its own budget; a tiny budget leaves out, never refuses", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    const coder = payloadOf(skillSession(t.engine, "claude", d))!;
-    const rev = payloadOf(skillSession(t.engine, "claude", d, "reviewer"))!;
+    const coder = payloadOf(skillSession(t.engine, d))!;
+    const rev = payloadOf(skillSession(t.engine, d, "reviewer"))!;
     expect(rev.estimatedTokens).toBeLessThan(coder.estimatedTokens);
     expect(rev.estimatedTokens).toBeLessThanOrEqual(t.engine.config.skills.review.max_tokens);
     const tiny = setup([gateRec(gateOut(["kafka"]))], { skills: { review: { max_tokens: 100, max_skill_tokens: 50 } } });
-    const s = skillSession(tiny.engine, "claude", d, "reviewer");
+    const s = skillSession(tiny.engine, d, "reviewer");
     expect("refused" in s).toBe(false);
     expect(payloadOf(s)).toMatchObject({ loaded: [], omitted: ["kafka@1.0.0"] });
     expect(tiny.logs.some((l) => l.includes("review context: kafka@1.0.0 left out: over budget"))).toBe(true);
@@ -238,27 +238,34 @@ describe("skillSession for a reviewer", () => {
   it("an old config with a small selection.max_tokens still works", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA, instructions: "Do it." })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))], { skills: { selection: { max_tokens: 500 } } });
-    const rev = payloadOf(skillSession(t.engine, "claude", d, "reviewer"));
+    const rev = payloadOf(skillSession(t.engine, d, "reviewer"));
     expect(rev === undefined || rev.estimatedTokens <= 500).toBe(true);
   });
 
-  it("is the same on Claude and Codex; a Codex coder still gets nothing", () => {
+  it("a coder gets the coding payload, a reviewer the review payload; neither is a draft", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    expect(skillSession(t.engine, "claude", d, "reviewer")).toEqual(skillSession(t.engine, "codex", d, "reviewer"));
-    expect(skillSession(t.engine, "codex", d)).toEqual({});
+    const coder = skillSession(t.engine, d);
+    const rev = skillSession(t.engine, d, "reviewer");
+    expect(payloadOf(coder)).toMatchObject({ loaded: ["kafka@1.0.0"] });
+    expect(payloadOf(coder)!.role).toBeUndefined();
+    expect(payloadOf(rev)).toMatchObject({ role: "reviewer" });
+    expect(coder).not.toHaveProperty("draft");
+    expect(rev).not.toHaveProperty("draft");
   });
 
   it("gives nothing when no selected skill has review text", () => {
     const d = { discover: () => reg(sk("a")), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["a"]))]);
-    expect(skillSession(t.engine, "claude", d, "reviewer")).toEqual({});
+    expect(skillSession(t.engine, d, "reviewer")).toEqual({});
   });
 
   it("plan review: a draft request gives a block without a lock file or a save", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA })) };
     const t = setup([rec("plan", { output: `Plan\n${line(["kafka"])}\nPLAN_STATUS: READY` })]);
-    const p = payloadOf(skillSession(t.engine, "codex", d, "reviewer"))!;
+    const s = skillSession(t.engine, d, "reviewer");
+    const p = payloadOf(s)!;
+    expect(s).toMatchObject({ draft: true });
     expect(p.text).toContain(KAFKA);
     expect(t.save).not.toHaveBeenCalled();
     expect(t.engine.summary.skillLock).toBeUndefined();
@@ -267,27 +274,27 @@ describe("skillSession for a reviewer", () => {
   it("plan review: an invalid line, an unpinned skill or a failed plan gives nothing", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA }), { ...sk("raw", { review: "r" }), pin: "unpinned" } as RegisteredSkill) };
     const bad = setup([rec("plan", { output: `${line(["kafka"])}\n${line(["kafka"])}` })]);
-    expect(skillSession(bad.engine, "claude", d, "reviewer")).toEqual({});
+    expect(skillSession(bad.engine, d, "reviewer")).toEqual({});
     expect(bad.logs.some((l) => l.includes("review context: none"))).toBe(true);
     const unpinned = setup([rec("plan", { output: line(["raw"]) })]);
-    expect(skillSession(unpinned.engine, "claude", d, "reviewer")).toEqual({});
+    expect(skillSession(unpinned.engine, d, "reviewer")).toEqual({});
     expect(unpinned.logs.some((l) => l.includes("review context: raw left out"))).toBe(true);
-    expect(skillSession(setup([rec("plan", { output: line(["kafka"]), ok: false })]).engine, "claude", d, "reviewer")).toEqual({});
+    expect(skillSession(setup([rec("plan", { output: line(["kafka"]), ok: false })]).engine, d, "reviewer")).toEqual({});
   });
 
   it("a changed digest refuses the reviewer on both agents", () => {
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    expect(skillSession(t.engine, "claude", { discover: () => reg(sk("kafka", { review: KAFKA })), commitOf: () => "f".repeat(40) }, "reviewer")).not.toHaveProperty("refused");
+    expect(skillSession(t.engine, { discover: () => reg(sk("kafka", { review: KAFKA })), commitOf: () => "f".repeat(40) }, "reviewer")).not.toHaveProperty("refused");
     const changed = { discover: () => reg(sk("kafka", { review: KAFKA, digest: digestOf("b") })) };
-    for (const agent of ["claude", "codex"] as const) expect(skillSession(t.engine, agent, changed, "reviewer")).toHaveProperty("refused");
+    expect(skillSession(t.engine, changed, "reviewer")).toHaveProperty("refused");
   });
 
   it("a blocked coding payload gives the reviewer no refusal", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    skillSession(t.engine, "claude", d); // makes the lock
+    skillSession(t.engine, d); // makes the lock
     t.engine.config = ConfigSchema.parse({ skills: { selection: { include: ["kafka"], max_tokens: 100 } } });
-    expect(skillSession(t.engine, "claude", d, "reviewer")).not.toHaveProperty("refused");
+    expect(skillSession(t.engine, d, "reviewer")).not.toHaveProperty("refused");
   });
 });
 
@@ -295,10 +302,14 @@ describe("replanning", () => {
   it("reviews the new draft, not the lock of the old plan", () => {
     const d = { discover: () => reg(sk("kafka", { review: KAFKA }), sk("postgres", { review: PG })), commitOf: () => "f".repeat(40) };
     const t = setup([gateRec(gateOut(["kafka"]))]);
-    expect(payloadOf(skillSession(t.engine, "claude", d, "reviewer"))!.loaded).toEqual(["kafka@1.0.0"]);
+    const first = skillSession(t.engine, d, "reviewer");
+    expect(payloadOf(first)!.loaded).toEqual(["kafka@1.0.0"]);
+    expect(first).not.toHaveProperty("draft");
     // the plan is sent back and planned again with another skill
     t.engine.summary.history.push(rec("send_back"), rec("plan", { output: `${line(["postgres"])}\nPLAN_STATUS: READY` }));
-    const p = payloadOf(skillSession(t.engine, "codex", d, "reviewer"))!;
+    const second = skillSession(t.engine, d, "reviewer");
+    expect(second).toMatchObject({ draft: true });
+    const p = payloadOf(second)!;
     expect(p.loaded).toEqual(["postgres@1.0.0"]);
     expect(p.text).not.toContain(KAFKA);
   });

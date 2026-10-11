@@ -112,7 +112,7 @@ const GROUPS: Record<string, string[]> = {
     "--text-section", "--text-page", "--text-display", "--leading-body", "--leading-tight", "--weight-regular", "--weight-medium", "--weight-bold",
   ],
   spacing: ["2xs", "xs", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl"].map((n) => `--space-${n}`),
-  sizing: ["--size-icon", "--size-icon-sm", "--size-sidebar", "--size-form", "--size-bar"],
+  sizing: ["--size-icon", "--size-icon-sm", "--size-sidebar", "--size-form", "--size-bar", "--size-touch", "--size-touch-min"],
   borders: ["--border-width", "--radius-none", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-pill", "--radius-round"],
   elevation: ["--shadow-sm", "--shadow-md", "--shadow-lg"],
   motion: ["--motion-fast", "--motion-base", "--motion-slow"],

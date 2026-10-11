@@ -159,6 +159,7 @@ describe("publishing a split issue replaces it", () => {
       issue: 12,
       parts: [101, 102],
       dependants: [{ issue: 20, outcome: "rewritten" }, { issue: 21, outcome: "by-hand" }],
+      closed: "open",
     });
     expect(j).not.toHaveProperty("notChanged");
 
@@ -231,7 +232,7 @@ describe("publishing a split issue replaces it", () => {
     expect(r.status).toBe(200);
     expect(r.json().created).toEqual([]);
     expect(r.json().replaced).toMatchObject({ issue: 12, parts: [101, 102] });
-    expect((await view(id)).source).toMatchObject({ replace: "done", closed: "open" });
+    expect((await view(id)).source).toMatchObject({ replace: "done", closed: "not_planned" });
   });
 
   it("adds the 1,000 issue warning when the open issues were cut", async () => {
@@ -255,7 +256,7 @@ describe("publishing a split issue replaces it", () => {
     expect(stored(id).source.buildLabel).toBe("Factory_go");
     expect((await publish(id)).status).toBe(200);
     expect(gh.ghLog()).toMatch(/gh issue edit 12 --repo acme\/app --remove-label Factory_go\n/);
-    expect(calls().filter((c) => c.endsWith(" 12")).slice(-2)).toEqual(["edit 12", "comment 12"]);
+    expect(calls().filter((c) => /^(edit|comment|patch) 12$/.test(c))).toEqual(["edit 12", "comment 12", "patch 12"]);
     expect(commentsOf(12)[0]!.body).toContain("`Factory_go`");
     expect(gh.bugIssues().find((i) => i.number === 12)!.labels.map((l) => l.name)).toEqual(["bug"]);
     expect(stored(id).source).not.toHaveProperty("buildLabel");
@@ -370,7 +371,8 @@ describe("the checks before the first write", () => {
     expect(r.status).toBe(200);
     expect(r.json().replaced).toMatchObject({ issue: 12, parts: [50, 101] });
     const v = await view(id);
-    expect(v.source).toMatchObject({ replace: "done", closed: "other", closedAt: "2026-03-01T00:00:00.000Z" });
+    expect(v.source).toMatchObject({ replace: "done", closed: "other" });
+    expect(v.source).not.toHaveProperty("closedAt");
     expect(commentsOf(12)[0]!.body).toContain("closed already");
     expect(calls()).not.toContain("patch 12");
   });

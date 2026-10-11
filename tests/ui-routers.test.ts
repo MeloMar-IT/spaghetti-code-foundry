@@ -72,7 +72,8 @@ describe("user router", () => {
     "/repos.js": never,
     "/user/runs.js": never,
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
-    "/shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+    "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
+    "/palette.js": { initPalette: vi.fn(() => () => {}) },
     "/home.js": never,
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -121,6 +122,27 @@ describe("user router", () => {
     expect(main().textContent).toContain("repos page");
   });
 
+  it("starts the palette for a user, and stops it when the view ends", async () => {
+    const stop = vi.fn();
+    const initPalette = vi.fn(() => stop);
+    let onEnded!: () => void;
+    const beginView = (_as: string, _me: unknown, opts: { onEnded: () => void }) => {
+      onEnded = opts.onEnded;
+      return { readOnly: true, ready: true };
+    };
+    await loadRouter("user/app.js", deps({ "/palette.js": { initPalette }, "/view-as.js": { beginView } }));
+    expect(initPalette).toHaveBeenCalledWith({ role: "user", user: { id: "u1" }, preview: true });
+    expect(stop).not.toHaveBeenCalled();
+    onEnded();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts no palette when the view cannot be shown", async () => {
+    const initPalette = vi.fn();
+    await loadRouter("user/app.js", deps({ "/palette.js": { initPalette }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
+    expect(initPalette).not.toHaveBeenCalled();
+  });
+
   it("keeps the generation check", () => {
     const src = readFileSync("ui/user/app.js", "utf8");
     expect(src).toContain("mine === generation && !stopped");
@@ -131,8 +153,8 @@ describe("user router", () => {
 describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
-      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
+      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -140,7 +162,8 @@ describe("admin router", () => {
       "./auth.js": { ...real.auth, enterDisplay: async () => ({ id: "a1" }) },
       "./dom.js": real.dom,
       "./ia.js": real.ia,
-      "./shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+      "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
+      "./palette.js": { initPalette: vi.fn() },
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
       "./work.js": never,
@@ -193,6 +216,34 @@ describe("admin router", () => {
     await vi.waitFor(() => expect(renderModelDetail).toHaveBeenCalledTimes(1));
     expect(renderModelDetail.mock.calls[0]![1]).toBe("ollama");
     expect(renderModels).not.toHaveBeenCalled();
+  });
+
+  it("routes the watcher and problem pages with an id, and the lists without", async () => {
+    const page = (name: string) => vi.fn(async (box: FakeElement) => { real.dom.mount(box, el(name)); });
+    for (const [hash, fn, expected] of [
+      ["#/watchers/w1", "renderWatcherDetail", ["w1"]], ["#/watchers", "renderWatchers", []],
+      ["#/problems/abc", "renderProblemDetail", ["abc"]], ["#/problems", "renderProblems", []],
+    ] as const) {
+      setup(hash);
+      const mocks = {
+        renderWatchers: page("watchers list"), renderWatcherDetail: page("watcher detail"),
+        renderProblems: page("problems list"), renderProblemDetail: page("problem detail"),
+      };
+      await loadRouter("app.js", stub({
+        "./watchers.js": { renderWatchers: mocks.renderWatchers, renderWatcherDetail: mocks.renderWatcherDetail },
+        "./problems.js": { renderProblems: mocks.renderProblems, renderProblemDetail: mocks.renderProblemDetail },
+      }));
+      await vi.waitFor(() => expect(mocks[fn]).toHaveBeenCalledTimes(1));
+      expect(mocks[fn].mock.calls[0]!.slice(1), hash).toEqual(expected);
+      for (const [name, other] of Object.entries(mocks)) if (name !== fn) expect(other, hash).not.toHaveBeenCalled();
+    }
+  });
+
+  it("starts the palette for an admin", async () => {
+    setup("#/dashboard");
+    const initPalette = vi.fn();
+    await loadRouter("app.js", stub({ "./palette.js": { initPalette }, "./dashboard.js": { renderDashboard: vi.fn() } }));
+    expect(initPalette).toHaveBeenCalledWith({ role: "admin", user: { id: "a1" } });
   });
 
   it("keeps the generation check before the error state", () => {

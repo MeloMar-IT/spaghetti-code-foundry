@@ -5,11 +5,13 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 let restore: () => void;
 let ui: any;
 let imp: any;
+let fresh: any;
 let api: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/refinement.js" as string);
   imp = await import("../ui/refinement-import.js" as string);
+  fresh = await import("../ui/refinement-new.js" as string);
   api = (await import("../ui/api.js" as string)).api;
 });
 afterAll(() => restore());
@@ -40,6 +42,7 @@ const session = (over: object = {}) => ({
 const dropped = (over: object = {}) => session({ state: "dropped", droppedAt: new Date().toISOString(), removedOn: new Date(Date.now() + 30 * 864e5).toISOString(), ...over });
 
 beforeEach(async () => {
+  fresh.clearKeptSession();
   sessions = [];
   repos = ["acme/app"];
   sent = [];
@@ -89,7 +92,7 @@ const press = (el: FakeElement | undefined) => {
   expect(el, "control").toBeDefined();
   el!.click();
 };
-const bad = (el: FakeElement) => walk(el).filter((e) => e.attrs.class === "status bad").map((e) => e.textContent);
+const bad = (el: FakeElement) => walk(el).filter((e) => (e.attrs.class ?? "").split(" ").includes("bad")).map((e) => e.textContent);
 const showList = async (readOnly = false) => void (await ui.renderRefinement(main(), { readOnly }));
 const showPage = async (id = "s1", admin = false) => {
   (globalThis as any).location.hash = `#/refinement/${id}`;
@@ -105,13 +108,6 @@ describe("pure functions", () => {
     expect(imp.issueNumber(" #12 ")).toBe(12);
     expect(imp.issueNumber("2147483647")).toBe(2147483647);
     for (const v of ["", "0", "1.5", "abc", "-3", "99999999999", "2147483648"]) expect(imp.issueNumber(v), v).toBeUndefined();
-  });
-  it("importProblem and importBody", () => {
-    expect(imp.importProblem({ repo: "", issue: "1" })).toBe("Choose a repository.");
-    expect(imp.importProblem({ repo: "a/b", issue: " " })).toBe("Give the issue number.");
-    expect(imp.importProblem({ repo: "a/b", issue: "abc" })).toBe("The issue number is a whole number from 1, for example 12.");
-    expect(imp.importProblem({ repo: "a/b", issue: "#12" })).toBe("");
-    expect(imp.importBody({ repo: "acme/app", issue: "#12" })).toEqual({ repo: "acme/app", issue: 12 });
   });
   it("importLogText", () => {
     expect(imp.importLogText({ what: "imported", who: "Ann", detail: "#12" })).toBe("Ann started the session from issue #12");
@@ -133,7 +129,7 @@ describe("the dialog", () => {
   const ask = async (issue: string) => {
     await open();
     field(root(), "issue")!.value = issue;
-    const go = button(root(), "Refine issue")!;
+    const go = button(root(), "Start session")!;
     press(go);
     await flush();
     return go;
@@ -161,10 +157,10 @@ describe("the dialog", () => {
     expect(bad(root())).toEqual(["Give the issue number."]);
     root().replaceChildren();
     await ask("abc");
-    expect(bad(root())).toEqual(["The issue number is a whole number from 1, for example 12."]);
+    expect(bad(root())).toEqual(["Give the issue number."]);
     root().replaceChildren();
     await ask("2147483648");
-    expect(bad(root())).toEqual(["The issue number is a whole number from 1, for example 12."]);
+    expect(bad(root())).toEqual(["Give the issue number."]);
     expect(sent).toEqual([]);
   });
   it("sends the number and opens the session", async () => {
@@ -194,7 +190,7 @@ describe("the dialog", () => {
     await open();
     field(root(), "issue")!.value = "12";
     holdNext = true;
-    const go = button(root(), "Refine issue");
+    const go = button(root(), "Start session");
     press(go);
     press(go);
     await flush();

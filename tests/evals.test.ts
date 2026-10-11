@@ -123,7 +123,7 @@ cases:
     expect(s.skills!.contextRate).toBeCloseTo(2 / 3, 2);
     expect(s.skills!.activationRate).toBeCloseTo(2 / 3, 2);
 
-    // A Codex variant (fake Codex): the output is fine, but Codex coding sessions get no skills yet, so activation fails.
+    // A Codex variant (fake Codex): Codex coding sessions get the locked skills like Claude ones, so it passes too.
     const codex = await runEval({
       suitePath: join(tmp, "skill-suite.yaml"),
       runsDir: join(tmp, "runs-codex"),
@@ -135,8 +135,8 @@ cases:
     });
     const cr = codex.report.results.find((r) => r.case === "right")!;
     expect(cr.variant).toContain("@codex");
-    expect(cr).toMatchObject({ quality: true, passed: false });
+    expect(cr).toMatchObject({ quality: true, passed: true });
     expect(cr.skills!.selection.ok).toBe(true);
-    expect(cr.skills!.activation.status).toBe("not-loaded");
+    expect(cr.skills!.activation.ok).toBe(true);
   });
 });

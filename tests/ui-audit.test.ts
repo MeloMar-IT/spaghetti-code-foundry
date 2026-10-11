@@ -146,13 +146,13 @@ describe("the list", () => {
       entry({ actor: account("u2", "Bob"), action: "block", target: account("u9", "deleted user") }),
     ];
     await show();
-    expect(main().all("th").map((t) => t.textContent)).toEqual(["Time", "Who", "Action", "Target", "Result"]);
+    expect(main().all("th").map((t) => t.textContent)).toEqual(["Time", "Who", "Action", "Target", "Result", "Details"]);
     const cells = rows().map((r) => r.all("td"));
     expect(cells.map((c) => c.map((t) => t.textContent))).toEqual([
-      [ui.timeText("2026-10-02T09:00:00.000Z"), "Ann", "sign-in", "run-1x -> y", "ok"],
-      [ui.timeText("2026-10-02T09:00:00.000Z"), "command line", "role", "—", "ok"],
-      [ui.timeText("2026-10-02T09:00:00.000Z"), "not signed in", "sign-in", "—", "failed"],
-      [ui.timeText("2026-10-02T09:00:00.000Z"), "Bob", "block", "deleted user", "ok"],
+      [ui.timeText("2026-10-02T09:00:00.000Z"), "Ann", "sign-in", "run-1x -> y", "ok", "Details"],
+      [ui.timeText("2026-10-02T09:00:00.000Z"), "command line", "role", "—", "ok", "Details"],
+      [ui.timeText("2026-10-02T09:00:00.000Z"), "not signed in", "sign-in", "—", "failed", "Details"],
+      [ui.timeText("2026-10-02T09:00:00.000Z"), "Bob", "block", "deleted user", "ok", "Details"],
     ]);
     expect(cells[0]![0]!.attrs.title).toBe("2026-10-02T09:00:00.000Z");
     expect(cells[0]![1]!.attrs.title).toBe("u1");
@@ -161,6 +161,75 @@ describe("the list", () => {
     expect(cells[0]![4]!.all("span")[0]!.attrs.class).toBe("pill ok");
     expect(cells[2]![4]!.all("span")[0]!.attrs.class).toBe("pill fail");
     expect(gets).toEqual(["/api/users", "/api/audit"]);
+  });
+});
+
+describe("detail row", () => {
+  const dd = () => main().all("dd").map((d) => d.textContent);
+  const detailButton = (i: number) => rows().filter((r) => r.all("button").length)[i]!.all("button")[0]!;
+  it("detailFields gives every field, with the id and link of an account", () => {
+    const f = ui.detailFields(entry({ target: account("u9", "Cy"), detail: "x -> y" }));
+    expect(f.map((x: any) => x.label)).toEqual(["Time", "Who", "Action", "Target", "Detail", "Result"]);
+    expect(f[0].value).toBe(`${ui.timeText("2026-10-02T09:00:00.000Z")} (2026-10-02T09:00:00.000Z)`);
+    expect(f[1]).toEqual({ label: "Who", value: "Ann", id: "u1", href: "#/users/u1" });
+    expect(f[3]).toEqual({ label: "Target", value: "Cy", id: "u9", href: "#/users/u9" });
+    expect(f[4]).toEqual({ label: "Detail", value: "x -> y" });
+    expect(f[5]).toEqual({ label: "Result", value: "ok" });
+  });
+  it("detailFields gives no link for the command line, anonymous and text, and a dash for nothing", () => {
+    const f = ui.detailFields(entry({ actor: { type: "cli" }, target: { type: "text", text: "run-1" } }));
+    expect(f[1]).toEqual({ label: "Who", value: "command line" });
+    expect(f[3]).toEqual({ label: "Target", value: "run-1" });
+    expect(f[4]).toEqual({ label: "Detail", value: "—" });
+    expect(ui.detailFields(entry({ actor: { type: "anonymous" }, target: null }))[1]).toEqual({ label: "Who", value: "not signed in" });
+    expect(ui.detailFields(entry({ target: null }))[3]).toEqual({ label: "Target", value: "—" });
+    expect(ui.detailFields(entry({ target: { type: "text", text: "" } }))[3]).toEqual({ label: "Target", value: "—" });
+  });
+  it("opens under the line with every field and no extra call, and Hide closes it", async () => {
+    entries = [entry({ target: account("u9", "Cy"), detail: "x -> y" }), entry({ action: "edit" })];
+    await show();
+    const calls = gets.length;
+    expect(main().all("dl")).toHaveLength(0);
+    const first = detailButton(0);
+    expect(first.attrs["aria-expanded"]).toBe("false");
+    first.click();
+    expect(gets).toHaveLength(calls);
+    expect(rows()).toHaveLength(3);
+    const open = detailButton(0);
+    expect(open.textContent).toBe("Hide");
+    expect(open.attrs["aria-expanded"]).toBe("true");
+    expect(main().all("dt").map((d) => d.textContent)).toEqual(["Time", "Who", "Action", "Target", "Detail", "Result"]);
+    expect(dd()).toEqual([`${ui.timeText("2026-10-02T09:00:00.000Z")} (2026-10-02T09:00:00.000Z)`, "User u1 Ann", "sign-in", "User u9 Cy", "x -> y", "ok"]);
+    expect(main().all("td").filter((t) => t.attrs.colspan === "6")).toHaveLength(1);
+    // the second line is still closed
+    expect(rows().filter((r) => r.all("button").length)[1]!.all("button")[0]!.textContent).toBe("Details");
+    open.click();
+    expect(rows()).toHaveLength(2);
+    expect(main().all("dl")).toHaveLength(0);
+    expect(gets).toHaveLength(calls);
+  });
+  it("links an account to its page, also one that is not in the users list", async () => {
+    entries = [entry({ actor: account("new9", "Newcomer"), target: account("u1", "Ann") })];
+    await show();
+    detailButton(0).click();
+    const links = main().all("dl")[0]!.all("a");
+    expect(links.map((a) => a.attrs.href)).toEqual(["#/users/new9", "#/users/u1"]);
+    expect(gets.filter((g) => g === "/api/users")).toHaveLength(1);
+  });
+  it("draws no link for the command line or text", async () => {
+    entries = [entry({ actor: { type: "cli" }, target: { type: "text", text: "run-1" } })];
+    await show();
+    detailButton(0).click();
+    expect(main().all("dl")[0]!.all("a")).toHaveLength(0);
+    expect(dd()[1]).toBe("command line");
+  });
+  it("a filter change closes the open lines", async () => {
+    await show();
+    detailButton(0).click();
+    expect(main().all("dl")).toHaveLength(1);
+    await change("action", "edit");
+    expect(main().all("dl")).toHaveLength(0);
+    expect(detailButton(0).textContent).toBe("Details");
   });
 });
 

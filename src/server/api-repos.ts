@@ -130,14 +130,15 @@ const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
 /** The public keys of deploy-key records; `send` keeps them readable (a public key is not a secret). */
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
 
-/** A record for the admin page: with its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
+/** A record for the admin page: with `github` ("owner/name") when it is a GitHub repository, its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
 function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
   const github = rec.method === "github-app" ? tryParseRepoUrl(rec.url)?.github : undefined;
   const offList = github !== undefined && u?.role === "user" && !onAppList(lists ? (lists.get(rec.owner) ?? []) : getAppRepos(rec.owner), github);
+  const name = githubNameOf(rec.url);
   const problem = watcherRepoProblem(rec, u ?? undefined);
   const { definitionOfReady, ...rest } = rec;
-  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */

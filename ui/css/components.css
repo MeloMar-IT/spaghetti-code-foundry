@@ -135,7 +135,7 @@ button.icon { justify-content: center; }
 
 /* ── a wide table scrolls in its own box ── */
 .table-box { overflow-x: auto; }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .table { display: block; overflow-x: auto; }
   .table-box > .table { display: table; overflow: hidden; }
 }

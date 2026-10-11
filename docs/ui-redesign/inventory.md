@@ -11,7 +11,7 @@ How to read it:
 
 ## Admin display
 
-The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 4 detail forms).
+The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4 detail forms).
 
 | Route | Nav label | UI module | Renderer | API handlers | Audience | Primary task | Primary action | Pain points |
 |---|---|---|---|---|---|---|---|---|
@@ -19,26 +19,30 @@ The page at `/`. 23 route rows (19 sections in `route()` at `ui/app.js:375` and 
 | `#/board` | Board | `ui/board.js` | `renderBoard(main, arg)` | `board.ts`, `api-admin.ts` (tick) | admin display only | See where every story of one repository is | Pick a repository, then read the columns | Status shown here again (see F1); polls every 5 s (`board.js:156`) |
 | `#/board/:id` | — | `ui/board.js` | `renderBoard(main, arg)` | `board.ts` | admin display only | Same board for the repository in the address | Read the columns | Same module as the list; the repository id is the only difference |
 | `#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | both displays | Find or start a refinement session | New session | Shares the renderer with the user display via `{ admin }`; 9 buttons in one module |
-| `#/refinement/:id` | — | `ui/refinement.js`, `refinement-draft.js` (709 lines), `-talk.js`, `-suggest.js`, `-ready.js`, `-impact.js`, `-remarks.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | both displays | Turn an idea into story drafts and publish them | Ask the architect, answer, edit drafts | Longest page: 7 modules, 6 modal call sites, 6 native confirms; `refinement-draft.js` alone is 709 lines |
+| `#/refinement/:id` | — | `ui/refinement.js`, `refinement-workspace.js`, `refinement-draft.js` (709 lines), `-talk.js`, `-suggest.js`, `-ready.js`, `-impact.js`, `-remarks.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | both displays | Turn an idea into story drafts and publish them | Ask the architect, answer, edit drafts | Longest page: 7 modules, 6 modal call sites, 6 native confirms; `refinement-draft.js` alone is 709 lines |
 | `#/flows` | Flows | `ui/app.js` | `welcome()` | `api-flows.ts` (list), `api-admin.ts` (info) | admin display only | Start a flow: draft with Claude or blank; also the default page | Draft flow with Claude / Blank flow | The same two buttons are in the sidebar on every admin page (`app.js:78-79`) |
-| `#/flows/:name` | — | `ui/app.js` (route), `ui/flow-page.js`, `ui/flow-shell.js`, `ui/flow-state.js`, `ui/editor.js`, `ui/graph.js`, `ui/step-types.js`, `ui/fields.js` | `openFlow` | `api-flows.ts`, `api-runs.ts` (run), `api-admin.ts` (info) | admin display only | Edit, validate, save and run one flow | Save (also Ctrl/Cmd+S, `app.js:432`) | `editor.js` 18 and `step-types.js` 5 inline styles; leaving with unsaved changes asks by native `confirm` (`app.js:90`) |
+| `#/flows/:name` | — | `ui/app.js` (route), `ui/flow-page.js`, `ui/flow-shell.js`, `ui/flow-state.js`, `ui/editor.js`, `ui/graph.js`, `ui/step-types.js`, `ui/fields.js` | `openFlow` | `api-flows.ts`, `api-runs.ts` (run), `api-admin.ts` (info) | admin display only | Edit, validate, save and run one flow | Save (also Ctrl/Cmd+S, `app.js:432`) | no inline styles in the editor files (the 18 of `editor.js` moved to classes in #360); leaving with unsaved changes asks by native `confirm` (`app.js:90`) |
 | `#/new` | — | `ui/app.js` (route), `ui/flow-page.js`, `ui/flow-shell.js`, `ui/flow-state.js` | `openNew` | `api-flows.ts` | admin display only | Write a new flow | Save | Nav highlights Flows (`app.js:390`); same editor as `#/flows/:name` |
 | `#/library` | Library | `ui/library.js` | `renderLibrary` | `api-flows.ts` (blocks) | admin display only | Browse, save and delete reusable step blocks | Insert from library / Save step as block | A third entry point to flow editing (F8); 2 native confirms |
 | `#/start` | Start work | `ui/user/start.js` | `renderStart` with `admin: true` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | both displays | Start a run of a published flow on a repository | Start | The user page drawn for the admin (`app.js:410-417`); needs a published flow (`NO_FLOWS_ADMIN`) |
 | `#/runs` | Runs | `ui/runs.js` | `renderRunsList` | `api-runs.ts`, `api-users.ts` (owner filter) | both displays | Find a run | Open a run (link) | Named "My runs" on the user display for the same hash; own list implementation (F3) |
-| `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and reject use native `prompt` (`runs.js:244-245`); cancel uses `confirm` (`runs.js:258`) |
+| `#/runs/:id` | — | `ui/runs.js` | `renderRunDetail` | `api-runs.ts` (incl. event stream) | both displays | Follow one run, approve, cancel, re-run | Approve / Cancel / Re-run (by step) | Approve and Reject use `decisionDialog`; Cancel and Re-run use `confirmDialog` (`ui/run-dialogs.js`) |
 | `#/repos` | My repositories | `ui/repos.js` | `renderRepos` | `api-repos.ts` | both displays | Add and manage the owner's own repositories | Add repository | One of three repository pages (F2) |
 | `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
 | `#/maintenance` | Maintenance | `ui/maintenance.js` | `renderMaintenance` | `api-admin.ts` | admin display only | Clean old run workspaces | Clean up | The clean action is a native confirm (`maintenance.js:12`) |
-| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 3 native confirms and two pages |
+| `#/watchers` | Watchers | `ui/watchers.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Scan watchers by repository; add a watcher | Add a watcher | Compact tables, no row buttons |
+| `#/watchers/:id` | — | `ui/watchers.js`, `ui/watcher-form.js` | `renderWatcherDetail` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Check, edit, enable or disable, delete a watcher; switch the monitor's bug stories | Check now | Delete sits in a Danger group |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
+| `#/operations` | Overview | `ui/operations.js` | `renderOperations` | `health.ts`, `api-admin.ts`, `api-runs.ts`, `api-repos.ts`, `api-audit.ts` | admin display only | See what needs attention | Cancel run (Health card) | — |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:41` (`problems.js:88`) |
+| `#/problems/:id` | — | `ui/problems.js`, `ui/monitor.js` | `renderProblemDetail` | `api-monitor.ts` | admin display only | See one finding with evidence, bug stories and runs; make a story, retry or mute it | Make a story now | Buttons in a Bug story group and a Mute group |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
 | `#/models/:name` | — | `ui/models.js` | `renderModelDetail` | `api-admin.ts` (config, providers) | admin display only | See, test, change or remove one provider | Save provider, Remove provider | Remove asks first; built-in providers are saved as an override |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
-| `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
+| `#/users/:id` | — | `ui/user-detail.js` | `renderUserDetail` | `api-users.ts`, `view-as.ts` | admin display only | See one account and use its actions | Edit / Limits / App repositories / New link / View as user; Reset password / Unlock / Block; Delete | Same dialogs as the list had (`DIALOGS` in `ui/users.js`) |
+| `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export / Details | Table without `.table-box` (`audit.js:79`); a line opens a detail row |
 
 ## User display
 
@@ -85,7 +89,7 @@ Admin preview: `/user/?as=<id>` (`ui/view-as.js`) draws these pages for the chos
 
 ## States
 
-Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js`). Since part 8 all six Administration pages (`#/users`, `#/watchers`, `#/problems`, `#/dashboard`, `#/audit`, `#/settings`) draw a skeleton (`loadingState`) at once and an `errorState` with Retry on failure; a failed reload of Users, Watchers or Problems keeps the list and shows a `staleNote`; a failed part of the Dashboard is a `partNote` on its section, and a failed monitor call on Watchers is an `errorState` in the monitor card. Save on Settings shows "Saving…", "Saved at …" or "Not saved." next to the button. All other routes leave `main` as it was until the first `await` ends.
+Loading, empty, error and live update per route, from the code. "Errors" means the router's `errors` box unless another is named. A loading marker is drawn at once on `#/runs` (`runs.js:63`), `#/board` (`board.js:155`), `#/library` (`library.js:117`), `#/dashboard` (`dashboard.js:124`), `#/models` (`models.js:172`) `#/operations` (`operations.js`) and `/user/#/runs/:id` (`user/runs.js:340`); `#/audit` shows one when it reloads (`audit.js`). Since part 8 all six Administration pages (`#/users`, `#/watchers`, `#/problems`, `#/dashboard`, `#/audit`, `#/settings`) draw a skeleton (`loadingState`) at once and an `errorState` with Retry on failure; a failed reload of Users, Watchers or Problems keeps the list and shows a `staleNote`; a failed part of the Dashboard is a `partNote` on its section, and a failed monitor call on Watchers is an `errorState` in the monitor card. Save on Settings shows "Saving…", "Saved at …" or "Not saved." next to the button. All other routes leave `main` as it was until the first `await` ends.
 
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
@@ -105,13 +109,17 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/all-repos` | "No repositories yet." (`admin-repos.js:222`) | errors box | cleanup returned |
 | `#/credentials` | "No stored credentials yet." (`admin-credentials.js:36`) | errors box | cleanup returned |
 | `#/maintenance` | no empty state | toast | none |
-| `#/watchers` | `div.empty` (`admin.js:211`) | errors box | none found |
+| `#/watchers` | `div.empty` (`watchers.js`) | errors box | none found |
+| `#/watchers/:id` | `errorState` for an unknown id, with a link back | skeleton; errors box on first load | none found |
 | `#/settings` | no empty state | errors box | none |
+| `#/operations` | per card: "Nothing is waiting.", "No entries.", "No account is at a limit." | "Not available" in the cards and tiles that depend on the failed call | none; open it again |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
+| `#/problems/:id` | `errorState` for an unknown id, with a link back | skeleton, then `errorState` with Retry | none |
 | `#/models` | none found | errors box | none |
 | `#/models/:name` | "This provider is not set up." | `errorState` with Retry | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
+| `#/users/:id` | "This account does not exist." with a link to Users | skeleton, then errors box; a failed reload keeps the page and shows a `staleNote` | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
@@ -143,13 +151,17 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/all-repos` | Table not in `.table-box`: probably overflows | Probably overflows |
 | `#/credentials` | Table not in `.table-box` | Probably overflows |
 | `#/maintenance` | Form | Probably fits |
-| `#/watchers` | Cards | Probably fits |
+| `#/watchers` | Compact tables | Probably fits |
+| `#/watchers/:id` | Single column | Probably fits |
 | `#/settings` | Form | Probably fits |
+| `#/operations` | `.dash-grid` one column (R1); 2 compact tables | Probably overflows |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
+| `#/problems/:id` | Single column | Probably fits |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
 | `#/models/:name` | Cards in one column | Same |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
-| `#/users` | Table not in `.table-box` | Probably overflows |
+| `#/users` | Shared table in a scroll box | Same |
+| `#/users/:id` | Cards in one column | Fits |
 | `#/audit` | Table not in `.table-box` | Probably overflows |
 | `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |
@@ -167,11 +179,10 @@ Count of `style:` occurrences per file (one line can hold more than one). Repeat
 grep -o 'style *:' ui/*.js ui/user/*.js | sort | uniq -c
 ```
 
-Total 5 in 2 files. Lines that contain one: 5.
+Total 1 in 1 files. Lines that contain one: 1.
 
 | File | Uses |
 |---|---|
-| `ui/refinement-import.js` | 4 |
 | `ui/dashboard.js` | 1 |
 
-Three lines stay inline for good, all in `ui/dashboard.js`: `tip.style.left` and `tip.style.top` (the chart tip position, computed from the bar) and the `rate-fill` width (computed from the data). Only the last is a `style:` use, so the grep counts 1 for `ui/dashboard.js`. The runs, repositories and refinement pages (except `ui/refinement-import.js`) and the editor files are clean.
+Three lines stay inline for good, all in `ui/dashboard.js`: `tip.style.left` and `tip.style.top` (the chart tip position, computed from the bar) and the `rate-fill` width (computed from the data). Only the last is a `style:` use, so the grep counts 1 for `ui/dashboard.js`. The runs, repositories and refinement pages and the editor files are clean.

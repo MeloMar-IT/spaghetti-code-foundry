@@ -23,6 +23,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [6. Automate with watchers](#6-automate-with-watchers)
   - **[Label cheat sheet: which label does what](#the-label-pipeline-one-label--plan--code--one-pull-request)**
 - [7. Settings and safety](#7-settings-and-safety)
+  - [Automatic skills](#automatic-skills)
 - [8. Costs, dashboard and evals](#8-costs-dashboard-and-evals)
 - [9. Command line](#9-command-line)
 - [10. Troubleshooting](#10-troubleshooting)
@@ -91,15 +92,17 @@ admin for a new one.
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
 | **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (up to 760 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+
+**Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways.
 
 An account with the role `user` works on its own display at `/user/`, with **Home**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 ![Home of a user](images/user-home.png)
 
-**Start work.** Three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. While the flows load, a grey placeholder shows under the heading. With none, the page says "No flows yet. Ask your administrator to publish one." (an admin sees "No published flows yet. Publish one in the flow editor." with a link to the editor). If the flows cannot be loaded, the page says what happened and has **Retry**; without permission it says so. (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. While the list loads, step 2 shows a placeholder and **Start** is off. With no repository the page says so and offers **Add repository**. If the list cannot be loaded, step 2 says so with **Retry**; flows that need no repository still work. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Start** starts the run and opens its page. An empty required field shows a message and nothing is sent; if the server refuses, an alert under the form explains what happened, what is safe and what to do. What you typed stays, **Start** is on again, and a second **Start** sends the same values. If the server did not answer or failed, the run may have started: check **My runs** first. The read-only preview shows no **Start** and no **Add repository**. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
+**Start work.** The page opens with "How do you want to begin?": **Start a task now** (the form below; chosen by default, and with a kept draft it says so and opens it), **Refine an idea first** and **Refine an existing issue** (both open the new-session dialog with that kind chosen), and **Continue a refinement session** (goes to **Refinement**). The read-only preview shows no choice that makes a session. Starting a task is three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. While the flows load, a grey placeholder shows under the heading. With none, the page says "No flows yet. Ask your administrator to publish one." (an admin sees "No published flows yet. Publish one in the flow editor." with a link to the editor). If the flows cannot be loaded, the page says what happened and has **Retry**; without permission it says so. (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. While the list loads, step 2 shows a placeholder and **Start** is off. With no repository the page says so and offers **Add repository**. If the list cannot be loaded, step 2 says so with **Retry**; flows that need no repository still work. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Review** checks the form and shows a review page; **Start** on that page starts the run and opens its page (see [Review before start](#review-before-start)). An empty required field shows a message and nothing is sent; if the server refuses, an alert under the form explains what happened, what is safe and what to do. What you typed stays, **Start** is on again, and a second **Start** sends the same values. If the server did not answer or failed, the run may have started: check **My runs** first. The read-only preview shows no **Review**, **Start** or **Add repository**. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
 **My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet." and offers **Start work**.
 
@@ -109,7 +112,9 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 
 | Where | Keys |
 |---|---|
-| Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. There are no single-key shortcuts. |
+| Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. Ctrl/⌘+K opens Search, also from a form field. Single-key shortcuts (below) work only outside form fields and can be switched off. |
+| Search | Up and Down arrows move (and wrap), Enter opens, Ctrl/⌘+Enter opens in a new tab and keeps Search open, Escape closes. Tab stays inside. |
+| Single keys | `/` opens Search. `g` then a letter, within 1 second, opens a page: `h` Home, `b` Board, `r` Runs, `e` Refinement, `p` Repositories, `f` Flows, `a` Administration, `s` Start work. Only pages your role has. |
 | Dialogs | Escape closes. Tab stays inside. Focus returns to the button that opened it. |
 | Help mark (**?**) | Enter or Space opens, Escape closes. |
 | Board | Tab to a card, Enter opens it. |
@@ -117,6 +122,8 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 | Run log | Tab to the log, then the arrow keys, Page Up/Down, Home and End scroll it. |
 | Editor | Tab moves between fields. Escape closes its dialogs. |
 | Forms | Tab moves between fields. The arrow keys change a select. Enter sends the form. |
+
+**Search.** The **Search** button in the top bar, Ctrl/⌘+K (also from a form field) or `/` opens a box with a list under it. With no text it shows **Recent**, **Go to** (pages) and **Actions**. With text it also shows what the server finds: runs, repositories, refinement sessions and flows, and for admins issues. A user sees only their own things and the flows they can start; an admin sees all accounts. A result shows its title and, when known, its status, repository, owner and last activity. Search only opens things: a page, a run, **Start work**, **New refinement session**. It changes nothing. A flow result on the user display opens Start work with that flow chosen (what you typed is kept); a repository result opens the list with that row selected. Recent items are kept in this browser, for each account, as ids only (no titles, 8 at most), and are shown only if the server still lets you see them. In a view-as preview there are no recent items and no "New refinement session". If search is not available, the box says so and pages still work. The single-key shortcuts never act inside form fields or while a dialog or the menu is open. A checkbox in Search switches them off for this browser; Ctrl/⌘+K always works.
 
 **Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive. The Board also keeps its scroll, up and down and sideways, when it redraws, and shows "Updated HH:MM". If a refresh fails, the cards stay and a message says "Could not refresh. Showing data from …" with a Retry button; the next good refresh removes it. A hidden browser tab makes no requests; when you come back, the Board refreshes once. On the admin Home, Needs you and Active refresh on their own, so one failing does not stop the other, and each has its own Retry. If only the health request fails, Problems keep the last answer and show "Problems could not be refreshed. Showing the last answer." until the next good answer.
 
@@ -183,6 +190,17 @@ Pick a flow on the left, press **▶ Run**, describe the task and start it.
 | `inplace` | Directly in the repository — only for flows you trust |
 
 When a run finishes, its branch stays in your repository. Review it, merge it, or delete it.
+
+### Review before start
+
+On **Start work**, the main button is **Review**. It runs the same check for required fields as before. If all is filled in, it shows a review page instead of sending anything.
+
+- **What you see.** The flow title, the repository as `owner/name` (or "No repository" when none is sent), the full task text, and every value that will be sent. A value the flow fixes says "set by the flow". If the administrator set the run to start as you, a "Start as" row says so.
+- **Notes.** Short safety notes appear when they apply: the repository connection is "Failed" or "Not tested yet"; the task is empty for a flow that uses it. One fixed note is always there: the work runs on the server against this repository and can be cancelled from the run page.
+- **Start and Back.** **Start** sends exactly what the page shows, once, even if you press it twice. **Back** returns to the form with every value in place. If the server refuses or the start fails, you return to the form with the server's sentence in the alert and nothing lost.
+- **Focus.** Focus moves to the review heading when the page opens, and back to **Review** when you press **Back**.
+- **Your draft is kept.** The flow, repository, task and input values stay in the page's memory while you go to another page and come back to **Start work**. The form then shows "Your draft from before". The draft is cleared after a successful start and by **Clear**. It is never written to disk or to browser storage, so it is gone when you reload or close the tab, and another account never sees it. If the kept flow or repository is no longer offered, the form uses the default; the task text stays.
+- **Read-only preview.** The preview (`?as=`) never reads or writes a draft and has no **Review**, **Start** or **Clear**.
 
 ### Start work as an admin
 
@@ -285,6 +303,7 @@ when the findings file cannot be read): counts only, never a name.
 - **The card:** issue number and title, what happens next, the current step ("coding — step 12 of 29"), and the stories it waits for ("after #88"). A bug story has a "goes first" mark. Click the card to open its run page. A story that has no run yet is not a link; use the issue link on it.
 - **Owner (admins):** a card that has a run shows the owner's name, `deleted user` when the account is gone, and nothing for a card without a run or owner. **All owners** above the board hides the cards of other owners in the page; it makes no new call. Users see no owner name.
 - **Highlight:** "What is in the way of #89?" marks the whole chain of stories that hold it back and dims the others. The line above the board lists the chain, also stories that have no card. **Show all** clears it.
+- **Narrow screens (below 768 px):** the board shows one column at a time. A picker named **Column** above it lists every column with its card count; the first column with cards shows by default. Your choice stays when the board refreshes, and if that column goes away the first column with cards shows. The owner filter and the highlight work as before; while a chain is highlighted, the picker marks the columns that hold cards of the chain. From 768 px up the board is unchanged.
 - **Updates:** the page asks every 5 seconds, so what the Foundry knows shows within 5 seconds. Changes on GitHub show after the watcher's next check; when you come back from a GitHub link, the watcher checks at once.
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
 
@@ -301,8 +320,8 @@ With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows
 - **Display menu:** choose what a card or row shows (repository, next move, blockers, owner, age, step), **Compact cards**, group by and order by. The choices apply to board and list. The menu stays open when the page updates.
 - **Rows:** issue link to GitHub, title, repository (when more than one shows), status, who has the next move and what to do, the stories it waits for, owner and age. Click a row, or press Enter on it, to open its run.
 - **Keys on the board:** each column has one Tab stop (the card you used last). Up and Down move in the column; Left and Right move to the same place in the next column that has cards; Home and End go to the first and last card of the column; Enter opens the run. Tab reaches the links inside a card. Focus stays on the same card when the board updates.
-- **Touch and narrow screens (up to 760 px):** columns scroll sideways and snap into place. Each column scrolls on its own, with its heading kept in view, and buttons and links in cards are at least 44 px tall. Nothing needs hover. On a large board, column bodies have a maximum height and scroll.
-- **What is in the way?** A card or row with blockers has a button **What is in the way?**. It opens a side panel for that story; nothing on the board is dimmed or moved. The panel shows the title, issue link, status, the full sentence, who has the next move and where, owner, age and **Open run** when there is a run. Under "In the way of #N" every story that must finish first is listed in the order it must finish, the deepest blocker first; direct blockers are marked "directly". A story that is on the board is a button that opens it in the panel, and **Back** returns to the story before; one that is not on the board is a GitHub link. On a wide screen the panel sits next to the board and the board stays usable. Up to 760 px it covers the page and Tab stays inside it. **Escape** or **Close** closes it and focus returns to the button. A card without a run opens the panel on Enter. The panel updates every 5 seconds; if the story is gone it closes with "#N is no longer on the board". Filters, layout and scroll position do not change. The open panel is not saved.
+- **Touch and narrow screens (below 768 px):** columns scroll sideways and snap into place. Each column scrolls on its own, with its heading kept in view, and buttons and links in cards are at least 44 px tall. Nothing needs hover. On a large board, column bodies have a maximum height and scroll.
+- **What is in the way?** A card or row with blockers has a button **What is in the way?**. It opens a side panel for that story; nothing on the board is dimmed or moved. The panel shows the title, issue link, status, the full sentence, who has the next move and where, owner, age and **Open run** when there is a run. Under "In the way of #N" every story that must finish first is listed in the order it must finish, the deepest blocker first; direct blockers are marked "directly". A story that is on the board is a button that opens it in the panel, and **Back** returns to the story before; one that is not on the board is a GitHub link. On a wide screen the panel sits next to the board and the board stays usable. Below 768 px it covers the page and Tab stays inside it. **Escape** or **Close** closes it and focus returns to the button. A card without a run opens the panel on Enter. The panel updates every 5 seconds; if the story is gone it closes with "#N is no longer on the board". Filters, layout and scroll position do not change. The open panel is not saved.
 - **Saved choices:** your layout, filters, display choices, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
 - **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
 ### Filters in the address
@@ -315,6 +334,9 @@ part of the address, so you can share it, and Back and Forward restore it:
 - The Board keeps `#/board/<repository>` and only adds `?owner=<account>`.
 - On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
   there: a user only ever sees their own runs.
+
+- `repo=all` (for example `#/runs?repo=all` or `#/runs?repo=all&owner=<account>`) means "every
+  repository". It opens the unfiltered list, so no repository chip is shown.
 
 Above the list a filter bar shows one chip per active filter, each with a remove button, and
 **Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
@@ -374,7 +396,7 @@ is wrong yet: look at the live log.
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
-There is no page for it yet; the new navigation will use it.
+The Search box in the top bar (see "Search" under Keyboard) uses it.
 
 - `?q=text` — words separated by spaces. Every word must match. Equal matches rank above
   prefixes, prefixes above word starts, word starts above "contains". A word like `#254` matches
@@ -578,7 +600,8 @@ the code", what went wrong and the fix. The causes and fixes:
   lines): resume the run to try the step again.
 - A skill request in the plan that is not valid ("planning failed: the skill request of the plan is
   not valid"): resuming does not help, because the stored plan is the same. Start the run again so
-  the issue is planned again. The step output says what was wrong.
+  the issue is planned again. The step output says what was wrong. For every skill stop reason
+  see [Find out why a run stopped](#find-out-why-a-run-stopped).
 - An internal error, an unknown step, or a run that failed before any step ran (workspace, bot
   identity, GitHub App token): fix the setting, or restart or update the Foundry, then resume.
 - A git or gh login error, or a network error, in a command of the flow: log in again (`gh auth
@@ -591,6 +614,10 @@ A failed test, guard or review, too many visits of a step and a push blocked by 
 are code failures and keep the usual text. A step budget that is used up is a limit, and a
 rejection is a person's decision. If a command was blocked earlier in such a run, the
 sentence adds a hint to allow it in the flow if it was needed.
+
+### Accessibility
+
+The Foundry aims to meet WCAG 2.2 AA. Open **Account → Accessibility** to read the statement: what is checked, the known limits and how to report a problem. The statement is also in [ACCESSIBILITY.md](ACCESSIBILITY.md), and [ACCESSIBILITY_SCRIPTS.md](ACCESSIBILITY_SCRIPTS.md) has keyboard and screen-reader scripts for the owner. Nothing was run in a browser or with a screen reader yet.
 
 ### Words the Foundry uses
 
@@ -672,6 +699,26 @@ The **Overview** button opens the graph of how steps connect: grey = next, green
 red dashed = on failure, purple = route. Click a node to select the step. The choice is
 remembered; at 1100 px wide and below the overview starts closed and opens above the form.
 The list on the left has a search box that filters by name and description.
+
+In the visual editor, the **structure list** shows **Flow settings** first, then one row per step:
+number, id, type icon, a one-line summary, and marks for "only via jumps" and "has a problem".
+Select a row to edit it. The **inspector** next to the list shows only the selected item, either the
+flow settings or one step. Add step (Agent, Shell, more types, **+ From library**), move up/down,
+duplicate, delete, **Save as block** and rename work from the list and from the inspector header.
+At 1100 px wide and below, the list is above the inspector.
+
+A step shows only the settings of its type: an agent step its prompt and model, a shell step its
+command, an approval step its question, a parallel step the step picker, a sub-flow step the flow
+and its variables. Less used options are in groups that start closed and open by themselves when
+they hold a value: **Routing** (on success, on failure, routes, only via jumps, pass/fail patterns,
+resume point), **Limits** (max visits, timeout, budget), **Sandbox & access** (shell and agent
+steps) and **Model & agent settings** (agent, provider, permission mode, allowed tools, extra system
+prompt, continue session). An approval step has no model, sandbox or tools group. A parallel or
+sub-flow step has no pass/fail patterns unless a value is already set; then it stays visible and
+editable. A step of an unknown type says to edit it in the YAML tab. The flow settings use groups
+too: basics, **Defaults for agent steps**, **Safety**, **Variables** and **Publish to users**.
+Clicking a node in the overview, or a problem, opens that step, focuses the field and opens the
+group that holds it.
 
 ![YAML view](images/flow-yaml.png)
 
@@ -922,6 +969,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
+- **One watcher.** The list is compact: the id (a link to `#/watchers/<id>`, crumbs **Administration › Watchers › <id>**), the state mark, what it does, the last successful check and a problem line. The watcher's page has the next steps, notes, error details and recent activity; for the monitor also the bug-story switch and the findings. **Check now**, **Edit** and **Enable** or **Disable** are together; **Delete** is alone in a **Danger** group. List rows have no Delete button.
 - **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`. If only the monitor cannot be loaded, the watchers are still shown and the monitor card says so, with **Retry**.
 - **While it works.** The page shows a grey skeleton while it loads. **Check now** shows "Checking…" next to its own button. **Delete** asks first in a dialog. If a reload fails, the list stays and a line says when it was last updated, with **Retry**. The same holds for Users and Problems.
 - **From config.yaml.** A watcher that is still in `config.yaml` (for example while there is no admin account, or at the connection limit) shows read-only with a note, and **Check now**. A watcher whose repository is gone can only be deleted.
@@ -1212,9 +1260,12 @@ happens to each problem.
   since the server started" until the monitor runs again.
 - **The findings.** Newest and most severe first (gone ones last), at most 100 at first and then
   **Show N more**. Each row has the summary, the severity, since when, how often ("seen in N
-  checks"), the state and the bug story. **Details** opens the evidence, the bug stories (links;
-  "(earlier)" for older ones) and the runs that build them. If the findings file cannot be read,
-  the page says so instead of "No findings."
+  checks"), the state and the bug story. The summary links to the finding's own page
+  (`#/problems/<id>`, crumbs **Administration › Problems › <id>**). It shows the evidence, the bug
+  stories (links; "(earlier)" for older ones) and the runs that build them. Its buttons are in two
+  groups: **Bug story** (**Make a story now**, **Try again**) and **Mute** (mute, **This is not a
+  problem**). The rows have no Mute button. An unknown id shows the server's sentence and a link
+  back. If the findings file cannot be read, the page says so instead of "No findings."
 
 | State | What it says |
 |---|---|
@@ -1834,7 +1885,11 @@ as another admin. Change a role with
 status, last sign-in and the number of runs. The status is **blocked**, **no password yet**,
 **locked** (too many wrong tries) or **active**; when more than one is true, the first in this list
 wins, so a blocked account reads "blocked" even if it is also locked. Your own account is
-marked "(you)".
+marked "(you)". The list has no action buttons: press a name to open the account page
+(`#/users/<id>`). It shows the same facts and the actions in three groups: **Actions** (Edit,
+Limits, App repositories, New link, View as user), **Security** (Reset password, Unlock, Block or
+Unblock) and **Danger** (Delete). The buttons below are on that page. An address for an account
+that does not exist shows "This account does not exist." with a link back to Users.
 
 - **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
@@ -1980,6 +2035,8 @@ An account with the role `user` never sees the link or the page; a user who open
 - **Use.** While the view runs, a `GET` call with `?as=<userId>` is answered as it would be for that user: the same rules (a call marked `no` for users is 403), and the same cut-down answers (no costs, no folders, no runs of other accounts; a foreign run is 404). This holds for `flows`, `queue`, `runs`, `runs/:id`, `runs/:id/events`, `runs/:id/diff`, `repos`, `repos/methods`, `credentials`, `refinement` and `refinement/:id`. Unexpected errors show the user's fixed sentence. `GET /api/session` still shows you as the admin. Calls without `as=` are not changed. Reads leave no audit line.
 - **Refused.** `as=` without a running view for that user is 403, and so is `as=` from a user. Any call that is not a `GET` and has `as=` is 403 "the preview is read-only", and nothing changes.
 - **End.** A view lasts 30 minutes and ends with the session. `DELETE /api/admin/view-as` ends it now. It also ends when the user is deleted or made an admin, or when you are no longer an admin. Views are kept in memory only: after a restart a new one must be started, which writes a new audit line. An open log stream started with `as=` is closed when the view ends.
+
+**The Audit page.** **Details** on a line opens a row with every field of the entry: time, who (with id), action, target (with id), detail and result. It makes no new call. When the actor or target is an account, its id links to the account page. **Hide** closes it; a filter change closes all opened lines.
 
 **Reading the audit log over the API.** Admins only; a user gets 403. `GET /api/audit` answers `{entries, more}`. An `actor` is `{type: "cli"}`, `{type: "anonymous"}` or `{type: "account", id, name}`; a `target` is an account in the same form, `{type: "text", text}`, or `null`. Account lines show `result: "ok"` and the account as target; a role change has `detail` like `user -> admin`, and a block that stops work has `stop work`. `name` is the current name, or `deleted user`; the file keeps ids only. Filters: `user` (the account id exactly as stored; it matches the actor or the target account), `action`, `from` and `to` (ISO times with seconds, such as `2026-10-02T09:00:00Z`; both are included). A `+` in an offset must be written `%2B`. An unknown, empty or repeated filter, a `user` that is not an id, an `action` that is not an audit action, a bad time, or `from` after `to` answers 400. At most 500 entries come back, newest first by the order of the lines; when `more` is true, narrow the filters or use the export. `GET /api/audit/export` takes the same filters and downloads every matching line as `audit.csv`, in the order of the file (oldest first), with the header row `time,actor,actor_name,action,target,target_name,result,detail`. A cell that starts with `=`, `+`, `-` or `@` gets a `'` in front. Stored secrets are hidden as in every other answer; a CSV row that would show one is hidden whole. Lines that do not parse are left out. An unreadable file answers a plain 500, and the log says `audit: audit.jsonl unreadable`. A download that breaks half-way is cut off, not ended early.
 
@@ -2425,7 +2482,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/refinement/:id/drafts/:did` | yes | yes | remove a story draft from your refinement session |
 | `POST /api/refinement/:id/drafts/:did/suggest` | yes | yes | ask the architect for a suggestion for one field of a story draft of your refinement session, or resume a paused one (one architect run per account at a time) |
 | `POST /api/refinement/:id/drafts/:did/review` | yes | yes | ask the architect to review a story draft of your refinement session, or resume a paused review (one architect run per account at a time); no field changes |
-| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again, a split original is skipped, and `leftBehind` names split originals that still hold criteria; in a session that came from an issue, the draft that stands for it replaces the title and text of that issue first (one comment holds the old text, labels are added and kept) and is answered as `updated`, and a closed issue or one the Foundry builds is refused (409) with nothing written; when the issue's title or text changed on GitHub since the session read it, nothing is written and the answer is 409 with `changedOnGithub` (both versions and `seen`): send `source: { keep: "mine" | "github", seen }` to choose; a split source issue is replaced once all its parts are on GitHub (the issues that depend on it get the parts under "Depends on" and a comment with the old and new text, every trigger label of an issues watcher of the repository is taken off it, and it gets a comment naming the parts; an open original stays open, a closed one stays closed) and the answer has `replaced: { issue, parts, dependants: [{ issue, outcome }] }`; an original that the Foundry builds is refused (409) before the first write, and so is a closed one unless its replacement had started already (it then stays closed), and a failed publish is finished by publishing again (an admin who is not the owner: 403) |
+| `POST /api/refinement/:id/publish` | yes | yes | publish the ready story drafts of your refinement session as GitHub issues, with the repository's sign-in; a draft that has an issue is not created again, a split original is skipped, and `leftBehind` names split originals that still hold criteria; in a session that came from an issue, the draft that stands for it replaces the title and text of that issue first (one comment holds the old text, labels are added and kept) and is answered as `updated`, and a closed issue or one the Foundry builds is refused (409) with nothing written; when the issue's title or text changed on GitHub since the session read it, nothing is written and the answer is 409 with `changedOnGithub` (both versions and `seen`): send `source: { keep: "mine" | "github", seen }` to choose; a split source issue is replaced once all its parts are on GitHub (the issues that depend on it get the parts under "Depends on" and a comment with the old and new text, every trigger label of an issues watcher of the repository is taken off it, and it gets a comment naming the parts; it is then closed as not planned; it stays open, to be closed by hand, when more than 1,000 open issues were read, a dependant must be changed or checked by hand, or it is a story of the monitor, and an original closed in another way is left so) and the answer has `replaced: { issue, parts, dependants: [{ issue, outcome }], closed: "not_planned" | "other" | "open", closedAt? }`; an original that the Foundry builds is refused (409) before the first write, and so is a closed one unless its replacement had started already (it is then left closed), and a failed publish is finished by publishing again (an admin who is not the owner: 403) |
 | `PUT /api/refinement/:id/drafts/:did/review-label` | yes | yes | choose whether a story draft of your refinement session gets the review label when it is published; nothing is sent to GitHub |
 | `POST /api/refinement/:id/drafts/:did/split` | yes | yes | ask the architect for ways to split a story draft of your refinement session, with an optional way of your own, or resume a paused one (one architect run per account at a time); nothing is split and no field changes |
 | `POST /api/refinement/:id/drafts/:did/split/confirm` | yes | yes | confirm a split of a story draft of your refinement session: each part becomes a new draft and the original is kept as a record; no architect run starts |
@@ -2439,13 +2496,163 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/accept` | yes | yes | accept a suggestion of the architect for a story draft of your refinement session, as it is or with your own text; it goes into the draft |
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
-| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`), and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
+| `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
 
 **What comes later.** Pages for users (starting runs).
 
+### Automatic skills
+
+Skills are on by default. For the shipped flows nobody has to set anything up: the Foundry picks the skills, checks them, locks them and loads them. It never installs, downloads or grants anything. This part gives the whole picture and links to the sections below for the detail.
+
+#### What happens by itself
+
+| Stage | What the Foundry does | Detail |
+|---|---|---|
+| Profile | Reads the repository for evidence of its technology. | [Skill catalogue](#skill-catalogue) |
+| Catalogue | Planner steps with `skills: catalog` get a short list of approved or built-in skills with a matching pin that pass coder resolution. | [Skill catalogue](#skill-catalogue) |
+| Request | The final plan ends with one `SKILL_REQUEST:` line. | [Skill request](#skill-request) |
+| Resolution | The ids become exact `id@version` plus their dependencies, and are checked under `skills.unresolved` after the plan gate. | [Skill selection](#skill-selection), [Missing and conflicting skills](#missing-and-conflicting-skills) |
+| Lock | The first agent step writes `skill-lock.json`. It is checked again before every agent session. | [Skill lock of a run](#skill-lock-of-a-run) |
+| Loading | A Claude session gets one `<foundry-skills>` block; a resumed session gets a one-line reminder. | [Skills in Claude sessions](#skills-in-claude-sessions) |
+| Review checks | Steps with `skill_role: reviewer` get the `REVIEW.md` checks of the loaded skills, on Claude and Codex. | [Review checks for reviewers](#review-checks-for-reviewers) |
+
+#### What policy decides
+
+- `skills.catalogue`: what a planner may see.
+- `skills.selection`: what a coder may get. `include` makes a skill mandatory.
+- `skills.unresolved`: what happens to a skill that cannot be used: stop, or warn for low-risk work.
+- `skills.review`: the size of the review block.
+- **Pins** (`scf skills pin`): which content is approved. `include` is never a pin.
+
+These are all the settings with their defaults:
+
+```yaml
+skills:
+  builtin: true
+  roots: []
+  repository: false
+  catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
+  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] }
+  review: { max_tokens: 3000, max_skill_tokens: 1000 }
+  unresolved:
+    unknown: stop
+    missing: stop
+    untrusted: stop
+    conflict: stop
+    oversized: stop
+    high_risk: [migration, migrations, security, messaging, kafka, rabbitmq, amqp, queue, outbox]
+```
+
+`skills.tools` is read but no run uses it yet.
+
+#### Write a skill
+
+1. Make a folder `<data folder>/skills/<id>/`, or one under a folder of `skills.roots`. Optional sub-folders are `references`, `scripts`, `assets` and `evals`.
+2. Write `SKILL.md`: frontmatter with `name` (the same as the id) and `description` (at most 1024 characters), then the instructions. At most 64 KiB. Only the description and the instructions reach a session.
+3. Write `skill.yaml`:
+
+   ```yaml
+   id: my-skill
+   version: 1.0.0
+   category: language
+   capabilities: [strict-typing]
+   dependencies:
+     - id: small-changes
+       min_version: 1.0.0
+   conflicts: []
+   roles: [coder, reviewer]
+   risk: low
+   ```
+
+   More fields: `detectors`, `connectors`, `tool_profile`. The five built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
+4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
+5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
+6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
+7. Evidence for a new version: see [Evidence to promote a skill version](#evidence-to-promote-a-skill-version).
+8. No credentials and no live endpoints: see [Credentials, endpoints and connectors](#credentials-endpoints-and-connectors).
+
+#### Context budgets
+
+| Limit | Default | When it is passed |
+|---|---|---|
+| `catalogue.max_tokens` | 2000 | The lowest-ranked skills are dropped, then descriptions are shortened. |
+| `selection.max_skill_tokens` | 5000 | The skill is refused as `too-large`. |
+| `selection.max_skills` / `selection.max_tokens` | 6 / 15000 | The skill is refused as `over-count` / `over-budget`. |
+| `review.max_tokens` / `review.max_skill_tokens` | 3000 / 1000 | The skill is left out of the review block and logged. |
+
+The estimate counts the description and `SKILL.md`, not reference files. A resumed session costs one reminder line; a new session gets the block once.
+
+#### Trust
+
+- **Sources** come in this order: the data folder, `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
+- **Pins** tie a version to its digest. A mismatch blocks the skill until you pin it again or give it a new version.
+- **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
+- **Isolation.** A Claude session that gets a skill block, or that is a reviewer, runs without your personal Claude setup, even with `isolate_agents` off. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn it on by themselves. Codex reviewers ignore your Codex user config.
+- **No grants.** A skill cannot give a tool, a permission or network access. The Foundry's rules and the task win.
+
+#### The two pipelines and skills
+
+| Step | Flow | What it does for skills |
+|---|---|---|
+| `plan`, `revise_plan` | `issue-gitflow`, `issue-plan` | Gets the catalogue (`skills: catalog`) and writes the `SKILL_REQUEST` line. |
+| `plan_review` | `issue-gitflow`, `issue-plan` | Review checks for the draft request (`skill_role: reviewer`). |
+| `risk_gate` | `issue-gitflow` | Plan gate: the request is validated and resolved under `skills.unresolved`. The run stops here on a problem. |
+| `post_plan` | `issue-plan` | Plan gate: the same check. Posts "Required skills" and writes the plan record. |
+| `plan_check` | `issue-code-daily` | Compares the plan comment with the plan record and carries the request. |
+| `implement` | `issue-gitflow`, `issue-code-daily` | The first agent step: writes `skill-lock.json` and loads the block. |
+| `fix_guard`, `fix_tests`, `address_review_N`, `docs` | `issue-gitflow`, `issue-code-daily` | The lock is checked again. A resumed session gets a reminder, a new session the full block. |
+| `review_1`, `review_2` | `issue-gitflow`, `issue-code-daily` | Review checks from the lock. |
+
+For the same plan and commit, both pipelines lock the same skills.
+
+#### Find out why a run stopped
+
+Look here, in this order:
+
+1. The **Skills** card of the run page ([Skills on the run page](#skills-on-the-run-page)).
+2. The stop reason of the run.
+3. The log lines: `skill catalogue: …`, `skill context: loaded|reloaded|reused …`, `! skill context: rejected (…)`, `⚠ skill …` and `· skills: off for this flow`.
+4. `scf skills`: pin state, both digests and problems.
+5. [The health line](#the-health-line): skill problems and `skill lock`.
+
+| The stop reason starts with | What to do |
+|---|---|
+| `planning failed: the skill request of the plan is not valid` | start the run again so the issue is planned again |
+| `skill integrity:` (a skill changed, is missing, is no longer pinned, now comes from the repository or cannot be verified; or the lock of the run is missing or changed) | restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills |
+| `skill selection is blocked: … does not fit the skill context budget` | raise skills.selection.max_tokens, then resume the run |
+| `skill selection is blocked:` | pin the skill or change skills.selection.include, then resume the run |
+| `skills not resolved: N skill(s) cannot be used — id [code]: …` | see the table of codes below |
+| `skills not resolved: skills.selection include/exclude is not valid` | correct the lists in the config, then resume the run |
+| `skills not resolved: …` with "plan the issue again" (the plan comment is gone or was edited, a newer plan has no record, the record was cleaned up, the comments could not be read) | plan the issue again, then resume the run |
+| `skills not resolved: the skills could not be checked`, `the skill request of the plan could not be read again` or `the plan record could not be checked` | resume the run; if it stays, plan the issue again |
+| `skills not resolved: the plan records of this issue are not valid` | the stored plan records of the issue cannot be read: plan the issue again, or ask an admin to check the plan records in the data folder, then resume the run |
+| `skills not resolved: the plan record could not be written (…)` | fix what the reason names (often the data folder cannot be written), then resume the run to try the step again |
+
+The reason code of each skill, the kind of policy that decides it, and what to do:
+
+| Code | Kind | What to do |
+|---|---|---|
+| `unknown` | unknown | Put it in the skills folder of the data folder, pin it with `scf skills pin`, then resume the run |
+| `excluded` | untrusted | Take it off `skills.selection.exclude` or `skills.catalogue.exclude`, then resume the run |
+| `unapproved` | untrusted | Copy it to an administrator skills folder, pin it, then resume the run |
+| `unpinned` | untrusted | Check the package, run `scf skills pin <id@version> <digest>`, then resume the run |
+| `mismatch` | untrusted | Run `scf skills` to see both digests, then pin it with `--replace` or give it a new version |
+| `unverified` | untrusted | Fix or delete `skills.lock.json`, pin again, then resume the run |
+| `role` | untrusted | Release a version that allows the role, or plan without it |
+| `too-large` | oversized | Raise `skills.selection.max_skill_tokens` or shorten the skill |
+| `over-count` | oversized | Raise `skills.selection.max_skills` or request fewer skills |
+| `over-budget` | oversized | Raise `skills.selection.max_tokens` or request fewer skills |
+| `dependency-unavailable` | missing, or the kind of the dependency's own problem (`untrusted` for an unpinned dependency, `oversized` for a large one) | Fix the dependency by its own code (the message names it); or shorten the chain |
+| `dependency-version` | missing | Install a newer version of the dependency and pin it, then resume the run |
+| `dependency-cycle` | missing | Remove the cycle from the skill packages, then resume the run |
+| `conflict` | conflict | Put one of them on `skills.selection.exclude` |
+| `blocked` | conflict | A mandatory skill was refused or the include/exclude lists are not valid. Fix that first |
+
+A kind set to `warn` lets low-risk work go on. Medium and high risk, and mandatory skills, always stop; see [Missing and conflicting skills](#missing-and-conflicting-skills).
+
 ### Skill sources
 
-The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). Nothing uses the list yet.
+The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). The planner's catalogue and the resolver read this list; see [Automatic skills](#automatic-skills).
 
 ```yaml
 skills:
@@ -2470,7 +2677,7 @@ risk: medium
 connectors: [kafka, oracle]
 ```
 
-- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. Nothing uses them yet.
+- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. No run connects to anything. A skill that names one stops the run at the plan gate, or gets a warning under `degrade`; see [Skills, tools and connectors](#skills-tools-and-connectors).
 - **Refused:** credential files by name (`.env`, `*.pem`, `id_rsa`, `*.key`, `*.p12` and similar; `.example`, `.sample` and `.template` copies are fine), credentials and live endpoints in any file, and file or folder names that look like a credential.
 - **Write endpoints like this:** `kafka://<broker>:9092`, `redis://${REDIS_HOST}:6379`, `amqp://mq.example.com`, `localhost`, the words `host`, `hostname`, `server`, `broker` or `db`, and names ending in `.example`, `.test` or `.invalid`. A placeholder user or password does not help when the host is real.
 - **Messages:** `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value.
@@ -2501,7 +2708,9 @@ A pin ties one skill version to the exact content you looked at. If the content 
 
 ### Skill catalogue
 
-The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. Nothing sends it to a planner yet.
+The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
+
+**Upgrade note.** Skills are now on for existing installs. A Claude session whose lock holds skills runs without your personal Claude setup (MCP servers, plugins, hooks and settings). To turn this off, set `skills.builtin: false` with no roots, or use `skills: {mode: off}` in a custom flow. The planner of the two flows now has only Read, Glob and Grep; the scoped `git log`, `git show`, `git grep` and `ls` Bash tools are gone, so the step is read-only by its tool list.
 
 ```yaml
 skills:
@@ -2524,14 +2733,14 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 
 - **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
-- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
-- **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). Nothing loads the skills yet, and no skill catalogue reaches the planner, so requests are empty for now.
-- **`issue-code-daily`** does not get a request: it would have to trust a comment.
+- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the plan gate (`risk_gate` in `issue-gitflow`, `post_plan` in `issue-plan`), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
+- **Checked, locked and loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). The planner picks from the [skill catalogue](#skill-catalogue); the run checks the ids, locks them and loads them into agent sessions (see [Skills in Claude sessions](#skills-in-claude-sessions) and [Skills in Codex and local-model sessions](#skills-in-codex-and-local-model-sessions)). A plan that picks nothing gives an empty request.
+- **`issue-code-daily`** has no plan gate, so it takes the request from the plan record, never from a comment; see [Skills from the plan to the coding run](#skills-from-the-plan-to-the-coding-run).
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
 ### Skill selection
 
-The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. After the plan gate a run checks the plan's skills with it (see [Missing and conflicting skills](#missing-and-conflicting-skills)), but no skill reaches an agent yet.
+The resolver turns the skill ids of a plan into the exact skills a coder may get. It only returns skills that are approved and pinned; it never installs, downloads or grants anything. After the plan gate a run checks the plan's skills with it (see [Missing and conflicting skills](#missing-and-conflicting-skills)).
 
 ```yaml
 skills:
@@ -2572,10 +2781,12 @@ When `issue-plan` posts a plan, the Foundry keeps its own record of the skill re
 - **Older plans:** if nothing is stored (plans made before this feature, on another machine, or run with a custom flow), the run codes without carried skills, as before. This includes the skills in `skills.selection.include`.
 - **The record lives on the planning machine.** To carry skills, plan and code on the same Foundry. A record for the same issue number in another repository is never used.
 - **Retention:** old records are cleaned up. A run that needs a cleaned-up record stops as above.
+- **Same skills as `issue-gitflow`.** For the same plan and commit, `issue-plan` + `issue-code-daily` lock the same skills (`id@version`, digests, load order) as one `issue-gitflow` run. A skill that cannot be used stops the coding run under `skills.unresolved`; resume checks again.
+- **On the run page.** The Skills card says in one sentence what the plan check found (record used, none found, cleaned up, comment edited or gone, newer plan, comments unreadable) and whether the run stopped. It never shows ids from the record or comment text.
 
 ### Missing and conflicting skills
 
-After the plan gate (`issue-plan`: the plan step) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.
+After the plan gate (`risk_gate` in `issue-gitflow`, `post_plan` in `issue-plan`) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.
 
 ```yaml
 skills:
@@ -2593,19 +2804,65 @@ skills:
 - **High risk always stops,** whatever the policy says. A skill is high risk when its id, category or a capability equals a `high_risk` term. Terms match whole hyphen-separated words, so `insecurity-notes` is not high risk. A package that says `risk: high` is high risk too. A `medium` skill also always stops; only `low` can be warned about. A mandatory skill (`skills.selection.include`) that cannot be used also stops.
 - **Resume:** resuming a stopped run checks the skills again. Install, approve or pin the skill (see [Pinned versions and integrity](#pinned-versions-and-integrity)), then resume. If the stored request cannot be read again, the run stays stopped.
 - **Unchanged:** a run whose plan asks for no skills, with no `skills.selection.include`, is not checked. Older run files stay valid.
-- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). GitHub comments do not show them yet.
+- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). The plan comment lists the required skills; stop reasons are not posted to GitHub.
 
 ### Skills in Claude sessions
 
 A Claude session gets only the skills of the run's lock. The Foundry puts their text in one `<foundry-skills>` block at the start of the prompt, in front of the task. Nothing is written to the repository, so no skill file can appear in a diff or a commit.
 
-- **Only locked skills.** The note every session gets says that the block is the only skill guidance to follow; the agent must not use, load or look for any other skill. A Claude session whose lock holds skills also runs without your personal Claude setup (skills, MCP servers, plugins, hooks and settings), even when `isolate_agents` is off. The log says so.
+- **Only locked skills.** The note every session gets says that the block is the only skill guidance to follow; the agent must not use, load or look for any other skill. A Claude session whose lock holds skills also runs without your personal Claude setup (skills, MCP servers, plugins, hooks and settings), even when `isolate_agents` is off. The log says so. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn this on by themselves; reviewer steps always run isolated.
 - **Rules win.** The block says that the Foundry's safety rules and the instructions of the user and the task win over a skill, and that a skill cannot grant a tool, a permission or network access. Only the description and the instructions of a package are used; its tools, profile and files never reach the session. Text that looks like a block tag is escaped.
 - **Size.** The block may not be larger than `skills.selection.max_tokens`. A skill is added together with the skills it needs, or not at all. A skill that does not fit is left out and logged. If a mandatory skill does not fit, the step stops with `skill selection is blocked: … does not fit the skill context budget`; raise `max_tokens`, then resume.
 - **Recorded.** The step record in `run.json` gets `skills`: `loaded` (`id@version`, in load order), `omitted` (only when something was left out), `bytes` and `estimatedTokens`. Steps without a lock have no `skills`. The log shows the same sizes.
 - **Repairs and fallbacks.** The full text is given once per Claude session. A step with `resume:` that continues the session of an earlier step (same agent, same locked block) gets only a one-line reminder with the skill ids, not the text again. A new session gets the complete block exactly once: a retry, a fallback to another model or provider, or a resume that cannot continue the old session. Before every session the lock is checked again; if the skills changed, the step stops.
 - **Log.** `skill context: reused …` (nothing added), `skill context: loaded …` (first session), `skill context: reloaded … new session` (retry, fallback or fresh session) and `! skill context: rejected (…)` (lock check failed). The log shows ids, sizes and token estimates, never the package text. The step record `skills` also gets `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; `skills_digest` is kept for the next resume. Older run files without them still work.
-- **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+- **Codex** sessions get the same block; see [Skills in Codex and local-model sessions](#skills-in-codex-and-local-model-sessions). Reviewer steps get review checks on both agents; see below.
+
+### Skills in Codex and local-model sessions
+
+A Codex step, also on a local model, gets the same `<foundry-skills>` block as a Claude step of the same run: after `</instructions>` and before the task. Nothing is written to the repository.
+
+- **Isolation.** A run whose lock holds skills runs its Codex steps without your personal Codex setup, even with `isolate_agents: false`. The mode depends on how the step signs in; see "Codex and your personal setup" in [When something goes wrong](#when-something-goes-wrong). A step held by the OS sandbox gets the block and the record too, with no flag and no note.
+- **Old Codex CLI.** If the CLI has no `--ignore-user-config`, a step with locked skills is refused before Codex starts (`skill selection is blocked: this Codex CLI has no --ignore-user-config …`). Update the CLI, or use a local model or `CODEX_API_KEY`. Without locked skills, the step runs as before.
+- **Size and record.** The same limits and the same `skills` record apply as for Claude. A mandatory skill that does not fit `skills.selection.max_tokens` stops the step before Codex starts.
+- **Every session.** Codex never reuses the block: a resumed session, a retry and a fallback each get the full text again. The log says "the full block is sent again".
+- **Review steps.** A review step on Codex gets the review checks of the run's lock.
+- **No lock, no block.** A run without a lock is unchanged.
+
+### Skills, tools and connectors
+
+A skill can say what it needs: a shell, network access, write access or a connector. The plan gate compares that with `skills.tools` and with what the flow gives.
+
+| What the skill needs | Checked against | Code when it fails |
+|---|---|---|
+| Shell, network or write access | `skills.tools` (the policy) | `tool-not-approved` |
+| Shell or network | What the flow gives its Claude steps | `tool-not-in-flow` |
+| A connector | Nothing: no connector can be granted yet | `connector-unavailable` |
+
+> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and the text of that skill can still reach Claude sessions. Leaving it out of sessions is not done yet. No connector is granted in either case.
+
+```yaml
+skills:
+  tools:
+    shell: true        # a skill may ask for a shell
+    network: false     # a skill may ask for network access
+    filesystem: write  # read or write
+    missing: stop      # stop or degrade
+```
+
+It decides whether a run may go on with a skill. It does not limit what a session can do.
+
+- **When it is checked:** after the plan gate, at the start of an explicit flow, and again on resume. It applies to planned, explicit and `plan_check` runs. A run with no skills is not checked, and older run files stay valid.
+- **"The flow has it":** a Claude step gives a shell or network through its permission mode, its `allowed_tools` (`Bash…`, `WebFetch`, `WebSearch`) or the sandbox. A flow with a `flow` step is not checked for `tool-not-in-flow`.
+- **`tool-not-approved`:** allow the tool in `skills.tools`, or plan without the skill; then resume.
+- **`tool-not-in-flow`:** give a Claude step the tool, or use another flow; then start again.
+- **`connector-unavailable`:** no connector can be granted in this version. Remove the skill from the plan, or take it off `skills.selection.include`.
+- **`degrade`:**
+  - The run goes on with a `⚠` warning.
+  - The skill, the skills that depend on it and the dependencies only it needed are listed in `skillPlan.tools.leftOut`.
+  - A mandatory skill still stops the run, and so does a skill that a mandatory skill needs, directly or through other skills.
+  - "Left out" is a record and a warning in this version: the skill stays in the run's lock and its text can still reach sessions. Use `stop` when the skill must not be used at all.
+- **Where to see it:** the stop reason, `run.json` → `skillPlan.tools` (`action`, `met`, `missing`, `leftOut`, `warnings`), and the log line `· skill tools: <key> <need> — <sources>`.
 
 ### Skills on the run page
 
@@ -2628,7 +2885,7 @@ The same data is the `skillView` field of `GET /api/runs/:id` and of the `update
 
 A skill package may hold an optional `REVIEW.md` next to `SKILL.md`: a few short checks for a reviewer (for example a Kafka skill checks delivery and ordering; a database skill checks the data model and migration risks). It is at most 8 KiB, must not be empty, and needs the `reviewer` role in `skill.yaml` (or no roles). It is part of the package digest, so a change needs a new pin.
 
-A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step and the `review_N` steps of `issue-plan` have it. Without `skill_role` a step is a coder, as before.
+A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step of `issue-gitflow` and `issue-plan`, and the `review_N` steps of `issue-gitflow` and `issue-code-daily`, have it. Without `skill_role` a step is a coder, as before.
 
 - **Compact.** The block (`<foundry-skills role="reviewer">`) holds only the description and `REVIEW.md` of each skill, never `SKILL.md`, references, scripts or other files. It is limited by `skills.review.max_tokens` (100–20000, default 3000) and `skills.review.max_skill_tokens` (50–5000, default 1000). It is always smaller than the coding block of the same run and never above `skills.selection.max_tokens`. A skill over its limit is left out and logged.
 - **Only coding skills.** Only skills that were loaded for coding and allow the `reviewer` role are used. Skills that were not selected do not appear. Code review uses the run's skill lock. Plan review, before any lock exists, uses the skills of the draft plan's `SKILL_REQUEST` if they resolve; otherwise the reviewer gets none and the log says why.
@@ -2782,6 +3039,20 @@ turn it off for one process, set `SCF_NO_FAILURE_MODEL=1`.
 Costs are still recorded and shown everywhere, but nothing is ever stopped because of money — no
 run limit, no step limit, no daily budget. The usage limits that Claude and Codex report
 themselves still pause runs; they continue by themselves when the limit resets.
+
+### Operations overview
+
+**Overview** is the first page of Administration. It shows what needs attention, on one page: four tiles (Problems, Queue, Watchers, Spent today) and seven cards. Each card has a link to its own page.
+
+- **Health** shows the same line as the health chip. **Cancel run** is the only action on the page; it asks first.
+- **Problems** counts the open findings of the monitor (Open Problems).
+- **Providers** says how many agents and providers are ready (Open Models).
+- **Queue** shows how many runs are running and waiting, and the first five waiting runs (Open Runs).
+- **Watchers** shows how many are enabled, the ones with a problem, and the oldest successful check (Open Watchers).
+- **Limits** shows today's spending and the accounts at a limit (Open Settings, Open Users).
+- **Recent audit** shows the newest entries (Open Audit).
+
+A part that cannot be loaded says "Not available" in its own card; the rest of the page still shows. The page does not refresh by itself: open it again to refresh.
 
 ### Dashboard
 
@@ -3115,9 +3386,9 @@ The folder of your clone can keep its name.
 
 **Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
 
-**Start a session.** Click **New session**. Choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (up to 120 characters). When the title is empty, the first line of the idea is used. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page.
+**Start a session.** Click **New session** (or choose **Refine an idea first** or **Refine an existing issue** on **Start work**). Choose the kind: **An idea** or **An existing issue**. For an idea, choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (optional, up to 120 characters). When the title is empty, the first line of the idea is used. For an existing issue, choose a repository and give the issue number (see below); a blank, zero or non-number issue is refused with "Give the issue number." and nothing is sent. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page. If the server refuses, its sentence shows in the dialog. What you typed is kept in page memory when you close the dialog or the request fails, and is cleared after the session is made. Nothing is written to GitHub.
 
-**Refine an existing issue.** Click **Refine an existing issue** next to **New session**. Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
+**Refine an existing issue.** Click **Refine an existing issue** next to **New session** (it opens the same dialog with the kind "An existing issue"). Under the kind the dialog says that a session from an issue cannot be published yet. Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
 
 **Start from an existing issue (server; the button above uses it).** `POST /api/refinement` also accepts `{ "repo": …, "issue": <number> }` instead of an idea. The issue is read from GitHub with the repository's sign-in; nothing is written to GitHub. The issue's title becomes the session title (up to 256 characters) and its title and text become the idea. The session keeps `source`: the issue number, link, and the title, text and `updated_at` it had when it was read (`GET /api/refinement/:id` returns it). When the text has the story format that Preview writes, the session gets one draft with the fields filled, all marked as typed by a person; text the fields cannot hold goes into the notes under its heading, and "Accepted anyway" is not taken. Without the story format, you get the idea only and no draft. Hidden Foundry markers and the "Refined in Spaghetti Code Foundry by …" note are left out. A text over the idea limit is refused, not cut. It is refused with a reason when the issue does not exist (404), is a pull request (400), is closed (409), or the repository is not yours (403). It is refused with 409 when the Foundry is building or has built the issue: a live or queued run, a Foundry status label (working, waiting, needs info, done; a watcher's own names count), or a run with a pull request, unless that pull request is closed and not merged. An issue with only a failed run, or only the failed label, is accepted. An issue for which you already have an open session is refused with the id of that session. When the issue has the build label, `source.buildLabel` says so. A session from an issue cannot be published yet (409) until write-back exists.
 
@@ -3125,7 +3396,26 @@ The folder of your clone can keep its name.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner. See "The session page" below for how the page is laid out.
+
+### The session page
+
+The session page `#/refinement/:id` is one workspace. The title, the state, the repository and the **Rename**, **Drop** and **Restore** buttons stay on top. Under them is a row of five parts; one part is shown at a time:
+
+| Part | Shows | State on its button |
+|---|---|---|
+| **Idea and brief** | the idea and the architect's context brief | "none", "made", or "working" |
+| **Conversation** | the questions, the proposals and the map | the open questions, for example "2 questions open" |
+| **Story drafts** | the drafts, their readiness, impact and suggestions | "n drafts, m ready" |
+| **Hand off** | publishing to GitHub | "n on GitHub", or "nothing ready" |
+| **Log** | who did what, and when | — |
+
+- **Next.** A line "Next:" names the next step: ask the architect to look at the code, answer the questions, add a draft, check readiness, or publish. Click it to go to that part. It is advice only. Nothing is done for you, and you can open any part at any time.
+- **Which part opens.** A new session opens on **Idea and brief**. A session with drafts opens on **Story drafts**. The part you choose is kept for that session while the page is open, also when the page refreshes by itself. It is not kept after you close the page.
+- **Nothing is lost.** Switching parts hides a part; it does not rebuild it. Text you typed in a draft or an answer is kept and is still saved. Leaving the page saves it as before.
+- **The architect's line.** While the architect works, its status line shows in whichever part is open.
+- **Keyboard and screen readers.** The row is a tab list. Use the left and right arrow keys to move between the parts. Enter or Space chooses one. The chosen part keeps the focus when the page refreshes.
+- **Rules are the same.** Who may change what, the read-only preview, dropped sessions, a hidden brief, talk or drafts, a missing repository, and publishing only after you confirm are all unchanged. The address `#/refinement/:id` is unchanged.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
@@ -3275,10 +3565,10 @@ When the run ends, the checked ways (see `ask=split` below) are stored with the 
 - **Title.** A draft needs a title. If a ready draft has none, the call is refused (409) and nothing is created.
 - **The hidden marker.** Each issue body ends with a hidden line naming the session and the draft. If a call fails halfway, **publish again**: drafts that have an issue are skipped, and an issue made before the answer was lost is found by its marker and taken over, with its text and labels unchanged. After a timeout, wait a moment before you try again: GitHub's list of issues can lag a few seconds, and an issue not listed yet would be created twice. Only the newest 100 issues are searched.
 - **While it runs.** The session cannot be changed while it is being published (409, "try again in a moment"); this includes rename, drop and architect calls. Publish waits (409) while an architect run of the session is queued or running; a paused run does not block it. A second publish at the same time gets 409. A session whose log is full cannot be published.
-- **Replacing a split issue.** When the session came from an issue and that issue was split, the issue is replaced once every part is on GitHub. Until then only the ready parts are created, and nothing is written to the original or to issues that depend on it. Then, in this order: (1) each open issue that lists the original under "Depends on" gets the parts in its place (only that list changes, never the title) and a comment with the text before and after; an issue that names the original only by title gets a comment asking you to change it by hand; (2) every trigger label of an issues watcher is taken off the original, so the Foundry does not build it; (3) the original gets a comment that names the parts and any criteria left behind. The original is **not** closed or otherwise changed: check it and close it by hand. The answer has `replaced: { issue, parts, dependants }`. A closed original, or one the Foundry builds, is refused (409) before anything is written, unless the replacement had started already. If a call fails, publish again (with `{}` if nothing is left to create); nothing is written twice. An edit made on GitHub inside the "Depends on" list while it is read gives 409; publish again. GitHub cannot refuse an out-of-date update, so an edit made in the moment between the last read and the update can be lost. While the replacement is due, the issue cannot be imported again, and the split mark draft cannot be removed once a part is on GitHub.
+- **Replacing a split issue.** When the session came from an issue and that issue was split, the issue is replaced once every part is on GitHub. Until then only the ready parts are created, and nothing is written to the original or to issues that depend on it. Then, in this order: (1) each open issue that lists the original under "Depends on" gets the parts in its place (only that list changes, never the title) and a comment with the text before and after; an issue that names the original only by title gets a comment asking you to change it by hand; (2) every trigger label of an issues watcher is taken off the original, so the Foundry does not build it; (3) the original gets one comment that names the parts, any criteria left behind, and says it will be closed; (4) the original is read again and closed as **not planned**, so the backlog holds only the parts. The answer has `replaced: { issue, parts, dependants, closed, closedAt? }`, where `closed` is `not_planned` (with `closedAt`), `other` or `open`. The original is **not** closed, and its comment says it stays open, when the repository has more than 1,000 open issues and pull requests, when a dependant had to be changed or checked by hand (it may still depend on the original, and a closed issue counts as done), or when it is a story the monitor opened (closing it would mute the finding): check it and close it by hand (`closed: "open"`). An original closed in another way is left so (`closed: "other"`). If it started to be built before the close, the answer is 409 and the replacement stays due. Closing can be undone on GitHub by reopening. Sessions finished before this change with the original open stay done and are not closed afterwards. A closed original, or one the Foundry builds, is refused (409) before anything is written, unless the replacement had started already. If a call fails, publish again (with `{}` if nothing is left to create); nothing is written twice. An edit made on GitHub inside the "Depends on" list while it is read gives 409; publish again. GitHub cannot refuse an out-of-date update, so an edit made in the moment between the last read and the update can be lost. While the replacement is due, the issue cannot be imported again, and the split mark draft cannot be removed once a part is on GitHub.
 - **Afterwards.** A published draft shows `published: { issue, url, at }` and the log has `draft-published`. It cannot be changed any more: edits, ready checks, the review label, suggestions and architect calls on it give 409 naming the issue. While a draft is published, the Epic cannot be changed, a map entry that the draft is tied to cannot be removed, and a draft that a published draft still names cannot be removed. Other drafts work as before. Editing after publishing comes later.
 
-**Publishing on the session page.** The session page shows **Publish** only to the owner, while the repository is in My repositories, and only when at least one draft is ready and not on GitHub yet. An admin who is not the owner does not see it.
+**Publishing on the session page.** The session page shows **Publish** only to the owner, while the repository is in My repositories, and only when at least one draft is ready and not on GitHub yet, or when the replacement of a split issue is not finished (also in a *Published* session). An admin who is not the owner does not see it.
 - **Save first.** Text you typed in a draft is saved before the plan is shown. If it cannot be saved, nothing is published. If some text has no place on the page any more, you are asked whether to publish anyway.
 - **The plan.** **Publish** opens a window with the issues in the order they will be created. Each shows its title, text, dependencies (`#12`, or "new issue 2: Title") and labels. Drafts that are not ready are listed with the reason and are not published. Nothing is sent to GitHub until you press **Create the issues**.
 - **Labels.** For each draft you tick labels from the labels of the repository. Nothing is ticked for you, except the review label when the draft asked for it. The build and review labels are not in the list; they are set by the rules.
@@ -3288,6 +3578,7 @@ When the run ends, the checked ways (see `ask=split` below) are stored with the 
   - **Keep GitHub's** writes nothing to the issue and publishes none of the listed stories. The session remembers the GitHub version as its source, so it does not ask again, and the draft stays unpublished: go on editing or drop the session. It is refused (409) while an unfinished update is pending, so the old text is not lost.
 
   The publish plan shows the same state as `changedOnGithub` before you press the button.
+- **Replacing a split issue.** When the session came from an issue that was split, the window says so. Once every part is on GitHub, it says `Issue #N is replaced by its parts and closed as not planned.` or, when the issue stays open (see above), that it gets the comment but stays open and should be checked and closed by hand; before that it says that nothing changes for it now. Under "Issues that depend on #N" it lists each open issue that names the issue under "Depends on", with the text **Before** and **After**; an issue that names it only by its title shows "Change by hand: it names the issue by its title." and gets a comment instead. Publishing rewrites the dependants and comments on them, and comments on the original with the names of the parts, then closes it as not planned. If criteria were left behind on it, the comment names them. If the repository has more than 1,000 open issues and pull requests, the window warns that some issues that depend on the original may be missing. The button reads **Replace the issue** when nothing is created, and **Create the issues and replace the original** when something is. The session page says how far it is: waiting for the parts, "not replaced yet" (**Publish** is offered again: publish again to finish), or "was replaced by #a, #b", followed by nothing more (closed as not planned), "It was closed on GitHub in another way and is left so.", or "It is still open: check it and close it by hand." The message after publishing says `issue #N is replaced`, `issue #N is replaced; it was closed in another way`, or `issue #N is not closed: check and close it by hand`. Dropping the session, or removing the split original before any part is published, gives the replacement up. Titles and texts from GitHub are shown as plain text.
 - **After publishing.** Each published draft shows **On GitHub: #n** with a link to its issue, and its fields are read only. The session shows *Published* when every draft is on GitHub.
 - **After a failure.** The page shows the message of the server and which drafts are on GitHub already. **Publish** is offered again for the rest; drafts that are on GitHub are not created twice.
 
@@ -3482,6 +3773,36 @@ When the task has the part "The person's own way", the first way works out that 
 **Cost and model.** At most $3 and 30 minutes a run, with the model `claude-opus-5-5`. An admin changes it with a routing rule for the flow `^refine-round$` on the Models page.
 
 **Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.
+
+### Refinement in short
+
+**What it is for.** A story that is clear before it is built is built right the first time. Refinement helps you write such a story. You stay in charge: you write the story, you decide, and you press **Publish**.
+
+**What the architect does.** It reads the code and the open issues, asks questions, points out what is unclear, proposes text, and suggests ways to split a big story. Its proposals wait beside your draft. They go into a story only when you accept them.
+
+**What the architect does not do.** It does not write to the repository or to GitHub. It does not decide for you, write an implementation plan or write code. Text from an issue or from your idea is only read, never followed as an instruction. Only you can see and publish your sessions. A story on GitHub holds only text that you wrote or accepted.
+
+**Definition of Ready.** Each story is checked against a short list for its repository (by default: clear value, stands on its own, criteria that can be checked, small enough, no open questions, out of scope named, no implementation plan). Press **Check** on a draft. A story with an open question or an implementation plan is not ready. You may accept another item anyway, with a reason; never the implementation plan.
+
+**Splitting.** When a story is too big, press **Split**, choose a way, and confirm. Each part becomes its own draft, with **Depends on** set so that the parts are built in order. The original is kept as a record.
+
+**Publishing.** **Publish** creates one GitHub issue for each ready story, in the order of their dependencies. For a session from an existing issue, it updates that issue. For a split issue, it also closes the original as not planned (see "Replacing a split issue").
+
+**What happens next.** The top of the session page has one sentence, "What happens next", that says who takes the next step (you or the architect) and what it is.
+
+**A worked example.** Sam writes the idea "Admins should be able to export a report" in a new session.
+
+1. The next-step sentence says: ask the architect to look at the code, or write your first story draft. Sam presses **Ask the architect to look at the code**. The brief shows an existing report page.
+2. Sam asks for questions. The architect asks "Which formats?" and "Who may export?". Sam answers the first with CSV and does not know the second, so presses "I don't know yet". The open question is on the map.
+3. Sam writes a draft and presses **Check**. It is not ready: it has an open question. Sam settles it with the team and answers it. After a new check the draft is ready.
+4. The draft also holds three criteria for three formats. Sam presses **Split**, picks the way with one story for CSV and one for each other format, and confirms. There are three drafts; the second and third depend on the first.
+5. Sam presses **Publish**. The three issues are created in order, with the dependencies as issue numbers. The session is *Published*.
+
+### Refinement for admins
+
+- **Definition of Ready per repository.** Press **Definition of Ready** on the repository's row (Administration → All repositories). Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
+- **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
+- **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
 
 ---
 

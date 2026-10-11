@@ -25,7 +25,7 @@ const row = (...nodes) => h("div", { class: "gallery-row" }, nodes);
 const VARIANTS = ["default", "primary", "danger", "ghost"];
 const ICONS = [["ghost", "x"], ["default", "check"], ["primary", "info"], ["danger", "ban"]];
 const notes = (keyboard, long, narrow) => h("ul", {}, h("li", {}, "Keyboard: ", keyboard), h("li", {}, "Long content: ", long), h("li", {}, "Narrow layout: ", narrow));
-const NARROW = "Overlays cover the browser window, not the gallery frame. Make the window 760 px or narrower: the drawer takes the full width.";
+const NARROW = "Overlays cover the browser window, not the gallery frame. Make the window 767 px or narrower: the drawer takes the full width.";
 const TABS = [
   { id: "one", label: "First", build: () => h("p", {}, "First panel.") },
   { id: "two", label: "Second", build: () => h("p", {}, "Second panel.") },

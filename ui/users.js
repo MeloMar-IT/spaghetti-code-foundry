@@ -1,13 +1,13 @@
 import { api } from "./api.js";
 import { errorText, linkHash } from "./auth.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { table } from "./kit/display.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
-import { rememberView } from "./view-as.js";
 
 const text = (s) => String(s ?? "").trim();
 const ROLES = ["user", "admin"];
 
-const browserPage = {
+export const browserPage = {
   origin: () => location.origin,
   clipboard: () => (typeof navigator === "undefined" ? undefined : navigator.clipboard),
   reload: () => location.reload(),
@@ -381,22 +381,33 @@ const appReposDialog = (u, { repos }) => {
   });
 };
 
-const DIALOGS = { app: appReposDialog, edit: editDialog, limits: limitsDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
-const LABELS = { edit: "Edit", limits: "Limits", app: "App repositories", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
+export const DIALOGS = { app: appReposDialog, edit: editDialog, limits: limitsDialog, link: linkDialog, reset: resetDialog, unlock: unlockDialog, block: blockDialog, unblock: unblockDialog, delete: deleteDialog };
+export const LABELS = { edit: "Edit", limits: "Limits", app: "App repositories", link: "New link", reset: "Reset password", unlock: "Unlock", block: "Block", unblock: "Unblock", view: "View as user", delete: "Delete" };
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "users";
+    // the list only: "#/users/<id>" is the page of one account
+    return decodeURIComponent(location.hash.split("?")[0].split("/")[1] ?? "") === "users" && location.hash.split("?")[0].split("/").length === 2;
   } catch {
     return false;
   }
 };
 
+/** The limits of one account as cell content: its own values marked, the defaults muted. `limits` null means the store could not be read. */
+export function limitsCell(limits, id) {
+  if (limits === null) return h("span", { class: "muted" }, "not available");
+  const parts = limitParts(limits, id);
+  if (!parts.length) return h("span", { class: "muted" }, "no limits");
+  return parts.map((p, i) => [
+    i ? " · " : null,
+    p.override ? h("strong", { title: "Set for this account" }, `${p.text} (own)`) : h("span", { class: "muted", title: "Default" }, p.text)]);
+}
+
 // A broken limits store must not take the page down: the column then says "not available".
-const loadUsers = () => Promise.all([api.users(), api.limits().catch(() => null)]);
+export const loadUsers = () => Promise.all([api.users(), api.limits().catch(() => null)]);
 const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "status" }, notice.text) : null);
 let reloads = 0; // the newest reload wins
 
@@ -421,37 +432,6 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
     if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh });
   };
 
-  const act = async (u, kind) => {
-    let loaded = {};
-    if (kind === "app") {
-      try {
-        loaded = await api.userAppRepos(u.id);
-      } catch (e) {
-        if (mine !== generation || !onPage()) return;
-        return toast(errorText(e), "error");
-      }
-      if (mine !== generation || !onPage()) return;
-    }
-    const answer = await DIALOGS[kind](u, { me, page, limits, repos: loaded.repos ?? [] });
-    if (answer && u.id === me && ["edit", "block", "delete"].includes(kind)) return page.reload();
-    let next;
-    if (answer && kind === "block") next = { text: cancelledText(u.name, cancelledTotal(answer.cancelled)) };
-    else if (answer && (kind === "edit" || kind === "limits" || kind === "app")) toast("Saved");
-    else if (answer && kind === "unlock") toast(`${u.name} is unlocked`);
-    else if (answer && kind === "unblock") toast(`${u.name} is unblocked`);
-    else if (answer && kind === "delete") toast(`${u.name} was deleted`);
-    return reload(next);
-  };
-  // Starts the read-only preview (an audit line on the server) and opens it in this tab; the name is kept for the bar.
-  const view = async (u) => {
-    try {
-      const v = await api.startViewAs(u.id);
-      rememberView(v);
-      page.go(`/user/?as=${encodeURIComponent(v.id)}`);
-    } catch (e) {
-      toast(errorText(e), "error");
-    }
-  };
   const add = async () => {
     await addDialog(null, { page });
     reload();
@@ -461,32 +441,22 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
     if (answer) toast("Saved");
     reload();
   };
-  const limitsCell = (u) => {
-    if (limits === null) return h("span", { class: "muted" }, "not available");
-    const parts = limitParts(limits, u.id);
-    if (!parts.length) return h("span", { class: "muted" }, "no limits");
-    return parts.map((p, i) => [
-      i ? " · " : null,
-      p.override ? h("strong", { title: "Set for this account" }, `${p.text} (own)`) : h("span", { class: "muted", title: "Default" }, p.text)]);
-  };
-  const row = (u) => h("tr", {},
-    h("td", {}, u.name, u.id === me ? h("span", { class: "muted" }, " (you)") : null),
-    h("td", { class: "mono" }, u.email),
-    h("td", {}, u.role),
-    h("td", {}, h("span", { class: pillClass(u) }, statusText(u))),
-    h("td", { class: "muted" }, lastSignInText(u)),
-    h("td", { class: "mono" }, u.runs),
-    h("td", {}, limitsCell(u)),
-    h("td", {}, actionsFor(u).map((k) => [h("button", { class: k === "delete" ? "small danger" : "small", disabled: k === "limits" && limits === null, onClick: () => (k === "view" ? view(u) : act(u, k)) }, LABELS[k]), " "])));
+  // The name opens the account's page, where all actions are. The shared table is drawn without `onRowOpen`, so the link stays a link.
+  const columns = [
+    { key: "name", label: "Name", cell: (u) => [h("a", { href: `#/users/${encodeURIComponent(u.id)}` }, u.name), u.id === me ? h("span", { class: "muted" }, " (you)") : null] },
+    { key: "email", label: "E-mail", cell: (u) => h("span", { class: "mono" }, u.email) },
+    { key: "role", label: "Role" },
+    { key: "status", label: "Status", cell: (u) => h("span", { class: pillClass(u) }, statusText(u)) },
+    { key: "lastSignIn", label: "Last sign-in", cell: (u) => h("span", { class: "muted" }, lastSignInText(u)) },
+    { key: "runs", label: "Runs", cell: (u) => h("span", { class: "mono" }, String(u.runs ?? 0)) },
+    { key: "limits", label: "Limits", cell: (u) => h("span", {}, limitsCell(limits, u.id)) },
+  ];
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
       h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
       h("button", { class: "primary", onClick: add }, "+ Add user")),
     note,
-    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : h("table", { class: "table" },
-      h("caption", { class: "sr-only" }, "Users"),
-      h("thead", {}, h("tr", {}, ["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-      h("tbody", {}, users.map(row))));
+    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : table({ caption: "Users", hideCaption: true, columns, rows: users }));
   return () => {
     generation++;
   };

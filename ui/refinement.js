@@ -1,19 +1,18 @@
 import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, timeAgo, toast } from "./dom.js";
+import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { dialogOpen } from "./live.js";
 import { announcer, failState } from "./refinement-states.js";
 import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
-import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
+import { sourceSection } from "./refinement-import.js";
+import { newSessionDialog } from "./refinement-new.js";
 import { publishSection } from "./refinement-publish.js";
-import { impactLogText } from "./refinement-impact.js";
-import { splitLogText } from "./refinement-split.js";
-import { readyLogText } from "./refinement-ready.js";
-import { reviewLogText } from "./refinement-remarks.js";
-import { suggestLogText } from "./refinement-suggest.js";
-import { drafts as talkDrafts, kindOf, talkLogText, talkSection } from "./refinement-talk.js";
+import { nextNode, sessionNext } from "./refinement-next.js";
+import { drafts as talkDrafts, kindOf, talkSection } from "./refinement-talk.js";
+import { PARTS, architectStatus, briefSection, chosen, defaultPart, handoffNote, homePart, logText, nextStep, partSummary, statusLine, workspace } from "./refinement-workspace.js";
 
 /** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. A session is Ready when every draft is ready. */
 export const STATE_LABELS = {
@@ -24,43 +23,12 @@ export const STATE_LABELS = {
   dropped: "Dropped",
 };
 
+export { sessionBody, sessionProblem } from "./refinement-new.js";
+
 const text = (s) => String(s ?? "").trim();
 
-/** What is missing in the input, or "" when it can be sent. */
-export function sessionProblem({ repo, idea } = {}) {
-  if (!text(repo)) return "Choose a repository.";
-  if (!text(idea)) return "Describe your idea.";
-  return "";
-}
+export { activityText, architectStatus, askLabel, briefMeta, briefParts, logText } from "./refinement-workspace.js";
 
-/** The request body: the title is left out when it is blank. */
-export function sessionBody({ repo, idea, title }) {
-  const body = { repo: text(repo), idea: String(idea ?? "") };
-  if (text(title)) body.title = text(title);
-  return body;
-}
-
-/** One line of the log in words. */
-export function logText(entry) {
-  const who = entry.who || "Someone";
-  if (entry.what === "created") return `${who} started the session`;
-  if (entry.what === "renamed") return `${who} renamed it${entry.detail ? ` to "${entry.detail}"` : ""}`;
-  if (entry.what === "source-refreshed") return `${who} kept the GitHub version of the issue${entry.detail ? ` ${entry.detail}` : ""}`;
-  if (entry.what === "dropped") return `${who} dropped the session`;
-  if (entry.what === "restored") return `${who} restored the session`;
-  if (entry.what === "architect-started") return `${who} asked the architect to look at the code`;
-  if (entry.what === "architect-resumed") return `${who} asked the architect to carry on`;
-  if (entry.what === "architect-brief") return "The architect wrote the context brief";
-  if (entry.what === "architect-failed") return `The architect could not finish${entry.detail ? `: ${entry.detail}` : ""}`;
-  if (entry.what === "draft-added") return `${who} added a story draft`;
-  if (entry.what === "draft-published") return `${who} published a story draft${entry.detail ? `: ${entry.detail}` : ""}`;
-  if (entry.what === "draft-removed") return `${who} removed a story draft${entry.detail ? `: "${entry.detail}"` : ""}`;
-  if (entry.what === "epic-set") return `${who} set the Epic${entry.detail ? ` to ${entry.detail}` : ""}`;
-  if (entry.what === "epic-cleared") return `${who} cleared the Epic`;
-  return importLogText(entry) || talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
-}
-
-const ASK = "Ask the architect to look at the code";
 /** How often the session page asks again while the architect is queued or running, in ms. */
 export const POLL_MS = 5000;
 let poll; // one session page at a time
@@ -68,103 +36,6 @@ const stopPoll = () => {
   clearTimeout(poll);
   poll = undefined;
 };
-const sentence = (t) => (/[.!?]$/.test(t) ? t : `${t}.`);
-
-/** What the step is, in words for the user: never a folder or file name of the run. */
-export function activityText(doing, kind = "brief") {
-  const t = text(doing);
-  if (!t) return "";
-  if (kind !== "brief") {
-    // A round, an answer, a suggestion, a review or a view: fixed sentences only, never the words of the step.
-    if (/clone|check out/i.test(t)) return "Getting the code.";
-    if (/reads the code/i.test(t)) return "Reading the code.";
-    if (kind === "impact" && /issues/i.test(t)) return "Reading the open issues.";
-    if (/^check/i.test(t)) return kind === "suggest" ? "Checking the suggestion." : kind === "review" ? "Checking the review." : kind === "impact" ? "Checking the view." : kind === "ready" ? "Checking the judgement." : kind === "split" ? "Checking the ways." : "Checking the answer.";
-    if (/^getting ready/i.test(t)) return "Getting ready.";
-    return "";
-  }
-  if (/clone|check out/i.test(t)) return "Getting the code.";
-  if (/reads the code/i.test(t)) return "Reading the code and writing the brief.";
-  if (/issues/i.test(t) && /read/i.test(t)) return "Reading the open issues.";
-  if (/check/i.test(t) && /brief/i.test(t)) return "Checking the brief.";
-  if (/[\w.-]+\/|\.\w{1,4}\b/.test(t)) return "Working on the brief.";
-  return t;
-}
-
-const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft.", impact: "Then it looks at what your draft touches.", ready: "Then it judges what code could not decide.", split: "Then it looks for ways to split your draft." };
-const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft.", impact: "The architect is looking at what your draft touches.", ready: "The architect is judging the readiness of your draft.", split: "The architect is looking for ways to split your draft." };
-
-/** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
-export function architectStatus(a) {
-  const state = a?.state;
-  const kind = kindOf(a);
-  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: QUEUED_DETAIL[kind] };
-  if (state === "running") return { busy: true, text: RUNNING_TEXT[kind], detail: activityText(a.doing, kind) };
-  if (state === "paused") return { busy: false, text: "The architect paused.", detail: sentence(text(a.reason)) };
-  if (state === "failed") return { busy: false, bad: true, text: "The architect could not finish.", detail: sentence(text(a.reason)) };
-  return { busy: false, text: "", detail: "" };
-}
-
-/** The label of the ask button, or "" when there is none. */
-export function askLabel(s) {
-  if (!s?.mine || s.state === "dropped" || s.repoAvailable === false) return "";
-  const state = s.architect?.state;
-  if (state === "queued" || state === "running") return "";
-  const own = kindOf(s.architect) === "brief"; // a round, a question, a suggestion, a review or a view is asked again where it shows
-  if (state === "paused") return own ? "Ask again" : "";
-  if (state === "failed" && own) return "Try again";
-  return s.brief ? "Refresh" : ASK;
-}
-
-/** The brief as parts: [{ title, body }], one per "## " heading. */
-export function briefParts(input) {
-  const parts = [];
-  let cur = { title: "", lines: [] };
-  for (const line of String(input ?? "").split(/\r?\n/)) {
-    const m = /^## +(.+?)\s*$/.exec(line);
-    if (m) {
-      parts.push(cur);
-      cur = { title: m[1], lines: [] };
-    } else cur.lines.push(line);
-  }
-  parts.push(cur);
-  return parts.map((p) => ({ title: p.title, body: p.lines.join("\n").trim() })).filter((p) => p.title || p.body);
-}
-
-/** "Made <date and time> · branch <name>"; the branch part only when there is one. */
-export function briefMeta(brief) {
-  return `Made ${new Date(brief.at).toLocaleString()}${brief.branch ? ` · branch ${brief.branch}` : ""}`;
-}
-
-/** The line for the state of the architect: a spinner while it works, its words otherwise; null when idle. */
-function statusLine(st) {
-  if (st.busy) return h("div", { class: "row" }, h("span", { class: "spinner" }), h("b", {}, st.text), h("span", { class: "muted" }, st.detail));
-  return st.text ? h("p", { class: st.bad ? "status bad" : "status" }, `${st.text} ${st.detail}`) : null;
-}
-
-/** The "Context brief" part: status line, button, brief. Returns nodes. */
-function briefSection(s, onAsk) {
-  // Only a run for the brief draws its line here; a round or a question is shown in the talk, a suggestion, a review or a view on the draft page.
-  const st = architectStatus(kindOf(s.architect) === "brief" ? s.architect : undefined);
-  const label = askLabel(s);
-  const b = s.brief;
-  const line = statusLine(st);
-  return [
-    h("h2", {}, "Context brief"),
-    line,
-    s.briefHidden ? h("p", { class: "muted" }, "The brief is not shown while the repository is not in My repositories.") : null,
-    !b && !s.briefHidden && !st.text ? h("p", { class: "muted" }, "No context brief yet.") : null,
-    label ? h("button", { class: label === "Refresh" ? "" : "primary", onClick: (e) => onAsk(e.currentTarget) }, label) : null,
-    b && !s.briefHidden ? h("div", { class: "card" },
-      h("p", { class: "muted" }, briefMeta(b)),
-      b.cut ? h("p", { class: "muted" }, "The brief was too long to keep whole; the end is missing.") : null,
-      briefParts(b.text).map((p) => [
-        p.title ? h("h3", {}, p.title) : null,
-        h("p", { class: "flush pre-wrap wrap-anywhere" }, p.body),
-      ])) : null,
-  ];
-}
-
 /** The server's sentence for a failed call. */
 export function errorText(e) {
   if (e instanceof TypeError) return "Could not reach the server.";
@@ -208,47 +79,6 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
     if (![...talkDrafts.values()].some(text)) return;
     e.preventDefault();
     e.returnValue = "";
-  });
-}
-
-/** Asks for the repository, the idea and an optional title. Resolves with the new session, or undefined when closed. */
-function newSessionDialog(repos, onMade, preferred) {
-  return modal("New refinement session", (close) => {
-    if (!repos.length) {
-      return h("div", { class: "stack" },
-        h("p", { class: "muted" }, "You need a GitHub repository first. Add one under My repositories."),
-        h("a", { href: "#/repos", onClick: () => close(undefined) }, "Go to My repositories"));
-    }
-    const select = h("select", { name: "repo" }, repos.map((r) => h("option", { value: r }, r)));
-    select.value = repos.find((r) => sameRepo(r, preferred)) ?? repos[0];
-    const title = h("input", { name: "title", placeholder: "Optional. The first line of the idea is used when empty.", autocomplete: "off" });
-    const idea = h("textarea", { name: "idea", rows: 8, placeholder: "Describe your idea in your own words" });
-    const err = h("p", { class: "status bad flush" });
-    let busy = false;
-    const run = async () => {
-      if (busy) return;
-      const input = { repo: select.value, idea: idea.value, title: title.value };
-      const problem = sessionProblem(input);
-      if (problem) return void (err.textContent = problem);
-      busy = true;
-      start.disabled = true;
-      err.textContent = "";
-      try {
-        const made = await api.createRefinement(sessionBody(input));
-        onMade?.(made); // also when the dialog was closed while the request ran
-        close(made);
-      } catch (e) {
-        busy = false;
-        err.textContent = errorText(e);
-        start.disabled = false;
-      }
-    };
-    const start = h("button", { class: "primary", onClick: run }, "Start session");
-    return h("div", { class: "stack" },
-      h("label", { class: "field" }, h("span", {}, "Repository"), select),
-      h("label", { class: "field" }, h("span", {}, "Title"), title),
-      h("label", { class: "field" }, h("span", {}, "Your idea"), idea),
-      err, h("div", { class: "row" }, h("span", { class: "spacer" }), start));
   });
 }
 
@@ -321,8 +151,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     if (onPage() && (openPage.id === undefined || openPage.id === sid)) await openPage.reload();
   };
   let leaveDrafts = () => {};
+  let unwish = () => {};
   const cleanup = () => {
     if (reloaded) return reloaded();
+    unwish();
     leaveDrafts(); // text that waits for its timer is sent now
     keepPage(null);
     generation++;
@@ -363,6 +195,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     if (!current()) return () => {};
     const upper = h("div");
     const lower = h("div");
+    const ideaBox = h("div");
+    const talkBox = h("div");
+    const handNote = h("div");
+    const nextBox = h("div"); // the next-step sentence; it also depends on the drafts, so it is drawn on its own
     const note = h("div"); // "Could not refresh" while the poll fails
     const waiting = announcer(); // "The architect is working", said once
     let at = Date.now(); // when the page last had an answer
@@ -372,13 +208,14 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     let waitTimer;
     const pendingText = () => {
       const el = document.activeElement;
-      const typing = Boolean(el) && ["TEXTAREA", "INPUT"].includes(String(el.tagName ?? el.tag ?? "").toUpperCase()) && upper.contains(el);
+      const typing = Boolean(el) && ["TEXTAREA", "INPUT"].includes(String(el.tagName ?? el.tag ?? "").toUpperCase()) && [upper, ideaBox, talkBox].some((box) => box.contains(el));
       return typing || talkText(id);
     };
     const guarding = () => pendingText() || dialogOpen(); // the draft editor guards its own unsaved fields
     const textWaits = () => pendingText() || unsaved.size > 0;
     keepPage(() => unsaved.size > 0 || talkText(id)); // a 401 of any call keeps the page while text waits
     let shownUpper = null;
+    let shownNext = null;
     let shownLower = null;
     let shown = "";
     let draws = 0; // counts the pages drawn: a poll that began before one is out of date
@@ -516,19 +353,26 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
           h("span", { class: "spacer" }), buttons),
+        nextBox,
         ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
-        h("h2", {}, "Idea"),
-        h("p", { class: "pre-wrap" }, s.idea),
-        ...briefSection(s, ask),
-        ...talkSection(s, { send, errorText, line: ["round", "question"].includes(kindOf(s.architect)) ? statusLine(architectStatus(s.architect)) : null }),
         );
+        mount(ideaBox, h("h2", {}, "Idea"), h("p", { class: "pre-wrap" }, s.idea), ...briefSection(s, ask));
+        mount(talkBox, ...talkSection(s, { send, errorText, line: ["round", "question"].includes(kindOf(s.architect)) ? statusLine(architectStatus(s.architect)) : null }));
+      }
+      const nextKey = JSON.stringify(sessionNext(s));
+      if (nextKey !== shownNext) {
+        shownNext = nextKey;
+        mount(nextBox, nextNode(s));
       }
       const st = architectStatus(s.architect);
       waiting.say(st.busy ? st.text : "");
       sections.update(s);
       publishing.update(s);
+      const hn = handoffNote(s);
+      handNote.replaceChildren(...(hn ? [h("p", { class: "muted" }, hn)] : []));
+      ws.update({ summary: partSummary(s), next: nextStep(s), line: st.busy ? { home: homePart(s.architect, s), st } : null });
       const lowerKey = JSON.stringify(s.log);
       if (lowerKey !== shownLower) {
         shownLower = lowerKey;
@@ -539,8 +383,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const sections = draftSection({ id, save, send, errorText, read, statusLine: (a) => statusLine(architectStatus(a)) });
     const publishing = publishSection({ id, save, errorText, current, saveAll: sections.saveAll, read });
     leaveDrafts = sections.leave;
+    const nodes = { brief: ideaBox, talk: talkBox, drafts: sections.node, handoff: h("div", {}, publishing.node, handNote), log: lower };
+    const ws = workspace({ id, parts: PARTS.map((p) => ({ ...p, node: nodes[p.id] })), initial: chosen.get(id) ?? defaultPart(s) });
     show(s);
-    mount(main, upper, note, waiting.node, sections.node, publishing.node, lower); // after the first draw, so the focus finds its control again
+    mount(main, upper, note, waiting.node, ws.node); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 
@@ -583,9 +429,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     h("span", { class: "spacer" }), full ? [filter("Open sessions", false), filter("Dropped", true)] : null,
     full && !readOnly ? [
       h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
-      h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
+      h("button", { onClick: () => newSessionDialog(repos, opened, { kind: "issue", preferred: view.filters.repo }) }, "Refine an existing issue"),
       h("button", { class: "primary", onClick: async () => {
-        await newSessionDialog(repos, opened, view.filters.repo);
+        await newSessionDialog(repos, opened, { preferred: view.filters.repo });
       } }, "New session"),
     ] : null);
   const drawList = () => {
@@ -630,5 +476,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   mount(main, head, note, body);
   mount(head, toolbar(false));
   await load(true);
+  if (!readOnly && current()) {
+    // The palette's "New refinement session": a wish that came before this page, or one for the page as it is.
+    if (takeWish("refinement")) void newSessionDialog(repos, opened);
+    unwish = onWish("refinement", () => void newSessionDialog(repos, opened));
+  }
   return cleanup;
 }

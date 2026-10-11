@@ -1,5 +1,5 @@
 /* pages/start.css — the Start work form.
-   Belongs here: form, fieldsets, choices and the "More options" disclosure of the start page.
+   Belongs here: form, fieldsets, choices, the "More options" disclosure and the review step of the start page.
    Does not belong here: inputs (components.css). */
 
 /* Start work */
@@ -18,3 +18,9 @@
 .start-form .start-note { margin: 0; color: var(--muted); font-size: var(--text-small); }
 .start-form .start-more { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; min-width: 0; }
 .start-form .start-more-body { display: grid; gap: 12px; }
+.start-entry { display: grid; gap: 8px; max-width: var(--size-form); margin-bottom: 16px; }
+.start-entry .start-label { font-weight: 600; margin: 0; }
+.start-review dl { margin: 0; }
+.start-review dt { font-weight: 600; }
+.start-review dd { margin: 0 0 8px; overflow-wrap: anywhere; }
+.start-review .start-notes { margin: 0; padding-left: 18px; color: var(--muted); font-size: var(--text-small); }

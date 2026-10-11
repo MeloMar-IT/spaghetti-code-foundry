@@ -120,8 +120,10 @@ export const api = {
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
   allCredentials: () => req("GET", "/api/admin/credentials"),
-  refinement: () => req("GET", "/api/refinement"),
-  createRefinement: (body) => req("POST", "/api/refinement", body),
+  // `stay`: a 401 must not reload the page while a typed idea is kept in memory
+  refinement: (stay = false) => req("GET", "/api/refinement", undefined, stay),
+  // `stay`: a 401 must not reload the page, so the typed idea is still there
+  createRefinement: (body) => req("POST", "/api/refinement", body, true),
   refinementBacklog: (repo) => req("GET", `/api/refinement/backlog?repo=${enc(repo)}`),
   // `stay`: a poll that runs while text is typed must not reload the page on a 401
   refinementSession: (id, stay = false) => req("GET", `/api/refinement/${enc(id)}`, undefined, stay),
@@ -187,6 +189,9 @@ export const api = {
   stats: () => req("GET", "/api/stats"),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
+  search: (q) => req("GET", `/api/search?q=${enc(q)}`),
+  /** The recent items again, as the server sees them now: `refs` are { type, id }, answered in the groups of a search. */
+  recent: (refs) => req("GET", `/api/search?${refs.map((r) => `id=${enc(`${r.type}:${r.id}`)}`).join("&")}`),
   events: (id) => {
     if (viewAs && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
     return new EventSource(withAs(`/api/runs/${enc(id)}/events`));

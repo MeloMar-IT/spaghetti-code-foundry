@@ -153,6 +153,24 @@ is how untrusted text travels: as environment variables, never pasted into a com
 pieces (plan phase, test-and-fix loop, review loop, merge). The YAML files are never edited by
 hand.
 
+### The skill path
+
+Skills reach an agent in a fixed order. Each stage has its own module:
+
+- **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
+- **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
+- **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
+- **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
+- **Lock:** `ensureSkillLock` in `src/engine/skill-lock.ts` and `src/skills/run-lock.ts`.
+- **Session:** `skillSession` in `src/engine/skill-lock.ts`, `src/skills/payload.ts` and `src/agents/run.ts`.
+- **Run page:** `src/server/skill-view.ts` and `ui/run-skills.js`.
+
+Design rules:
+
+- The resolver and the policy are pure modules: same input, same answer.
+- Nothing is written to the workspace, so no skill file appears in a diff.
+- Messages are built from validated fields, never from request text.
+
 ![The flow editor with a built-in flow](images/flows.png)
 
 ---
@@ -282,6 +300,8 @@ flowchart LR
 `issue-plan` (plan, person approves) → `issue-code-daily` (code on the day's branch) →
 `daily-pr` (one pull request per day).
 
+For the same plan and commit, both pipelines lock the same skills; see [The skill path](#the-skill-path).
+
 A flow that a watcher uses cannot be deleted.
 
 ---
@@ -409,6 +429,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   `CODEX_HOME`, and rules are separate (`--ignore-rules` is never passed). `fake-codex.mjs` models exactly
   this. Not yet checked on a real CLI: whether `exec resume` lists the flag, and whether a private
   `CODEX_HOME` hides personal skills kept outside it.
+  The skill payload path (`skillSession()`, `withSkillPayload()`, `skillsRecord()`) is shared by both agents (#422): a lock with skills forces Codex isolation, and `unsupported` refuses it.
   Limits: macOS only, and `sandbox-exec` is deprecated; the token is visible to the agent's shell tool; the
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not
@@ -491,7 +512,7 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 | **Runs** | — | Every run, live log, steps and transcripts, changes |
 | **Repositories** | — | Repositories and how the Foundry signs in |
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
-| **Administration** | Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
 
 **User display:** **Home**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 
@@ -500,6 +521,24 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 **Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
+
+### Breakpoints and touch targets
+
+Breakpoints are named by layout need. `ui/viewport.js` is the one place in code (`BREAKPOINTS = { compact: 767, medium: 1023 }`, `mediaFor(name)`; `initShell` and `renderWork` take their default `media` from it). Media queries cannot use custom properties, so the CSS repeats the numbers; `tests/ui-viewport.test.ts` fails when a `max-width` or `min-width` in `ui/` is not one of the values below.
+
+| Name | Width | Layout |
+|---|---|---|
+| **compact** | below 768 px (`max-width: 767px`) | drawer navigation, one column, dialogs as bottom sheets, cards |
+| **medium** | 768–1023 px | sidebar, one content column |
+| **wide** | 1024 px and up | full layout |
+
+The existing `max-width: 1100px` rule stays as "two panes side by side".
+
+**Touch targets.** `--size-touch` (44 px) and `--size-touch-min` (24 px) are in `ui/tokens.css`. On coarse pointers buttons, `.btn` links, form inputs and selects, `summary`, sidebar and sub-navigation links, table row actions and the dialog close button are at least 44 × 44 px, with at least 8 px between neighbours. On fine pointers the minimum is 24 × 24 px.
+
+**Sheets and wrapping.** Below 768 px a dialog (`.modal`, and the kit's `.scf-dialog`) is a bottom sheet: full width, fixed to the bottom, at most 90 % of the viewport height, scrolling inside, with a sticky head so the close button stays reachable. This is CSS only; `modal()` is unchanged, so the focus trap and Escape work as before. `.toolbar` actions wrap below the title. `.log`, `pre.diff` and long names scroll or wrap inside their own box, so the page never scrolls sideways at 360 px.
+
+The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.css`); width rules that belong to one component stay next to their base rules.
 
 ### Development gallery
 
@@ -585,8 +624,11 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
   - The navigation spec checks every primary link on both displays at all four widths. At 360 px
     it goes through the menu button and drawer.
   - Pages keep an event stream open, so the tests never wait for "network idle".
-  - Two cases (admin display at 360 and 768 px) are `test.fixme`: they show sideways scroll that
-    UI quality 1b (part 2 of #264) fixes.
+  - `tests/browser/responsive.spec.ts` (UI quality 1b, #368) checks at all four widths: no sideways
+    page scroll on Home, Runs, a run detail (log and diff), Start work, Repositories and one open
+    dialog; every visible interactive element in the header, sidebar and dialog is at least 44 × 44 px
+    with a touch device profile (`touch` option of `openAs`); the dialog is a sheet at 360 px and
+    centred at 1024 px.
   - **Visual check.** `tests/browser/visual.spec.ts` compares screenshots (`toHaveScreenshot`) with
     committed baselines. `tests/browser/visual-matrix.ts` defines the matrix once: 12 pages (the
     gallery stand-in `docs/ui-redesign/visual-system-demo.html` opened from disk, admin, user and

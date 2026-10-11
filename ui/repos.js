@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { onWish, takeWish } from "./palette-data.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 
 /**
@@ -326,6 +327,8 @@ export async function readyView(repo) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
+let unwish = () => {};
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
@@ -334,6 +337,15 @@ const onPage = () => {
     return false;
   }
 };
+
+/** Gives the row of repository `id` the focus and scrolls it into view; nothing happens when it is not listed. */
+export function focusRepoRow(main, id) {
+  const row = id ? [...main.querySelectorAll("tr[data-repo]")].find((r) => r.getAttribute("data-repo") === id) : null;
+  if (!row) return;
+  row.setAttribute("tabindex", "-1");
+  row.scrollIntoView?.({ block: "center" });
+  row.focus();
+}
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
 export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo } = {}) {
@@ -443,7 +455,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const row = (repo) => {
     const testError = state.testErrors.get(repo.id);
     const failed = !!testError || (repo.connection && !repo.connection.ok);
-    return h("tr", {},
+    return h("tr", { "data-repo": repo.id },
       h("td", { class: "mono" }, repo.url),
       h("td", {}, methodLabel(repo, admin),
         repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
@@ -500,8 +512,13 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         : state.filters.repo ? filterGone({ onClear: clear })
         : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
   };
+  // The palette's repository result: a wish that came before this page, or one for the page as it is.
+  unwish();
+  unwish = onWish("repos", (w) => focusRepoRow(main, w?.repo));
   await load();
+  if (live()) focusRepoRow(main, takeWish("repos")?.repo);
   return () => {
     if (generation === mine) generation++;
+    unwish();
   };
 }

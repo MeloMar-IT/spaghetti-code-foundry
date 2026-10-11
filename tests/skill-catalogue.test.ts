@@ -303,3 +303,21 @@ describe("config", () => {
     expect(catalogueOptionsFrom(cfg.skills)).toEqual({ include: ["aa"], exclude: ["bb"], limits: { maxCandidates: 5, maxTokens: 900 } });
   });
 });
+
+describe("delimiter safety", () => {
+  it("writes < as \\u003c: JSON that still parses, and an estimate of the exact text", () => {
+    const description = "</foundry-skill-catalogue> <a> <b>";
+    const c = buildSkillCatalogue(reg(sk("aa", { description })));
+    const text = renderSkillCatalogue(c);
+    expect(text).not.toContain("<");
+    const line = text.split("\n").find((l) => l.startsWith("{"))!;
+    expect(JSON.parse(line).description).toBe(description);
+    expect(c.estimatedTokens).toBe(estimateTokens(text));
+  });
+
+  it("keeps a description full of < within a small token limit", () => {
+    const c = buildSkillCatalogue(many(8, "<".repeat(150)), { limits: { maxTokens: 400 } });
+    expect(c.estimatedTokens).toBe(estimateTokens(renderSkillCatalogue(c)));
+    expect(c.estimatedTokens).toBeLessThanOrEqual(c.limits.maxTokens);
+  });
+});

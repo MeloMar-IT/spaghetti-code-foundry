@@ -123,7 +123,8 @@ export function nextParts(n, { ref = true, status = true, focus } = {}) {
 /** One line per record, "You" first. */
 export const nextList = (records) => h("ul", { class: "holds" }, sortNext(records).map((n) => h("li", {}, nextParts(n))));
 
-/** Run page block. */
+/** Run page block; a record that waits for you also shows its sentence. */
 export const nextBlock = (n, focus = "next") => h("div", { class: `card next-step ${whoClass(n)}` },
   h("b", {}, "What happens next"),
-  h("div", { class: "next-parts" }, nextParts(n, { ref: false, status: false, focus })));
+  h("div", { class: "next-parts" }, nextParts(n, { ref: false, status: false, focus })),
+  n.who === "You" && n.text ? h("p", { class: "mt-4 mb-4" }, n.text) : null);

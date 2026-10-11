@@ -4,9 +4,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let draft: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/user/start.js" as string);
+  draft = await import("../ui/user/start-draft.js" as string);
 });
 afterAll(() => restore());
 
@@ -27,6 +29,12 @@ const submitBtn = (root: FakeElement) => one(root, "button", { type: "submit" })
 const submit = async (root: FakeElement) => {
   one(root, "form").fire("submit", { preventDefault() {} });
   await flush();
+  // "Review" opens the review; "Start" there sends
+  const start = find(root, "button", { "data-focus": "start-run" })[0];
+  if (start) {
+    start.fire("click");
+    await flush();
+  }
 };
 const radios = (root: FakeElement) => find(root, "input", { name: "flow" });
 const failBoxes = (root: FakeElement) => find(root, "div", { role: "alert" });
@@ -77,6 +85,7 @@ async function open(opts: object = {}, wait = true) {
 }
 
 beforeEach(() => {
+  draft.clearDraft();
   go = vi.fn();
   data = { flows: [], repos: [] };
   calls = { flows: 0, repos: 0, start: [] };
@@ -131,7 +140,7 @@ describe("renderStart: flows", () => {
     expect(box.attrs["data-kind"]).toBe("server");
     expect(box.textContent).toContain(ui.FLOWS_FAILED);
     expect(box.textContent).toContain("db down");
-    expect(find(main, "button")).toHaveLength(1);
+    expect(find(box, "button")).toHaveLength(1);
     expect(find(main, "form")).toHaveLength(0);
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
@@ -156,7 +165,7 @@ describe("renderStart: flows", () => {
     await open();
     const box = one(main, "div", { class: "state-error state-permission" });
     expect(box.textContent).toContain(ui.FLOWS_DENIED);
-    expect(find(main, "button")).toHaveLength(0);
+    expect(find(box, "button")).toHaveLength(0);
   });
 
   it("shows the error again when Retry fails again, and never rejects", async () => {
@@ -185,7 +194,7 @@ describe("renderStart: flows", () => {
   it("says what to do with no flows: a user asks the administrator", async () => {
     await open();
     expect(one(main, "div", { class: "empty" }).textContent).toContain(ui.NO_FLOWS);
-    expect(find(main, "a")).toHaveLength(0);
+    expect(find(one(main, "div", { class: "empty" }), "a")).toHaveLength(0);
   });
 
   it("links an admin to the flow editor", async () => {

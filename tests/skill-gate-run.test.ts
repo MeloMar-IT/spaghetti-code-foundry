@@ -27,15 +27,15 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-const cfg = (unresolved: Record<string, unknown> = {}, include: string[] = []): Config =>
-  ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, roots: [root], unresolved, selection: { include } } });
+const cfg = (unresolved: Record<string, unknown> = {}, include: string[] = [], tools: Record<string, unknown> = {}): Config =>
+  ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, roots: [root], unresolved, selection: { include }, tools } });
 /** A unique id per call: the pin lock lives in the shared test home. */
 const uid = (base = "skill") => `${base}-${++n}-x${process.pid}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
-const install = (id: string) => {
+const install = (id: string, tail = "") => {
   const d = join(root, id);
   mkdirSync(d, { recursive: true });
   writeFileSync(join(d, "SKILL.md"), `---\nname: ${id}\ndescription: A test skill called ${id}.\n---\n\nDo it.\n`);
-  writeFileSync(join(d, "skill.yaml"), `id: ${id}\nversion: 1.0.0\n`);
+  writeFileSync(join(d, "skill.yaml"), `id: ${id}\nversion: 1.0.0\n${tail}`);
 };
 const pin = (c: Config, id: string) => {
   const reg = discoverSkills(c.skills);
@@ -313,6 +313,22 @@ describe("a run with skills in its plan", () => {
     expect(done.skillPlan!.selected[0]!.id).toBe(id);
     expect(count(done, "risk_gate")).toBe(1);
     expect(marker(done)).toBe(true);
+  });
+
+  it("stops for a tool the policy does not allow; degrade lets the resume go on with a warning", async () => {
+    const id = uid("tnetrun");
+    install(id, "tool_profile: {network: true}\n");
+    pin(cfg(), id);
+    const r = await start([id], cfg());
+    expect(r.status).toBe("stopped");
+    expect(r.reason).toMatch(/^skills not resolved: .*\[tool-not-approved\]/);
+    expect(r.state.next).toBe("implement");
+    expect(marker(r)).toBe(false);
+    expect((loadRun(runsDir, r.runId)!.skillPlan as unknown as { tools: { missing: unknown[] } }).tools.missing).toHaveLength(1);
+    const done = await resume(r.runId, cfg({}, [], { missing: "degrade" }));
+    expect(done.status).toBe("succeeded");
+    expect(count(done, "risk_gate")).toBe(1);
+    expect(readFileSync(liveLogFile(done.runDir), "utf8")).toContain(`⚠ skill ${id} [tool-not-approved]`);
   });
 
   it("an unknown low-risk id stops by default; installing and pinning it lets the resume succeed", async () => {

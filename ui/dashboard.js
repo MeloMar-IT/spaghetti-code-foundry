@@ -7,7 +7,7 @@ import { errorState, explainError, loadingState, staleNote } from "./states.js";
 const usd = (n, d = 2) => `$${(n ?? 0).toFixed(d)}`;
 const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : "—");
 
-function tile(label, value, sub) {
+export function tile(label, value, sub) {
   return h("div", { class: "tile" }, h("div", { class: "tile-label" }, label), h("div", { class: "tile-value" }, value), sub ? h("div", { class: "tile-sub" }, sub) : null);
 }
 

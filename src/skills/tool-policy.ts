@@ -3,8 +3,8 @@ import { UNRESOLVED_LIMITS } from "./resolve-rules.js";
 import type { SkillPackage, ToolPolicy } from "./schema.js";
 
 // Compares what a skill needs (shell, network, write access, connectors) with what a flow or one Claude step gives,
-// under the administrator's skills.tools policy. Pure: no engine imports, nothing calls it yet. It decides which skills
-// load; it never limits a session. Messages are built from validated ids and slugs only, and must not contain the
+// under the administrator's skills.tools policy. Pure: no engine imports, the plan gate (`run-plan.ts`) calls it. It decides whether a run may
+// go past the plan gate with a skill; it never limits a session. Messages are built from validated ids and slugs only, and must not contain the
 // phrases the watcher reads as a pause ("daily budget", "usage limit reached", "signed out").
 
 /** The permission mode of a step with no mode set. A test keeps it equal to DEFAULT_PERMISSION_MODE. */

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RunSkillCarry } from "./plan-carry.js";
+import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
 import type { RunSkillPlan } from "../skills/run-plan.js";
@@ -33,6 +33,8 @@ export interface StepRecord {
   denied?: string[];
   /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. */
   skills?: { loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
+  /** A skill catalogue was put before this step's prompt: counts only, never the text. `hidden`: skills left out only because they are not pinned. */
+  skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number };
   startedAt: string;
   durationMs: number;
   logFile: string;
@@ -100,6 +102,8 @@ export interface RunSummary {
   skillPlan?: RunSkillPlan;
   /** The skill request carried from the plan record at plan_check. Absent on older runs and on runs without a plan record. */
   skillCarry?: RunSkillCarry;
+  /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */
+  planCheck?: RunPlanCheck;
   /** When the run was archived (taken out of the default list). Absent: not archived. */
   archivedAt?: string;
   /** The id of the account that archived it. Never shown to a user. */

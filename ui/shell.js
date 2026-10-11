@@ -1,11 +1,13 @@
 import { h, mount } from "./dom.js";
 import { SECTIONS, splitHash, subnavFor } from "./ia.js";
+import { mediaFor } from "./viewport.js";
 
 // The frame around a page: which top link is on, the secondary row, the breadcrumb line and the tab title.
 
 export const TITLE = "Spaghetti Code Foundry";
 
 let pageTitle = "";
+let pageWhere = "";
 let waiting = 0;
 
 /** The tab title. With no page it is the plain name, or "(n) Foundry" when items wait. */
@@ -35,7 +37,8 @@ export function sideState({ narrow, collapsed, drawer }) {
   return narrow ? { open: !!drawer, modal: !!drawer } : { open: !collapsed, modal: false };
 }
 
-function safeStore() {
+/** localStorage that never throws: a missing or broken store reads as empty and ignores writes. */
+export function safeStore() {
   try {
     const s = globalThis.localStorage;
     return {
@@ -48,7 +51,7 @@ function safeStore() {
 }
 
 /** Sets up the menu button, drawer, skip button and account menu. Call once, after sign-in. Returns a stop function. */
-export function initShell(role, { user, store = safeStore(), media = globalThis.matchMedia?.("(max-width: 760px)") } = {}) {
+export function initShell(role, { user, store = safeStore(), media = mediaFor("compact") } = {}) {
   const ctl = fresh();
   shell = ctl;
   const undo = [];
@@ -112,6 +115,7 @@ export function initShell(role, { user, store = safeStore(), media = globalThis.
       if (el("modal-root")?.children?.length) return; // the dialog's own Escape wins
       ctl.closeDrawer(el("menu-btn"));
     } else if (e.key === "Tab") {
+      if (el("modal-root")?.children?.length) return; // a dialog over the drawer traps Tab itself
       // The drawer is modal: Tab stays inside it.
       const list = [...(el("side")?.querySelectorAll("a[href], button") ?? [])];
       if (!list.length) return;
@@ -133,6 +137,20 @@ export function initShell(role, { user, store = safeStore(), media = globalThis.
     document.body?.classList?.remove("side-closed", "drawer-open");
     for (const id of ["top", "skip", "content"]) el(id)?.removeAttribute("inert");
   };
+}
+
+let lastCrumb = null; // the current page's crumb, so a detail page can show its name once it is loaded
+
+/** Replaces the id in the last crumb, the page name and the tab title with a name. It does not move focus or announce again. */
+export function namePage(name) {
+  const text = String(name ?? "").trim();
+  if (!text) return;
+  if (lastCrumb) lastCrumb.textContent = text;
+  pageTitle = text;
+  document.title = titleText(pageTitle, waiting);
+  const title = document.getElementById("page-title");
+  if (title) title.textContent = text;
+  document.getElementById("main")?.setAttribute("aria-label", text);
 }
 
 function hide(el, list) {
@@ -163,10 +181,11 @@ export function showPage(role, to) {
     hide(subnav, links);
   }
   const crumbs = document.getElementById("crumbs");
+  lastCrumb = null;
   if (crumbs) {
     mount(crumbs, to.crumbs.flatMap((c, i) => [
       i ? h("span", { "aria-hidden": "true" }, " › ") : null,
-      c.href ? h("a", { href: c.href }, c.label) : h("span", { "aria-current": "page" }, c.label),
+      c.href ? h("a", { href: c.href }, c.label) : (lastCrumb = h("span", { "aria-current": "page" }, c.label)),
     ]));
     hide(crumbs, to.crumbs);
   }
@@ -178,11 +197,22 @@ export function showPage(role, to) {
   if (title) title.textContent = where;
   const main = document.getElementById("main");
   main?.setAttribute("aria-label", where);
+  pageWhere = where;
   shell.closeDrawer?.(null);
   document.getElementById("account")?.removeAttribute("open");
   if (shell.shown++ === 0) return;
   if (document.getElementById("modal-root")?.contains?.(document.activeElement)) return;
-  main?.focus();
+  announcePage(where);
+}
+
+/** Closes the drawer if it is open; `to` gets focus afterwards (none: focus stays where it is). */
+export function closeDrawer(to) {
+  shell.closeDrawer?.(to);
+}
+
+/** Moves focus to `<main>` and announces the page that is open (or `where`) again. */
+export function announcePage(where = pageWhere) {
+  document.getElementById("main")?.focus();
   // Clear first and fill a moment later, so the same text twice in a row is announced again.
   const status = document.getElementById("route-status");
   if (status) {

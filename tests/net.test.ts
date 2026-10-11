@@ -153,7 +153,7 @@ describe("server settings schema", () => {
 });
 
 describe("the UI under the Content-Security-Policy", () => {
-  it.each(["index.html", "user/index.html"])("%s has only external scripts, no inline style and no event attributes", (f) => {
+  it.each(["index.html", "user/index.html", "accessibility.html"])("%s has only external scripts, no inline style and no event attributes", (f) => {
     const html = readFileSync(`ui/${f}`, "utf8");
     expect(html.match(/<script\b[^>]*>/g)?.length ?? 0).toBeGreaterThan(0);
     for (const tag of html.match(/<script\b[^>]*>/g) ?? []) expect(tag).toContain("src=");

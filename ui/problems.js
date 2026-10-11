@@ -70,7 +70,6 @@ export function storyButton(m) {
 }
 
 let shown = PAGE;
-const openIds = new Set();
 
 const act = async (fn, ok, reload) => {
   try {
@@ -99,66 +98,59 @@ function switchRow(m, reload) {
     h("p", { class: "muted flush mt-4" }, "While it is off the monitor still records problems, but makes no bug story and writes no comment."));
 }
 
-function detailRow(f, cache, cols, redraw) {
-  const cell = h("td", { colspan: cols }, loadingState("Loading details…", { rows: 2 }));
-  if (!cache.has(f.id)) cache.set(f.id, api.monitorFinding(f.id));
-  cache.get(f.id).then((d) => {
-    const story = (s) => {
-      const link = typeof s.url === "string" && s.url.startsWith("https://")
-        ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, `#${s.issue}`)
-        : h("span", {}, `#${s.issue}`);
-      return h("span", {}, link, s.current ? "" : " (earlier)", " ");
-    };
-    cell.replaceChildren(
-      d.evidence?.length ? h("pre", { class: "mono" }, d.evidence.join("\n")) : h("p", { class: "muted" }, "No evidence was recorded."),
-      h("div", {}, "Bug stories: ", d.stories?.length ? d.stories.map(story) : h("span", { class: "muted" }, "No bug story yet.")),
-      h("div", {}, "Runs: ", d.runs?.length
-        ? d.runs.map((r) => h("span", {}, h("a", { href: `#/runs/${r.id}` }, r.id), ` (${r.status}${r.startedAt ? `, ${when(r.startedAt)}` : ""}) `))
-        : h("span", { class: "muted" }, "No run yet.")));
-  }, (e) => cell.replaceChildren(errorState(explainError(e, { what: "The details could not be loaded." }), { onRetry: () => { cache.delete(f.id); redraw(); } })));
-  return h("tr", {}, cell);
+/** What the finding call returns, as nodes: the evidence, the bug stories and the runs. */
+function findingDetail(d) {
+  const story = (s) => {
+    const link = typeof s.url === "string" && s.url.startsWith("https://")
+      ? h("a", { href: s.url, target: "_blank", rel: "noopener noreferrer" }, `#${s.issue}`)
+      : h("span", {}, `#${s.issue}`);
+    return h("span", {}, link, s.current ? "" : " (earlier)", " ");
+  };
+  return [
+    d.evidence?.length ? h("pre", { class: "mono" }, d.evidence.join("\n")) : h("p", { class: "muted" }, "No evidence was recorded."),
+    h("div", {}, "Bug stories: ", d.stories?.length ? d.stories.map(story) : h("span", { class: "muted" }, "No bug story yet.")),
+    h("div", {}, "Runs: ", d.runs?.length
+      ? d.runs.map((r) => h("span", {}, h("a", { href: `#/runs/${r.id}` }, r.id), ` (${r.status}${r.startedAt ? `, ${when(r.startedAt)}` : ""}) `))
+      : h("span", { class: "muted" }, "No run yet.")),
+  ];
 }
 
-function findingButtons(f, m, reload, redraw) {
-  const buttons = [];
-  const open = openIds.has(f.id);
-  buttons.push(h("button", { class: "small", onClick: () => { if (open) openIds.delete(f.id); else openIds.add(f.id); redraw(); } }, open ? "Hide" : "Details"));
-  if (f.state === "gone" || (f.state === "muted" && !f.mute)) return buttons;
+/** The buttons of a finding's page: { story, mute }. Which show depends on its state. */
+function findingActions(f, m, reload) {
+  const story = [];
+  const mute = [];
+  if (f.state === "gone" || (f.state === "muted" && !f.mute)) return { story, mute };
   if (f.state === "muted") {
     const label = f.mute.kind === "detector" ? `End mute of detector ${f.detector}` : "End mute";
-    buttons.push(h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(f.mute.id), () => "Mute ended", reload) }, label));
-    return buttons;
+    mute.push(h("button", { class: "small", onClick: () => act(() => api.unmuteMonitor(f.mute.id), () => "Mute ended", reload) }, label));
+    return { story, mute };
   }
   if (f.state === "seen") {
     const b = storyButton(m);
-    buttons.push(h("button", { class: "small", disabled: !b.enabled, onClick: () => act(() => api.monitorStory(f.id), (r) => (r.story?.made ? `Bug story #${r.story.issue} made` : `Bug story #${r.story?.issue} exists already`), reload) }, b.label));
+    story.push(h("button", { class: "small", disabled: !b.enabled, onClick: () => act(() => api.monitorStory(f.id), (r) => (r.story?.made ? `Bug story #${r.story.issue} made` : `Bug story #${r.story?.issue} exists already`), reload) }, b.label));
   }
   if (f.state === "needs-you") {
-    buttons.push(h("button", { class: "small", onClick: () => act(() => api.retryMonitor(f.id), () => "The monitor may try again", reload) }, "Try again"));
+    story.push(h("button", { class: "small", onClick: () => act(() => api.retryMonitor(f.id), () => "The monitor may try again", reload) }, "Try again"));
   }
-  buttons.push(
+  mute.push(
     h("button", { class: "small", onClick: async () => { if (await muteForm({ finding: f.id }, m.detectors)) await reload(); } }, "Mute"),
     h("button", { class: "small", onClick: async () => { if (await muteForm({ finding: f.id }, m.detectors, { notProblem: true })) await reload(); } }, "This is not a problem"));
-  return buttons;
+  return { story, mute };
 }
 
-function findingsTable(m, reload, redraw, cache) {
+function findingsTable(m, redraw) {
   const rows = m.findings.slice(0, shown);
-  const body = rows.flatMap((f) => {
-    const row = h("tr", {},
-      h("td", {}, SEVERITY[f.severity] ?? f.severity),
-      h("td", {}, f.summary, h("div", { class: "muted text-xs" }, f.detector)),
-      h("td", {}, when(f.firstSeen)),
-      h("td", {}, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`),
-      h("td", {}, stateText(f)),
-      h("td", {}, storyCell(f.story, f.needsYou)),
-      h("td", {}, findingButtons(f, m, reload, redraw)));
-    return openIds.has(f.id) ? [row, detailRow(f, cache, 7, redraw)] : [row];
-  });
+  const body = rows.map((f) => h("tr", {},
+    h("td", {}, SEVERITY[f.severity] ?? f.severity),
+    h("td", {}, h("a", { href: "#/problems/" + encodeURIComponent(f.id) }, f.summary), h("div", { class: "muted text-xs" }, f.detector)),
+    h("td", {}, when(f.firstSeen)),
+    h("td", {}, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`),
+    h("td", {}, stateText(f)),
+    h("td", {}, storyCell(f.story, f.needsYou))));
   const left = m.findings.length - rows.length;
   return h("div", {},
     h("table", { class: "table compact", "aria-label": "Findings" },
-      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
+      h("thead", {}, h("tr", {}, ["Severity", "What", "Since", "How often", "State", "Story"].map((c) => h("th", { scope: "col" }, c)))),
       h("tbody", {}, body)),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 }
@@ -235,11 +227,10 @@ export async function renderProblems(main, { data } = {}) {
     if (my === reloads) await renderProblems(main, { data: fresh });
   };
   shown = PAGE;
-  const cache = new Map();
   const list = h("div", {});
   const redraw = () => list.replaceChildren(
     m.findingsUnreadable ? h("p", { class: "status bad" }, "The findings file of the monitor cannot be read, so the list is not shown. The next check keeps it as monitor-findings.json.broken and starts a new one.") : null,
-    m.findings?.length ? findingsTable(m, reload, redraw, cache) : m.findingsUnreadable ? null : emptyState("No findings."));
+    m.findings?.length ? findingsTable(m, redraw) : m.findingsUnreadable ? null : emptyState("No findings."));
   redraw();
   mount(main,
     h("h1", {}, "Problems"),
@@ -249,4 +240,58 @@ export async function renderProblems(main, { data } = {}) {
     h("details", {}, h("summary", {}, `Mutes (${(m.mutes ?? []).length})`), (m.mutes ?? []).length ? mutesTable(m, reload) : h("p", { class: "muted" }, "No mutes.")),
     h("h2", {}, "Detectors"),
     detectorsTable(m, reload));
+}
+
+let detailReloads = 0;
+
+/** One finding: its facts, evidence, bug stories and runs, and its buttons in two groups. For admins. */
+export async function renderProblemDetail(main, id, { data } = {}) {
+  const back = { href: "#/problems", label: "Back to Problems" };
+  let d;
+  let m;
+  if (data) ({ d, m } = data);
+  else {
+    mount(main, h("h1", {}, "Problem"), loadingState("Loading the problem…", { rows: 3, shape: "detail" }));
+    const [one, list] = await Promise.allSettled([api.monitorFinding(id), api.monitor()]);
+    if (one.status === "rejected") {
+      const e = one.reason;
+      mount(main, h("h1", {}, "Problem"),
+        errorState(explainError(e, { what: "The problem could not be loaded." }), { back, onRetry: e?.status === 404 ? undefined : () => renderProblemDetail(main, id) }));
+      return;
+    }
+    if (list.status === "rejected") {
+      mount(main, h("h1", {}, "Problem"),
+        errorState(explainError(list.reason, { what: "The problems could not be loaded." }), { back, onRetry: () => renderProblemDetail(main, id) }));
+      return;
+    }
+    d = one.value;
+    m = list.value;
+  }
+  const at = Date.now();
+  const note = h("div");
+  const reload = async () => {
+    const my = ++detailReloads;
+    let fresh;
+    try {
+      const [one, list] = await Promise.all([api.monitorFinding(id), api.monitor()]);
+      fresh = { d: one, m: list };
+    } catch {
+      if (my === detailReloads) mount(note, staleNote(at, { failed: true, onRetry: reload }));
+      return;
+    }
+    if (my === detailReloads) await renderProblemDetail(main, id, { data: fresh });
+  };
+  // the two calls read the findings independently: the finding can be gone from the list by now
+  const f = (m.findings ?? []).find((x) => x.id === id);
+  const { story, mute } = f ? findingActions(f, m, reload) : { story: [], mute: [] };
+  mount(main,
+    h("h1", {}, f?.summary ?? "Problem"),
+    f
+      ? h("div", { class: "muted text-sm" },
+        [SEVERITY[f.severity] ?? f.severity, f.detector, `since ${when(f.firstSeen)}`, `seen in ${f.count} ${f.count === 1 ? "check" : "checks"}`, stateText(f)].join(" · "), " · ", storyCell(f.story, f.needsYou))
+      : h("p", { class: "status bad" }, "This problem is not in the list of the monitor any more. What was found is shown below.", " ", h("a", { href: back.href }, back.label)),
+    note,
+    findingDetail(d),
+    story.length ? h("section", { class: "action-group" }, h("h2", {}, "Bug story"), h("div", { class: "row" }, story)) : null,
+    mute.length ? h("section", { class: "action-group" }, h("h2", {}, "Mute"), h("div", { class: "row" }, mute)) : null);
 }

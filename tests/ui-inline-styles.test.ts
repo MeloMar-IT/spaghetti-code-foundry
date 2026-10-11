@@ -13,10 +13,10 @@ const STYLE_USE = /\bstyle\s*:|\.style\s*[.[]|setAttribute\(\s*["']style["']/;
 
 /** Every file whose inline styles are gone. A new inline style in one of them fails the test. */
 const CLEAN = [
-  "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
-  "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
+  "ui/admin.js", "ui/watchers.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
+  "ui/dashboard.js", "ui/operations.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
   "ui/editor.js", "ui/app.js", "ui/flow-page.js", "ui/flow-shell.js", "ui/flow-state.js","ui/step-types.js", "ui/graph.js", "ui/library.js",
-  "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
+  "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-import.js", "ui/refinement-new.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
   "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js",
 ];
 
@@ -27,8 +27,8 @@ const ALLOW: Allowed[] = [
   { file: "ui/dashboard.js", has: 'class: "rate-fill", style: { width:', reason: "rate bar width, computed from the data" },
 ];
 
-/** #339 and #340 are both done. Only the import page is left; whoever cleans it removes this list. */
-const NOT_CLEANED_YET = ["ui/refinement-import.js"];
+/** Every page is clean now. A file that is not yet clean goes here until it is. */
+const NOT_CLEANED_YET: string[] = [];
 
 /** Selector to declarations, as the utility vocabulary defines them in ui/css/utilities.css. */
 const margin = (side: "top" | "bottom", names: Array<[string, string]>): Record<string, string[]> =>

@@ -412,7 +412,8 @@ describe("a session file that cannot be saved", () => {
     const { id } = await dueSession([withDeps(20, "#12")]);
     const r = await faultAt(id, "issue comment 12");
     expect(r.status).toBe(500);
-    expect(r.error()).toMatch(/#12 got a comment/);
+    // The session write that fails is the one after the close.
+    expect(r.error()).toMatch(/#12 was closed/);
     expect(r.error()).toMatch(/publish again/i);
     seedFromLog();
     const again = await publish(id, {});
@@ -420,7 +421,8 @@ describe("a session file that cannot be saved", () => {
     expect(patchesOf(20)).toHaveLength(1);
     expect(commentsOf(20)).toHaveLength(1);
     expect(commentsOf(12)).toHaveLength(1);
-    expect((await view(id)).source).toMatchObject({ replace: "done", closed: "open" });
+    expect(gh.closedIssues()).toHaveLength(1);
+    expect((await view(id)).source).toMatchObject({ replace: "done", closed: "not_planned" });
   });
 });
 

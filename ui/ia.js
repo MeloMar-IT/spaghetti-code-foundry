@@ -2,6 +2,8 @@
 // resolves. No imports, so both displays and the tests can load it.
 
 export const MAX_PRIMARY = 7;
+// "all" in `?repo=` means the unfiltered list; resolve() removes it, so pages never see it.
+export const ALL_REPOS = "all";
 export const FALLBACK = { admin: "#/home", user: "#/runs" };
 
 export const AREAS = [
@@ -17,30 +19,34 @@ const A = ["admin"];
 const AU = ["admin", "user"];
 
 // nav: "primary" | "secondary" | "action" | "detail". dest: destination id, null for the Start work action.
-// section: id from SECTIONS, optional (administration pages only).
+// section: id from SECTIONS, optional (administration pages only). scope: true = the page follows the repository context.
 const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "administration", dest: "administration", parent: null, nav: "secondary", label: { admin: title }, roles: A, section });
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
-  { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A },
-  { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A },
-  { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU },
+  { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
+  { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
+  { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU, scope: true },
   { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "start", path: "#/start", title: "Start work", area: "work", dest: null, parent: null, nav: "action", label: { admin: "Start work", user: "Start work" }, roles: AU },
-  { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU },
+  { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU, scope: true },
   { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
-  { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU },
+  { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU, scope: true },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "library", path: "#/library", title: "Library", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Library" }, roles: A },
+  adminPage("operations", "Overview", "operations"),
   adminPage("problems", "Problems", "operations"),
   adminPage("watchers", "Watchers", "operations"),
+  { id: "problem", path: "#/problems/:id", title: (id) => id, area: "administration", dest: "administration", parent: "problems", nav: "detail", label: {}, roles: A },
+  { id: "watcher", path: "#/watchers/:id", title: (id) => id, area: "administration", dest: "administration", parent: "watchers", nav: "detail", label: {}, roles: A },
   adminPage("models", "Models", "operations"),
   { id: "model", path: "#/models/:name", title: (name) => name, area: "administration", dest: "administration", parent: "models", nav: "detail", label: {}, roles: A },
   adminPage("dashboard", "Dashboard", "operations"),
   adminPage("users", "Users", "access"),
-  adminPage("all-repos", "All repositories", "access"),
+  { id: "user", path: "#/users/:id", title: (id) => id, area: "administration", dest: "administration", parent: "users", nav: "detail", label: {}, roles: A },
+  { ...adminPage("all-repos", "All repositories", "access"), scope: true },
   adminPage("credentials", "Credentials", "access"),
   adminPage("audit", "Audit", "access"),
   adminPage("settings", "Settings", "system"),
@@ -55,7 +61,7 @@ export const DESTINATIONS = [
   { id: "runs", label: { admin: "Runs", user: "My runs" }, landing: "runs", group: "work", roles: AU },
   { id: "repos", label: { admin: "Repositories", user: "My repositories" }, landing: "repos", group: "work", roles: AU },
   { id: "flows", label: { admin: "Flows" }, landing: "flows", group: "setup", roles: A },
-  { id: "administration", label: { admin: "Administration" }, landing: "users", group: "setup", roles: A },
+  { id: "administration", label: { admin: "Administration" }, landing: "operations", group: "setup", roles: A },
 ];
 
 /** The groups of the sidebar, in order. */
@@ -125,7 +131,7 @@ function describe(role, page, arg, hash, reason) {
 
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
-const VALID = { repo: (v) => v.length <= 200 && REPO_OK.test(v), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
+const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */
 export function splitHash(hash) {
@@ -134,7 +140,7 @@ export function splitHash(hash) {
   return i < 0 ? { path: text, query: "" } : { path: text.slice(0, i), query: text.slice(i + 1) };
 }
 
-/** The known filters of a query text ("?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
+/** The known filters of a query text (`repo` is "owner/name" or "all";"?repo=…&owner=…", with or without the "?"): { repo?, owner? }. Anything else is dropped. */
 export function parseQuery(text) {
   const out = {};
   const raw = typeof text === "string" ? text.replace(/^\?/, "") : "";
@@ -175,5 +181,30 @@ export function resolve(role, hash) {
   if (alias) return { ...resolve(role, alias.to), hash: alias.to, redirected: true, reason: "alias" };
   const m = match(role, parts);
   if (!m) return fallback("unknown");
-  return { ...describe(role, m.page, m.arg, hash, null), query: parseQuery(query) };
+  const q = parseQuery(query);
+  if (q.repo === ALL_REPOS) delete q.repo; // "all" is the unfiltered list: pages never see it
+  return { ...describe(role, m.page, m.arg, hash, null), query: q };
+}
+
+/** The letter after `g` for a page ("g r" goes to Runs). Only the pages a role has are offered. */
+export const GO_KEYS = { home: "h", board: "b", refinement: "e", runs: "r", repos: "p", flows: "f", users: "a", start: "s" };
+
+/** Actions of the command palette. They only open things: `page` is where they lead, `intent` is set when the page does something on arrival. */
+export const PALETTE_ACTIONS = [
+  { id: "start", page: "start" },
+  { id: "new-refinement", page: "refinement", label: "New refinement session", intent: true, preview: false },
+];
+
+const command = (p, role, extra = {}) => ({
+  id: p.id, label: labelOf(p, role), href: p.path, hint: AREAS.find((a) => a.id === p.area)?.label ?? "", key: GO_KEYS[p.id] ?? null, intent: null, ...extra,
+});
+
+/** The pages ("goTo") and actions a role can reach from the palette. A preview has no action that would change something. */
+export function commandsFor(role, { preview = false } = {}) {
+  const goTo = PAGES.filter((p) => forRole(role)(p) && (p.nav === "primary" || p.nav === "secondary")).map((p) => command(p, role));
+  const actions = PALETTE_ACTIONS.filter((a) => !(preview && a.preview === false))
+    .map((a) => ({ a, p: pageById(a.page) }))
+    .filter(({ p }) => forRole(role)(p))
+    .map(({ a, p }) => command(p, role, { id: a.id, label: a.label ?? labelOf(p, role), key: a.intent ? null : GO_KEYS[a.id] ?? null, intent: a.intent ? a.page : null }));
+  return { goTo, actions };
 }

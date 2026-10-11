@@ -6,9 +6,15 @@ import { readUiCss } from "./helpers/ui-css.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let draft: any;
+let fresh: any;
+let entry: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/user/start.js" as string);
+  fresh = await import("../ui/refinement-new.js" as string);
+  entry = await import("../ui/user/start-entry.js" as string);
+  draft = await import("../ui/user/start-draft.js" as string);
 });
 afterAll(() => restore());
 
@@ -29,14 +35,21 @@ const submitBtn = (root: FakeElement) => one(root, "button", { type: "submit" })
 const submit = async (root: FakeElement) => {
   one(root, "form").fire("submit", { preventDefault() {} });
   await flush();
+  // "Review" opens the review; "Start" there sends
+  const start = find(root, "button", { "data-focus": "start-run" })[0];
+  if (start) {
+    start.fire("click");
+    await flush();
+  }
 };
 
 let main: FakeElement;
 let calls: any;
 let go: ReturnType<typeof vi.fn>;
 let dialog: ReturnType<typeof vi.fn>;
-let data: { flows: any[]; repos: any[]; reposAfter?: any[]; reposFail?: boolean; startFail?: unknown; hold?: boolean; holdRepos?: boolean };
+let data: { flows: any[]; repos: any[]; reposAfter?: any[]; reposFail?: boolean; startFail?: unknown; hold?: boolean; holdRepos?: boolean; refFail?: boolean; holdRef?: boolean; refRepos?: string[] };
 let release: () => void;
+let releaseRef: () => void;
 let releaseRepos: () => void;
 
 const fakeApi = () => ({
@@ -51,6 +64,12 @@ const fakeApi = () => ({
     return calls.repos > 1 && data.reposAfter ? data.reposAfter : data.repos;
   },
   repoMethods: async () => ({ methods: ["github-token"], githubApp: { available: false } }),
+  refinement: async () => {
+    calls.refinement++;
+    if (data.holdRef) await new Promise<void>((r) => (releaseRef = r));
+    if (data.refFail) throw Object.assign(new Error("GitHub could not be reached"), { status: 502 });
+    return { sessions: [], repos: data.refRepos ?? ["acme/app"] };
+  },
   startRun: async (body: unknown) => {
     calls.start.push(body);
     if (data.hold) await new Promise<void>((r) => (release = r));
@@ -66,7 +85,10 @@ async function open(admin?: boolean) {
 }
 
 beforeEach(() => {
-  calls = { repos: 0, start: [], flows: [] };
+  draft.clearDraft();
+  fresh.clearKeptSession();
+  (document as any).getElementById("modal-root").replaceChildren();
+  calls = { repos: 0, start: [], flows: [], refinement: 0 };
   go = vi.fn();
   dialog = vi.fn(async () => undefined);
   data = { flows: [], repos: [] };
@@ -288,7 +310,7 @@ describe("renderStart: repository", () => {
     await open();
     expect(main.textContent).toContain("me/fixed");
     expect(find(main, "select")).toHaveLength(0);
-    expect(find(main, "button", { type: "button" })).toHaveLength(0);
+    expect(find(main, "button", { type: "button" }).map((b) => b.textContent)).toEqual(["Clear"]);
     expect(calls.repos).toBe(0);
     await submit(main);
     expect(calls.start[0].vars).toEqual({});
@@ -428,21 +450,25 @@ describe("renderStart: fields and start", () => {
     expect(one(box, "p", { class: "state-next" }).textContent).toBe(ui.START_UNSURE_NEXT);
   });
 
-  it("switches the button off while the call runs, ignores a second submit and keeps it off on success", async () => {
+  it("switches Start and Back off while the call runs, sends once for two clicks and keeps the form off on success", async () => {
     data.flows = [flow("a")];
     data.hold = true;
     await open();
     await submit(main);
-    expect(submitBtn(main).disabled).toBe(true);
-    await submit(main);
+    const startBtn = one(main, "button", { "data-focus": "start-run" });
+    startBtn.fire("click");
+    startBtn.fire("click");
+    await flush();
+    expect(startBtn.disabled).toBe(true);
+    expect(one(main, "button", { "data-focus": "start-back" }).disabled).toBe(true);
     expect(calls.start).toHaveLength(1);
     release();
     await flush();
     expect(go).toHaveBeenCalledWith("#/runs/r1");
-    expect(submitBtn(main).disabled).toBe(true);
+    expect(startBtn.disabled).toBe(true);
   });
 
-  it("sends with Ctrl+Enter in the Task box", async () => {
+  it("opens the review with Ctrl+Enter in the Task box", async () => {
     data.flows = [flow("a")];
     await open();
     const box = one(main, "textarea");
@@ -450,6 +476,9 @@ describe("renderStart: fields and start", () => {
     await flush();
     expect(calls.start).toHaveLength(0);
     box.fire("keydown", { key: "Enter", ctrlKey: true, preventDefault() {} });
+    await flush();
+    expect(calls.start).toHaveLength(0);
+    one(main, "button", { "data-focus": "start-run" }).fire("click");
     await flush();
     expect(calls.start).toHaveLength(1);
   });
@@ -465,7 +494,7 @@ describe("renderStart: fields and start", () => {
       while (p && p.tag !== "label") p = p.parent;
       expect(p, `${el.tag} ${el.attrs.name}`).toBeDefined();
     }
-    expect(submitBtn(main).textContent).toBe("Start");
+    expect(submitBtn(main).textContent).toBe("Review");
     expect(one(main, "button", { "data-focus": "add-repo" }).attrs.type).toBe("button");
   });
 
@@ -560,9 +589,9 @@ describe("renderStart: required first, More options", () => {
     data.hold = true;
     await open();
     one(main, "input", { name: "o" }).value = "typed";
+    const radios = find(main, "input", { name: "flow" });
     const sent = submit(main);
     await flush();
-    const radios = find(main, "input", { name: "flow" });
     expect(radios.every((r) => (r as any).disabled)).toBe(true);
     radios[1]!.fire("change");
     expect(find(main, "input", { name: "p" })).toHaveLength(0);
@@ -718,6 +747,354 @@ describe("renderStart: admin", () => {
       one(main, "button", { type: "button", "data-focus": "add-repo" }).fire("click");
       await flush();
       expect(dialog).toHaveBeenLastCalledWith({ admin, options: expect.anything() });
+    }
+  });
+});
+
+describe("renderStart: a wish from the command palette", () => {
+  let wishes: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+  });
+  beforeEach(() => {
+    wishes.resetWishes();
+    data.flows = [flow("a"), flow("b")];
+  });
+  const checkedIn = (root: FakeElement) => find(root, "input", { name: "flow" }).filter((r) => r.checked).map((r) => r.value);
+  const checked = () => checkedIn(main);
+
+  it("chooses the flow that was wished before the page was drawn", async () => {
+    wishes.sendWish("start", { flow: "b" });
+    await open();
+    expect(checked()).toEqual(["b"]);
+    expect(wishes.takeWish("start")).toBeNull();
+  });
+
+  it("falls back to the first flow for an unknown name, and uses the wish up when there are no flows", async () => {
+    wishes.sendWish("start", { flow: "nope" });
+    await open();
+    expect(checked()).toEqual(["a"]);
+    data.flows = [];
+    wishes.sendWish("start", { flow: "b" });
+    await open();
+    expect(wishes.takeWish("start")).toBeNull();
+  });
+
+  it("switches the flow on the open page, keeps the typed text and checks the radio, also for an admin", async () => {
+    for (const admin of [false, true]) {
+      await open(admin);
+      one(main, "textarea", { name: "task" }).value = "my text";
+      wishes.sendWish("start", { flow: "b" });
+      await flush();
+      expect(checked()).toEqual(["b"]);
+      expect(one(main, "textarea", { name: "task" }).value).toBe("my text");
+      wishes.sendWish("start", { flow: "b" });
+      wishes.sendWish("start", { flow: "nope" });
+      await flush();
+      expect(checked()).toEqual(["b"]);
+    }
+  });
+
+  it("does not lose a wish that arrives while repositories are loading", async () => {
+    data.flows = [flow("a", [field("github_repo")]), flow("b")];
+    data.holdRepos = true;
+    const opening = open();
+    await flush();
+    wishes.sendWish("start", { flow: "b" });
+    releaseRepos();
+    await opening;
+    expect(checked()).toEqual(["b"]);
+  });
+
+  it("frees the slot when the page is left", async () => {
+    const cleanup = await open();
+    cleanup();
+    wishes.sendWish("start", { flow: "b" });
+    expect(wishes.takeWish("start")).toEqual({ flow: "b" });
+  });
+
+  it("lets only the newest render take the wish and own the handler, whatever order they finish in", async () => {
+    let finishOld!: () => void;
+    const slow = { ...fakeApi(), flows: () => new Promise<any[]>((r) => { finishOld = () => r(data.flows); }) };
+    const mainOld = document.createElement("div") as unknown as FakeElement;
+    wishes.sendWish("start", { flow: "b" });
+    const oldRender = ui.renderStart(mainOld, { a: slow, dialog, go });
+    await open();
+    expect(checked()).toEqual(["b"]);
+    finishOld();
+    const cleanOld = await oldRender;
+    // the older render did not take the wish: it shows the first flow
+    expect(checkedIn(mainOld)).toEqual(["a"]);
+    cleanOld();
+    // the older render's cleanup does not remove the handler of the newer page
+    wishes.sendWish("start", { flow: "a" });
+    await flush();
+    expect(checked()).toEqual(["a"]);
+  });
+});
+
+describe("renderStart: entry choices", () => {
+  const group = (root: FakeElement) => find(root, "div", { role: "group", "aria-label": "How do you want to begin?" });
+  const texts = (root: FakeElement) => [...find(group(root)[0]!, "button"), ...find(group(root)[0]!, "a")].map((e) => e.textContent);
+  const modalRoot = () => (document as any).getElementById("modal-root") as FakeElement;
+  const choice = (name: string) => one(main, "button", { "data-focus": name });
+  const toastText = () => (document as any).getElementById("toast").textContent as string;
+  const realFetch = globalThis.fetch;
+  const posts: any[] = [];
+  const stubPost = (status = 201, body: unknown = { id: "new1", title: "T" }) => {
+    posts.length = 0;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      posts.push({ url, method: init.method, body: JSON.parse(init.body) });
+      return { ok: status < 400, status, statusText: "x", json: async () => body };
+    };
+  };
+  const reset = () => { globalThis.fetch = realFetch; };
+  const radio = (kind: string) => modalRoot().all("input").find((e) => e.attrs.name === "kind" && e.value === kind)!;
+  const press = (el: FakeElement | undefined) => {
+    expect(el, "control").toBeDefined();
+    el!.click();
+  };
+
+  it("comes before the form with the four choices in order, and asks for nothing yet", async () => {
+    data.flows = [flow("a")];
+    await open();
+    expect(group(main)).toHaveLength(1);
+    const children = main.children as FakeElement[];
+    expect(children.indexOf(group(main)[0]!)).toBeLessThan(children.indexOf(one(main, "form")));
+    expect(texts(main)).toEqual([entry.ENTRY_TASK, entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
+    expect(choice("entry-task").attrs["aria-current"]).toBe("true");
+    expect(calls.refinement).toBe(0);
+  });
+
+  it("is also there with no flows and when the flows fail, without the task choice", async () => {
+    await open();
+    expect(texts(main)).toEqual([entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
+    expect(main.textContent).toContain(ui.NO_FLOWS);
+    const failing = { ...fakeApi(), flows: async () => { throw Object.assign(new Error("x"), { status: 500 }); } };
+    main = document.createElement("div") as unknown as FakeElement;
+    await ui.renderStart(main, { a: failing, dialog, go });
+    expect(texts(main)).toEqual([entry.ENTRY_IDEA, entry.ENTRY_ISSUE, entry.ENTRY_CONTINUE]);
+  });
+
+  it("starts a refinement from the no-flows page", async () => {
+    await open();
+    press(choice("entry-issue"));
+    await flush();
+    expect(radio("issue").checked).toBe(true);
+  });
+
+  it("is on the form again after Back and not on the review", async () => {
+    data.flows = [flow("a")];
+    await open();
+    one(main, "textarea", { name: "task" }).value = "t";
+    one(main, "form").fire("submit", { preventDefault() {} });
+    await flush();
+    expect(group(main)).toHaveLength(0);
+    one(main, "button", { "data-focus": "start-back" }).click();
+    expect(group(main)).toHaveLength(1);
+    expect(find(main, "form")).toHaveLength(1);
+  });
+
+  it("says a kept draft is carried on, until Clear", async () => {
+    data.flows = [flow("a")];
+    draft.writeDraft({ flow: "a", task: "kept task", values: { a: {} } });
+    await open();
+    expect(choice("entry-task").textContent).toBe(entry.ENTRY_TASK_DRAFT);
+    expect(one(main, "textarea", { name: "task" }).value).toBe("kept task");
+    one(main, "button", { type: "button" }).click();
+    expect(choice("entry-task").textContent).toBe(entry.ENTRY_TASK);
+  });
+
+  it("moves the focus into the form on Start a task now", async () => {
+    data.flows = [flow("a")];
+    await open();
+    press(choice("entry-task"));
+    expect((document as any).activeElement).toBe(one(main, "textarea", { name: "task" }));
+  });
+
+  it("opens the idea form after one read, and goes to the session after Start session", async () => {
+    data.flows = [flow("a")];
+    stubPost();
+    try {
+      await open();
+      press(choice("entry-idea"));
+      await flush();
+      expect(calls.refinement).toBe(1);
+      expect(radio("idea").checked).toBe(true);
+      one(modalRoot(), "textarea", { name: "idea" }).value = "An idea";
+      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
+      await flush();
+      expect(posts).toEqual([{ url: "/api/refinement", method: "POST", body: { repo: "acme/app", idea: "An idea" } }]);
+      expect(go).toHaveBeenCalledWith("#/refinement/new1");
+    } finally {
+      reset();
+    }
+  });
+
+  it("opens the issue form", async () => {
+    data.flows = [flow("a")];
+    await open();
+    press(choice("entry-issue"));
+    await flush();
+    expect(radio("issue").checked).toBe(true);
+    expect(find(modalRoot(), "input", { name: "issue" })).toHaveLength(1);
+  });
+
+  it("links to the refinement sessions", async () => {
+    data.flows = [flow("a")];
+    await open();
+    expect(one(main, "a", { href: "#/refinement" }).textContent).toBe(entry.ENTRY_CONTINUE);
+  });
+
+  it("shows a failed read as a toast, opens nothing and works again", async () => {
+    data.flows = [flow("a")];
+    await open();
+    data.refFail = true;
+    press(choice("entry-idea"));
+    await flush();
+    expect(toastText()).toContain("GitHub could not be reached");
+    expect(modalRoot().children).toHaveLength(0);
+    data.refFail = false;
+    press(choice("entry-idea"));
+    await flush();
+    expect(modalRoot().children.length).toBeGreaterThan(0);
+  });
+
+  it("reads once for two fast presses", async () => {
+    data.flows = [flow("a")];
+    data.holdRef = true;
+    await open();
+    press(choice("entry-idea"));
+    press(choice("entry-idea"));
+    releaseRef();
+    await flush();
+    expect(calls.refinement).toBe(1);
+  });
+
+  it("opens no dialog when the page was left before the answer", async () => {
+    data.flows = [flow("a")];
+    data.holdRef = true;
+    const cleanup = await open();
+    press(choice("entry-idea"));
+    cleanup();
+    releaseRef();
+    await flush();
+    expect(modalRoot().children).toHaveLength(0);
+  });
+
+  it("has no entry that makes a session in a preview and reads nothing", async () => {
+    data.flows = [flow("a")];
+    main = document.createElement("div") as unknown as FakeElement;
+    await ui.renderStart(main, { a: fakeApi(), dialog, go, readOnly: true });
+    expect(texts(main)).toEqual([entry.ENTRY_CONTINUE]);
+    expect(calls.refinement).toBe(0);
+  });
+
+  it("keeps the typed text when the form is closed and opened again from the page", async () => {
+    data.flows = [flow("a")];
+    await open();
+    press(choice("entry-idea"));
+    await flush();
+    const area = one(modalRoot(), "textarea", { name: "idea" });
+    area.value = "Typed";
+    area.fire("input");
+    (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
+    press(choice("entry-issue"));
+    await flush();
+    expect(radio("issue").checked).toBe(true);
+    radio("idea").checked = true;
+    radio("idea").fire("change");
+    expect(one(modalRoot(), "textarea", { name: "idea" }).value).toBe("Typed");
+  });
+
+  it("opens no dialog when the address changed before the answer, also while the flows still load", async () => {
+    (globalThis as any).location = { hash: "#/start" };
+    data.flows = [flow("a")];
+    data.holdRef = true;
+    let finishFlows!: () => void;
+    const slow = { ...fakeApi(), flows: () => new Promise<any[]>((r) => { finishFlows = () => r(data.flows); }) };
+    main = document.createElement("div") as unknown as FakeElement;
+    const rendering = ui.renderStart(main, { a: slow, dialog, go });
+    press(choice("entry-idea")); // pressed while the flows load
+    (globalThis as any).location.hash = "#/runs";
+    releaseRef();
+    await flush();
+    expect(modalRoot().children).toHaveLength(0);
+    finishFlows();
+    await rendering;
+    expect(modalRoot().children).toHaveLength(0);
+    (globalThis as any).location.hash = "#/start";
+  });
+
+  it("does not go to a session when the address changed while it was made", async () => {
+    (globalThis as any).location = { hash: "#/start" };
+    data.flows = [flow("a")];
+    stubPost();
+    try {
+      await open();
+      press(choice("entry-idea"));
+      await flush();
+      one(modalRoot(), "textarea", { name: "idea" }).value = "An idea";
+      (globalThis as any).location.hash = "#/runs";
+      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
+      await flush();
+      expect(go).not.toHaveBeenCalled();
+      expect(toastText()).toContain("Refinement session started");
+    } finally {
+      reset();
+      (globalThis as any).location.hash = "#/start";
+    }
+  });
+
+  it("keeps the page and the kept idea when the session ended while the repositories were read", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/start", reload };
+    data.flows = [flow("a")];
+    const { api } = await import("../ui/api.js" as string);
+    (globalThis as any).fetch = async () => ({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) });
+    try {
+      main = document.createElement("div") as unknown as FakeElement;
+      await ui.renderStart(main, { a: { ...fakeApi(), refinement: api.refinement }, dialog, go });
+      press(choice("entry-idea"));
+      await flush();
+      expect(reload).toHaveBeenCalled(); // nothing is kept yet: a 401 may reload
+      reload.mockClear();
+      // an idea is kept: open the form through the API-free path, type, close, then the 401 must not reload
+      (globalThis as any).fetch = async () => ({ ok: true, status: 200, statusText: "x", json: async () => ({ sessions: [], repos: ["acme/app"] }) });
+      press(choice("entry-idea"));
+      await flush();
+      const area = one(modalRoot(), "textarea", { name: "idea" });
+      area.value = "Kept idea";
+      area.fire("input");
+      (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
+      (globalThis as any).fetch = async () => ({ ok: false, status: 401, statusText: "x", json: async () => ({ error: "Sign in again." }) });
+      press(choice("entry-idea"));
+      await flush();
+      expect(reload).not.toHaveBeenCalled();
+      expect(toastText()).toContain("Sign in again.");
+      expect(fresh.keptSession()).toMatchObject({ idea: "Kept idea" });
+    } finally {
+      reset();
+    }
+  });
+
+  it("keeps the page and the text when the session ended during Start session", async () => {
+    data.flows = [flow("a")];
+    const reload = vi.fn();
+    (globalThis as any).location = { hash: "#/start", reload };
+    stubPost(401, { error: "Sign in again." });
+    try {
+      await open();
+      press(choice("entry-idea"));
+      await flush();
+      one(modalRoot(), "textarea", { name: "idea" }).value = "Typed";
+      press(find(modalRoot(), "button").find((b) => b.textContent === "Start session"));
+      await flush();
+      expect(reload).not.toHaveBeenCalled();
+      expect(modalRoot().textContent).toContain("Sign in again.");
+      expect(one(modalRoot(), "textarea", { name: "idea" }).value).toBe("Typed");
+    } finally {
+      reset();
     }
   });
 });

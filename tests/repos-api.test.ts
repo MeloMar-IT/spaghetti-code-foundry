@@ -81,7 +81,9 @@ describe("repositories API", () => {
     expect(mine.find((r) => r.id === other.json().id)).not.toHaveProperty("github");
     expect(mine.find((r) => r.id === ssh.json().id)).toHaveProperty("github", "acme/tool");
     const rows = (await call(admin, "GET", "/api/admin/repos")).json() as object[];
-    for (const r of rows) expect(r).not.toHaveProperty("github");
+    // the admin list carries github for GitHub records too (#443), and not for the others
+    expect(rows.find((r: any) => r.id === ssh.json().id)).toHaveProperty("github", "acme/tool");
+    expect(rows.find((r: any) => r.id === other.json().id)).not.toHaveProperty("github");
     // leave the list as it was for the tests that follow
     for (const r of [ssh, other]) expect((await call(ann, "DELETE", `/api/repos/${r.json().id}`)).status).toBe(200);
   });

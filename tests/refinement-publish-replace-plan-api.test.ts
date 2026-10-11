@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, setRepoReady } from "../src/auth/repos.js";
 import { beginPublishing, endPublishing, recordDependantDone, recordDependantWrite, recordReplacing, refinementsPath } from "../src/refinement/store.js";
+import { saveFindings } from "../src/monitor/findings.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -117,6 +118,7 @@ describe("the publish plan of a split issue", () => {
       issue: 12,
       parts: [{ item: 1, title: "First" }, { item: 2, title: "Second" }],
       ready: true,
+      staysOpen: true,
       dependants: [
         { issue: 20, title: "Dependant 20", before: "#12", after: "new issue 1, new issue 2" },
         { issue: 21, title: "Dependant 21", byHand: true },
@@ -133,7 +135,21 @@ describe("the publish plan of a split issue", () => {
     const { id } = await splitSession([withDeps(20, "#12"), ...fillers]);
     const r = (await plan(id)).json().replaces;
     expect(r.cut).toBe(true);
+    expect(r.staysOpen).toBe(true);
     expect(r.dependants.map((d: any) => d.issue)).toEqual([20]);
+  });
+
+  it("has no staysOpen in the plain case, and has it for a monitor story or one a finding remembers", async () => {
+    const { id } = await splitSession([withDeps(20, "#12")]);
+    expect((await plan(id)).json().replaces).not.toHaveProperty("staysOpen");
+    change(12, { body: `${STORY}\n\n<!-- claude-factory monitor=0123456789abcdef -->` });
+    expect((await plan(id)).json().replaces.staysOpen).toBe(true);
+    // The marker was taken out, but a finding of the monitor still remembers the issue.
+    change(12, { body: STORY });
+    expect((await plan(id)).json().replaces).not.toHaveProperty("staysOpen");
+    const at = new Date().toISOString();
+    saveFindings([{ detector: "d", fingerprint: "f", severity: "minor", about: "foundry", summary: "s", firstSeen: at, lastSeen: at, count: 1, gone: false, evidence: { lines: [] }, report: { repo: "acme/app", issue: 12, url: "u", at, seen: 1 } } as any]);
+    expect((await plan(id)).json().replaces.staysOpen).toBe(true);
   });
 
   it("finds title references with the live title of a closed original, and falls back to the stored one", async () => {

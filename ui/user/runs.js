@@ -9,6 +9,7 @@ import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filte
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
+import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
@@ -24,6 +25,8 @@ const NOT_CANCELLED = "The run could not be cancelled. It may have just finished
 
 // The header of the run page lives in ui/run-header.js; the admin page shares it.
 export { firstLine, workText, runActions };
+// The Approve and Reject dialog lives in ui/run-dialogs.js: the administrator's run page uses it too.
+export { decisionDialog };
 
 const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
 const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
@@ -76,48 +79,6 @@ export async function confirmDialog(title, text, yes = "Yes", no = "No") {
     h("div", { class: "row" },
       h("button", { type: "button", class: "danger", onClick: () => close(true) }, yes),
       h("button", { type: "button", onClick: () => close(false) }, no))));
-  return answer === true;
-}
-
-/**
- * The Approve and Reject dialog with an optional note. `send(note)` makes the call. A refusal shows its sentence in the
- * dialog, which stays open with the note kept. Nothing closes the dialog while the call is out. Resolves true once sent.
- */
-export async function decisionDialog(kind, send) {
-  const approve = kind === "approve";
-  let busy = false;
-  const answer = await modal(approve ? "Approve" : "Reject", (close) => {
-    const note = h("textarea", { name: "note", rows: 4, "aria-label": approve ? "Note (optional)" : "Why reject? (optional)" });
-    const err = h("p", { class: "status bad flush", role: "alert" });
-    const submitBtn = h("button", { type: "submit", class: approve ? "primary" : "danger" }, approve ? "Approve" : "Reject");
-    const closeBtn = h("button", { type: "button", onClick: () => { if (!busy) close(false); } }, "Not now");
-    const submit = async (e) => {
-      e?.preventDefault?.();
-      if (busy) return;
-      busy = true;
-      submitBtn.disabled = true;
-      err.textContent = "";
-      try {
-        await send(note.value.trim());
-        busy = false;
-        close(true);
-      } catch (ex) {
-        busy = false;
-        submitBtn.disabled = false;
-        err.textContent = errorText(ex);
-      }
-    };
-    note.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault?.();
-        submit();
-      }
-    });
-    return h("form", { class: "run-dialog", onSubmit: submit },
-      h("label", { class: "field" }, h("span", {}, approve ? "Note (optional)" : "Why reject? (optional)"), note),
-      err,
-      h("div", { class: "row" }, submitBtn, closeBtn));
-  }, { busy: () => busy });
   return answer === true;
 }
 

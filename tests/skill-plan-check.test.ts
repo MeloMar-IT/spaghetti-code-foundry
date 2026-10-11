@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
-import { carryRunSkills } from "../src/engine/plan-carry.js";
+import { carryRunSkills, markPlanCheckFailed } from "../src/engine/plan-carry.js";
 import type { RunSummary } from "../src/engine/state.js";
 import { prunePlanRecords } from "../src/skills/plan-record.js";
 import { planHashOf, sha256Of } from "../src/skills/run-lock.js";
@@ -123,7 +123,54 @@ describe("carryRunSkills at plan_check", () => {
     expect(run(r, deps(), ["x"], l.log)).toBeUndefined();
     expect(r.skillCarry).toBeUndefined();
     expect(r.skillPlan).toBeUndefined();
-    expect(l.lines).toEqual([]);
+    expect(l.lines).toEqual(["    · plan check: no plan record for this issue here; the run goes on without the plan's skills"]);
+    expect(r.planCheck).toMatchObject({ outcome: "none", stopped: false });
+  });
+
+  it("notes the outcome of each check in run.planCheck", () => {
+    plan();
+    const ok = check([{ id: "7" }]);
+    run(ok);
+    expect(ok.planCheck).toMatchObject({ outcome: "record", stopped: false });
+    expect(ok.planCheck).not.toHaveProperty("changes");
+    const changed = check([{ id: "7", later: 1 }]);
+    run(changed);
+    expect(changed.planCheck!.changes).toEqual(changed.skillCarry!.changes);
+    const edited = check([{ id: "7", sha256: "sha256:" + "d".repeat(64) }], { planCheck: { outcome: "record", stopped: false } });
+    run(edited);
+    expect(edited.planCheck).toMatchObject({ outcome: "comment-changed", stopped: true });
+    const gated = check([{ id: "7" }], { planCheck: { outcome: "none", stopped: false }, history: [{ id: "post_plan", type: "shell", ok: true, visit: 1, output: postPlanOutput(REQUEST) }] });
+    gated.flowDef = { steps: [{ id: "post_plan", type: "shell", run: "x $FACTORY_TOOLS/skill-request" }, { id: "plan_check", type: "shell", run: "x $FACTORY_TOOLS/plan-comment" }] } as never;
+    run(gated);
+    expect(gated.planCheck).toBeUndefined();
+  });
+
+  it("notes a warning without a stop when no skills are in play", () => {
+    plan({ version: 1, skills: [] });
+    const r = check([{ id: "9" }]);
+    run(r);
+    expect(r.planCheck).toMatchObject({ outcome: "newer-plan", stopped: false });
+  });
+
+  it("notes a failed check and an invalid store as stopped", () => {
+    plan();
+    const r = check([{ id: "7" }]);
+    expect(run(r, { ...deps(), commitOf: () => { throw new Error("x"); } })).toBe("skills not resolved: the plan record could not be checked");
+    expect(r.planCheck).toMatchObject({ outcome: "failed", stopped: true });
+    writeFileSync(join(home, "skill-plans", "acme", "app", "5", "junk.json"), "{");
+    const bad = check([{ id: "7" }]);
+    run(bad);
+    expect(bad.planCheck).toMatchObject({ outcome: "invalid", stopped: true });
+  });
+
+  it("markPlanCheckFailed drops a stale carry and notes the unreadable check", () => {
+    const r = check([{ id: "7" }], { skillCarry: { stale: true } });
+    markPlanCheckFailed(r, "plan_check");
+    expect(r.skillCarry).toBeUndefined();
+    expect(r.planCheck).toMatchObject({ outcome: "check-unreadable", stopped: true });
+    const other = check([{ id: "7" }], { skillCarry: { stale: true } });
+    markPlanCheckFailed(other, "implement");
+    expect(other.skillCarry).toBeDefined();
   });
 
   it("never uses a record of another repository", () => {

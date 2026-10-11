@@ -18,12 +18,16 @@
     <span class="spacer"></span>
     <span id="top-actions" class="top-actions">
       <a href="#/start" data-nav="start">Start work</a>
+      <button type="button" id="search-btn" class="search-btn" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K">Search</button>
       <span id="ask-scf" class="ask-scf" hidden></span>
       <button type="button" id="health-btn" class="health-chip" aria-controls="health" aria-expanded="false" hidden>Health</button>
     </span>
     <details id="account" class="account">
       <summary id="account-summary" aria-label="Account"><span id="account-name" class="account-name">Account</span></summary>
-      <span id="user" class="user" hidden></span>
+      <div class="account-menu">
+        <span id="user" class="user" hidden></span>
+        <a href="/accessibility.html">Accessibility</a>
+      </div>
     </details>
   </header>
   <div id="scrim" class="scrim" hidden></div>
@@ -38,7 +42,7 @@
       <a href="#/repos" data-nav="repos">Repositories</a>
       <span class="side-head">Setup</span>
       <a href="#/flows" data-nav="flows" class="setup">Flows</a>
-      <a href="#/users" data-nav="administration" class="setup">Administration</a>
+      <a href="#/operations" data-nav="administration" class="setup">Administration</a>
       <span class="repo" id="repo" title="Repository this UI works against"></span>
     </nav>
     <div id="content" class="content">

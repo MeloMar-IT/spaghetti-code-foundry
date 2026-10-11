@@ -1,7 +1,8 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
-import { connectionProblem, connectionStatus, loadFailed, methodLabel, plainError } from "./repos.js";
+import { onWish, takeWish } from "./palette-data.js";
+import { connectionProblem, connectionStatus, focusRepoRow, loadFailed, methodLabel, plainError } from "./repos.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
@@ -193,6 +194,8 @@ export function transferDialog(repo) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
+let unwish = () => {};
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
@@ -241,7 +244,7 @@ export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) 
     }
     if (n === seq && live()) draw();
   };
-  const row = (repo) => h("tr", {},
+  const row = (repo) => h("tr", { "data-repo": repo.id },
     h("td", { class: "mono" }, repo.url),
     h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
     h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
@@ -278,8 +281,13 @@ export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) 
           h("tbody", {}, sortRepos(shown).map(row)))
         : state.filters.repo ? filterGone({ onClear: clear }) : emptyState("No repositories yet."));
   };
+  // The palette's repository result: a wish that came before this page, or one for the page as it is.
+  unwish();
+  unwish = onWish("all-repos", (w) => focusRepoRow(main, w?.repo));
   await load();
+  if (live()) focusRepoRow(main, takeWish("all-repos")?.repo);
   return () => {
     if (generation === mine) generation++;
+    unwish();
   };
 }

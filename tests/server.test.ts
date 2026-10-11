@@ -187,7 +187,12 @@ describe("ui server", () => {
     const css = await fetchUiCss(base);
     expect(css).toContain("body.drawer-open .side");
     expect(css).toContain(".brand-short { display: none; }");
-    expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);
+    expect(css).toContain(".backdrop { place-items: end stretch; padding: 0; }");
+    const viewport = await fetch(base + "/viewport.js");
+    expect(viewport.status).toBe(200);
+    expect(viewport.headers.get("content-type")).toContain("text/javascript");
+    expect(viewport.headers.get("content-security-policy")).toBeTruthy();
+    expect(css).toMatch(/@media \(max-width: 767px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);
     const app = await text("/app.js");
     expect(app).toContain("Welcome to Spaghetti Code Foundry");
     expect(app).toContain("Build your own coding flows: pick a flow on the left,");
@@ -745,7 +750,7 @@ steps:
       expect(r.status).toBe(200);
       return r.text();
     };
-    const [next, dashboard, admin, runs, api, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/admin.js", "/runs.js", "/api.js", "/health.js", "/", "/app.js"].map(text));
+    const [next, dashboard, admin, runs, api, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/watchers.js", "/runs.js", "/api.js", "/health.js", "/", "/app.js"].map(text));
     const css = await fetchUiCss(base);
     expect(next).toContain("What happens next");
     for (const js of [dashboard, admin, runs, health]) expect(js).toContain("./next.js");
@@ -1133,6 +1138,6 @@ steps:
     const { readFileSync } = await import("node:fs");
     const ui = (f: string) => readFileSync(resolve("ui", f), "utf8");
     expect(ui("runs.js")).toContain("whenParts(");
-    for (const f of ["runs.js", "dashboard.js", "admin.js"]) expect(ui(f)).not.toMatch(/usually|longer than usual|Estimate:|Continues/);
+    for (const f of ["runs.js", "dashboard.js", "admin.js", "watchers.js"]) expect(ui(f)).not.toMatch(/usually|longer than usual|Estimate:|Continues/);
   });
 });

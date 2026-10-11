@@ -3,7 +3,7 @@ import { confirmDialog, debounce, h, modal, mount, toast } from "./dom.js";
 import { cleanFlow, editable, renderEditor } from "./editor.js";
 import { editorState, overviewStartsOpen, overviewStoreFor } from "./flow-state.js";
 import { renderHeader, renderNavigator } from "./flow-shell.js";
-import { openInVisual, openInYaml, problemsOf, renderFlowProblems } from "./flow-problems.js";
+import { markProblems, openInVisual, openInYaml, problemsOf, renderFlowProblems } from "./flow-problems.js";
 import { splitHash } from "./ia.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 import { renderGraph } from "./graph.js";
@@ -45,7 +45,7 @@ function browserStorage() {
 /**
  * The flow page: the editor, its header and the flow list on the left.
  * `state` is the shared { info, flows, cur, ... } of the app; cur is the flow being edited:
- * { name: saved name | null, scope, saveScope, yaml, obj, mode: "visual"|"yaml", dirty, selected, validation, problems, checking }
+ * { name: saved name | null, scope, saveScope, yaml, obj, mode: "visual"|"yaml", dirty, selected ("settings", a step index or null), validation, problems, problemsFor (the YAML they describe), checking }
  * `onNavigate(hash, "go" | "push" | "replace")` changes the address. `storage` and `isNarrow` can be replaced in tests.
  */
 export function createFlowPage({ main, sidebar, state, api, onNavigate, storage = browserStorage(), isNarrow = () => !!globalThis.matchMedia?.("(max-width: 1100px)")?.matches, watchNarrow = (fn) => globalThis.matchMedia?.("(max-width: 1100px)")?.addEventListener?.("change", fn) }) {
@@ -269,6 +269,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       lostComments ? h("p", { class: "muted mt-0" }, "Note: visual edits rewrite the YAML and drop its comments.") : null,
       renderEditor(c.obj, {
         selected: c.selected,
+        problems: c.problemsFor === c.yaml ? (c.problems ?? []) : [],
         onChange: () => {
           c.yaml = YAML.stringify(cleanFlow(c.obj), { lineWidth: 0 });
           changed();
@@ -300,10 +301,12 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   }
 
   function select(i, scroll) {
-    state.cur.selected = i;
-    document.querySelectorAll(".card[id^='step-']").forEach((el) => el.classList.toggle("selected", el.id === `step-${i}`));
+    const c = state.cur;
+    const before = c.selected ?? "settings";
+    c.selected = i;
+    if (c.mode === "visual" && before !== i) drawBody();
     drawGraph();
-    if (scroll && state.cur.mode === "visual") document.getElementById(`step-${i}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (scroll && c.mode === "visual") document.getElementById(i === "settings" ? "flow-settings" : `step-${i}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   function setMode(mode) {
@@ -323,6 +326,8 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const wasClean = !c.dirty;
     c.dirty = true;
     c.checking = true;
+    // The marks on the list described the old text; the next check puts back the ones that still hold.
+    if (c.mode === "visual") markProblems(ui.body, []);
     drawHeader();
     drawGraph();
     if (wasClean) renderSidebar(); // the list marks the open flow as unsaved
@@ -346,6 +351,8 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     c.drawn = seq;
     c.validation = r;
     c.problems = r.ok ? [] : problemsOf(r, yaml, YAML);
+    c.problemsFor = yaml;
+    if (c.mode === "visual") markProblems(ui.body, c.problems);
     c.checking = false;
     if (r.ok) mount(ui.errors, null);
     else drawErrors(c, yaml, lead, r.error, r);

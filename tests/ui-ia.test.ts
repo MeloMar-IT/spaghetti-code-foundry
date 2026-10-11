@@ -28,6 +28,22 @@ describe("resolve with a query", () => {
     expect(a("#/runs?x=1&repo=bad")).toMatchObject({ page: { id: "runs" }, query: {} });
   });
 
+  it("keeps the address for repo=all and leaves repo out of the query", () => {
+    for (const role of ["admin", "user"]) {
+      expect(ia.resolve(role, "#/runs?repo=all")).toMatchObject({ hash: "#/runs?repo=all", redirected: false, page: { id: "runs" }, query: {} });
+      expect(ia.resolve(role, "#/runs?repo=all&owner=u1")).toMatchObject({ hash: "#/runs?repo=all&owner=u1", redirected: false, query: { owner: "u1" } });
+    }
+    expect(a("#/board?repo=all")).toMatchObject({ page: { id: "board" }, query: {} });
+    expect(a("#/runs?repo=ALL")).toMatchObject({ page: { id: "runs" }, query: {} });
+    expect(ia.resolve("user", "#/all-repos?repo=all")).toMatchObject({ hash: "#/runs", redirected: true });
+  });
+
+  it("marks exactly six pages with scope and exports ALL_REPOS", () => {
+    expect(ia.ALL_REPOS).toBe("all");
+    expect(ia.PAGES.filter((p: any) => p.scope).map((p: any) => p.id).sort()).toEqual(["all-repos", "board", "board-repo", "refinement", "repos", "runs"]);
+    for (const p of ia.PAGES.filter((x: any) => !["all-repos", "board", "board-repo", "refinement", "repos", "runs"].includes(x.id))) expect(p.scope, p.id).toBeUndefined();
+  });
+
   it("gives an empty query to every address without one", () => {
     for (const p of ia.PAGES) expect(a(p.path.replace(":id", "x").replace(":name", "x")).query, p.path).toEqual({});
   });
@@ -63,8 +79,8 @@ describe("the navigation lists", () => {
 
   it("lists the secondary pages of a destination", () => {
     const adm = ia.subnavFor("admin", "administration");
-    expect(adm.map((l: any) => l.label)).toEqual(["Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
-    expect(adm.map((l: any) => l.section)).toEqual([...Array(4).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
+    expect(adm.map((l: any) => l.label)).toEqual(["Overview", "Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
+    expect(adm.map((l: any) => l.section)).toEqual([...Array(5).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
     expect(ia.subnavFor("admin", "flows").map((l: any) => l.href)).toEqual(["#/flows", "#/library"]);
     expect(ia.subnavFor("admin", "flows").every((l: any) => l.section === undefined)).toBe(true);
     expect(ia.subnavFor("admin", "repos")).toEqual([]);
@@ -103,6 +119,15 @@ describe("resolve for an admin", () => {
     for (const h of ["#/nope", "#/runs/a/b", "#/runs/%E0%A4%A", "#/runs/"]) expect(r(h), h).toMatchObject({ hash: "#/home", reason: "unknown", redirected: true });
   });
 
+  it("knows one account's page under Users", () => {
+    expect(r("#/users/u1")).toMatchObject({ hash: "#/users/u1", arg: "u1", back: "#/users", dest: "administration", title: "u1", redirected: false });
+    expect(r("#/users/u1").page.id).toBe("user");
+    expect(r("#/users/u1").crumbs.map((c: any) => [c.label, c.href])).toEqual([["Administration", "#/operations"], ["Users", "#/users"], ["u1", null]]);
+    expect(r("#/users/a%20b").arg).toBe("a b");
+    expect(ia.resolve("user", "#/users/x")).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users/a/b", "#/users/"]) expect(r(h), h).toMatchObject({ hash: "#/home", reason: "unknown" });
+  });
+
   it("keeps an encoded name", () => {
     expect(r("#/flows/my%20flow")).toMatchObject({ hash: "#/flows/my%20flow", arg: "my flow", title: "my flow" });
   });
@@ -111,13 +136,15 @@ describe("resolve for an admin", () => {
     const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
     expect(crumbs("#/runs/r1")).toEqual([["Runs", "#/runs"], ["Run r1", null]]);
     expect(r("#/runs/r1").back).toBe("#/runs");
-    expect(crumbs("#/users")).toEqual([["Administration", "#/users"], ["Users", null]]);
+    expect(crumbs("#/operations")).toEqual([["Administration", "#/operations"], ["Overview", null]]);
+    expect(ia.primaryFor("admin").find((p: any) => p.id === "administration")).toMatchObject({ href: "#/operations" });
+    expect(crumbs("#/users")).toEqual([["Administration", "#/operations"], ["Users", null]]);
     expect(r("#/users").back).toBeNull();
-    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/users"], ["All repositories", null]]);
-    expect(crumbs("#/credentials")).toEqual([["Administration", "#/users"], ["Credentials", null]]);
-    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/users"], ["Maintenance", null]]);
+    expect(crumbs("#/all-repos")).toEqual([["Administration", "#/operations"], ["All repositories", null]]);
+    expect(crumbs("#/credentials")).toEqual([["Administration", "#/operations"], ["Credentials", null]]);
+    expect(crumbs("#/maintenance")).toEqual([["Administration", "#/operations"], ["Maintenance", null]]);
     expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
-    expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/users"], ["Models", "#/models"], ["ollama", null]]);
+    expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/operations"], ["Models", "#/models"], ["ollama", null]]);
     expect(r("#/models/ollama")).toMatchObject({ back: "#/models", title: "ollama", dest: "administration" });
     expect(r("#/models/ollama").page.id).toBe("model");
     expect(r("#/models/my%2Dproxy")).toMatchObject({ hash: "#/models/my%2Dproxy", arg: "my-proxy" });
@@ -127,6 +154,18 @@ describe("resolve for an admin", () => {
     expect(crumbs("#/repos")).toEqual([["Repositories", "#/repos"], ["My repositories", null]]);
     expect(r("#/runs/r1").title).toBe("Run r1");
     expect(r("#/runs").title).toBe("Runs");
+  });
+
+  it("builds the crumbs of a watcher and a problem, and keeps the list address", () => {
+    const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
+    expect(crumbs("#/watchers/w-1")).toEqual([["Administration", "#/operations"], ["Watchers", "#/watchers"], ["w-1", null]]);
+    expect(r("#/watchers/w-1").back).toBe("#/watchers");
+    expect(crumbs("#/problems/00000000000000a1")).toEqual([["Administration", "#/operations"], ["Problems", "#/problems"], ["00000000000000a1", null]]);
+    expect(r("#/problems/00000000000000a1").back).toBe("#/problems");
+    expect(r("#/problems")).toMatchObject({ hash: "#/problems", redirected: false });
+    expect(r("#/problems").page.id).toBe("problems");
+    expect(r("#/watchers/w-1").page.id).toBe("watcher");
+    expect(r("#/problems/abc").page.id).toBe("problem");
   });
 });
 
@@ -161,13 +200,20 @@ describe("resolve for a user", () => {
   });
 
   it("sends admin pages to My runs", () => {
-    for (const h of ["#/users", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users", "#/operations", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
     expect(auth.isUserHash("#/models/ollama")).toBe(false);
+  });
+
+  it("sends the watcher and problem pages, and their lists, to My runs", () => {
+    for (const h of ["#/watchers/w", "#/problems/abc", "#/watchers", "#/problems"]) {
+      expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true });
+      expect(auth.isUserHash(h), h).toBe(false);
+    }
   });
 
   it("has no link to the admin-only pages in the user HTML", () => {
     const html = read("ui/user/index.html");
-    for (const h of ["#/maintenance", "#/all-repos", "#/credentials"]) expect(html).not.toContain(h);
+    for (const h of ["#/maintenance", "#/all-repos", "#/credentials", "#/operations"]) expect(html).not.toContain(h);
   });
 
   it("builds crumbs", () => {
@@ -231,5 +277,59 @@ describe("the grouped shell", () => {
       const all = [...html.matchAll(/data-nav="([\w-]+)"/g)].length;
       expect([...side.matchAll(/data-nav="([\w-]+)"/g)].length + 1, file).toBe(all);
     }
+  });
+});
+
+describe("commandsFor", () => {
+  const keys = (list: any[]) => list.filter((c) => c.key).map((c) => c.key).sort();
+
+  it("lists every primary and secondary page of an admin, in the order of PAGES", () => {
+    const { goTo } = ia.commandsFor("admin");
+    const shown = ia.PAGES.filter((p: any) => p.roles.includes("admin") && (p.nav === "primary" || p.nav === "secondary"));
+    expect(goTo.map((c: any) => c.id)).toEqual(shown.map((p: any) => p.id));
+    expect(goTo.length).toBeGreaterThanOrEqual(16);
+    const order = ia.PAGES.map((p: any) => p.id);
+    const at = goTo.map((c: any) => order.indexOf(c.id));
+    expect(at).toEqual([...at].sort((a: number, b: number) => a - b));
+    expect(goTo.find((c: any) => c.id === "users")).toMatchObject({ label: "Users", hint: "Administration", href: "#/users" });
+  });
+
+  it("gives the admin the g keys h b e r p f a, and s on Start work", () => {
+    const { goTo, actions } = ia.commandsFor("admin");
+    expect(keys(goTo)).toEqual(["a", "b", "e", "f", "h", "p", "r"]);
+    expect(actions.find((a: any) => a.id === "start")).toMatchObject({ key: "s", href: "#/start", intent: null });
+  });
+
+  it("gives a user four pages and two actions, without board, flows or users", () => {
+    const { goTo, actions } = ia.commandsFor("user");
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Refinement", "My runs", "My repositories"]);
+    expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
+    expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
+  });
+
+  it("has no New refinement session in a preview", () => {
+    for (const role of ["admin", "user"]) {
+      expect(ia.commandsFor(role, { preview: true }).actions.map((a: any) => a.id)).toEqual(["start"]);
+      expect(ia.commandsFor(role).actions.map((a: any) => a.id)).toEqual(["start", "new-refinement"]);
+    }
+  });
+
+  it("only has addresses that resolve for the role without a redirect", () => {
+    for (const role of ["admin", "user"]) {
+      const { goTo, actions } = ia.commandsFor(role);
+      for (const c of [...goTo, ...actions]) {
+        const to = ia.resolve(role, c.href);
+        expect(to.redirected, `${role} ${c.href}`).toBe(false);
+        expect(to.hash).toBe(c.href);
+      }
+    }
+  });
+
+  it("uses page ids in GO_KEYS and PALETTE_ACTIONS, and every letter once", () => {
+    const ids = ia.PAGES.map((p: any) => p.id);
+    for (const id of Object.keys(ia.GO_KEYS)) expect(ids, id).toContain(id);
+    for (const a of ia.PALETTE_ACTIONS) expect(ids, a.id).toContain(a.page);
+    const letters = Object.values(ia.GO_KEYS) as string[];
+    expect(new Set(letters).size).toBe(letters.length);
   });
 });

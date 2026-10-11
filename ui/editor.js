@@ -1,6 +1,8 @@
 import { glyph, h } from "./dom.js";
-import { area, field, insertAtCursor, list, select, setKey, text } from "./fields.js";
-import { STEP_TYPES, stepBody, stepAdvanced } from "./step-types.js";
+import { field, list, select, setKey, text } from "./fields.js";
+import { STEP_TYPES, stepBody } from "./step-types.js";
+import { subtitle } from "./graph.js";
+import { markProblems } from "./flow-problems.js";
 
 export const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"];
 
@@ -29,13 +31,17 @@ function settingsCard(flow, onChange, rerender) {
   const vars = Object.entries(flow.vars);
   const setVars = (entries) => { flow.vars = Object.fromEntries(entries); onChange(); };
 
-  return h("div", { class: "card", "data-section": "flow" },
+  const filled = (o) => Object.values(o ?? {}).some((v) => v != null && v !== "" && !(Array.isArray(v) && !v.length));
+  const safetyOpen = filled(flow.limits) || filled(flow.sandbox) || flow.one_per_repo != null;
+
+  return h("div", { class: "card inspector", id: "flow-settings", "data-section": "flow" },
+    h("div", { class: "card-head" }, h("strong", {}, "Flow settings")),
     h("div", { class: "grid" },
       field("Name", text(flow, "name", onChange, { mono: true, placeholder: "my-flow" }), "Also the file name"),
       field("Workspace", select(flow, "workspace", [["worktree", "git worktree of local repo (isolated branch)"], ["empty", "empty folder (clone from GitHub in a step)"], ["inplace", "in place (edit repo directly)"]], onChange))),
     field("Description", text(flow, "description", onChange, { placeholder: "What this flow does" })),
-    h("details", { "data-section": "defaults" },
-      h("summary", {}, "Defaults for all agent steps"),
+    h("details", { "data-section": "defaults", open: filled(d) },
+      h("summary", {}, "Defaults for agent steps"),
       h("div", { class: "grid" },
         field("Model", text(d, "model", onChange, { list: "models", mono: true, placeholder: "(router / default)" }), "e.g. sonnet, codex, ollama:qwen3-coder"),
         field("Agent", select(d, "agent", [["claude", "Claude Code"], ["codex", "Codex (ChatGPT)"]], onChange, { emptyLabel: "from model spec" })),
@@ -46,8 +52,8 @@ function settingsCard(flow, onChange, rerender) {
         field("Budget / step ($)", text(d, "max_budget_usd", onChange, { type: "number" }))),
       h("div", { class: "mt-10" },
         field("Allowed tools", list(d, "allowed_tools", onChange, 'Read, Edit, Write, Bash(npm *)'), "Comma-separated. Shell commands Claude may run without asking."))),
-    h("details", { "data-section": "limits sandbox", open: !!(flow.limits?.max_cost_usd || flow.sandbox?.claude || flow.sandbox?.docker_image || flow.one_per_repo) },
-      h("summary", {}, "Safety: budget, sandbox & concurrency"),
+    h("details", { "data-section": "limits sandbox", open: safetyOpen },
+      h("summary", {}, "Safety"),
       h("div", { class: "grid" },
         field("Max cost per run ($)", text((flow.limits ??= {}), "max_cost_usd", onChange, { type: "number", placeholder: "no limit" }), "The run fails once it has spent this much."),
         field("Docker image for sandboxed shell steps", text((flow.sandbox ??= {}), "docker_image", onChange, { mono: true, placeholder: "e.g. node:22 (global default in Settings)" }))),
@@ -70,30 +76,23 @@ function settingsCard(flow, onChange, rerender) {
     publishPanel(flow, onChange, rerender));
 }
 
-// ── step card ──
+// ── step inspector ──
 
-function targetOptions(flow, self, fallback) {
-  const base = [["next", "next step"], ["end", "end (success)"], ["fail", "fail run"], ["stop", "stop (needs a human)"]];
-  const steps = flow.steps.filter((s) => s !== self).map((s) => [s.id, `→ ${s.id}`]);
-  return [["", `${fallback} (default)`], ...base.filter(([v]) => v !== fallback), ...steps];
-}
-
-function stepCard(flow, step, i, ctx) {
-  const { onChange, rerender, selected, onSelect } = ctx;
+function stepInspector(flow, step, i, ctx) {
+  const { onChange, rerender, onSelect } = ctx;
   const move = (delta) => {
     const j = i + delta;
     if (j < 0 || j >= flow.steps.length) return;
     [flow.steps[i], flow.steps[j]] = [flow.steps[j], flow.steps[i]];
-    onSelect(j);
+    onSelect(j, false);
     rerender();
   };
-  const priorClaude = flow.steps.slice(0, i).filter((s) => s.type === "claude").map((s) => [s.id, s.id]);
+  const btn = (name, title, label, props) => h("button", { class: "icon", title, "aria-label": title, "data-focus": name, ...props }, label);
   const vars = Object.keys(flow.vars ?? {});
   const earlier = flow.steps.filter((s) => s !== step).map((s) => s.id);
   const prevId = step.id;
 
-  const body = stepBody(flow, step, i, { onChange, rerender, vars, earlier, priorClaude });
-  return h("div", { class: `card${selected === i ? " selected" : ""}${step.jump_only ? " jump-only" : ""}`, id: `step-${i}`, onFocusin: () => selected !== i && onSelect(i, false) },
+  return h("div", { class: `card inspector${step.jump_only ? " jump-only" : ""}`, id: `step-${i}` },
     h("div", { class: "card-head" },
       h("span", { class: "num" }, `${i + 1}`),
       text(step, "id", onChange, {
@@ -108,45 +107,86 @@ function stepCard(flow, step, i, ctx) {
       }),
       h("span", { class: `pill ${step.type}` }, glyph(STEP_TYPES[step.type]?.icon ?? "?"), " ", step.type),
       h("span", { class: "spacer" }),
-      h("button", { class: "icon", title: "Move up", disabled: i === 0, onClick: () => move(-1) }, "↑"),
-      h("button", { class: "icon", title: "Move down", disabled: i === flow.steps.length - 1, onClick: () => move(1) }, "↓"),
-      h("button", { class: "icon", title: "Save as reusable block", onClick: () => ctx.onSaveBlock?.(step) }, "☆"),
-      h("button", { class: "icon", title: "Duplicate", onClick: () => { flow.steps.splice(i + 1, 0, { ...structuredClone(step), id: uniqueId(flow, step.id) }); rerender(); } }, "⧉"),
-      h("button", { class: "icon", title: "Delete step", onClick: () => { flow.steps.splice(i, 1); rerender(); } }, "🗑")),
+      btn("step-up", "Move up", "↑", { disabled: i === 0, onClick: () => move(-1) }),
+      btn("step-down", "Move down", "↓", { disabled: i === flow.steps.length - 1, onClick: () => move(1) }),
+      btn("step-block", "Save as reusable block", "☆", { onClick: () => ctx.onSaveBlock?.(step) }),
+      btn("step-dup", "Duplicate", "⧉", { onClick: () => {
+        flow.steps.splice(i + 1, 0, { ...structuredClone(step), id: uniqueId(flow, step.id) });
+        onSelect(i + 1, false);
+        rerender();
+      } }),
+      btn("step-del", "Delete step", "🗑", { onClick: () => {
+        flow.steps.splice(i, 1);
+        onSelect(flow.steps.length ? Math.min(i, flow.steps.length - 1) : "settings", false);
+        rerender();
+      } })),
     field("Description", text(step, "description", onChange, { placeholder: "optional" })),
-    ...body,
-    h("div", { class: "card-sub" },
-      h("div", { class: "grid" },
-        field("On success →", select(step, "on_success", targetOptions(flow, step, "next").slice(1), () => { onChange(); }, { emptyLabel: "next (default)" })),
-        field("On failure →", select(step, "on_failure", targetOptions(flow, step, "fail").slice(1), () => { onChange(); }, { emptyLabel: "fail run (default)" })),
-        field("Max visits", text(step, "max_visits", onChange, { type: "number", placeholder: String(flow.defaults?.max_visits ?? 5) })),
-        field("Timeout (sec)", text(step, "timeout_sec", onChange, { type: "number", placeholder: flow.defaults?.timeout_sec ? String(flow.defaults.timeout_sec) : "none" }))),
-      h("label", { class: "row tight text-sm" },
-        // The data-field key is split so the words test does not read it as shown text.
-        h("input", { type: "checkbox", class: "fit", "data-field": "jump" + "_only", checked: !!step.jump_only,
-          onChange: (e) => { setKey(step, "jump_only", e.target.checked || ""); rerender(); } }),
-        h("span", {}, "Only reachable via jumps"),
-        h("span", { class: "muted" }, "— skipped in normal order, e.g. an “ask for info” or “fix” handler")),
-      h("div", { class: "grid" },
-        field("Pass only if output matches", text(step, "pass_if", onChange, { mono: true, placeholder: "regex, e.g. ^VERDICT: APPROVE" })),
-        field("Fail if output matches", text(step, "fail_if", onChange, { mono: true, placeholder: "regex" }))),
-      stepAdvanced(flow, step, { onChange, rerender, targets: targetOptions(flow, step, "next").slice(1) })));
+    ...stepBody(flow, step, i, { onChange, rerender, vars, earlier }));
 }
 
-function insertBar(flow, at, { rerender, onSelect, onLibrary }) {
+// ── structure list ──
+
+/** Where a new step goes: at the top, after the selected step, or at the end. */
+function insertIndex(flow, sel, where) {
+  if (where === "top") return 0;
+  if (where === "end" || sel === "settings") return flow.steps.length;
+  return sel + 1;
+}
+
+function insertBar(flow, sel, { rerender, onSelect, onLibrary }) {
+  let where = "after";
+  const at = () => insertIndex(flow, sel, where);
   const add = (type) => {
+    const i = at();
     const step = { id: uniqueId(flow, type), ...structuredClone(STEP_TYPES[type].blank) };
-    flow.steps.splice(at, 0, step);
-    onSelect(at);
+    flow.steps.splice(i, 0, step);
+    onSelect(i, false);
     rerender();
   };
   return h("div", { class: "insert" },
-    h("button", { class: "small", onClick: () => add("claude") }, "+ Agent step"),
-    h("button", { class: "small", onClick: () => add("shell") }, "+ Shell step"),
+    h("select", { class: "small-select", title: "Where new steps go", "aria-label": "Where new steps go", "data-focus": "step-add-where", onChange: (e) => { where = e.target.value; } },
+      [["after", sel === "settings" ? "Add at the end" : "Add after selected"], ["top", "Add at the top"], ["end", "Add at the end"]]
+        .filter(([v]) => v !== "end" || sel !== "settings")
+        .map(([v, l]) => h("option", { value: v, selected: v === "after" }, l))),
+    h("button", { class: "small", "data-focus": "step-add-claude", onClick: () => add("claude") }, "+ Agent step"),
+    h("button", { class: "small", "data-focus": "step-add-shell", onClick: () => add("shell") }, "+ Shell step"),
     h("select", { class: "small-select", title: "More step types", "aria-label": "More step types", onChange: (e) => { if (e.target.value) add(e.target.value); } },
       h("option", { value: "" }, "+ more…"),
       ["approval", "parallel", "flow"].map((t) => h("option", { value: t }, STEP_TYPES[t].label))),
-    h("button", { class: "small", onClick: () => onLibrary?.(at) }, "+ From library"));
+    h("button", { class: "small", "data-focus": "step-add-library", onClick: () => onLibrary?.(at()) }, "+ From library"));
+}
+
+const problemMark = () => {
+  const mark = h("span", { class: "mark-bad", "data-mark": "problem" }, glyph("!"), h("span", { class: "sr-only" }, "has a problem"));
+  mark.hidden = true;
+  return mark;
+};
+
+/** The list: "Flow settings", then a row per step. `sync()` refreshes the id and summary texts after an edit. */
+function structureList(flow, sel, ctx) {
+  const { onSelect } = ctx;
+  const syncs = [];
+  const row = (key, children, props) => h("button", { type: "button", class: "structure-row" + (sel === key ? " selected" : ""), "data-step": String(key), "data-focus": `flow-row-${key}`, "aria-current": sel === key ? "true" : null, onClick: () => onSelect(key), ...props }, children);
+
+  const sum = h("span", { class: "sum" }, flow.name ?? "");
+  syncs.push(() => { sum.textContent = flow.name ?? ""; });
+  const rows = [row("settings", [h("span", { class: "num" }), h("span", {}), h("span", { class: "id" }, "Flow settings"), h("span", { class: "marks" }, problemMark()), sum])];
+  flow.steps.forEach((s, i) => {
+    const id = h("span", { class: "id" }, s.id ?? "");
+    const su = h("span", { class: "sum" }, subtitle(s));
+    syncs.push(() => { id.textContent = s.id ?? ""; su.textContent = subtitle(s); });
+    rows.push(row(i, [
+      h("span", { class: "num" }, `${i + 1}`),
+      h("span", {}, glyph(STEP_TYPES[s.type]?.icon ?? "?"), h("span", { class: "sr-only" }, String(s.type))),
+      id,
+      h("span", { class: "marks" }, s.jump_only ? h("span", {}, glyph("↪"), h("span", { class: "sr-only" }, "only via jumps")) : null, problemMark()),
+      su,
+    ]));
+  });
+  return {
+    el: h("div", { class: "structure" }, h("h3", { class: "mb-4" }, "Structure"), rows, insertBar(flow, sel, ctx)),
+    sync: () => syncs.forEach((f) => f()),
+  };
 }
 
 const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
@@ -161,11 +201,13 @@ export function editable(flow) {
 /** Visual editor for a flow object. Field edits call onChange; structural edits call rerender. */
 export function renderEditor(flow, ctx) {
   flow.steps ??= [];
-  return h("div", { class: "steps" },
-    settingsCard(flow, ctx.onChange, ctx.rerender),
-    h("h3", { class: "mt-22 mb-4" }, `Steps (${flow.steps.length})`),
-    insertBar(flow, 0, ctx),
-    flow.steps.map((s, i) => [stepCard(flow, s, i, ctx), insertBar(flow, i + 1, ctx)]));
+  const sel = Number.isInteger(ctx.selected) && flow.steps[ctx.selected] ? ctx.selected : "settings";
+  let structure;
+  const inner = { ...ctx, selected: sel, onChange: () => { ctx.onChange(); structure.sync(); } };
+  structure = structureList(flow, sel, inner);
+  markProblems(structure.el, ctx.problems ?? []);
+  return h("div", { class: "flow-form" }, structure.el,
+    sel === "settings" ? settingsCard(flow, inner.onChange, ctx.rerender) : stepInspector(flow, flow.steps[sel], sel, inner));
 }
 
 /** Strip empty values so the YAML stays tidy. */
@@ -257,7 +299,8 @@ function publishVarRow(flow, name, onChange, rerender) {
 export function publishPanel(flow, onChange, rerender) {
   const p = (flow.publish ??= {});
   const names = Object.keys(flow.vars ?? {});
-  return h("details", { "data-section": "publish", open: p.enabled === true },
+  const stored = p.enabled != null || !!p.name || !!p.description || Object.keys(p.vars ?? {}).length > 0;
+  return h("details", { "data-section": "publish", open: stored },
     h("summary", {}, p.enabled ? `Publish to users — version ${p.version ?? 1}` : "Publish to users"),
     h("label", { class: "row tight text-sm mt-6" },
       h("input", { type: "checkbox", class: "fit", "data-field": "enabled", checked: p.enabled === true, onChange: (e) => { setKey(p, "enabled", e.target.checked || ""); onChange(); rerender(); } }),

@@ -29,7 +29,7 @@ steps:
 describe("locate", () => {
   it("finds steps, sections and nothing", () => {
     expect(fp.locate(["steps", 1, "run"])).toEqual({ stepIndex: 1, field: "run", section: null });
-    expect(fp.locate(["steps", 0, "routes", 2, "if"]).field).toBe("routes");
+    expect(fp.locate(["steps", 0, "routes", 2, "if"]).field).toBe("routes.2.if");
     expect(fp.locate(["defaults", "timeout_sec"])).toEqual({ stepIndex: null, field: "timeout_sec", section: "defaults" });
     expect(fp.locate(["limits", "max_cost_usd"]).section).toBe("limits");
     expect(fp.locate(["vars", "x"])).toEqual({ stepIndex: null, field: "x", section: "vars" });
@@ -109,7 +109,7 @@ describe("renderProblems", () => {
 describe("openInVisual", () => {
   const flow = () => ({ name: "t", steps: [{ id: "a", type: "shell", run: "x" }, { id: "b", type: "claude", prompt: "p" }] });
   const ctx = { onChange: () => {}, rerender: () => {}, onSelect: () => {} };
-  const tree = () => editor.renderEditor(flow(), ctx);
+  const tree = (selected: number | string = 0) => editor.renderEditor(flow(), { ...ctx, selected });
   const p = (path: (string | number)[]) => ({ message: "m", path, ...fp.locate(path), stepId: null, line: null, col: null });
   const active = () => (document as any).activeElement;
 
@@ -120,7 +120,7 @@ describe("openInVisual", () => {
     expect(active().getAttribute("data-field")).toBe("run");
   });
   it("opens a closed details around the field", () => {
-    fp.openInVisual(tree(), p(["steps", 1, "system_prompt"]), () => {});
+    fp.openInVisual(tree(1), p(["steps", 1, "system_prompt"]), () => {});
     expect(active().getAttribute("data-field")).toBe("system_prompt");
     expect(active().closest("details").open).toBe(true);
   });
@@ -132,7 +132,7 @@ describe("openInVisual", () => {
     expect(active()).toBeNull();
   });
   it("opens settings sections", () => {
-    const root = tree();
+    const root = tree("settings");
     fp.openInVisual(root, p(["defaults", "timeout_sec"]), () => {});
     expect(active().getAttribute("data-field")).toBe("timeout_sec");
     expect(active().closest("details").open).toBe(true);
@@ -181,5 +181,87 @@ describe("openInYaml", () => {
     expect(fp.openInYaml(t, prob(["steps", 9, "run"]), YAML)).toBe(false);
     expect(t.selectionStart).toBe(4);
     expect(fp.openInYaml(null, prob(["name"]), YAML)).toBe(false);
+  });
+});
+
+describe("openInVisual with one inspector", () => {
+  const f = (): any => ({
+    name: "t", defaults: { model: "m" }, vars: {},
+    steps: [
+      { id: "a", type: "shell", run: "x" },
+      { id: "b", type: "claude", prompt: "p", routes: [{ if: "x", goto: "end" }, { if: "y", goto: "end" }] },
+      { id: "c", type: "parallel", steps: ["a"] },
+      { id: "d", type: "flow", flow: "g", vars: { k: "v" } },
+    ],
+  });
+  const p = (path: (string | number)[]) => ({ message: "m", path, ...fp.locate(path), stepId: null, line: null, col: null });
+  const active = () => (document as any).activeElement;
+  const ctx = { onChange: () => {}, rerender: () => {}, onSelect: () => {} };
+
+  /** A holder that draws the editor again for the item `select` is called with, as the page does. */
+  function holder(start: number | string) {
+    const flow = f();
+    const root = new FakeElement("div");
+    const draw = (selected: number | string) => root.replaceChildren(editor.renderEditor(flow, { ...ctx, selected }));
+    draw(start);
+    const calls: unknown[][] = [];
+    return { root, calls, select: (i: number | string, scroll: boolean) => { calls.push([i, scroll]); draw(i); } };
+  }
+
+  it("selects a step that is not drawn and focuses its field", () => {
+    const h = holder("settings");
+    expect(fp.openInVisual(h.root, p(["steps", 0, "run"]), h.select)).toBe(true);
+    expect(h.calls).toEqual([[0, true]]);
+    expect(active().getAttribute("data-field")).toBe("run");
+  });
+
+  it("focuses the second invalid route and opens the routing group", () => {
+    const h = holder(1);
+    expect(fp.openInVisual(h.root, p(["steps", 1, "routes", 1, "if"]), h.select)).toBe(true);
+    expect(active().getAttribute("data-field")).toBe("routes.1.if");
+    expect(active().closest("details").open).toBe(true);
+    fp.openInVisual(h.root, p(["steps", 1, "routes", 1, "goto"]), h.select);
+    expect(active().getAttribute("data-field")).toBe("routes.1.goto");
+  });
+
+  it("focuses the parallel picker and the sub-flow variables", () => {
+    const h = holder("settings");
+    fp.openInVisual(h.root, p(["steps", 2, "steps", 0]), h.select);
+    expect(active().getAttribute("data-field")).toBe("steps");
+    fp.openInVisual(h.root, p(["steps", 3, "vars", "k"]), h.select);
+    expect(active().getAttribute("data-field")).toBe("vars.k");
+    expect(fp.locate(["steps", 3, "vars"]).field).toBe("vars");
+  });
+
+  it("switches to the settings for a settings problem", () => {
+    const h = holder(0);
+    expect(fp.openInVisual(h.root, p(["defaults", "model"]), h.select)).toBe(true);
+    expect(h.calls).toEqual([["settings", true]]);
+    expect(active().getAttribute("data-field")).toBe("model");
+  });
+
+  it("still refuses a step that is gone", () => {
+    const h = holder(0);
+    expect(fp.openInVisual(h.root, p(["steps", 99, "run"]), h.select)).toBe(false);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe("markProblems", () => {
+  const list = () => editor.renderEditor({ name: "t", steps: [{ id: "a", type: "shell", run: "x" }, { id: "b", type: "shell", run: "x" }] }, { onChange: () => {}, rerender: () => {}, onSelect: () => {} });
+  const hidden = (root: FakeElement) => root.querySelectorAll("[data-mark]").map((m) => m.hidden);
+
+  it("sets and clears the marks", () => {
+    const root = list();
+    fp.markProblems(root, [{ stepIndex: 1, section: null }]);
+    expect(hidden(root)).toEqual([true, true, false]);
+    fp.markProblems(root, [{ stepIndex: null, section: "vars" }, { stepIndex: null, section: null }]);
+    expect(hidden(root)).toEqual([false, true, true]);
+    fp.markProblems(root, []);
+    expect(hidden(root)).toEqual([true, true, true]);
+  });
+
+  it("ignores a missing root", () => {
+    expect(() => fp.markProblems(null, [])).not.toThrow();
   });
 });

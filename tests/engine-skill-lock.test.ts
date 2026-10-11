@@ -62,6 +62,30 @@ describe("ensureSkillLock with a carry", () => {
     expect(t.logs.at(-1)).toMatch(/verified 1 skill$/);
   });
 
+  it("a plan gate and a carry with the same request lock the same skills in the same order", () => {
+    const registry = () => reg(sk("a"), sk("b", { version: "2.0.0", digest: digestOf("c") }));
+    const both: SkillRequest = { version: 1, skills: ["a", "b"].map((id) => ({ id, reason: "Needed", evidence: ["catalogue:" + id] })) };
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const viaGate = setup(gateOutput(["a", "b"]));
+    const viaCarry = setup(undefined, { skillCarry: { ...carry(), request: both } });
+    expect(ensureSkillLock(viaGate.engine, { discover: registry, commitOf, now })).toBeUndefined();
+    expect(ensureSkillLock(viaCarry.engine, { discover: registry, commitOf, now })).toBeUndefined();
+    const g = readRunSkillLock(viaGate.runDir);
+    const c = readRunSkillLock(viaCarry.runDir);
+    if (!g.ok || !c.ok) throw new Error("no lock");
+    expect(g.lock.skills.length).toBe(2);
+    expect(c.lock.skills).toEqual(g.lock.skills);
+    expect(c.lock.estimatedTokens).toBe(g.lock.estimatedTokens);
+    expect(c.lock.commit).toBe(g.lock.commit);
+  });
+
+  it("a carry is stopped by skills.unresolved when a skill is gone before the lock", () => {
+    const t = setup(undefined, { skillCarry: carry() });
+    const reason = ensureSkillLock(t.engine, { discover: () => reg(), commitOf });
+    expect(reason).toBeDefined();
+    expect(existsSync(file(t.runDir))).toBe(false);
+  });
+
   it("a plan gate wins over a carry", () => {
     const t = setup(gateOutput(["a"]), { skillCarry: carry() });
     expect(ensureSkillLock(t.engine, { discover: () => reg(sk("a")), commitOf })).toBeUndefined();
@@ -262,13 +286,13 @@ describe("skillSession", () => {
 
   it("does nothing without a gate", () => {
     const discover = vi.fn(() => reg());
-    expect(skillSession(setup(undefined).engine, "claude", { discover })).toEqual({});
+    expect(skillSession(setup(undefined).engine, { discover })).toEqual({});
     expect(discover).not.toHaveBeenCalled();
   });
 
   it("gives an empty payload for an empty lock", () => {
     const t = setup(gateOutput([]));
-    const p = payloadOf(skillSession(t.engine, "claude", { discover: () => reg() }));
+    const p = payloadOf(skillSession(t.engine, { discover: () => reg() }));
     expect(p).toMatchObject({ loaded: [], text: "" });
   });
 
@@ -276,7 +300,7 @@ describe("skillSession", () => {
     const t = setup(gateOutput(["a"]));
     const discover = () => reg(withText(sk("a"), "Package instructions of a."));
     for (let i = 0; i < 2; i++) {
-      const p = payloadOf(skillSession(t.engine, "claude", { discover }))!;
+      const p = payloadOf(skillSession(t.engine, { discover }))!;
       expect(p.loaded).toEqual(["a@1.0.0"]);
       expect(p.text).toContain("Package instructions of a.");
     }
@@ -287,9 +311,9 @@ describe("skillSession", () => {
   it("verifies before every session and never resolves or writes the lock again", () => {
     const t = setup(gateOutput(["a"]));
     const discover = vi.fn(() => reg(withText(sk("a"), "Package instructions of a.")));
-    skillSession(t.engine, "claude", { discover });
+    skillSession(t.engine, { discover });
     const first = readFileSync(file(t.runDir), "utf8");
-    skillSession(t.engine, "claude", { discover });
+    skillSession(t.engine, { discover });
     expect(discover).toHaveBeenCalledTimes(2);
     expect(readFileSync(file(t.runDir), "utf8")).toBe(first);
   });
@@ -297,7 +321,7 @@ describe("skillSession", () => {
   it("loads several skills in lock order, and only the locked ones", () => {
     const t = setup(gateOutput(["a", "b"]));
     const discover = () => reg(sk("a"), sk("b", { digest: digestOf("b") }), sk("z", { digest: digestOf("c") }));
-    const p = payloadOf(skillSession(t.engine, "claude", { discover }))!;
+    const p = payloadOf(skillSession(t.engine, { discover }))!;
     expect(p.loaded).toEqual(["a@1.0.0", "b@1.0.0"]);
     expect(p.text).not.toContain('id="z"');
   });
@@ -305,51 +329,44 @@ describe("skillSession", () => {
   it("takes only the description and the instructions of a package", () => {
     const t = setup(gateOutput(["a"]));
     const s = withText(sk("a"), "Plain advice.", { allowedTools: "Bash(SENTINEL_TOOL)", tool_profile: "SENTINEL_PROFILE", files: [{ path: "scripts/x.sh", content: "SENTINEL_FILE" }] });
-    const p = payloadOf(skillSession(t.engine, "claude", { discover: () => reg(s) }))!;
+    const p = payloadOf(skillSession(t.engine, { discover: () => reg(s) }))!;
     expect(p.text).toContain("Plain advice.");
     expect(p.text).not.toMatch(/SENTINEL/);
   });
 
   it("gives nothing for an old plan without a current gate", () => {
     const t = setup(gateOutput(["a"]));
-    skillSession(t.engine, "claude", { discover: () => reg(sk("a")) });
+    skillSession(t.engine, { discover: () => reg(sk("a")) });
     t.summary.history.push({ id: "plan", type: "claude", visit: 1, ok: true, output: "plan", startedAt: "", durationMs: 0, logFile: "" } as StepRecord);
     t.summary.flowDef = { steps: [{ id: "plan", type: "claude", prompt: "x" }] } as never;
-    expect(skillSession(t.engine, "claude", { discover: () => reg(sk("a")) })).toEqual({});
+    expect(skillSession(t.engine, { discover: () => reg(sk("a")) })).toEqual({});
   });
 
   it("leaves out a requested skill over the budget and logs it; a mandatory one refuses the session", () => {
     const t = setup(gateOutput(["a"]));
     const discover = () => reg(withText(sk("a"), "x ".repeat(2000)));
-    expect(skillSession(t.engine, "claude", { discover })).toBeTruthy();
+    expect(skillSession(t.engine, { discover })).toBeTruthy();
     t.engine.config = ConfigSchema.parse({ skills: { selection: { max_tokens: 100 } } });
-    const p = payloadOf(skillSession(t.engine, "claude", { discover }))!;
+    const p = payloadOf(skillSession(t.engine, { discover }))!;
     expect(p.loaded).toEqual([]);
     expect(p.omitted).toEqual(["a@1.0.0"]);
     expect(t.logs.some((l) => l.includes("skill context: a@1.0.0 left out: over budget"))).toBe(true);
 
     const m = setup(gateOutput([]));
     m.engine.config = ConfigSchema.parse({ skills: { selection: { include: ["a"] } } });
-    expect(skillSession(m.engine, "claude", { discover })).toEqual({ payload: expect.objectContaining({ loaded: ["a@1.0.0"] }) });
+    expect(skillSession(m.engine, { discover })).toEqual({ payload: expect.objectContaining({ loaded: ["a@1.0.0"] }) });
     m.engine.config = ConfigSchema.parse({ skills: { selection: { include: ["a"], max_tokens: 100 } } });
-    const r = skillSession(m.engine, "claude", { discover }) as { refused: string };
+    const r = skillSession(m.engine, { discover }) as { refused: string };
     expect(r.refused.startsWith("skill selection is blocked: ")).toBe(true);
     expect(r.refused).toContain("a@1.0.0 does not fit the skill context budget (skills.selection.max_tokens)");
-    // Codex gets no payload and no refusal; a fallback to Claude is judged again
-    const before = m.logs.length;
-    expect(skillSession(m.engine, "codex", { discover })).toEqual({});
-    expect(m.logs.slice(before).some((l) => l.includes("skill context"))).toBe(false);
-    expect(skillSession(m.engine, "claude", { discover })).toHaveProperty("refused");
   });
 
-  it("verifies for Codex too: a changed digest refuses both agents", () => {
+  it("a changed digest refuses the session", () => {
     const t = setup(gateOutput(["a"]));
-    skillSession(t.engine, "claude", { discover: () => reg(sk("a")) });
+    skillSession(t.engine, { discover: () => reg(sk("a")) });
     const changed = () => reg(sk("a", { digest: digestOf("d") }));
-    for (const agent of ["claude", "codex"] as const) {
-      const r = skillSession(t.engine, agent, { discover: changed }) as { refused: string };
-      expect(r.refused).toMatch(/^skill integrity: a@1\.0\.0 changed/);
-    }
+    const r = skillSession(t.engine, { discover: changed }) as { refused: string };
+    expect(r.refused).toMatch(/^skill integrity: a@1\.0\.0 changed/);
   });
 });
 
@@ -362,8 +379,8 @@ describe("flow skill modes", () => {
     t.engine.config.skills.selection.include = ["a"];
     const discover = vi.fn(() => reg(sk("a")));
     expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
-    for (const [agent, role] of [["claude", "coder"], ["codex", "coder"], ["claude", "reviewer"]] as const) {
-      expect(skillSession(t.engine, agent, { discover }, role)).toEqual({});
+    for (const role of ["coder", "reviewer"] as const) {
+      expect(skillSession(t.engine, { discover }, role)).toEqual({});
     }
     expect(existsSync(file(t.runDir))).toBe(false);
     expect(t.summary.skillLock).toBeUndefined();
@@ -383,7 +400,7 @@ describe("flow skill modes", () => {
     expect(ensureSkillLock(t.engine, { discover })).toBeUndefined();
     expect(readFileSync(file(t.runDir)).equals(bytes)).toBe(true);
     expect(t.save).toHaveBeenCalledTimes(1);
-    expect(skillSession(t.engine, "claude", { discover })).toMatchObject({ payload: { loaded: ["a@1.0.0"] } });
+    expect(skillSession(t.engine, { discover })).toMatchObject({ payload: { loaded: ["a@1.0.0"] } });
     rmSync(file(t.runDir));
     expect(ensureSkillLock(t.engine, { discover })).toBe(SKILL_LOCK_CHANGED);
   });
@@ -397,9 +414,9 @@ describe("flow skill modes", () => {
 
   it("block = false: lock still made, no payload; a changed skill is refused", () => {
     const t = setup(gateOutput(["a"]));
-    expect(skillSession(t.engine, "claude", { discover: () => reg(sk("a")), commitOf }, "coder", false)).toEqual({});
+    expect(skillSession(t.engine, { discover: () => reg(sk("a")), commitOf }, "coder", false)).toEqual({});
     expect(existsSync(file(t.runDir))).toBe(true);
     const changed = () => reg(sk("a", { digest: digestOf("b") }));
-    expect(skillSession(t.engine, "claude", { discover: changed }, "coder", false)).toHaveProperty("refused");
+    expect(skillSession(t.engine, { discover: changed }, "coder", false)).toHaveProperty("refused");
   });
 });

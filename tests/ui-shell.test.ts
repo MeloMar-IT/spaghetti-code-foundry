@@ -59,16 +59,35 @@ describe("showPage", () => {
     expect(sub.hidden).toBe(true);
     shell.showPage("admin", ia.resolve("admin", "#/users"));
     expect(sub.hidden).toBe(false);
-    expect(sub.all("a").length).toBe(10);
+    expect(sub.all("a").length).toBe(11);
     expect(sub.all("a").filter((a) => a.attrs.class === "active").map((a) => a.textContent)).toEqual(["Users"]);
     const heads = sub.all("span").filter((s) => s.attrs.class === "subnav-head");
     expect(heads.map((s) => s.textContent)).toEqual(["Operations", "People and access", "System"]);
-    for (const label of ["Problems", "Users", "Settings"]) {
+    for (const label of ["Overview", "Users", "Settings"]) {
       const i = sub.children.findIndex((c) => c.tag === "a" && c.textContent === label);
       expect((sub.children[i - 1] as FakeElement).attrs.class).toBe("subnav-head");
     }
     shell.showPage("admin", ia.resolve("admin", "#/runs"));
     expect(sub.hidden).toBe(true);
+  });
+
+  it("namePage puts the name in the last crumb, the title and the labels", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/users/u1"));
+    const crumbs = doc().getElementById("crumbs") as FakeElement;
+    expect(crumbs.textContent).toContain("u1");
+    shell.namePage("Ann");
+    expect(crumbs.all("span").filter((s) => s.attrs["aria-current"] === "page").map((s) => s.textContent)).toEqual(["Ann"]);
+    expect(crumbs.textContent).not.toContain("u1");
+    expect(doc().getElementById("page-title").textContent).toBe("Ann");
+    expect(doc().getElementById("main").attrs["aria-label"]).toBe("Ann");
+    expect(doc().title).toBe("Ann · Spaghetti Code Foundry");
+    shell.namePage("");
+    expect(doc().getElementById("page-title").textContent).toBe("Ann");
+  });
+
+  it("namePage does not fail on a page without crumbs", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/runs"));
+    expect(() => shell.namePage("Ann")).not.toThrow();
   });
 
   it("highlights Administration and All repositories on #/all-repos", () => {
@@ -204,6 +223,19 @@ describe("initShell, wide", () => {
     stop = shell.initShell("admin", { store: broken, media: mkMedia(false) });
     expect(doc().body.classList.contains("side-closed")).toBe(false);
     expect(() => byId("menu-btn").click()).not.toThrow();
+  });
+
+  it("asks for the compact layout from ui/viewport.js by default", () => {
+    const g = globalThis as any;
+    const had = Object.getOwnPropertyDescriptor(g, "matchMedia");
+    const asked: string[] = [];
+    g.matchMedia = (q: string) => { asked.push(q); return mkMedia(false); };
+    try {
+      stop = shell.initShell("admin", { store: mkStore(null) });
+    } finally {
+      if (had) Object.defineProperty(g, "matchMedia", had); else delete g.matchMedia;
+    }
+    expect(asked).toEqual(["(max-width: 767px)"]);
   });
 
   it("works with no matchMedia and with every element missing", () => {
@@ -390,5 +422,66 @@ describe("showPage with the shell", () => {
     field.focus();
     shell.showPage("admin", ia.resolve("admin", "#/flows"));
     expect(doc().activeElement).toBe(field);
+  });
+});
+
+describe("helpers for the command palette", () => {
+  it("announcePage focuses main and announces the open page again, also for the same title", () => {
+    vi.useFakeTimers();
+    try {
+      stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(false) });
+      shell.showPage("admin", ia.resolve("admin", "#/board"));
+      shell.showPage("admin", ia.resolve("admin", "#/board"));
+      vi.advanceTimersByTime(60);
+      doc().activeElement = null;
+      shell.announcePage();
+      expect(doc().activeElement).toBe(byId("main"));
+      expect(byId("route-status").textContent).toBe("");
+      vi.advanceTimersByTime(60);
+      expect(byId("route-status").textContent).toBe("Board");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closeDrawer closes an open drawer and does nothing otherwise", () => {
+    stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(true) });
+    shell.closeDrawer(null);
+    byId("menu-btn").click();
+    expect(doc().body.classList.contains("drawer-open")).toBe(true);
+    shell.closeDrawer(null);
+    expect(doc().body.classList.contains("drawer-open")).toBe(false);
+  });
+
+  it("Tab stays with a dialog that was opened over the drawer", () => {
+    stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(true) });
+    byId("menu-btn").click();
+    byId("modal-root").append(new FakeElement("div"));
+    links[2]!.focus();
+    expect(press("Tab")).toBe(false);
+    expect(doc().activeElement).toBe(links[2]);
+  });
+
+  it("safeStore survives a missing or throwing localStorage", () => {
+    const g = globalThis as any;
+    const saved = g.localStorage;
+    try {
+      delete g.localStorage;
+      const none = shell.safeStore();
+      expect(none.getItem("k")).toBeNull();
+      expect(() => none.setItem("k", "v")).not.toThrow();
+      g.localStorage = { getItem: () => { throw new Error("off"); }, setItem: () => { throw new Error("off"); } };
+      const broken = shell.safeStore();
+      expect(broken.getItem("k")).toBeNull();
+      expect(() => broken.setItem("k", "v")).not.toThrow();
+      const mem: Record<string, string> = {};
+      g.localStorage = { getItem: (k: string) => mem[k] ?? null, setItem: (k: string, v: string) => { mem[k] = v; } };
+      const ok = shell.safeStore();
+      ok.setItem("k", "v");
+      expect(ok.getItem("k")).toBe("v");
+    } finally {
+      if (saved === undefined) delete g.localStorage;
+      else g.localStorage = saved;
+    }
   });
 });

@@ -174,7 +174,7 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 **Limits.**
 - The scan is pattern matching. Encoded or split secrets and unusual formats pass, also a YAML escape that only becomes a token after parsing.
 - An Oracle TNS descriptor (`@(DESCRIPTION=…)`) and `http(s)` endpoints are not seen. A single-label host such as `kafka` counts as real.
-- Connectors are declared but not enforced until later parts.
+- A skill that names a connector stops the run at the plan gate. Under `skills.tools.missing: degrade` it stops only when the skill is mandatory or is required, directly or transitively, by a mandatory skill; otherwise the run goes on with a warning and the skill's text can still reach sessions. `skills.tools` does not limit what a session can do.
 
 ## Open findings
 

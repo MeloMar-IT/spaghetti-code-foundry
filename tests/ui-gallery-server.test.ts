@@ -98,7 +98,7 @@ describe("without dev", () => {
     expect((await get(off.port, p)).status).toBe(404);
   });
   it("still serves the rest of the UI", async () => {
-    for (const p of ["/", "/style.css", "/kit/kit.css", "/user/"]) expect((await get(off.port, p)).status, p).toBe(200);
+    for (const p of ["/", "/style.css", "/kit/kit.css", "/user/", "/accessibility.html"]) expect((await get(off.port, p)).status, p).toBe(200);
   });
 });
 

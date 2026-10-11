@@ -103,6 +103,12 @@ export function dependsOnText(body: string): string | undefined {
   return range ? body.slice(range.start, range.end) : undefined;
 }
 
+/** The line of the comment on the original that announces the close. It is the second line of the generated comment. */
+export const CLOSES_LINE = "This issue will be closed as not planned.";
+
+/** Does this comment on the original announce the close? Only the generated line in its place counts, not a criterion that repeats it. */
+export const announcesClose = (body: string): boolean => body.split("\n")[1] === CLOSES_LINE;
+
 /** A comment on GitHub holds at most 65,536 characters; the list of criteria stays well below that. */
 const COMMENT_MAX = 60_000;
 const oneLine = (t: string) => t.replace(/\s*[\r\n]+\s*/g, " ").trim();
@@ -122,7 +128,7 @@ export function originalComment(o: {
   max?: number;
 }): string {
   const lines = [`**Spaghetti Code Foundry:** This issue was split into ${refs(o.parts)} by ${o.by}. The work continues there.`];
-  if (o.ending === "closes") lines.push("This issue will be closed as not planned.");
+  if (o.ending === "closes") lines.push(CLOSES_LINE);
   else if (o.ending === "staysOpen") lines.push("This issue stays open. Please check it, and close it by hand when nothing is left to do here.");
   else lines.push("This issue was closed already, so it was left as it is.");
   if (o.labels?.length) lines.push(`The ${o.labels.length === 1 ? "label" : "labels"} ${o.labels.map((l) => `\`${l}\``).join(", ")} ${o.labels.length === 1 ? "was" : "were"} taken off this issue, so that it is not built as well.`);

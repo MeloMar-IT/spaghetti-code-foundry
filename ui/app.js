@@ -3,20 +3,24 @@ import { enterDisplay, linkToken } from "./auth.js";
 import { h, mount } from "./dom.js";
 import { createFlowPage } from "./flow-page.js";
 import { resolve, splitHash } from "./ia.js";
-import { initShell, showPage } from "./shell.js";
+import { initPalette } from "./palette.js";
+import { initShell, namePage, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
-import { renderSettings, renderWatchers } from "./admin.js";
+import { renderSettings } from "./admin.js";
+import { renderWatchers, renderWatcherDetail } from "./watchers.js";
 import { renderMaintenance } from "./maintenance.js";
 import { refreshModelLists, renderModelDetail, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
-import { renderProblems } from "./problems.js";
+import { renderProblems, renderProblemDetail } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
 import { renderCredentials } from "./admin-credentials.js";
+import { renderOperations } from "./operations.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
+import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
@@ -114,8 +118,8 @@ async function route() {
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);
-    else if (section === "watchers") await renderInBox(renderWatchers);
-    else if (section === "problems") await renderInBox(renderProblems);
+    else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg) : renderWatchers);
+    else if (section === "problems") await renderInBox(arg ? (box) => renderProblemDetail(box, arg) : renderProblems);
     else if (section === "settings") await renderInBox(renderSettings);
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await (arg ? renderModelDetail(main, arg) : renderModels(main));
@@ -129,13 +133,27 @@ async function route() {
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
+    else if (section === "operations") {
+      const off = await renderOperations(main);
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg, query: to.query, go });
     else if (section === "repos") {
       const off = await renderRepos(main, { admin: true, query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
-    else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
+    else if (section === "users" && arg) {
+      const off = await renderUserDetail(main, arg, { me: S.me, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
+    else if (section === "users") {
+      const off = await renderUsers(main, { me: S.me });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "start") {
       // The page draws into its own box, so a slow load that ends after a hash change cannot touch the page that took over.
@@ -176,6 +194,7 @@ document.addEventListener("keydown", (e) => {
 const me = await enterDisplay("admin");
 S.me = me.id;
 initShell("admin", { user: me });
+initPalette({ role: "admin", user: me });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 await startAdmin();
