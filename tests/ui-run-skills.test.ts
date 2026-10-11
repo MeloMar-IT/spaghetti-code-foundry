@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { markPlanCheckFailed } from "../src/engine/plan-carry.js";
+import { runSkillView } from "../src/server/skill-view.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -161,5 +163,41 @@ describe("status sentences", () => {
     const t = sentence({ resolved: [row()], estimatedTokens: 300, checkedAt: "2026-01-02T00:00:00.000Z" });
     expect(t).toContain("About 300 tokens of skill context.");
     expect(t).toContain("Integrity checked 2026-01-02T00:00:00.000Z.");
+  });
+});
+
+describe("planRecordNote", () => {
+  const note = (rec: any) => ui.planRecordNote({ planRecord: rec }) as string | null;
+  it("has one sentence per outcome", () => {
+    for (const o of ["none", "record-purged", "comment-missing", "comment-changed", "newer-plan", "check-unreadable", "invalid", "failed", "record"]) {
+      expect(note({ outcome: o })).toContain(ui.PLAN_RECORD_NOTES[o]);
+    }
+  });
+  it("says how a stop and a warning end", () => {
+    expect(note({ outcome: "comment-changed", stopped: true })).toContain("Plan the issue again, then resume.");
+    expect(note({ outcome: "newer-plan" })).toContain("The run goes on without the plan's skills.");
+    expect(note({ outcome: "none" })).toContain("codes without the plan's skills");
+  });
+  it("lists the changes of a record and ignores unknown words", () => {
+    expect(note({ outcome: "record", changes: ["code", "technology", "x"] })).toContain("Changed since the plan: code, technology.");
+  });
+  it("a failed gh call reaches the card as: resume to check again, not plan again", () => {
+    const run: any = {
+      runId: "r", runDir: "/x", history: [{ id: "plan_check", type: "shell", ok: false, visit: 1, output: "" }],
+      flowDef: { name: "f", steps: [{ id: "plan_check", type: "shell", run: "gh issue view | node $FACTORY_TOOLS/plan-comment" }] },
+      skillCarry: { stale: true },
+    };
+    markPlanCheckFailed(run, "plan_check");
+    const v = runSkillView(run, { admin: false, readLock: () => ({ ok: false, reason: "missing" }) });
+    const t = text(card(v));
+    expect(t).toContain("The plan comments could not be read.");
+    expect(t).toContain("resume to check again");
+    expect(t).not.toContain("Plan the issue again");
+    expect(t).not.toContain("goes on without");
+  });
+  it("draws nothing for an unknown outcome and draws the note as text", () => {
+    expect(note({ outcome: "toString" })).toBeNull();
+    expect(ui.planRecordNote({})).toBeNull();
+    expect(text(card(view({ planRecord: { outcome: "none" } })))).toContain("No plan record was found");
   });
 });

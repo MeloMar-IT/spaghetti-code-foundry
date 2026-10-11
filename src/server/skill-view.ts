@@ -1,7 +1,8 @@
+import { PLAN_CHECK_OUTCOMES, type PlanCheckOutcome } from "../engine/plan-carry.js";
 import type { RunSummary } from "../engine/state.js";
 import type { SkillRegistry } from "../skills/registry.js";
 import { flowSkillSource } from "../skills/run-plan.js";
-import { planGateRecord, planSkillRequest, SKILL_REQUEST_GATES } from "../skills/request.js";
+import { PLAN_CHECK_STEP, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestSchema, type SkillRequest } from "../skills/request.js";
 import { RESOLVE_REASONS, RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KINDS } from "../skills/resolve-rules.js";
 import { planHashOf, readRunSkillLock, safeText, verifyRunSkillLock, type RunSkillLock, type RunSkillLockRead } from "../skills/run-lock.js";
 import { relativePathProblem, SkillIdSchema, SkillVersionSchema } from "../skills/schema.js";
@@ -52,6 +53,8 @@ export interface RunSkillView {
   planChanged?: true;
   /** What the check of the current plan decided; absent when the plan is not current. */
   action?: "continue" | "warn" | "stop";
+  /** What the plan check of a coding run found; words only. */
+  planRecord?: { outcome: PlanCheckOutcome; stopped?: true; changes?: ("comments" | "code" | "technology")[] };
   estimatedTokens?: number;
   /** When the registry was read for the integrity words (ISO time). */
   checkedAt?: string;
@@ -135,14 +138,37 @@ function readPlan(plan: unknown): { action?: RunSkillView["action"]; selected: P
   return { action: oneOf(p.action, ["continue", "warn", "stop"] as const), selected, unresolved };
 }
 
-/** Context per `id@version`, from the sessions after the gate whose plan the lock belongs to. */
-function contextOf(history: unknown[], planHash: string | undefined): Map<string, { context?: ContextState; step?: string; review?: true }> {
+const CHANGE_WORDS = ["comments", "code", "technology"] as const;
+
+/** The outcome of plan_check as the page may see it: enum words only. */
+function readPlanCheck(v: unknown): RunSkillView["planRecord"] | undefined {
+  const o = obj(v);
+  const outcome = oneOf(o?.outcome, PLAN_CHECK_OUTCOMES);
+  if (!o || !outcome) return undefined;
+  const changes = list(o.changes).flatMap((c) => oneOf(c, CHANGE_WORDS) ?? []);
+  return { outcome, ...(o.stopped === true ? { stopped: true as const } : {}), ...(changes.length ? { changes } : {}) };
+}
+
+/** The request carried from a plan record, checked again. */
+function readCarry(v: unknown): { lockHash: string; request: SkillRequest } | undefined {
+  const o = obj(v);
+  if (!o || typeof o.lockHash !== "string" || o.lockHash.length === 0 || o.lockHash.length > 100) return undefined;
+  const parsed = SkillRequestSchema.safeParse(o.request);
+  return parsed.success ? { lockHash: o.lockHash, request: parsed.data } : undefined;
+}
+
+/** Context per `id@version`, from the sessions after the gate (or the plan check of a carry) whose plan the lock belongs to. */
+function contextOf(history: unknown[], planHash: string | undefined, carryHash?: string): Map<string, { context?: ContextState; step?: string; review?: true }> {
   const out = new Map<string, { context?: ContextState; step?: string; review?: true }>();
   if (!planHash) return out;
   let from = -1;
+  const byCarry = carryHash !== undefined && carryHash === planHash;
   history.forEach((r, i) => {
     const o = obj(r);
-    if (o && !o.parent && typeof o.id === "string" && (SKILL_REQUEST_GATES as readonly string[]).includes(o.id) && o.ok === true && typeof o.output === "string" && planHashOf(o.output) === planHash) from = i;
+    if (!o || o.parent || typeof o.id !== "string") return;
+    if (byCarry) {
+      if (o.id === PLAN_CHECK_STEP && o.ok === true) from = i;
+    } else if ((SKILL_REQUEST_GATES as readonly string[]).includes(o.id) && o.ok === true && typeof o.output === "string" && planHashOf(o.output) === planHash) from = i;
   });
   if (from < 0) return out;
   for (const r of history.slice(from + 1)) {
@@ -188,17 +214,20 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
   })();
   const plan = readPlan(s.skillPlan);
   const kept = obj(s.skillLock);
-  const hasPlan = !!gate || src.mode === "explicit";
-  if (!hasPlan && !plan && !kept) return undefined;
+  // A coding run without a gate of its own takes its request from the plan record (run.skillCarry).
+  const carry = src.mode === "planned" && !gate ? readCarry(s.skillCarry) : undefined;
+  const planRecord = src.mode === "planned" && !gate ? readPlanCheck(s.planCheck) : undefined;
+  const hasPlan = !!gate || src.mode === "explicit" || !!carry;
+  if (!hasPlan && !plan && !kept && !planRecord) return undefined;
 
   // The plan is current when its gate is the last one.
-  const planHash = src.mode === "explicit" ? src.planHash : gate ? planHashOf(gate.output) : undefined;
+  const planHash = src.mode === "explicit" ? src.planHash : gate ? planHashOf(gate.output) : carry?.lockHash;
   // A plan that names its gate output belongs to it only when the hashes agree; an older plan has no hash and is taken as current.
   const planOwn = obj(s.skillPlan)?.planHash;
   const planCurrent = hasPlan && !!plan && (planOwn === undefined || planOwn === planHash);
   let request: ReturnType<typeof planSkillRequest>;
   try {
-    request = src.mode === "explicit" ? src.request : gate ? planSkillRequest({ history, flowDef }) : undefined;
+    request = src.mode === "explicit" ? src.request : gate ? planSkillRequest({ history, flowDef }) : carry?.request;
   } catch {
     request = undefined;
   }
@@ -228,7 +257,7 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
   } else lock = read.reason === "missing" ? (kept ? "missing" : "none") : "changed";
 
   // The skills the run holds: the lock, else the summary of it, else the selection of the plan.
-  const ctx = contextOf(history, locked?.planHash ?? (typeof kept?.planHash === "string" ? kept.planHash : undefined));
+  const ctx = contextOf(history, locked?.planHash ?? (typeof kept?.planHash === "string" ? kept.planHash : undefined), carry?.lockHash);
   let integrity = new Map<string, IntegrityState>();
   let registry: RegistryLike | undefined;
   let checkedAt: string | undefined;
@@ -293,13 +322,15 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
 
   const action = planCurrent ? plan?.action : undefined;
   const failed = planCurrent && (action === "stop" || action === "warn");
-  if (!rows.length && !requested.length && !failed && lock !== "missing" && lock !== "changed") return undefined;
+  const noted = !!planRecord && planRecord.outcome !== "record";
+  if (!rows.length && !requested.length && !failed && !noted && lock !== "missing" && lock !== "changed") return undefined;
 
   const tokens = locked ? locked.estimatedTokens : rows.some((r) => r.estimatedTokens !== undefined) ? rows.reduce((n, r) => n + (r.estimatedTokens ?? 0), 0) : tokensOf(kept?.estimatedTokens);
   const view: RunSkillView = {
     lock,
     ...(planChanged ? { planChanged: true as const } : {}),
     ...(action ? { action } : {}),
+    ...(planRecord ? { planRecord } : {}),
     ...(tokens !== undefined && rows.length ? { estimatedTokens: tokens } : {}),
     ...(checkedAt ? { checkedAt } : {}),
     ...(opts.admin && locked?.commit ? { commit: locked.commit } : {}),

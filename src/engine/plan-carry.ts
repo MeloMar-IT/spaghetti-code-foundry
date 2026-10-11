@@ -35,6 +35,22 @@ export interface PlanCarryDeps {
   pathsChanged?: (workdir: string, fromCommit: string, paths: string[]) => boolean;
 }
 
+export type PlanCheckOutcome =
+  | "record" | "none" | "record-purged" | "comment-missing" | "comment-changed" | "newer-plan" | "check-unreadable" | "invalid" | "failed";
+export const PLAN_CHECK_OUTCOMES: readonly PlanCheckOutcome[] = [
+  "record", "none", "record-purged", "comment-missing", "comment-changed", "newer-plan", "check-unreadable", "invalid", "failed",
+];
+
+/** What plan_check found. Words only: no ids, no text. */
+export interface RunPlanCheck {
+  outcome: PlanCheckOutcome;
+  /** The run stopped for it (skills in play). */
+  stopped: boolean;
+  /** Only for outcome "record". */
+  changes?: ("comments" | "code" | "technology")[];
+  at: string;
+}
+
 const NOT_CHECKED = "skills not resolved: the plan record could not be checked";
 const NOT_WRITTEN = "skills not resolved: the plan record could not be written";
 
@@ -64,6 +80,15 @@ function pathsChangedIn(workdir: string, fromCommit: string, paths: string[]): b
   }
 }
 
+/** The plan_check shell step itself failed (gh failed, bad JSON): note it, and drop any carry of an earlier attempt. */
+export function markPlanCheckFailed(run: RunSummary, stepId: string): void {
+  if (stepId !== PLAN_CHECK_STEP) return;
+  const def = run.flowDef?.steps?.find((s) => s.id === stepId);
+  if (!def || def.type !== "shell" || !def.run.includes("/plan-comment")) return;
+  delete run.skillCarry;
+  run.planCheck = { outcome: "check-unreadable", stopped: true, at: new Date().toISOString() };
+}
+
 /**
  * After post_plan: writes the plan record. After plan_check: reads it and sets run.skillCarry.
  * Returns a stop reason (skills in play) or undefined to go on.
@@ -75,23 +100,33 @@ export function carryRunSkills(run: RunSummary, config: Config, stepId: string, 
     if (!def || def.type !== "shell" || !def.run.includes("/plan-comment")) return undefined;
     return stepId === PLAN_CHECK_STEP ? checkRecord(run, config, log, deps) : writeRecord(run, config, stepId, log, deps);
   } catch {
-    if (stepId === PLAN_CHECK_STEP) delete run.skillCarry;
+    if (stepId === PLAN_CHECK_STEP) {
+      delete run.skillCarry;
+      run.planCheck = { outcome: "failed", stopped: true, at: new Date().toISOString() };
+    }
     return stopRunSkills(run, stepId, NOT_CHECKED, log);
   }
 }
 
 function checkRecord(run: RunSummary, config: Config, log: (m: string) => void, deps: PlanCarryDeps): string | undefined {
   delete run.skillCarry;
+  delete run.planCheck;
   if (planGateRecord(run)) return undefined; // a plan gate in the history wins
-  const stop = (reason: string): string => {
+  const stop = (reason: string, outcome: PlanCheckOutcome): string => {
     delete run.skillCarry;
-    return stopRunSkills(run, PLAN_CHECK_STEP, `skills not resolved: ${reason}`, log);
+    const text = stopRunSkills(run, PLAN_CHECK_STEP, `skills not resolved: ${reason}`, log);
+    run.planCheck = { outcome, stopped: true, at: new Date().toISOString() };
+    return text;
   };
   const read = readPlanRecords(run.vars?.github_repo ?? "", run.vars?.issue ?? "", { home: deps.home });
-  if (read === "invalid") return stop("the plan records of this issue are not valid");
+  if (read === "invalid") return stop("the plan records of this issue are not valid", "invalid");
   const last = [...run.history].reverse().find((r) => !r.parent && r.id === PLAN_CHECK_STEP && r.ok);
   const pick = pickPlanRecord(read, last ? parsePlanCommentFacts(last.output) : undefined);
-  if (pick.kind === "none") return undefined;
+  if (pick.kind === "none") {
+    run.planCheck = { outcome: "none", stopped: false, at: new Date().toISOString() };
+    log("    · plan check: no plan record for this issue here; the run goes on without the plan's skills");
+    return undefined;
+  }
   if (pick.kind !== "record") {
     // Fail closed: any record with a skill (or a purge that held one) puts skills in play, not only the newest.
     const inPlay =
@@ -99,7 +134,8 @@ function checkRecord(run: RunSummary, config: Config, log: (m: string) => void, 
       read.records.some((r) => r.request.skills.length > 0) ||
       (read.purged?.skills.length ?? 0) > 0;
     const why: string = CHECK_REASONS[pick.kind];
-    if (inPlay) return stop(why);
+    if (inPlay) return stop(why, pick.kind);
+    run.planCheck = { outcome: pick.kind, stopped: false, at: new Date().toISOString() };
     log(`⚠ plan check: ${why.split(" — ")[0]}; the run goes on without the plan's skills`);
     return undefined;
   }
@@ -111,6 +147,7 @@ function checkRecord(run: RunSummary, config: Config, log: (m: string) => void, 
   const head = (run.workdir ? (deps.commitOf ?? headCommit)(run.workdir) : undefined) ?? "";
   const lockHash = changes.length ? sha256Of(record.planHash + "\n" + changes.join(",") + "\n" + head) : record.planHash;
   run.skillCarry = { request: record.request, planHash: record.planHash, lockHash, commentId: record.commentId, changes, at: new Date().toISOString() };
+  run.planCheck = { outcome: "record", stopped: false, ...(changes.length ? { changes } : {}), at: run.skillCarry.at };
   if (changes.includes("comments")) log("⚠ plan check: comments were added after the plan; the skills are resolved again");
   if (changes.includes("code")) log("⚠ plan check: files the plan named have changed; the skills are resolved again");
   if (changes.includes("technology")) log("⚠ plan check: the technology of the repository has changed; the skills are resolved again");
