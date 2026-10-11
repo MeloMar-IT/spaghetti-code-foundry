@@ -2,7 +2,8 @@ import { api } from "./api.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { h, mount } from "./dom.js";
 import { createFlowPage } from "./flow-page.js";
-import { resolve, splitHash } from "./ia.js";
+import { parseQuery, resolve, splitHash } from "./ia.js";
+import { initContext } from "./context.js";
 import { initPalette } from "./palette.js";
 import { initShell, namePage, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
@@ -73,6 +74,19 @@ function welcome() {
 }
 
 let routeGen = 0;
+let context = null;
+// Routing starts when startAdmin() draws the first page; a navigation before that is drawn by it.
+let booted = false;
+// The switcher changes the address through this: a navigation, or only the address (drawn again or not).
+const contextGo = (hash, { replace = false, draw = true } = {}) => {
+  if (!replace) {
+    if (hash !== location.hash) location.hash = hash;
+    return;
+  }
+  history.replaceState(null, "", hash);
+  S.lastHash = hash;
+  if (draw) void route();
+};
 // The "since you last looked" box: Home places it; it stays hidden until there is something to say.
 const sinceEl = h("div", { class: "since" });
 sinceEl.hidden = true;
@@ -85,6 +99,7 @@ async function renderInBox(render) {
 }
 
 async function route() {
+  if (!booted) return;
   // While a dialog is open (the discard question included) the address is put back: the dialog is not replaced and a busy one is not bypassed.
   // This sits before the generation is counted, or the navigation the person confirms would be dropped as stale.
   if (flowPage.dialogOpen() && S.lastHash) {
@@ -94,8 +109,10 @@ async function route() {
   const mine = ++routeGen;
   // A set-password link is only for the sign-in page: load it again to show that page.
   if (linkToken(location.hash)) return location.reload();
-  const to = resolve("admin", location.hash);
+  let to = resolve("admin", location.hash);
   if (to.hash !== location.hash) history.replaceState(null, "", to.hash);
+  const scoped = to.redirected ? null : context?.scoped(to.hash);
+  if (scoped) { history.replaceState(null, "", scoped); to = resolve("admin", scoped); }
   const hash = to.hash;
   const { path } = splitHash(hash);
   const [, section, arg] = path.split("/").map(decodeURIComponent);
@@ -128,7 +145,7 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go });
+    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me, query: { ...to.query, ...(parseQuery(splitHash(hash).query).repo === "all" ? { repo: "all" } : {}) } }) : renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);
@@ -209,6 +226,7 @@ const me = await enterDisplay("admin");
 S.me = me.id;
 initShell("admin", { user: me });
 initPalette({ role: "admin", user: me });
+context = initContext("admin", me, { go: contextGo });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 
@@ -237,6 +255,8 @@ async function startAdmin() {
   // When something waits for the owner, the app opens on the Your turn page.
   const to = startHash(location.hash, await startBadge());
   if (to) history.replaceState(null, "", to);
+  await context.ready;
+  booted = true;
   route();
   startSince(sinceEl);
 }

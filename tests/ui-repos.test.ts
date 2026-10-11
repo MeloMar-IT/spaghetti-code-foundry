@@ -1284,3 +1284,79 @@ describe("the GitHub App", () => {
     expect(asked).not.toContain("token");
   });
 });
+
+describe("the repository context", () => {
+  let ctx: any;
+  const gh = (github: string) => ({ github, owner: "u1", account: null });
+  const memStore = { getItem: () => null, setItem: () => undefined };
+  const start = async (lists: any[][], where = "#/repos") => {
+    const context = await import("../ui/context.js" as string);
+    const queue = [...lists];
+    const a = { repos: vi.fn(() => Promise.resolve(queue.length > 1 ? queue.shift() : queue[0])) };
+    const go = vi.fn();
+    ctx = context.initContext("user", { id: "u1" }, { a, go, notify: vi.fn(), store: context.contextStore("u1", memStore), where: () => where });
+    await ctx.ready;
+    return { a, go };
+  };
+  const switcher = () => (document as any).getElementById("context").textContent as string;
+  afterEach(() => ctx?.stop());
+
+  it("a confirmed removal loads the list of the switcher once more", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")], []]);
+    await show();
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(switcher()).toContain("No repository yet.");
+  });
+
+  it("a removal that fails in the cleanup still loads it again, and the retry stays", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")], []]);
+    await show();
+    answers.push({ status: 500, error: "an old key is still in the Keychain" });
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(switcher()).toContain("No repository yet.");
+    expect(button(main(), "Try again")).toBeDefined();
+  });
+
+  it("a removal that fails before anything is removed does not", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")]]);
+    await show();
+    answers.push({ status: 404, error: "no such repository" });
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(1);
+  });
+
+  it("an added repository changes the switcher from one to many and rewrites #/repos without a redraw", async () => {
+    const { a, go } = await start([[gh("o/a")], [gh("o/a"), gh("o/b")]]);
+    await show();
+    press(button(main(), "+ Add repository"));
+    type("url", "https://github.com/o/b");
+    type("token", TOKEN);
+    press(button(root(), "Add repository"));
+    await flush();
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(go).toHaveBeenCalledWith("#/repos?repo=all", { replace: true, draw: false });
+  });
+
+  it("changing the authentication does not load the list again", async () => {
+    repos = [rec({ url: "https://git.example.com/a/b", method: "https-token", username: "ann" })];
+    const { a } = await start([[gh("o/a")]]);
+    await show();
+    press(button(main(), "Change authentication"));
+    type("username", "ann2");
+    press(button(root(), "Save"));
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(1);
+  });
+});

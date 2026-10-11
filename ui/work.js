@@ -68,7 +68,7 @@ export function workView(data, prefs, handlers) {
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderWork(main, wantedRepo, { user, store, now, media = mediaFor("compact") } = {}) {
+export function renderWork(main, wantedRepo, { user, store, now, query = {}, media = mediaFor("compact") } = {}) {
   let closed = false;
   let data;
   let last;
@@ -82,13 +82,20 @@ export function renderWork(main, wantedRepo, { user, store, now, media = mediaFo
   let opener = null;
   let slot;
   let prefs = loadPrefs(user, store);
+  // The address wins over the saved choices: a repository, "all" (no repository filter) and an owner.
   if (wantedRepo) prefs = { ...prefs, repo: wantedRepo };
+  else if (query.repo === "all") prefs = { ...prefs, repo: DEFAULTS.repo };
+  else if (query.repo) prefs = { ...prefs, repo: query.repo };
+  // An owner named by the address stays, even without cards (an empty list, not other people's stories), until the person picks another.
+  let addressOwner = query.owner || "";
+  if (addressOwner) prefs = { ...prefs, owner: addressOwner };
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
 
   const handlers = {
     onChange: (patch) => {
       if (Object.entries(patch).every(([k, v]) => JSON.stringify(prefs[k]) === JSON.stringify(v))) return; // nothing changed: no redraw
       prefs = { ...prefs, ...patch };
+      if ("owner" in patch) addressOwner = "";
       savePrefs(user, prefs, store);
       draw();
     },
@@ -98,6 +105,7 @@ export function renderWork(main, wantedRepo, { user, store, now, media = mediaFo
       mount(bodyEl, workBody(data, prefs, handlers));
     },
     onClear: () => {
+      addressOwner = "";
       prefs = { ...prefs, repo: DEFAULTS.repo, owner: DEFAULTS.owner, status: [], who: DEFAULTS.who, text: DEFAULTS.text };
       savePrefs(user, prefs, store);
       draw();
@@ -190,6 +198,7 @@ export function renderWork(main, wantedRepo, { user, store, now, media = mediaFo
     last = text;
     data = next;
     prefs = cleanPrefs(prefs, data);
+    if (addressOwner) prefs = { ...prefs, owner: addressOwner };
     // The panel follows the data: a story that is gone closes it (and drops out of Back).
     const keys = new Set(workItems(data).map(keyOf));
     history = history.filter((k) => keys.has(k));

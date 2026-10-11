@@ -63,7 +63,15 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js", "context.js", "context-view.js"]) expect(seen.has(m), m).toBe(true);
+  });
+
+  it("starts the context after the view is known, and waits for it before the first page", () => {
+    expect(app.indexOf("initContext(")).toBeGreaterThan(app.indexOf("stopped = !view.ready;"));
+    expect(app.indexOf("initContext(")).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
+    expect(app.indexOf("await context?.ready;")).toBeGreaterThan(0);
+    expect(app.indexOf("await context?.ready;")).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
+    expect(app.indexOf("await context?.ready;")).toBeLessThan(app.lastIndexOf("await route();"));
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {

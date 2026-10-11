@@ -11,6 +11,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Status.** `disabled`, `quarantined` and `retired` are explicit and need a `reason`. An enabled source needs an owner, an approved ref and an update cadence.
   - **CLI.** `scf skills sources check [<file>]` checks the file offline, without choosing or moving the data folder. Each problem names the field and says how to fix it.
   - **Docs.** "Skill library sources" in `docs/USER_GUIDE.md` describes the format and the pull-request workflow.
+- Repository context 2b — the switcher is live in both routers and after repository changes (#451). Part 2 of 2 of #444.
+  - **Start and stop.** Both displays start the context after sign-in (`initContext` in `ui/app.js` and `ui/user/app.js`); the first page draws after the list has loaded or failed. In the read-only preview (`?as=`) it starts with `readOnly`, so storage is never read or written. When the preview ends the context is stopped; when the view cannot be shown none is started.
+  - **Addresses.** With two or more repositories a bare `#/runs`, `#/refinement`, `#/repos`, `#/all-repos` or `#/board` is rewritten with `history.replaceState` before the page draws (`?repo=<name>`, `#/board/<name>` or `?repo=all`). An address that names a repository or has any query wins. A redirected address is not scoped. With fewer than two repositories nothing is rewritten.
+  - **Choosing.** On a page with `scope` a choice changes the address and the page draws again; `owner` is kept. On other pages only the label changes.
+  - **After a change.** Adding or removing a repository (My repositories, the Add dialog from **Start work**) and a transfer (All repositories) call `reposChanged()`, and the switcher loads again: none, one, many changes it from text to label to button. One → many on `#/repos` rewrites the address to `#/repos?repo=all` without drawing twice.
+  - **Docs and tests.** New "Repository context" section in `docs/USER_GUIDE.md`. Router, user, Start work, My repositories and All repositories tests extended; `tests/helpers/flow-app.ts` stubs `context.js`.
 
 - Page templates 5b — the runs list, the board and the run page (#448). Part 2 of 3 of #341. Nothing changes for the eye; focus and scroll behave as before.
   - **Runs list.** `renderRunsList` mounts one `collectionPage` in every state (loading, first-load error, 403, data). With data the slots are `actions` (queue text, owner filter, spacer, note, Refresh), `notices`, `filters`, `list` and `empty`.
