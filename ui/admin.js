@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
-import { check, input } from "./fields.js";
+import { check, input, lockReadOnly } from "./fields.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -35,7 +35,7 @@ export function serverFrom(v) {
 
 // ── settings ──
 
-export async function renderSettings(main) {
+export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
   const [c, info] = await Promise.all([api.config(), api.info()]);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
@@ -129,7 +129,7 @@ export async function renderSettings(main) {
   const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
   mount(main, settingsPage({
     title: "Settings",
-    actions: [h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), saveNote, saveBtn],
+    actions: [h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])],
     notices: err,
     sections: [
     section("Budget & capacity",
@@ -184,4 +184,5 @@ export async function renderSettings(main) {
         f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))),
     ],
   }));
+  if (readOnly) lockReadOnly(main);
 }

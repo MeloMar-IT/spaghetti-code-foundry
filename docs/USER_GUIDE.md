@@ -615,6 +615,26 @@ are code failures and keep the usual text. A step budget that is used up is a li
 rejection is a person's decision. If a command was blocked earlier in such a run, the
 sentence adds a hint to allow it in the flow if it was needed.
 
+### Small screens
+
+On a small screen some pages show their content but not the controls that change things. A note above the page says why: "Editing needs a wider screen (768 px or more)." Use a wider screen to make changes.
+
+| Page | Below 768 px | 768–1023 px |
+|---|---|---|
+| Users, one user, Settings | read-only | full |
+| Credentials, Audit, Dashboard | read-only (the note only; they have nothing to change) | full |
+| Overview, Watchers, All repositories, Models, Problems, Maintenance | full for now | full |
+| Flows and the flow editor | full for now | full for now |
+| Every other page, the Library included | full | full |
+
+On a read-only page:
+
+- **Users:** the table stays; there is no "+ Add user", no "Default limits" and no action in the empty state.
+- **One user:** only "View as user" is offered; the Account card stays.
+- **Settings:** no Save button. You can select and scroll through text fields but not change them; lists and checkboxes are disabled.
+
+Resizing the window across 768 px redraws the page only when its level changes. If a dialog is open, it stays and the page is redrawn when you close it. **Unsaved Settings fields are lost when the width crosses 768 px.** The lock is in the page only; the server still accepts changes made from a wider screen or through the API.
+
 ### Accessibility
 
 The Foundry aims to meet WCAG 2.2 AA. Open **Account → Accessibility** to read the statement: what is checked, the known limits and how to report a problem. The statement is also in [ACCESSIBILITY.md](ACCESSIBILITY.md), and [ACCESSIBILITY_SCRIPTS.md](ACCESSIBILITY_SCRIPTS.md) has keyboard and screen-reader scripts for the owner. Nothing was run in a browser or with a screen reader yet.

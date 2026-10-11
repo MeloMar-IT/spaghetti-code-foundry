@@ -282,3 +282,23 @@ describe("Settings → Safety: audit log", () => {
     expect(main.textContent).toContain("invalid config: nope");
   });
 });
+
+describe("read-only Settings", () => {
+  it("shows the values without a Save button or any control that changes", async () => {
+    const { main, puts } = await render({});
+    expect(main.all("button").map((b) => b.textContent)).toContain("Save");
+    expect(main.all("input").some((i: any) => i.readOnly)).toBe(false);
+    const ro = new FakeElement("main");
+    await ui.renderSettings(ro, { readOnly: true });
+    expect(ro.all("button")).toHaveLength(0);
+    expect(ro.all("span").some((s) => s.getAttribute("role") === "status")).toBe(false);
+    expect(ro.all("fieldset")).toHaveLength(0);
+    for (const i of ro.all("input") as any[]) {
+      if (i.attrs.type === "checkbox") expect(i.disabled).toBe(true);
+      else expect(i.readOnly).toBe(true);
+    }
+    for (const s of ro.all("select") as any[]) expect(s.disabled).toBe(true);
+    expect((ro.all("label").find((l) => l.textContent.includes("Keep the audit log"))!.all("input")[0] as any).value).toBe("180");
+    expect(puts).toHaveLength(0);
+  });
+});

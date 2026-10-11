@@ -29,10 +29,18 @@ import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
 import { renderAdminHome } from "./home-admin.js";
 import { startBadge, startHash } from "./turn.js";
+import { levelNotice, mediaFor, supportLevel } from "./viewport.js";
 
 const sidebar = document.getElementById("sidebar");
 const main = document.getElementById("main");
 const healthEl = document.getElementById("health");
+const levelNote = document.getElementById("level-note");
+
+// Pages not wired to the support level yet: they keep their controls and get no notice.
+const NOT_YET = new Set(["operations", "watchers", "watcher", "flows", "flow", "new-flow", "all-repos", "models", "model", "problems", "problem", "maintenance"]);
+const levelOf = (id) => (NOT_YET.has(id) ? "full" : supportLevel(id, globalThis.innerWidth));
+let drawn = null; // { id, level } of the page route() drew last
+let missed = false; // the width crossed a breakpoint while a dialog was open
 
 /**
  * cur: the flow being edited.
@@ -103,6 +111,12 @@ async function route() {
   S.lastHash = hash;
   S.cleanup?.();
   S.cleanup = null;
+  const level = levelOf(to.page.id);
+  drawn = { id: to.page.id, level };
+  const readOnly = level === "read-only";
+  const note = readOnly ? levelNotice(to.page.id, { dirty: !!S.cur?.dirty }) : null;
+  levelNote.textContent = note ?? "";
+  levelNote.hidden = !note;
   showPage("admin", to);
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
@@ -120,7 +134,7 @@ async function route() {
     else if (section === "dashboard") await renderInBox(renderDashboard);
     else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg) : renderWatchers);
     else if (section === "problems") await renderInBox(arg ? (box) => renderProblemDetail(box, arg) : renderProblems);
-    else if (section === "settings") await renderInBox(renderSettings);
+    else if (section === "settings") await renderInBox((box) => renderSettings(box, { readOnly }));
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await (arg ? renderModelDetail(main, arg) : renderModels(main));
     else if (section === "all-repos") {
@@ -145,12 +159,12 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "users" && arg) {
-      const off = await renderUserDetail(main, arg, { me: S.me, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      const off = await renderUserDetail(main, arg, { me: S.me, readOnly, onName: (n) => { if (mine === routeGen) namePage(n); } });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "users") {
-      const off = await renderUsers(main, { me: S.me });
+      const off = await renderUsers(main, { me: S.me, readOnly });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
@@ -197,6 +211,21 @@ initShell("admin", { user: me });
 initPalette({ role: "admin", user: me });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
+
+/** The width crossed a breakpoint: redraw only when the level of the drawn page changed; wait for an open dialog. */
+function onWidth() {
+  if (!drawn || levelOf(drawn.id) === drawn.level) { missed = false; return; }
+  if (flowPage.dialogOpen()) { missed = true; return; }
+  missed = false;
+  route();
+}
+for (const name of ["compact", "wide"]) mediaFor(name)?.addEventListener?.("change", onWidth);
+// The dialog empties #modal-root before its promise settles, so the redraw waits one task: the action that opened the
+// dialog finishes its own follow-up (back to the list after a delete, a reload) before the page is drawn again.
+if (typeof MutationObserver === "function") {
+  new MutationObserver(() => { if (missed && !flowPage.dialogOpen()) setTimeout(onWidth, 0); })
+    .observe(document.getElementById("modal-root"), { childList: true });
+}
 await startAdmin();
 
 async function startAdmin() {

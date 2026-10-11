@@ -2,7 +2,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain JavaScript module without types
-import { BREAKPOINTS, STACKED_MAX, mediaFor, queryFor } from "../ui/viewport.js";
+import { BREAKPOINTS, STACKED_MAX, levelNotice, mediaFor, queryFor, supportLevel } from "../ui/viewport.js";
+// @ts-expect-error plain JavaScript module without types
+import { PAGES } from "../ui/ia.js";
 import { readUiCss } from "./helpers/ui-css.js";
 import { usesDrawer } from "./browser/widths.js";
 
@@ -41,6 +43,33 @@ describe("ui/viewport.js", () => {
   it("is the drawer width of the browser tests", () => {
     expect(usesDrawer(767)).toBe(true);
     expect(usesDrawer(768)).toBe(false);
+  });
+});
+
+describe("support levels", () => {
+  const FLOW = new Set(["flows", "flow", "new-flow"]);
+  it("gives every page its level at the edge widths", () => {
+    for (const p of PAGES as { id: string; area: string }[]) {
+      const admin = p.area === "administration";
+      for (const w of [360, 767, 768, 1023, 1024]) {
+        const expected = (admin && w <= 767) || (FLOW.has(p.id) && w <= 1023) ? "read-only" : "full";
+        expect(supportLevel(p.id, w), `${p.id} at ${w}`).toBe(expected);
+      }
+    }
+    expect(supportLevel("library", 360)).toBe("full");
+  });
+  it("is full for an unknown id or no usable width", () => {
+    expect(supportLevel("nope", 360)).toBe("full");
+    expect(supportLevel("users", undefined)).toBe("full");
+    expect(supportLevel("users", NaN)).toBe("full");
+    expect(supportLevel(undefined, 360)).toBe("full");
+  });
+  it("words the notice", () => {
+    expect(levelNotice("users")).toBe("Editing needs a wider screen (768 px or more).");
+    expect(levelNotice("flow")).toContain("1024 px");
+    expect(levelNotice("flow")).not.toContain("unsaved");
+    expect(levelNotice("flow", { dirty: true })).toContain("unsaved changes are kept");
+    for (const id of ["library", "home", "nope"]) expect(levelNotice(id)).toBeNull();
   });
 });
 

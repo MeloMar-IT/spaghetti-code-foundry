@@ -482,3 +482,25 @@ describe("wiring", () => {
     expect(sent[2]!.body).toEqual({ stopWork: true });
   });
 });
+
+describe("read-only Users", () => {
+  const texts = () => main().all("button").map((b) => b.textContent);
+  it("has no Add user and no Default limits, and keeps the table and the name links", async () => {
+    await ui.renderUsers(main(), { me: "me", page, readOnly: true });
+    expect(texts()).not.toContain("+ Add user");
+    expect(texts()).not.toContain("Default limits");
+    expect(rows()).toHaveLength(2);
+    expect(main().all("a").map((a) => a.textContent)).toContain("Ann");
+  });
+  it("has no action in the empty state", async () => {
+    users = [];
+    await ui.renderUsers(main(), { me: "me", page, readOnly: true });
+    expect(main().textContent).toContain("No users yet.");
+    expect(main().all("button")).toHaveLength(0);
+  });
+  it("offers both buttons by default", async () => {
+    await show();
+    expect(texts()).toContain("+ Add user");
+    expect(texts()).toContain("Default limits");
+  });
+});

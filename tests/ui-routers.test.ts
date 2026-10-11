@@ -13,6 +13,7 @@ beforeAll(async () => {
     states: await import("../ui/states.js" as string),
     ia: await import("../ui/ia.js" as string),
     auth: await import("../ui/auth.js" as string),
+    viewport: await import("../ui/viewport.js" as string),
   };
 });
 afterAll(() => restore());
@@ -162,6 +163,7 @@ describe("admin router", () => {
       "./auth.js": { ...real.auth, enterDisplay: async () => ({ id: "a1" }) },
       "./dom.js": real.dom,
       "./ia.js": real.ia,
+      "./viewport.js": real.viewport,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./palette.js": { initPalette: vi.fn() },
       "./states.js": real.states,
@@ -251,5 +253,194 @@ describe("admin router", () => {
     const i = lines.findIndex((l) => l.includes("errorState(explainError(e,"));
     expect(i).toBeGreaterThan(0);
     expect(lines[i - 1]).toContain("if (mine !== routeGen) return;");
+  });
+});
+
+describe("support levels", () => {
+  const listeners: Record<string, () => unknown> = {};
+  let observed: (() => unknown) | undefined;
+  let dialogs = 0;
+  const note = () => g.document.getElementById("level-note") as FakeElement;
+  const adminDeps = (over: Record<string, any> = {}) => ({
+    "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
+    "./api.js": { api: { info: async () => ({ repo: "r" }), flows: async () => [] } },
+    "./auth.js": { ...real.auth, enterDisplay: async () => ({ id: "a1" }) },
+    "./dom.js": real.dom,
+    "./ia.js": real.ia,
+    "./viewport.js": real.viewport,
+    "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
+    "./palette.js": { initPalette: vi.fn() },
+    "./states.js": real.states,
+    "./icons.js": { flowNameMark: () => "" },
+    "./work.js": never,
+    "./home-admin.js": never,
+    "./health.js": { loadHealth: vi.fn(), startHealth: vi.fn() },
+    "./since.js": { startSince: vi.fn() },
+    "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
+    ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
+      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+    "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
+    "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
+    ...over,
+  });
+  const width = (w: number | undefined) => { if (w === undefined) delete g.innerWidth; else g.innerWidth = w; };
+  const fire = async (name: "compact" | "wide") => { listeners[name]!(); await tick(); };
+  const closeDialog = async () => { dialogs = 0; observed!(); await new Promise((r) => setTimeout(r, 5)); };
+  const load = async (hash: string, w: number | undefined, over: Record<string, any> = {}) => {
+    setup(hash);
+    width(w);
+    return loadRouter("app.js", adminDeps(over));
+  };
+  const page = () => vi.fn(async (box: FakeElement) => { real.dom.mount(box, el("page")); });
+
+  beforeEach(() => {
+    for (const k of Object.keys(listeners)) delete listeners[k];
+    observed = undefined;
+    dialogs = 0;
+    g.matchMedia = (q: string) => ({ addEventListener: (_t: string, fn: () => unknown) => { listeners[q.includes("max-width: 767") ? "compact" : "wide"] = fn; } });
+    g.MutationObserver = class { constructor(cb: () => unknown) { observed = cb; } observe() {} };
+    note().hidden = true;
+    note().textContent = "";
+  });
+  afterEach(() => {
+    delete g.innerWidth;
+    delete g.matchMedia;
+    delete g.MutationObserver;
+  });
+
+  it("is full with no innerWidth and shows no notice", async () => {
+    const renderUsers = page();
+    await load("#/users", undefined, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    expect(renderUsers.mock.calls[0]![1].readOnly).toBe(false);
+    expect(note().hidden).toBe(true);
+  });
+
+  it("is read-only at 360 and shows the notice; full at 768", async () => {
+    const renderUsers = page();
+    await load("#/users", 360, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    expect(renderUsers.mock.calls[0]![1].readOnly).toBe(true);
+    expect(note().textContent).toBe("Editing needs a wider screen (768 px or more).");
+    expect(note().hidden).toBe(false);
+    const wide = page();
+    await load("#/users", 768, { "./users.js": { renderUsers: wide } });
+    await vi.waitFor(() => expect(wide).toHaveBeenCalledTimes(1));
+    expect(wide.mock.calls[0]![1].readOnly).toBe(false);
+    expect(note().hidden).toBe(true);
+  });
+
+  it("passes readOnly to the user page and Settings", async () => {
+    const renderUserDetail = page();
+    await load("#/users/u1", 360, { "./user-detail.js": { renderUserDetail } });
+    await vi.waitFor(() => expect(renderUserDetail).toHaveBeenCalledTimes(1));
+    expect(renderUserDetail.mock.calls[0]![2].readOnly).toBe(true);
+    const renderSettings = page();
+    await load("#/settings", 360, { "./admin.js": { renderSettings } });
+    await vi.waitFor(() => expect(renderSettings).toHaveBeenCalledTimes(1));
+    expect(renderSettings.mock.calls[0]![1].readOnly).toBe(true);
+  });
+
+  it("shows the notice only on Dashboard, Credentials and Audit", async () => {
+    for (const [hash, over] of [
+      ["#/dashboard", { "./dashboard.js": { renderDashboard: page() } }],
+      ["#/credentials", { "./admin-credentials.js": { renderCredentials: async () => () => {} } }],
+      ["#/audit", { "./audit.js": { renderAudit: () => () => {} } }],
+    ] as const) {
+      await load(hash, 360, over);
+      await vi.waitFor(() => expect(note().hidden, hash).toBe(false));
+    }
+  });
+
+  it("shows no notice on pages that are not wired yet", async () => {
+    for (const hash of ["#/watchers", "#/models", "#/flows"]) {
+      note().hidden = true;
+      await load(hash, 360, { "./watchers.js": { renderWatchers: page() } });
+      await tick();
+      expect(note().hidden, hash).toBe(true);
+    }
+  });
+
+  it("redraws on a crossing that changes the level, and only then", async () => {
+    const renderUsers = page();
+    await load("#/users", 1024, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    width(360);
+    await fire("compact");
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(2));
+    expect(renderUsers.mock.calls[1]![1].readOnly).toBe(true);
+    width(800);
+    await fire("compact");
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(3));
+    expect(renderUsers.mock.calls[2]![1].readOnly).toBe(false);
+    width(1100);
+    await fire("wide");
+    expect(renderUsers).toHaveBeenCalledTimes(3);
+  });
+
+  it("draws nothing on a crossing on a page whose level does not change", async () => {
+    const renderWatchers = page();
+    await load("#/watchers", 1024, { "./watchers.js": { renderWatchers } });
+    await vi.waitFor(() => expect(renderWatchers).toHaveBeenCalledTimes(1));
+    width(360);
+    await fire("compact");
+    expect(renderWatchers).toHaveBeenCalledTimes(1);
+    const renderRuns = page();
+    await load("#/runs", 1024, { "./runs.js": { renderRunsList: renderRuns } });
+    await vi.waitFor(() => expect(renderRuns).toHaveBeenCalledTimes(1));
+    width(360);
+    await fire("compact");
+    expect(renderRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an open dialog on a crossing and redraws once after it closes (wide to narrow)", async () => {
+    const renderUsers = page();
+    await load("#/users", 1024, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    dialogs = 1;
+    width(360);
+    await fire("compact");
+    expect(renderUsers).toHaveBeenCalledTimes(1);
+    await closeDialog();
+    expect(renderUsers).toHaveBeenCalledTimes(2);
+    expect(renderUsers.mock.calls[1]![1].readOnly).toBe(true);
+  });
+
+  it("keeps an open dialog on a crossing and redraws once after it closes (narrow to wide)", async () => {
+    const renderUsers = page();
+    await load("#/users", 360, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    dialogs = 1;
+    width(1024);
+    await fire("wide");
+    expect(renderUsers).toHaveBeenCalledTimes(1);
+    await closeDialog();
+    expect(renderUsers).toHaveBeenCalledTimes(2);
+    expect(renderUsers.mock.calls[1]![1].readOnly).toBe(false);
+  });
+
+  it("draws nothing when the width crosses and returns while a dialog is open", async () => {
+    const renderUsers = page();
+    await load("#/users", 1024, { "./users.js": { renderUsers } });
+    await vi.waitFor(() => expect(renderUsers).toHaveBeenCalledTimes(1));
+    dialogs = 1;
+    width(360);
+    await fire("compact");
+    width(1024);
+    await fire("compact");
+    await closeDialog();
+    expect(renderUsers).toHaveBeenCalledTimes(1);
+  });
+
+  it("redraws a task after the dialog closes, so the action's own follow-up runs first", () => {
+    expect(readFileSync("ui/app.js", "utf8")).toContain("setTimeout(onWidth, 0)");
+  });
+
+  it("keeps NOT_YET to the twelve pages not wired yet", () => {
+    const src = readFileSync("ui/app.js", "utf8");
+    const ids = [...src.match(/const NOT_YET = new Set\(\[([^\]]*)\]/)![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect([...ids].sort()).toEqual(["all-repos", "flow", "flows", "maintenance", "model", "models", "new-flow", "operations", "problem", "problems", "watcher", "watchers"]);
+    const known = real.ia.PAGES.map((p: { id: string }) => p.id);
+    for (const id of ids) expect(known).toContain(id);
   });
 });
