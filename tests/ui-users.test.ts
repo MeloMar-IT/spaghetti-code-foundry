@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+// The Users list, its pure functions and the Add user and Default limits dialogs. The actions of one account are in ui-user-detail.test.ts.
 let restore: () => void;
 let ui: any;
 let api: any;
@@ -18,7 +19,6 @@ const ORIGIN = "https://foundry.example";
 const LINK = `${ORIGIN}/#/set-password/${TOKEN}`;
 const FUTURE = new Date(Date.now() + 20 * 60_000).toISOString();
 const PAST = new Date(Date.now() - 60_000).toISOString();
-const ADMIN_ONLY = "this is the only admin that is not blocked; make another admin first";
 
 type Answer = { status: number; error: string; after?: boolean } | "throw";
 let users: any[];
@@ -29,9 +29,6 @@ let holdNext: boolean;
 let held: { release: () => void } | undefined;
 let heldGets: (() => void)[][];
 let clipboard: any;
-let appRepos: Record<string, string[]>;
-let appGets: number;
-let heldApp: (() => void)[] | undefined;
 let page: any;
 let limits: { defaults: any; users: Record<string, any> };
 let limitsFail: boolean;
@@ -47,9 +44,6 @@ beforeEach(() => {
   gets = 0;
   limits = { defaults: {}, users: {} };
   limitsFail = false;
-  appGets = 0;
-  heldApp = undefined;
-  appRepos = {};
   sent = [];
   answers = [];
   holdNext = false;
@@ -79,13 +73,6 @@ beforeEach(() => {
       if (m && !Object.keys(into).length) delete limits.users[m[1]!];
       return reply(limits);
     }
-    if (init.method === "GET" && url.endsWith("/app-repos")) {
-      appGets++;
-      const a = answers.shift();
-      if (heldApp) await new Promise<void>((r) => heldApp!.push(r));
-      if (a && a !== "throw") return reply({ error: a.error }, a.status);
-      return reply({ repos: appRepos[url.split("/")[3] ?? ""] ?? [] });
-    }
     if (init.method === "GET") {
       gets++;
       const snapshot = users.map((u) => ({ ...u }));
@@ -103,28 +90,13 @@ beforeEach(() => {
     if (answer === "throw") throw new TypeError("fetch failed");
     const id = url.split("/")[3] ?? "";
     const target = users.find((u) => u.id === id);
-    if (url.endsWith("/app-repos") && !answer) return reply({ repos: body.repos });
-    const apply = () => {
-      if (init.method === "PUT" && target) Object.assign(target, body);
-      if (url.endsWith("/block") && target) target.status = "blocked";
-      if (url.endsWith("/unblock") && target) target.status = "active";
-      if (url.endsWith("/unlock") && target) target.lockedUntil = null;
-      if (url.endsWith("/reset") && target) target.hasPassword = false;
-      if (init.method === "DELETE") users = users.filter((u) => u.id !== id);
-    };
-    if (answer) {
-      if (answer.after) apply();
-      return reply({ error: answer.error }, answer.status);
-    }
-    apply();
+    if (answer) return reply({ error: answer.error }, answer.status);
+    if (init.method === "PUT" && target) Object.assign(target, body);
     if (init.method === "POST" && url === "/api/users") {
       const created = user({ id: "new1", ...body, hasPassword: false, lastSignIn: null, runs: 0 });
       users.push(created);
       return reply({ user: created, token: TOKEN, expires: "2026-12-01T00:00:00.000Z" }, 201);
     }
-    if (url.endsWith("/link") || url.endsWith("/reset")) return reply({ user: target, token: TOKEN, expires: "x" });
-    if (url.endsWith("/block")) return reply({ user: target, cancelled: { queued: 1, running: 1, waiting: 1 } });
-    if (init.method === "DELETE") return reply({ ok: true, credentials: 0, cancelled: 1 });
     return reply({ user: target });
   };
 });
@@ -149,10 +121,6 @@ const rows = () => main().all("tr").filter((r) => r.all("td").length);
 const rowOf = (name: string) => rows().find((r) => r.all("td")[0]!.textContent.startsWith(name))!;
 const show = async () => {
   await ui.renderUsers(main(), { me: "me", page });
-};
-const open = async (name: string, label: string) => {
-  press(button(rowOf(name), label));
-  await flush();
 };
 
 describe("pure functions", () => {
@@ -193,6 +161,12 @@ describe("pure functions", () => {
     expect(ui.actionsFor(user({ lockedUntil: FUTURE, hasPassword: false }))).toEqual(["edit", "limits", "app","link", "block", "view", "delete"]);
     expect(ui.actionsFor(user({ lockedUntil: PAST }))).toEqual(["edit", "limits", "app","reset", "block", "view", "delete"]);
     expect(ui.actionsFor(user({ role: "admin" }))).toEqual(["edit", "limits", "app","reset", "block", "delete"]);
+  });
+  it("every action has a dialog (or View as) and a label", () => {
+    for (const k of ui.actionsFor(user({ lockedUntil: FUTURE }))) {
+      expect(ui.LABELS[k], k).toBeTruthy();
+      if (k !== "view") expect(typeof ui.DIALOGS[k], k).toBe("function");
+    }
   });
   it("limitParts", () => {
     expect(ui.limitParts({ defaults: {}, users: {} }, "u1")).toEqual([]);
@@ -254,6 +228,10 @@ describe("pure functions", () => {
     expect(ui.cancelledTotal({ queued: 1 })).toBe(1);
     expect(ui.cancelledTotal(undefined)).toBe(0);
   });
+  it("appReposBody turns the lines of the box into a list", () => {
+    expect(ui.appReposBody(" acme/app \n\n acme/* \r\n")).toEqual(["acme/app", "acme/*"]);
+    expect(ui.appReposBody("")).toEqual([]);
+  });
   it("copyText", async () => {
     const fake = { writeText: vi.fn(async () => {}) };
     expect(await ui.copyText(fake, "x")).toBe(true);
@@ -261,48 +239,44 @@ describe("pure functions", () => {
     expect(await ui.copyText(undefined, "x")).toBe(false);
     expect(await ui.copyText({ writeText: async () => { throw new Error("no"); } }, "x")).toBe(false);
   });
+  it("limitsCell marks own values, mutes defaults and says when the limits are not available", () => {
+    expect(ui.limitsCell(null, "u1").textContent).toBe("not available");
+    expect(ui.limitsCell({ defaults: {}, users: {} }, "u1").textContent).toBe("no limits");
+    const cell = ui.limitsCell({ defaults: { maxConcurrent: 2 }, users: { u1: { dailyBudgetUsd: 5 } } }, "u1");
+    expect(cell.flat(Infinity).map((n: any) => (typeof n === "string" ? n : n?.textContent ?? "")).join("")).toBe("2 at a time · $5 a day (own)");
+  });
 });
 
 describe("the list", () => {
-  it("shows the columns and one row per account", async () => {
+  it("shows the columns and one row per account, with no action buttons", async () => {
     users.push(user({ id: "u2", name: "Bob", status: "blocked", lastSignIn: null }), user({ id: "u3", name: "Cy", hasPassword: false, lastSignIn: null }));
     await show();
-    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits", "Actions"]);
+    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits"]);
     const cells = (n: string) => rowOf(n).all("td").map((t) => t.textContent);
     expect(cells("Root").slice(0, 4)).toEqual(["Root (you)", "root@example.com", "admin", "active"]);
     expect(cells("Ann").slice(0, 7)).toEqual(["Ann", "ann@example.com", "user", "active", "just now", "2", "no limits"]);
     expect(cells("Bob")[3]).toBe("blocked");
     expect(cells("Bob")[4]).toBe("never");
     expect(cells("Cy")[3]).toBe("no password yet");
-    const labels = (n: string) => rowOf(n).all("button").map((b) => b.textContent);
-    expect(labels("Ann")).toEqual(["Edit", "Limits", "App repositories", "Reset password", "Block", "View as user", "Delete"]);
-    expect(labels("Bob")).toEqual(["Edit", "Limits", "App repositories", "Reset password", "Unblock", "View as user", "Delete"]);
-    expect(labels("Cy")).toEqual(["Edit", "Limits", "App repositories", "New link", "Block", "View as user", "Delete"]);
-    expect(labels("Root")).not.toContain("View as user");
+    for (const r of rows()) expect(r.all("button"), r.textContent).toHaveLength(0);
+    expect(main().all("table")[0]!.all("button")).toHaveLength(0);
     expect(main().all("input")).toHaveLength(0);
   });
 
-  it("View as user starts the view and opens the preview", async () => {
+  it("the name links to the account's page", async () => {
+    users.push(user({ id: "a b/c", name: "Odd" }));
     await show();
-    const real = (globalThis as any).fetch;
-    (globalThis as any).fetch = async (url: string, init: any) => {
-      if (init.method === "POST") {
-        sent.push({ method: init.method, url, body: JSON.parse(init.body) });
-        return { ok: true, status: 200, statusText: "OK", json: async () => ({ id: "u1", name: "Ann" }) };
-      }
-      return real(url, init);
-    };
-    await open("Ann", "View as user");
-    expect(sent).toEqual([{ method: "POST", url: "/api/admin/view-as", body: { userId: "u1" } }]);
-    expect(page.go).toHaveBeenCalledWith("/user/?as=u1");
+    const link = (n: string) => rowOf(n).all("a")[0]!;
+    expect(link("Ann").attrs.href).toBe("#/users/u1");
+    expect(link("Ann").textContent).toBe("Ann");
+    expect(link("Root").attrs.href).toBe("#/users/me");
+    expect(link("Odd").attrs.href).toBe("#/users/a%20b%2Fc");
   });
 
-  it("a refusal of View as user shows the sentence and goes nowhere", async () => {
+  it("offers Delete and Block nowhere on the list", async () => {
     await show();
-    answers.push({ status: 400, error: "that account is not a user" });
-    await open("Ann", "View as user");
-    expect(toastText()).toBe("that account is not a user");
-    expect(page.go).not.toHaveBeenCalled();
+    const labels = main().all("button").map((b) => b.textContent);
+    expect(labels).toEqual(["Default limits", "+ Add user"]);
   });
 });
 
@@ -371,221 +345,12 @@ describe("Add user", () => {
   });
 });
 
-describe("New link", () => {
-  const noPassword = () => users.push(user({ id: "u2", name: "Cy", hasPassword: false }));
-  it("shows a fresh link", async () => {
-    noPassword();
-    await show();
-    await open("Cy", "New link");
-    expect(root().textContent).toContain("earlier link stops working");
-    expect(root().textContent).not.toContain("unblock");
-    press(button(root(), "New link"));
-    await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/users/u2/link", body: {} }]);
-    expect(field(root(), "link")!.value).toBe(LINK);
-    expect(root().textContent).toContain("works once");
-    expect(root().textContent).not.toContain("unblock");
-  });
-  it("tells that a blocked account needs an unblock first", async () => {
-    users.push(user({ id: "u2", name: "Cy", hasPassword: false, status: "blocked" }));
-    await show();
-    await open("Cy", "New link");
-    expect(root().textContent).toContain("only after you unblock");
-    press(button(root(), "New link"));
-    await flush();
-    expect(root().textContent).toContain("only after you unblock");
-    expect(sent).toHaveLength(1);
-  });
-  it("shows a refusal", async () => {
-    noPassword();
-    await show();
-    await open("Cy", "New link");
-    answers.push({ status: 409, error: "this account has a password already" });
-    press(button(root(), "New link"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toBe("this account has a password already");
-  });
-});
-
-describe("Reset password", () => {
-  it("names the account, shows the link once for 24 hours and reloads the list", async () => {
-    await show();
-    await open("Ann", "Reset password");
-    expect(root().textContent).toContain("Ann (ann@example.com)");
-    expect(root().textContent).toContain("signed out everywhere");
-    press(button(root(), "Reset password"));
-    await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/users/u1/reset", body: {} }]);
-    expect(field(root(), "link")!.value).toBe(LINK);
-    expect(root().textContent).toContain("24 hours");
-    expect(root().textContent).toContain("works once");
-    const g = gets;
-    press(button(root(), "Done"));
-    await flush();
-    expect(gets).toBe(g + 1);
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("no password yet");
-    for (const t of [main().textContent, toastText(), root().textContent]) expect(t).not.toContain(TOKEN);
-  });
-
-  it("warns when it is the own account", async () => {
-    users.push(user({ id: "u9", name: "Ed", email: "ed@example.com", role: "admin" }));
-    await show();
-    await open("Root", "Reset password");
-    expect(root().textContent).toContain("signed out at once");
-  });
-});
-
-describe("Unlock", () => {
-  it("sends the call, toasts and reloads; the text does not promise an immediate sign-in", async () => {
-    users[1]!.lockedUntil = FUTURE;
-    await show();
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("locked");
-    expect(rowOf("Ann").all("td")[3]!.all("span")[0]!.attrs.class).toBe("pill locked");
-    await open("Ann", "Unlock");
-    expect(root().textContent).toContain("Ann (ann@example.com)");
-    expect(root().textContent).not.toContain("at once");
-    press(button(root(), "Unlock"));
-    await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/users/u1/unlock", body: {} }]);
-    expect(toastText()).toBe("Ann is unlocked");
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("active");
-  });
-
-  it("shows a refusal in the dialog", async () => {
-    users[1]!.lockedUntil = FUTURE;
-    await show();
-    await open("Ann", "Unlock");
-    answers.push({ status: 404, error: "no such account" });
-    press(button(root(), "Unlock"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toBe("no such account");
-  });
-});
-
-describe("App repositories", () => {
-  it("turns the lines of the box into a list", () => {
-    expect(ui.appReposBody(" acme/app \n\n acme/* \r\n")).toEqual(["acme/app", "acme/*"]);
-    expect(ui.appReposBody("")).toEqual([]);
-  });
-
-  it("loads the list, sends the lines and says Saved", async () => {
-    appRepos.u1 = ["acme/one", "acme/*"];
-    await show();
-    await open("Ann", "App repositories");
-    expect(appGets).toBe(1);
-    expect(field(root(), "appRepos")!.value).toBe("acme/one\nacme/*");
-    expect(root().textContent).toContain("An empty list allows none");
-    expect(root().textContent).not.toContain("An admin is not limited");
-    field(root(), "appRepos")!.value = "acme/two\n\n  acme/three  ";
-    press(button(root(), "Save"));
-    await flush();
-    expect(sent).toEqual([{ method: "PUT", url: "/api/users/u1/app-repos", body: { repos: ["acme/two", "acme/three"] } }]);
-    expect(root().children).toHaveLength(0);
-    expect(toastText()).toBe("Saved");
-  });
-
-  it("shows a server error in the dialog", async () => {
-    await show();
-    await open("Ann", "App repositories");
-    answers.push({ status: 400, error: 'entry 1 is not valid: write "owner/name" or "owner/*"' });
-    field(root(), "appRepos")!.value = "nonsense";
-    press(button(root(), "Save"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toContain("entry 1 is not valid");
-  });
-
-  it("toasts and opens no dialog when the list cannot be loaded", async () => {
-    await show();
-    answers.push({ status: 404, error: "no such account" });
-    await open("Ann", "App repositories");
-    expect(root().children).toHaveLength(0);
-    expect(toastText()).toBe("no such account");
-  });
-
-  it("tells that an admin is not limited", async () => {
-    await show();
-    await open("Root", "App repositories");
-    expect(root().textContent).toContain("An admin is not limited; the list counts only if the account becomes a user.");
-  });
-});
-
-describe("Edit", () => {
-  it("sends only what changed and shows it", async () => {
-    await show();
-    await open("Ann", "Edit");
-    expect(field(root(), "name")!.value).toBe("Ann");
-    expect(field(root(), "role")!.value).toBe("user");
-    field(root(), "name")!.value = "Bea";
-    press(button(root(), "Save"));
-    await flush();
-    expect(sent).toEqual([{ method: "PUT", url: "/api/users/u1", body: { name: "Bea" } }]);
-    expect(root().children).toHaveLength(0);
-    expect(gets).toBe(2);
-    expect(rowOf("Bea").all("td")[1]!.textContent).toBe("ann@example.com");
-    expect(toastText()).toBe("Saved");
-    expect(page.reload).not.toHaveBeenCalled();
-  });
-  it("sends nothing when nothing changed", async () => {
-    await show();
-    await open("Ann", "Edit");
-    press(button(root(), "Save"));
-    await flush();
-    expect(sent).toEqual([]);
-    expect(root().children).toHaveLength(0);
-  });
-  it("reloads the page after a change to your own account", async () => {
-    await show();
-    await open("Root", "Edit");
-    field(root(), "name")!.value = "Boss";
-    press(button(root(), "Save"));
-    await flush();
-    expect(page.reload).toHaveBeenCalledTimes(1);
-    expect(gets).toBe(1);
-  });
-});
-
-describe("Limits", () => {
+describe("Limits on the list", () => {
   it("shows defaults, and an own value marked (own)", async () => {
     limits = { defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, dailyBudgetUsd: 5 } } };
     await show();
     expect(rowOf("Root").all("td")[6]!.textContent).toBe("2 at a time");
     expect(rowOf("Ann").all("td")[6]!.textContent).toBe("9 at a time (own) · $5 a day (own)");
-  });
-  it("the dialog is prefilled, shows the default as placeholder and sends only changes", async () => {
-    limits = { defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, dailyBudgetUsd: 5 } } };
-    await show();
-    await open("Ann", "Limits");
-    expect(field(root(), "maxConcurrent")!.value).toBe("9");
-    expect(field(root(), "maxRunsPerDay")!.attrs.placeholder).toBe("default: no limit");
-    field(root(), "maxConcurrent")!.value = "";
-    field(root(), "maxRunsPerDay")!.value = "7";
-    press(button(root(), "Save"));
-    await flush();
-    expect(sent).toEqual([{ method: "PUT", url: "/api/users/u1/limits", body: { maxConcurrent: null, maxRunsPerDay: 7 } }]);
-    expect(toastText()).toBe("Saved");
-    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("2 at a time · 7 runs a day (own) · $5 a day (own)");
-  });
-  it("shows a problem and sends nothing; no change closes without a call", async () => {
-    await show();
-    await open("Ann", "Limits");
-    field(root(), "maxConcurrent")!.value = "0";
-    press(button(root(), "Save"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toBe("Runs at the same time must be a whole number of 1 or more, or empty.");
-    field(root(), "maxConcurrent")!.value = "";
-    press(button(root(), "Save"));
-    await flush();
-    expect(sent).toEqual([]);
-    expect(root().children).toHaveLength(0);
-  });
-  it("shows a server error in the dialog", async () => {
-    await show();
-    await open("Ann", "Limits");
-    field(root(), "maxConcurrent")!.value = "3";
-    answers.push({ status: 500, error: "nope" });
-    press(button(root(), "Save"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toContain("nope");
   });
   it("Default limits sends the defaults", async () => {
     await show();
@@ -598,151 +363,50 @@ describe("Limits", () => {
     expect(toastText()).toBe("Saved");
     expect(rowOf("Ann").all("td")[6]!.textContent).toBe("$12.5 a day");
   });
+  it("Default limits shows a problem and a server error in the dialog", async () => {
+    await show();
+    press(button(main(), "Default limits"));
+    await flush();
+    field(root(), "maxConcurrent")!.value = "0";
+    press(button(root(), "Save"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toBe("Runs at the same time must be a whole number of 1 or more, or empty.");
+    field(root(), "maxConcurrent")!.value = "3";
+    answers.push({ status: 500, error: "nope" });
+    press(button(root(), "Save"));
+    await flush();
+    expect(errLine(root())[0]!.textContent).toContain("nope");
+  });
   it("still lists users when the limits cannot be read", async () => {
     limitsFail = true;
     await show();
     expect(rows()).toHaveLength(2);
     expect(rowOf("Ann").all("td")[6]!.textContent).toBe("not available");
     expect(button(main(), "Default limits")!.attrs.disabled).toBe("");
-    expect(button(rowOf("Ann"), "Limits")!.attrs.disabled).toBe("");
-    expect(button(rowOf("Ann"), "Edit")!.attrs.disabled).toBeUndefined();
-  });
-});
-
-describe("Block and Unblock", () => {
-  it("says what happens and sends the choice", async () => {
-    for (const checked of [false, true]) {
-      users = [user({ id: "me", name: "Root", role: "admin" }), user()];
-      await show();
-      await open("Ann", "Block");
-      for (const t of ["signed out", "queued runs are cancelled", "Running runs finish", "Also stop all their work now"]) expect(root().textContent).toContain(t);
-      expect(root().textContent).not.toContain("signed out at once");
-      (field(root(), "stopWork") as any).checked = checked;
-      press(button(root(), "Block"));
-      await flush();
-      expect(sent.at(-1)).toEqual({ method: "POST", url: "/api/users/u1/block", body: { stopWork: checked } });
-      expect(root().children).toHaveLength(0);
-      expect(main().textContent).toContain(ui.cancelledText("Ann", 3));
-      expect(rowOf("Ann").all("td")[3]!.textContent).toBe("blocked");
-      expect(button(rowOf("Ann"), "Unblock")).toBeDefined();
-    }
-  });
-  it("signs you out when you block yourself", async () => {
-    await show();
-    await open("Root", "Block");
-    expect(root().textContent).toContain("signed out at once");
-    press(button(root(), "Block"));
-    await flush();
-    expect(page.reload).toHaveBeenCalledTimes(1);
-    expect(gets).toBe(1);
-    expect(main().textContent).not.toContain("cancelled");
-  });
-  it("keeps the dialog on a 500 after the change, and reads the list when it closes", async () => {
-    await show();
-    await open("Ann", "Block");
-    const before = main().textContent;
-    answers.push({ status: 500, error: "the account list is not working; see the server log", after: true });
-    press(button(root(), "Block"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toContain("not working");
-    expect(button(root(), "Block")!.disabled).toBe(false);
-    expect(gets).toBe(1);
-    expect(main().textContent).toBe(before);
-    pressEscape();
-    await flush();
-    expect(gets).toBe(2);
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("blocked");
-    expect(button(rowOf("Ann"), "Unblock")).toBeDefined();
-    expect(main().textContent).not.toContain("cancelled");
-  });
-  it("unblocks", async () => {
-    users[1]!.status = "blocked";
-    await show();
-    expect(button(rowOf("Ann"), "Block")).toBeUndefined();
-    await open("Ann", "Unblock");
-    expect(root().textContent).toContain("not restarted");
-    press(button(root(), "Unblock"));
-    await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/users/u1/unblock", body: {} }]);
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("active");
-    expect(button(rowOf("Ann"), "Block")).toBeDefined();
-    expect(button(rowOf("Ann"), "Unblock")).toBeUndefined();
-    expect(toastText()).toBe("Ann is unblocked");
-  });
-});
-
-describe("Delete", () => {
-  it("names the account and asks first", async () => {
-    await show();
-    await open("Ann", "Delete");
-    for (const t of ["Ann", "ann@example.com", "stored credentials", "wiped", "runs are kept"]) expect(root().textContent).toContain(t);
-    pressEscape();
-    await flush();
-    expect(sent).toEqual([]);
-  });
-  it("deletes", async () => {
-    await show();
-    await open("Ann", "Delete");
-    press(button(root(), "Delete"));
-    await flush();
-    expect(sent).toEqual([{ method: "DELETE", url: "/api/users/u1", body: undefined }]);
-    expect(rows().map((r) => r.all("td")[0]!.textContent)).toEqual(["Root (you)"]);
-    expect(toastText()).toBe("Ann was deleted");
-  });
-  it("reloads the page when you delete yourself", async () => {
-    await show();
-    await open("Root", "Delete");
-    press(button(root(), "Delete"));
-    await flush();
-    expect(page.reload).toHaveBeenCalledTimes(1);
-    expect(gets).toBe(1);
-  });
-  it("shows a 500 that came after the delete, and reloads on close", async () => {
-    await show();
-    await open("Ann", "Delete");
-    answers.push({ status: 500, error: "the account was deleted, but an old key is left", after: true });
-    press(button(root(), "Delete"));
-    await flush();
-    expect(errLine(root())[0]!.textContent).toContain("the account was deleted, but");
-    pressEscape();
-    await flush();
-    expect(rows()).toHaveLength(1);
   });
 });
 
 describe("refusals", () => {
-  const cases: [string, string, Answer, (name: string) => Promise<void>][] = [
-    ["Add: e-mail taken", "Add user", { status: 409, error: "an account with that e-mail exists already" }, async () => {
+  const cases: [string, string, Answer, () => void][] = [
+    ["Add: e-mail taken", "Add user", { status: 409, error: "an account with that e-mail exists already" }, () => {
       press(button(main(), "+ Add user"));
       field(root(), "name")!.value = "Dee";
       field(root(), "email")!.value = "ann@example.com";
     }],
-    ["Add: bad e-mail", "Add user", { status: 400, error: "that is not a valid e-mail address" }, async () => {
+    ["Add: bad e-mail", "Add user", { status: 400, error: "that is not a valid e-mail address" }, () => {
       press(button(main(), "+ Add user"));
       field(root(), "name")!.value = "Dee";
       field(root(), "email")!.value = "nope";
     }],
-    ["Edit: last admin", "Save", { status: 409, error: ADMIN_ONLY }, async () => {
-      await open("Root", "Edit");
-      field(root(), "role")!.value = "user";
-    }],
-    ["Block: last admin", "Block", { status: 409, error: ADMIN_ONLY }, () => open("Root", "Block")],
-    ["Reset: last admin", "Reset password", { status: 409, error: ADMIN_ONLY }, () => open("Root", "Reset password")],
-    ["Delete: last admin", "Delete", { status: 409, error: ADMIN_ONLY }, () => open("Root", "Delete")],
-    ["Unblock: gone", "Unblock", { status: 404, error: "no such account" }, async () => {
-      users[1]!.status = "blocked";
-      await ui.renderUsers(main(), { me: "me", page });
-      gets = 1;
-      await open("Ann", "Unblock");
-    }],
-    ["Edit: network", "Save", "throw", async () => {
-      await open("Ann", "Edit");
-      field(root(), "name")!.value = "Bea";
+    ["Add: network", "Add user", "throw", () => {
+      press(button(main(), "+ Add user"));
+      field(root(), "name")!.value = "Dee";
+      field(root(), "email")!.value = "dee@example.com";
     }],
   ];
   it.each(cases)("%s", async (_n, label, answer, setup) => {
     await show();
-    await setup(label);
+    setup();
     const before = main().textContent;
     const g = gets;
     answers.push(answer);
@@ -755,35 +419,21 @@ describe("refusals", () => {
   });
 });
 
-describe("a dialog closed while the call runs", () => {
-  it("reloads after a late success and toasts a late failure", async () => {
-    await show();
-    await open("Ann", "Block");
-    holdNext = true;
-    press(button(root(), "Block"));
-    await flush();
-    pressEscape();
-    held!.release();
-    await flush();
-    expect(rowOf("Ann").all("td")[3]!.textContent).toBe("blocked");
-
-    await open("Ann", "Unblock");
-    answers.push({ status: 404, error: "no such account" });
-    holdNext = true;
-    press(button(root(), "Unblock"));
-    await flush();
-    pressEscape();
-    held!.release();
-    await flush();
-    expect(toastText()).toBe("no such account");
-  });
-});
-
 describe("late answers", () => {
   it("draws nothing when the page was left", async () => {
     (globalThis as any).location = { hash: "#/runs" };
     await show();
     expect(main().textContent).toBe("");
+  });
+  it("draws nothing on an account's page address", async () => {
+    (globalThis as any).location = { hash: "#/users/u1" };
+    await show();
+    expect(main().textContent).toBe("");
+  });
+  it("draws on the list address", async () => {
+    (globalThis as any).location = { hash: "#/users" };
+    await show();
+    expect(rows()).toHaveLength(2);
   });
   it("the cleanup drops a load that is on its way", async () => {
     const wait: (() => void)[] = [];
@@ -797,22 +447,6 @@ describe("late answers", () => {
     await load;
     expect(main().textContent).toBe("");
   });
-  it("opens no app-repositories dialog and shows no error when the page was left while the list loads", async () => {
-    for (const fail of [false, true]) {
-      const stop = await ui.renderUsers(main(), { me: "me", page });
-      heldApp = [];
-      const wait = heldApp;
-      if (fail) answers.push({ status: 404, error: "no such account" });
-      press(button(rowOf("Ann"), "App repositories"));
-      await flush();
-      stop(); // the person goes to another page
-      wait.forEach((r) => r());
-      await flush();
-      heldApp = undefined;
-      expect(root().children).toHaveLength(0);
-      expect(toastText()).toBe("");
-    }
-  });
 });
 
 describe("wiring", () => {
@@ -822,8 +456,13 @@ describe("wiring", () => {
     expect(ia.subnavFor("admin", "administration")).toContainEqual({ id: "users", href: "#/users", label: "Users", section: "access" });
     expect(read("index.html")).toContain('href="#/operations" data-nav="administration"');
     expect(read("app.js")).toContain('from "./users.js"');
-    expect(read("app.js")).toContain('section === "users"');
+    expect(read("app.js")).toContain('from "./user-detail.js"');
+    expect(read("app.js")).toContain('section === "users" && arg');
+    expect(read("app.js")).toContain('section === "users")');
     expect(read("user/index.html")).not.toContain("#/users");
+  });
+  it("the two files stay under 500 lines", () => {
+    for (const f of ["users.js", "user-detail.js"]) expect(read(f).split("\n").length, f).toBeLessThan(500);
   });
   it("the api calls hit the right routes", async () => {
     await api.users();

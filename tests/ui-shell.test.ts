@@ -71,6 +71,25 @@ describe("showPage", () => {
     expect(sub.hidden).toBe(true);
   });
 
+  it("namePage puts the name in the last crumb, the title and the labels", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/users/u1"));
+    const crumbs = doc().getElementById("crumbs") as FakeElement;
+    expect(crumbs.textContent).toContain("u1");
+    shell.namePage("Ann");
+    expect(crumbs.all("span").filter((s) => s.attrs["aria-current"] === "page").map((s) => s.textContent)).toEqual(["Ann"]);
+    expect(crumbs.textContent).not.toContain("u1");
+    expect(doc().getElementById("page-title").textContent).toBe("Ann");
+    expect(doc().getElementById("main").attrs["aria-label"]).toBe("Ann");
+    expect(doc().title).toBe("Ann · Spaghetti Code Foundry");
+    shell.namePage("");
+    expect(doc().getElementById("page-title").textContent).toBe("Ann");
+  });
+
+  it("namePage does not fail on a page without crumbs", () => {
+    shell.showPage("admin", ia.resolve("admin", "#/runs"));
+    expect(() => shell.namePage("Ann")).not.toThrow();
+  });
+
   it("highlights Administration and All repositories on #/all-repos", () => {
     shell.showPage("admin", ia.resolve("admin", "#/all-repos"));
     expect(active()).toEqual(["administration"]);

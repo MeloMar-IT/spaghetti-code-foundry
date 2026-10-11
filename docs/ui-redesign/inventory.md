@@ -41,7 +41,8 @@ The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4
 | `#/models/:name` | — | `ui/models.js` | `renderModelDetail` | `api-admin.ts` (config, providers) | admin display only | See, test, change or remove one provider | Save provider, Remove provider | Remove asks first; built-in providers are saved as an override |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
-| `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export | Table without `.table-box` (`audit.js:79`) |
+| `#/users/:id` | — | `ui/user-detail.js` | `renderUserDetail` | `api-users.ts`, `view-as.ts` | admin display only | See one account and use its actions | Edit / Limits / App repositories / New link / View as user; Reset password / Unlock / Block; Delete | Same dialogs as the list had (`DIALOGS` in `ui/users.js`) |
+| `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export / Details | Table without `.table-box` (`audit.js:79`); a line opens a detail row |
 
 ## User display
 
@@ -118,6 +119,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/models/:name` | "This provider is not set up." | `errorState` with Retry | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
 | `#/users` | none found | errors box | none |
+| `#/users/:id` | "This account does not exist." with a link to Users | skeleton, then errors box; a failed reload keeps the page and shows a `staleNote` | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
@@ -158,7 +160,8 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
 | `#/models/:name` | Cards in one column | Same |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
-| `#/users` | Table not in `.table-box` | Probably overflows |
+| `#/users` | Shared table in a scroll box | Same |
+| `#/users/:id` | Cards in one column | Fits |
 | `#/audit` | Table not in `.table-box` | Probably overflows |
 | `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |

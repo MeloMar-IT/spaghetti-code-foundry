@@ -3,7 +3,7 @@ import { enterDisplay, linkToken } from "./auth.js";
 import { h, mount } from "./dom.js";
 import { createFlowPage } from "./flow-page.js";
 import { resolve, splitHash } from "./ia.js";
-import { initShell, showPage } from "./shell.js";
+import { initShell, namePage, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
 import { renderSettings } from "./admin.js";
@@ -19,6 +19,7 @@ import { renderOperations } from "./operations.js";
 import { renderRefinement } from "./refinement.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
+import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
 import { renderBoard } from "./board.js";
@@ -142,7 +143,16 @@ async function route() {
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
-    else if (section === "users") S.cleanup = await renderUsers(main, { me: S.me });
+    else if (section === "users" && arg) {
+      const off = await renderUserDetail(main, arg, { me: S.me, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
+    else if (section === "users") {
+      const off = await renderUsers(main, { me: S.me });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "audit") S.cleanup = await renderAudit(main);
     else if (section === "start") {
       // The page draws into its own box, so a slow load that ends after a hash change cannot touch the page that took over.

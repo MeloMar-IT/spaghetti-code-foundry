@@ -81,7 +81,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     // no timers: the typing check never runs by itself; a test can call the function the debounce would have called
     "./dom.js": { ...real.dom, debounce: (fn: () => unknown) => { debounced.push(fn); return () => undefined; } },
     "./ia.js": real.ia,
-    "./shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+    "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./states.js": real.states,
     "./icons.js": { flowNameMark: (f: { name: string }) => f.name },
     "./editor.js": { renderEditor: () => real.dom.h("div"), cleanFlow: (x: unknown) => x, editable: (x: unknown) => !!x && typeof x === "object" && !Array.isArray(x) },
@@ -97,7 +97,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./work.js": never,
   };
   for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
-    "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
+    "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
   // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);
   deps["./flow-shell.js"] = await import("../../ui/flow-shell.js" as string);
