@@ -42,6 +42,12 @@ describe("parseQuery", () => {
     expect(f.parseQuery("owner=a%2Fb&owner=u2")).toEqual({ owner: "u2" });
   });
 
+  it("reads repo=all, exactly", () => {
+    expect(f.parseQuery("repo=all")).toEqual({ repo: "all" });
+    expect(f.parseQuery("?repo=all&owner=u1")).toEqual({ repo: "all", owner: "u1" });
+    for (const t of ["repo=All", "repo=ALL"]) expect(f.parseQuery(t), t).toEqual({});
+  });
+
   it("gives a plain object with only own keys repo and owner", () => {
     const q = f.parseQuery("repo=a%2Fb&owner=u1&x=1");
     expect(Object.keys(q).sort()).toEqual(["owner", "repo"]);
@@ -55,6 +61,12 @@ describe("formatQuery and withQuery", () => {
     expect(f.formatQuery({ owner: "u1", repo: "acme/app" })).toBe("?repo=acme%2Fapp&owner=u1");
     expect(f.withQuery("#/runs", { owner: "u1" })).toBe("#/runs?owner=u1");
     expect(f.withQuery("#/runs", {})).toBe("#/runs");
+  });
+
+  it("writes repo=all", () => {
+    expect(f.formatQuery({ repo: "all" })).toBe("?repo=all");
+    expect(f.withQuery("#/runs", { repo: "all", owner: "u1" })).toBe("#/runs?repo=all&owner=u1");
+    expect(f.parseQuery(f.formatQuery({ repo: "all" }))).toEqual({ repo: "all" });
   });
 
   it("leaves out invalid values and round-trips", () => {

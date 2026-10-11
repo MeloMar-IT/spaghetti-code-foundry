@@ -319,6 +319,9 @@ part of the address, so you can share it, and Back and Forward restore it:
 - On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
   there: a user only ever sees their own runs.
 
+- `repo=all` (for example `#/runs?repo=all` or `#/runs?repo=all&owner=<account>`) means "every
+  repository". It opens the unfiltered list, so no repository chip is shown.
+
 Above the list a filter bar shows one chip per active filter, each with a remove button, and
 **Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
 and offers **Clear filters**; this also happens for a repository your account cannot see.
