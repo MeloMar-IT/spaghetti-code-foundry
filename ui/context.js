@@ -1,6 +1,10 @@
 // The repository context: "my current repository" (or All), the favourites and the recent ones, kept per account
-// in this browser, plus the pure rules for the addresses and the rows of the switcher. No DOM.
+// in this browser, plus the pure rules for the addresses and the rows of the switcher, and the controller of the
+// switcher (`initContext`), which draws it into `#context` with ui/context-view.js.
 // Same store pattern as ui/work-prefs.js and ui/since.js: missing, throwing or garbage storage means the empty state.
+import { api } from "./api.js";
+import { switcherView } from "./context-view.js";
+import { mount, toast } from "./dom.js";
 import { ALL_REPOS, parseQuery, resolve } from "./ia.js";
 import { sameRepo, withQuery } from "./filters.js";
 
@@ -182,4 +186,190 @@ export function switcherRows(list, state, text = "") {
   const t = String(text ?? "").trim().toLowerCase();
   const rows = [all, ...favourites, ...recents, ...rest];
   return t ? rows.filter((r) => r.label.toLowerCase().includes(t)) : rows;
+}
+
+export const UNKNOWN_OWNER = "Unknown account";
+export const SEARCH_FROM = 8;
+export const goneText = (name) => `${name} is no longer in your list. The switcher shows All repositories now.`;
+
+// The same text as `ownerText` in ui/admin-repos.js (copied, so the user display reaches no admin module).
+const ownerText = (row) => (row.account ? `${row.account.name} (${row.account.email})` : UNKNOWN_OWNER);
+
+/**
+ * The sections of the panel from `switcherRows`: All (no title), Favourites, Recent, then the rest. The rest is one
+ * "Repositories" section for a user; for an admin (`ownerOf(name)` → heading) one section per owner, sorted
+ * ignoring case, "Unknown account" last. Empty sections are left out.
+ */
+export function switcherSections(rows, ownerOf = null) {
+  const list = Array.isArray(rows) ? rows : [];
+  const of = (group) => list.filter((r) => r.group === group);
+  const rest = of("rest");
+  const out = [{ title: null, rows: of("all") }, { title: "Favourites", rows: of("favourite") }, { title: "Recent", rows: of("recent") }];
+  if (!ownerOf) out.push({ title: "Repositories", rows: rest });
+  else {
+    const by = new Map();
+    for (const r of rest) {
+      const t = ownerOf(r.name) || UNKNOWN_OWNER;
+      if (!by.has(t)) by.set(t, []);
+      by.get(t).push(r);
+    }
+    const key = (t) => t.toLowerCase();
+    const titles = [...by.keys()].sort((x, y) => (x === UNKNOWN_OWNER) - (y === UNKNOWN_OWNER) || (key(x) < key(y) ? -1 : key(x) > key(y) ? 1 : 0));
+    for (const t of titles) out.push({ title: t, rows: by.get(t) });
+  }
+  return out.filter((s) => s.rows.length);
+}
+
+let live = null;
+
+/**
+ * The live repository context of this page: loads the list, owns the store state and the switcher in `#context`.
+ * Returns { ready, scoped, keep, current, refresh, stop }. `ready` never rejects. Only one context is live.
+ */
+export function initContext(role, me, { readOnly = false, go = () => {}, a = api, where = () => location.hash, notify = (text) => toast(text), store = contextStore(me?.id, readOnly ? null : undefined) } = {}) {
+  live?.stop();
+  const box = document.getElementById("context");
+  let state = store.get();
+  let list = [];
+  let owners = new Map();
+  let open = false;
+  let text = "";
+  let gen = 0;
+  let stopped = false;
+  let loaded = false;
+  let failed = false;
+  let view = null;
+
+  const current = () => {
+    const item = list.find((i) => sameRepo(i.name, state.repo));
+    return { active: loaded && !stopped && list.length >= 2, repo: item?.name ?? "", own: item?.own ?? false };
+  };
+  const ownerOf = role === "admin" ? (name) => owners.get(String(name).toLowerCase()) : null;
+
+  const model = () => {
+    if (failed) return { state: "failed", label: "", open: false, search: false, text: "", sections: [] };
+    const n = list.length;
+    const search = n >= SEARCH_FROM;
+    return {
+      state: n === 0 ? "none" : n === 1 ? "one" : "many",
+      label: n === 1 ? list[0].name : current().repo || ALL_LABEL,
+      open: n >= 2 && open,
+      search,
+      text,
+      sections: n >= 2 && open ? switcherSections(switcherRows(list, state, search ? text : ""), ownerOf) : [],
+    };
+  };
+  const draw = () => {
+    if (stopped) return;
+    view?.cleanup();
+    view = switcherView(model(), handlers);
+    mount(box, view.node);
+  };
+  const focusTrigger = () => [...box.querySelectorAll("[data-focus]")].find((x) => x.getAttribute("data-focus") === "context-btn")?.focus();
+
+  /** Loads the list. → { ok, gone }; ok is false for a failure and for an answer that came too late. */
+  const load = async () => {
+    const mine = ++gen;
+    let got;
+    try {
+      got = await (role === "admin" ? a.allRepos() : a.repos());
+    } catch {
+      if (stopped || mine !== gen) return { ok: false, gone: "" };
+      if (!loaded) {
+        failed = true;
+        draw();
+      }
+      return { ok: false, gone: "" };
+    }
+    if (stopped || mine !== gen) return { ok: false, gone: "" };
+    const rows = (Array.isArray(got) ? got : []).map((r) => ({ ...r, own: role === "admin" ? r?.owner === me?.id : true }));
+    list = repoList(rows);
+    owners = new Map();
+    if (role === "admin") {
+      for (const r of rows) {
+        if (!validName(r?.github)) continue;
+        const id = r.github.toLowerCase();
+        if (!owners.has(id) || r.own) owners.set(id, ownerText(r));
+      }
+    }
+    loaded = true;
+    failed = false;
+    const gone = store.prune(list.map((i) => i.name));
+    state = store.get();
+    if (list.length < 2) {
+      open = false;
+      text = "";
+    }
+    draw();
+    if (gone.repo) notify(goneText(gone.repo));
+    return { ok: true, gone: gone.repo };
+  };
+
+  const refresh = async () => {
+    if (stopped) return;
+    const r = await load();
+    if (!r.ok || r.gone) return; // a repository that went is told by the notice; the page is not moved
+    const to = scopedHash(role, where(), current());
+    if (!to) return;
+    const at = resolve(role, to);
+    go(to, { replace: true, draw: Boolean(at.query.repo) || at.page.id === "board-repo" });
+  };
+
+  const handlers = {
+    onToggle() {
+      open = !open;
+      if (!open) text = "";
+      draw();
+    },
+    onClose({ focus } = {}) {
+      if (!open) return;
+      open = false;
+      text = "";
+      if (focus) focusTrigger();
+      else if (box.contains(document.activeElement)) document.activeElement.blur?.();
+      draw();
+    },
+    onChoose(name) {
+      state = store.choose(name);
+      open = false;
+      text = "";
+      focusTrigger();
+      draw();
+      const to = chosenHash(role, where(), current());
+      if (to) go(to);
+    },
+    onStar(name) {
+      state = store.toggleFavourite(name);
+      view?.update(model());
+    },
+    onSearch(t) {
+      text = t;
+      view?.update(model());
+    },
+    onRetry: () => refresh(),
+  };
+
+  const ctx = {
+    ready: load().then(() => {}, () => {}),
+    scoped: (hash) => scopedHash(role, hash, current()),
+    keep: (hash) => hash,
+    current,
+    refresh,
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      gen++;
+      view?.cleanup();
+      if (view && view.node.parentNode === box) box.replaceChildren(); // the box may belong to a newer context now
+      view = null;
+      if (live === ctx) live = null;
+    },
+  };
+  live = ctx;
+  return ctx;
+}
+
+/** Loads the list again for the live context; nothing when there is none. */
+export function reposChanged() {
+  return live ? live.refresh() : undefined;
 }

@@ -27,6 +27,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **`allowed-tools`.** `allowed-tools` in a skill's SKILL.md is never passed on to Claude.
   - **Failure hint.** A `skill tools: …` failure says: allow it under `skills.tools`, or set `skills.tools.missing: degrade`, then resume the run.
   - **Not changed.** Codex sessions, reviewer steps, `--allowedTools` and the permission mode behave as before. The capabilities are an estimate; they decide only which skills are loaded, never what a session gets.
+- Repository context 2a — the repository switcher view and its controller (#450). Part 1 of 2 of #444.
+  - **Not visible yet.** Both displays get an empty `<span id="context" class="context">` as the first child of `#top-actions`. It takes no space while empty. Nothing calls `initContext` yet, so the top bar looks the same; part 2b turns it on.
+  - **View.** New `ui/context-view.js` (`switcherView`) shows no repository, a label for one, or a button with a panel for two or more. With eight or more there is a search box. Rows have a star button; the panel closes with Escape or when you choose.
+  - **Controller.** `ui/context.js` adds `initContext`, `switcherSections`, `reposChanged` and `goneText`. A user's list comes from `api.repos()`, an admin's from `api.allRepos()`, grouped by owner. A failed first load shows "Repositories could not be loaded." with **Retry**.
+  - **Compact screens.** At 767 px and below the panel is fixed under the top bar and rows are at least 44 px high.
+
 - Skill safety 1c — a run stops at the plan gate when a skill needs a tool or connector it may not use (#430).
   - **Behaviour change.** A pinned skill that needs `network`, or more than the flow gives, now stops the run until `skills.tools` allows it. Recover with the config and a resume.
   - **Record.** `run.skillPlan.tools` has `action`, `met`, `missing`, `leftOut` and `warnings`. It is absent on older runs, when the resolver already stopped, when no skill was selected and when the check failed (which fails closed with `skills not resolved: the skills could not be checked`).

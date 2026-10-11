@@ -10,7 +10,8 @@ const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "use
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
-    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "account"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "context", "account"]) expect(html).toContain(`id="${id}"`);
+    expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
     expect(html).not.toContain("health-btn");
   });
   it("has exactly five links with the user pages", () => {

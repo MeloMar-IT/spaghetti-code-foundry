@@ -536,6 +536,8 @@ steps:
     expect(html).toContain("<title>Spaghetti Code Foundry</title>");
     expect((await fetch(base + "/turn.js")).status).toBe(200);
     expect((await fetch(base + "/turn-act.js")).status).toBe(200);
+    expect((await fetch(base + "/context.js")).status).toBe(200);
+    expect((await fetch(base + "/context-view.js")).status).toBe(200);
     expect((await json("GET", "/api/your-turn/detail?key=nope")).status).toBe(404);
     expect((await json("GET", "/api/your-turn/detail")).status).toBe(400);
     expect((await json("POST", "/api/your-turn/act", { key: "nope", action: "retry" })).status).toBe(404);

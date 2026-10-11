@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { installFakeDom } from "./helpers/fake-dom.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -23,9 +23,9 @@ const mem = (opts: { getThrows?: boolean; setThrows?: boolean } = {}) => {
 const EMPTY = { repo: "", favourites: [], recents: [] };
 
 describe("the module", () => {
-  it("imports only ia.js and filters.js", () => {
+  it("imports only api.js, context-view.js, dom.js, filters.js and ia.js", () => {
     const src = readFileSync("ui/context.js", "utf8");
-    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./filters.js", "./ia.js"]);
+    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./api.js", "./context-view.js", "./dom.js", "./filters.js", "./ia.js"]);
   });
 });
 
@@ -265,5 +265,330 @@ describe("switcherRows", () => {
     expect(brief(c.switcherRows(list, state, "all"))).toEqual(["all:"]);
     expect(c.switcherRows(list, state, "acme")).toEqual([]);
     expect(c.switcherRows(list, state, "  ")).toHaveLength(5);
+  });
+});
+
+describe("goneText and switcherSections", () => {
+  it("goneText", () => {
+    expect(c.goneText("a/b")).toBe("a/b is no longer in your list. The switcher shows All repositories now.");
+  });
+  const rows = (names: string[]) => c.switcherRows(names.map((n) => ({ name: n, own: true })), { repo: "", favourites: [], recents: [] });
+  it("a user gets All and Repositories; empty sections are left out", () => {
+    const s = c.switcherSections(rows(["a/b", "c/d"]));
+    expect(s.map((x: any) => x.title)).toEqual([null, "Repositories"]);
+    expect(c.switcherSections(rows([])).map((x: any) => x.title)).toEqual([null]);
+    const st = { repo: "", favourites: ["a/b"], recents: ["c/d"] };
+    const items = [{ name: "a/b", own: true }, { name: "c/d", own: true }, { name: "e/f", own: true }];
+    expect(c.switcherSections(c.switcherRows(items, st)).map((x: any) => x.title)).toEqual([null, "Favourites", "Recent", "Repositories"]);
+  });
+  it("an admin gets one section per owner, sorted ignoring case, Unknown account last", () => {
+    const owner: Record<string, string> = { "a/1": "bob (b@x)", "b/2": "Zed (z@x)", "c/3": "alice (a@x)", "d/4": "" };
+    const s = c.switcherSections(rows(["a/1", "b/2", "c/3", "d/4"]), (n: string) => owner[n]);
+    expect(s.map((x: any) => x.title)).toEqual([null, "alice (a@x)", "bob (b@x)", "Zed (z@x)", "Unknown account"]);
+  });
+});
+
+describe("initContext", () => {
+  const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+  const box = () => (globalThis as any).document.getElementById("context") as FakeElement;
+  const doc = () => (globalThis as any).document;
+  const gh = (github: string, extra: Record<string, unknown> = {}) => ({ github, owner: "u1", account: null, ...extra });
+  const fakeA = (...lists: any[]) => {
+    const queue = [...lists];
+    const next = () => {
+      const l = queue.length > 1 ? queue.shift() : queue[0];
+      return typeof l === "function" ? l() : l instanceof Error ? Promise.reject(l) : Promise.resolve(l);
+    };
+    return { repos: vi.fn(next), allRepos: vi.fn(next) };
+  };
+  const focusOf = (name: string) => box().querySelectorAll("[data-focus]").find((e) => e.attrs["data-focus"] === name) as FakeElement;
+  const names = (n: number) => Array.from({ length: n }, (_, i) => gh(`o/r${i}`));
+  const two = [gh("a/b"), gh("c/d")];
+  const text = () => box().textContent;
+  let ctxs: any[] = [];
+  const make = (role: string, a: any, extra: Record<string, unknown> = {}) => {
+    const go = vi.fn();
+    const notify = vi.fn();
+    const store = c.contextStore("u1", mem());
+    const ctx = c.initContext(role, { id: "u1" }, { a, go, notify, store, where: () => "#/home", ...extra });
+    ctxs.push(ctx);
+    return { ctx, go, notify, store, a };
+  };
+  beforeEach(() => {
+    box().replaceChildren();
+    doc().listeners.keydown = [];
+    doc().listeners.mousedown = [];
+    doc().activeElement = null;
+  });
+  afterEach(() => {
+    for (const x of ctxs) x.stop();
+    ctxs = [];
+    vi.unstubAllGlobals();
+  });
+
+  it("adapts to the number of repositories", async () => {
+    let t = make("user", fakeA([]));
+    await t.ctx.ready;
+    expect(text()).toContain("No repository yet.");
+    expect(focusOf("context-add").attrs.href).toBe("#/repos");
+    t = make("user", fakeA([gh("a/b")]));
+    await t.ctx.ready;
+    expect(text()).toBe("a/b");
+    expect(box().querySelectorAll("button")).toHaveLength(0);
+    t = make("user", fakeA(two));
+    await t.ctx.ready;
+    expect(focusOf("context-btn")).toBeTruthy();
+    expect(text()).toContain("All repositories");
+  });
+  it("shows the search box from eight repositories", async () => {
+    for (const [n, has] of [[7, false], [8, true]] as const) {
+      const t = make("user", fakeA(names(n)));
+      await t.ctx.ready;
+      focusOf("context-btn").click();
+      expect(!!focusOf("context-search"), String(n)).toBe(has);
+    }
+  });
+  it("a user reads repos only, an admin allRepos only", async () => {
+    const u = make("user", fakeA(two));
+    await u.ctx.ready;
+    expect(u.a.repos).toHaveBeenCalledTimes(1);
+    expect(u.a.allRepos).not.toHaveBeenCalled();
+    const ad = make("admin", fakeA(two));
+    await ad.ctx.ready;
+    expect(ad.a.allRepos).toHaveBeenCalledTimes(1);
+    expect(ad.a.repos).not.toHaveBeenCalled();
+  });
+  it("an admin's panel groups by owner; own row decides for the same name; other hosts do not throw", async () => {
+    const t = make("admin", fakeA([
+      gh("z/z", { owner: "u2", account: { name: "Ann", email: "a@x" } }),
+      gh("y/y", { owner: "u1", account: { name: "Me", email: "m@x" } }),
+      gh("y/y", { owner: "u2", account: { name: "Ann", email: "a@x" } }),
+      gh("q/q", { owner: "u3", account: null }),
+      { owner: "u2", account: { name: "Ann", email: "a@x" } },
+    ]));
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    const heads = box().querySelectorAll("div").filter((e) => e.attrs.class === "context-head").map((e) => e.textContent);
+    expect(heads).toEqual(["Ann (a@x)", "Me (m@x)", "Unknown account"]);
+    await tick();
+    expect(t.ctx.current().own).toBe(false);
+    focusOf("context-item-y/y").click();
+    expect(t.ctx.current()).toEqual({ active: true, repo: "y/y", own: true });
+  });
+  it("a list with no GitHub repository does not throw for an admin", async () => {
+    const t = make("admin", fakeA([{ owner: "u1", account: null }]));
+    await t.ctx.ready;
+    expect(t.ctx.scoped("#/runs")).toBeNull();
+  });
+  it("draws nothing before the first load settles", async () => {
+    let release: (v: unknown) => void = () => {};
+    const t = make("user", fakeA(() => new Promise((r) => { release = r; })));
+    expect(box().children).toHaveLength(0);
+    expect(t.ctx.scoped("#/runs")).toBeNull();
+    release(two);
+    await t.ctx.ready;
+    expect(box().children).toHaveLength(1);
+    expect(t.ctx.scoped("#/runs")).toBe(c.scopedHash("user", "#/runs", t.ctx.current()));
+    expect(t.ctx.scoped("#/runs")).toContain("repo=all");
+    expect(t.ctx.keep("#/x")).toBe("#/x");
+  });
+  it("scoped is null with fewer than two and after stop", async () => {
+    const one = make("user", fakeA([gh("a/b")]));
+    await one.ctx.ready;
+    expect(one.ctx.scoped("#/runs")).toBeNull();
+    const t = make("user", fakeA(two));
+    await t.ctx.ready;
+    t.ctx.stop();
+    expect(t.ctx.scoped("#/runs")).toBeNull();
+    expect(box().children).toHaveLength(0);
+  });
+  it("opens, closes with Escape and focus on the trigger, and closes on choosing", async () => {
+    const t = make("user", fakeA(two));
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    expect(focusOf("context-btn").attrs["aria-expanded"]).toBe("true");
+    expect(doc().listeners.keydown).toHaveLength(1);
+    doc().listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
+    expect(focusOf("context-btn").attrs["aria-expanded"]).toBe("false");
+    expect(doc().activeElement).toBe(focusOf("context-btn"));
+    focusOf("context-btn").click();
+    focusOf("context-item-a/b").click();
+    expect(focusOf("context-btn").attrs["aria-expanded"]).toBe("false");
+    expect(doc().listeners.keydown).toHaveLength(0);
+  });
+  it("choosing goes to the address on a scoped page and keeps owner; not elsewhere", async () => {
+    const t = make("user", fakeA(two), { where: () => "#/runs?owner=u2" });
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    focusOf("context-item-a/b").click();
+    expect(t.store.get().repo).toBe("a/b");
+    expect(t.go).toHaveBeenCalledTimes(1);
+    expect(t.go.mock.calls[0]).toEqual([c.chosenHash("user", "#/runs?owner=u2", { active: true, repo: "a/b", own: true })]);
+    expect(t.go.mock.calls[0][0]).toContain("owner=u2");
+    const u = make("user", fakeA(two));
+    await u.ctx.ready;
+    focusOf("context-btn").click();
+    focusOf("context-item-c/d").click();
+    expect(u.go).not.toHaveBeenCalled();
+    expect(text()).toContain("c/d");
+    focusOf("context-btn").click();
+    focusOf("context-item-all").click();
+    expect(u.store.get().repo).toBe("");
+  });
+  it("prunes a repository that is gone: one notice, no go, none the second time", async () => {
+    const store = c.contextStore("u1", mem());
+    store.choose("x/y");
+    const t = make("user", fakeA(two), { store, where: () => "#/runs" });
+    await t.ctx.ready;
+    expect(t.notify).toHaveBeenCalledTimes(1);
+    expect(t.notify).toHaveBeenCalledWith(c.goneText("x/y"));
+    expect(t.go).not.toHaveBeenCalled();
+    expect(store.get().repo).toBe("");
+    await t.ctx.refresh();
+    expect(t.notify).toHaveBeenCalledTimes(1);
+  });
+  it("a repository that goes in a refresh is told, and the page is not moved", async () => {
+    const t = make("user", fakeA([...two, gh("e/f")], two), { where: () => "#/runs" });
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    focusOf("context-item-e/f").click();
+    t.go.mockClear();
+    await t.ctx.refresh();
+    expect(t.notify).toHaveBeenCalledWith(c.goneText("e/f"));
+    expect(t.go).not.toHaveBeenCalled();
+  });
+  it("a failed first load shows Retry, leaves the store alone; Retry loads", async () => {
+    const m = mem();
+    const a = fakeA(new Error("no"), two);
+    const t = make("user", a, { store: c.contextStore("u1", m) });
+    await t.ctx.ready;
+    expect(text()).toContain("Repositories could not be loaded.");
+    expect(m.calls.set).toBe(0);
+    expect(t.ctx.scoped("#/runs")).toBeNull();
+    focusOf("context-retry").click();
+    await tick();
+    expect(focusOf("context-btn")).toBeTruthy();
+  });
+  it("a failed refresh keeps the old list", async () => {
+    const t = make("user", fakeA(two, new Error("no")));
+    await t.ctx.ready;
+    await t.ctx.refresh();
+    expect(focusOf("context-btn")).toBeTruthy();
+    expect(t.ctx.current().active).toBe(true);
+  });
+  it("readOnly never touches localStorage", async () => {
+    const m = mem();
+    vi.stubGlobal("localStorage", m);
+    const ctx = c.initContext("user", { id: "u1" }, { readOnly: true, a: fakeA(two), go: vi.fn(), notify: vi.fn(), where: () => "#/home" });
+    ctxs.push(ctx);
+    await ctx.ready;
+    focusOf("context-btn").click();
+    focusOf("context-star-a/b").click();
+    focusOf("context-item-a/b").click();
+    expect(ctx.current().repo).toBe("a/b");
+    expect(m.calls).toEqual({ get: 0, set: 0 });
+  });
+  it("refresh changes the switcher and navigates on a bare scoped address", async () => {
+    const t = make("user", fakeA([], [gh("a/b")], two), { where: () => "#/runs" });
+    await t.ctx.ready;
+    expect(text()).toContain("No repository yet.");
+    await t.ctx.refresh();
+    expect(text()).toBe("a/b");
+    expect(t.go).not.toHaveBeenCalled();
+    await t.ctx.refresh();
+    expect(focusOf("context-btn")).toBeTruthy();
+    expect(t.go).toHaveBeenCalledWith("#/runs?repo=all", { replace: true, draw: false });
+  });
+  it("refresh draws only when the new address filters by a repository", async () => {
+    const store = c.contextStore("u1", mem());
+    store.choose("a/b");
+    const t = make("user", fakeA(two), { store, where: () => "#/runs" });
+    await t.ctx.ready;
+    await t.ctx.refresh();
+    expect(t.go).toHaveBeenLastCalledWith(c.scopedHash("user", "#/runs", t.ctx.current()), { replace: true, draw: true });
+    const b = make("admin", fakeA(two), { store: c.contextStore("u1", mem()), where: () => "#/board" });
+    await b.ctx.ready;
+    await b.ctx.refresh();
+    expect(b.go).toHaveBeenLastCalledWith("#/board?repo=all", { replace: true, draw: false });
+    for (const hash of ["#/runs?repo=x/y", "#/home"]) {
+      const n = make("user", fakeA(two), { where: () => hash });
+      await n.ctx.ready;
+      await n.ctx.refresh();
+      expect(n.go, hash).not.toHaveBeenCalled();
+    }
+  });
+  it("reposChanged refreshes the live context, and does nothing without one", async () => {
+    const a = fakeA(two);
+    const t = make("user", a);
+    await t.ctx.ready;
+    await c.reposChanged();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    t.ctx.stop();
+    expect(c.reposChanged()).toBeUndefined();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+  });
+  it("a second context replaces the first; stopping the first again leaves the second alone", async () => {
+    const first = make("user", fakeA(two));
+    await first.ctx.ready;
+    const second = make("user", fakeA(two));
+    await second.ctx.ready;
+    expect(first.ctx.scoped("#/runs")).toBeNull();
+    first.ctx.stop();
+    expect(focusOf("context-btn")).toBeTruthy();
+    focusOf("context-btn").click();
+    expect(doc().listeners.keydown).toHaveLength(1);
+    expect(second.ctx.scoped("#/runs")).not.toBeNull();
+  });
+  it("a late answer after stop draws nothing and calls nothing", async () => {
+    const store = c.contextStore("u1", mem());
+    store.choose("x/y");
+    for (const how of ["resolve", "reject", "stop-then-reject"]) {
+      let settle: (v?: unknown) => void = () => {};
+      let self: any;
+      const a = fakeA(() => new Promise((res, rej) => {
+        settle = how === "resolve" ? res : (v) => { if (how === "stop-then-reject") self.stop(); rej(v); };
+      }));
+      const t = make("user", a, { store });
+      self = t.ctx;
+      t.ctx.stop();
+      settle(how === "resolve" ? two : new Error("no"));
+      await t.ctx.ready;
+      expect(box().children, how).toHaveLength(0);
+      expect(t.go).not.toHaveBeenCalled();
+      expect(t.notify).not.toHaveBeenCalled();
+    }
+  });
+  it("a star keeps the panel, the search text and the focus; typing keeps the input", async () => {
+    const t = make("user", fakeA(names(8)));
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    const input = focusOf("context-search");
+    input.value = "r";
+    input.fire("input");
+    expect(focusOf("context-search")).toBe(input);
+    focusOf("context-star-o/r3").focus();
+    focusOf("context-star-o/r3").click();
+    expect(focusOf("context-search")).toBe(input);
+    expect(input.value).toBe("r");
+    expect(doc().activeElement.attrs["data-focus"]).toBe("context-star-o/r3");
+    expect(doc().activeElement.attrs["aria-pressed"]).toBe("true");
+    expect(t.store.get().favourites).toEqual(["o/r3"]);
+    input.value = "zzz";
+    input.fire("input");
+    expect(text()).toContain("No repository matches.");
+  });
+  it("leaves no document listener behind", async () => {
+    const t = make("user", fakeA(two));
+    await t.ctx.ready;
+    focusOf("context-btn").click();
+    focusOf("context-btn").click();
+    expect(doc().listeners.keydown).toHaveLength(0);
+    focusOf("context-btn").click();
+    await t.ctx.refresh();
+    expect(doc().listeners.keydown.length).toBeLessThanOrEqual(1);
+    expect(doc().listeners.mousedown.length).toBeLessThanOrEqual(1);
+    t.ctx.stop();
+    expect(doc().listeners.keydown).toHaveLength(0);
+    expect(doc().listeners.mousedown).toHaveLength(0);
   });
 });
