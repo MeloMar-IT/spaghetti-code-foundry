@@ -1,5 +1,6 @@
 import { h, mount } from "./dom.js";
 import { SECTIONS, splitHash, subnavFor } from "./ia.js";
+import { mediaFor } from "./viewport.js";
 
 // The frame around a page: which top link is on, the secondary row, the breadcrumb line and the tab title.
 
@@ -48,7 +49,7 @@ function safeStore() {
 }
 
 /** Sets up the menu button, drawer, skip button and account menu. Call once, after sign-in. Returns a stop function. */
-export function initShell(role, { user, store = safeStore(), media = globalThis.matchMedia?.("(max-width: 760px)") } = {}) {
+export function initShell(role, { user, store = safeStore(), media = mediaFor("compact") } = {}) {
   const ctl = fresh();
   shell = ctl;
   const undo = [];

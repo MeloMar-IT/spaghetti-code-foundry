@@ -117,10 +117,12 @@
 .scf-overlay__title { margin: 0; font-size: var(--text-section); overflow-wrap: anywhere; min-width: 0; }
 .scf-overlay__body { min-width: 0; overflow-wrap: anywhere; }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .scf-drawer { width: 100%; }
-  .scf-overlay { padding: var(--space-md); }
-  .scf-overlay--drawer { padding: 0; }
+  .scf-overlay { place-items: end stretch; padding: 0; }
+  .scf-overlay--drawer { place-items: stretch end; }
+  .scf-dialog { width: 100%; border-radius: var(--radius-xl) var(--radius-xl) var(--radius-none) var(--radius-none); }
+  .scf-dialog .scf-overlay__head { position: sticky; top: 0; background: var(--color-surface); }
 }
 
 /* Toast */

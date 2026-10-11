@@ -806,7 +806,7 @@ describe("the module, its CSS and the pages", () => {
   it("overlays.css has the hidden rules, the narrow drawer and layer tokens for every z-index", () => {
     const css = read("ui/kit/overlays.css");
     for (const sel of [".scf-menu__list[hidden]", ".scf-tooltip__bubble[hidden]", ".scf-tabs__panel[hidden]"]) expect(css, sel).toContain(sel);
-    expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.scf-drawer \{ width: 100%; \}/);
+    expect(css).toMatch(/@media \(max-width: 767px\) \{[^@]*\.scf-drawer \{ width: 100%; \}/);
     for (const m of css.matchAll(/z-index:\s*([^;]+);/g)) expect(m[1], m[0]).toMatch(/^var\(--layer-/);
     expect(css).toMatch(/\.scf-tooltip__bubble \{[^}]*overflow-wrap: anywhere/);
   });

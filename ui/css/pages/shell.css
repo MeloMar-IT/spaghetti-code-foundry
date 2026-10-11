@@ -39,7 +39,7 @@
 .flow-list .d { color: var(--muted); font-size: var(--text-meta); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-list .bad .n { color: var(--fail); }
 .flow-list .n .ico { margin-right: var(--space-xs); }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .brand-full { display: none; }
   .brand-short { display: inline; }
   .repo { display: none; }
@@ -60,7 +60,7 @@
 .view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
 .view-bar[hidden] { display: none; }
 .view-as .top { position: static; }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .user-display .top { position: static; overflow-x: visible; }
 }
 
@@ -111,7 +111,7 @@ body.side-closed .side { display: none; }
 
 .signed-out .side, .signed-out .menu-btn, .signed-out .page-title, .signed-out .top a[data-nav], .signed-out .health-chip, .signed-out .account, .signed-out .skip, .signed-out .top-actions { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .side { display: none; position: fixed; top: 0; left: 0; bottom: 0; height: auto; width: min(280px, 85vw); z-index: calc(var(--layer-menu) + 1); }
   body.drawer-open .side, body.drawer-open.side-closed .side { display: flex; }
   body.side-closed:not(.drawer-open) .side { display: none; }
@@ -125,16 +125,12 @@ body.side-closed .side { display: none; }
   aside { max-height: 35vh; overflow: auto; }
 }
 
-@media (pointer: coarse) {
-  .side a, .top button, .top a[data-nav], .account summary, .account-menu > a { min-height: 44px; }
-}
-
 @media (prefers-reduced-motion: no-preference) {
   .scrim { transition: opacity var(--motion-base); }
 }
 
 /* ── narrow screens: the page itself never scrolls sideways (320 px) ── */
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; }
   main { overflow-wrap: break-word; }
   main pre { max-width: 100%; overflow-x: auto; }

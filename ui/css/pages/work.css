@@ -36,7 +36,7 @@
 .work-panel h3 { margin: 0; font-size: var(--text-small); }
 .work-panel p { margin: 0; }
 .work-panel-chain { display: grid; gap: var(--space-sm); margin: 0; padding-left: 20px; }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .work-board { grid-auto-columns: 85vw; scroll-snap-type: x mandatory; }
   .work-col { scroll-snap-align: start; }
   .work-card a, .work-card button, .work-bar .seg button, .work-display summary { display: inline-flex; align-items: center; min-height: 44px; }

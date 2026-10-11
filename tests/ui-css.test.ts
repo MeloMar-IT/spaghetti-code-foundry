@@ -8,7 +8,7 @@ import { importsOf, parseCss, readUiCss, uiCssImports, type CssRule } from "./he
 
 const ORDER = [
   "tokens", "reset", "layout", "components", "utilities",
-  "pages/shell", "pages/editor", "pages/runs", "pages/dashboard", "pages/turn", "pages/board", "pages/start", "pages/refinement", "pages/gallery", "pages/work",
+  "pages/shell", "pages/editor", "pages/runs", "pages/dashboard", "pages/turn", "pages/board", "pages/start", "pages/refinement", "pages/gallery", "pages/work", "responsive",
 ].map((n) => `/css/${n}.css`);
 const file = (imp: string) => readFileSync(join("ui", imp), "utf8");
 const key = (r: CssRule) => `${r.context}|${r.selector}|${r.declarations.join(";")}`;

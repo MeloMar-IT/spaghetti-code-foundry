@@ -521,6 +521,24 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 
+### Breakpoints and touch targets
+
+Breakpoints are named by layout need. `ui/viewport.js` is the one place in code (`BREAKPOINTS = { compact: 767, medium: 1023 }`, `mediaFor(name)`; `initShell` and `renderWork` take their default `media` from it). Media queries cannot use custom properties, so the CSS repeats the numbers; `tests/ui-viewport.test.ts` fails when a `max-width` or `min-width` in `ui/` is not one of the values below.
+
+| Name | Width | Layout |
+|---|---|---|
+| **compact** | below 768 px (`max-width: 767px`) | drawer navigation, one column, dialogs as bottom sheets, cards |
+| **medium** | 768–1023 px | sidebar, one content column |
+| **wide** | 1024 px and up | full layout |
+
+The existing `max-width: 1100px` rule stays as "two panes side by side".
+
+**Touch targets.** `--size-touch` (44 px) and `--size-touch-min` (24 px) are in `ui/tokens.css`. On coarse pointers buttons, `.btn` links, form inputs and selects, `summary`, sidebar and sub-navigation links, table row actions and the dialog close button are at least 44 × 44 px, with at least 8 px between neighbours. On fine pointers the minimum is 24 × 24 px.
+
+**Sheets and wrapping.** Below 768 px a dialog (`.modal`, and the kit's `.scf-dialog`) is a bottom sheet: full width, fixed to the bottom, at most 90 % of the viewport height, scrolling inside, with a sticky head so the close button stays reachable. This is CSS only; `modal()` is unchanged, so the focus trap and Escape work as before. `.toolbar` actions wrap below the title. `.log`, `pre.diff` and long names scroll or wrap inside their own box, so the page never scrolls sideways at 360 px.
+
+The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.css`); width rules that belong to one component stay next to their base rules.
+
 ### Development gallery
 
 `scf ui --dev` and `scf serve --dev` set `ServerOptions.dev`. With it, the static branch in `src/server/server.ts` serves `ui/gallery/` (`/gallery` and `/gallery/` map to `gallery/index.html`, like `/user`). Without it, `isGalleryPath` (`src/server/http.ts`) catches every spelling of a path under `/gallery` (`..`, `\`, case) and the server answers 404 before `serveStatic`. The switch is on the command line only. The gallery is plain static files under the existing CSP, adds no API route and so needs no rule in `permissions.ts`. See `docs/UI_COMPONENTS.md`.
@@ -605,8 +623,11 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
   - The navigation spec checks every primary link on both displays at all four widths. At 360 px
     it goes through the menu button and drawer.
   - Pages keep an event stream open, so the tests never wait for "network idle".
-  - Two cases (admin display at 360 and 768 px) are `test.fixme`: they show sideways scroll that
-    UI quality 1b (part 2 of #264) fixes.
+  - `tests/browser/responsive.spec.ts` (UI quality 1b, #368) checks at all four widths: no sideways
+    page scroll on Home, Runs, a run detail (log and diff), Start work, Repositories and one open
+    dialog; every visible interactive element in the header, sidebar and dialog is at least 44 × 44 px
+    with a touch device profile (`touch` option of `openAs`); the dialog is a sheet at 360 px and
+    centred at 1024 px.
   - **Visual check.** `tests/browser/visual.spec.ts` compares screenshots (`toHaveScreenshot`) with
     committed baselines. `tests/browser/visual-matrix.ts` defines the matrix once: 12 pages (the
     gallery stand-in `docs/ui-redesign/visual-system-demo.html` opened from disk, admin, user and

@@ -187,7 +187,12 @@ describe("ui server", () => {
     const css = await fetchUiCss(base);
     expect(css).toContain("body.drawer-open .side");
     expect(css).toContain(".brand-short { display: none; }");
-    expect(css).toMatch(/@media \(max-width: 760px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);
+    expect(css).toContain(".backdrop { place-items: end stretch; padding: 0; }");
+    const viewport = await fetch(base + "/viewport.js");
+    expect(viewport.status).toBe(200);
+    expect(viewport.headers.get("content-type")).toContain("text/javascript");
+    expect(viewport.headers.get("content-security-policy")).toBeTruthy();
+    expect(css).toMatch(/@media \(max-width: 767px\) \{[^@]*\.brand-full \{ display: none; \}[^@]*\.brand-short \{ display: inline; \}/);
     const app = await text("/app.js");
     expect(app).toContain("Welcome to Spaghetti Code Foundry");
     expect(app).toContain("Build your own coding flows: pick a flow on the left,");
