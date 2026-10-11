@@ -158,7 +158,9 @@ case "$1 $2" in
          if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
          [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}; [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
-      *) printf '# #%s: Add a feature\nhttps://github.com/owner/repo/issues/%s\n\nPlease add feature.txt\n' "$3" "$3"
+      # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).
+      *) b=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_ISSUE_BODIES||"{}")[process.argv[1]];process.stdout.write(typeof v==="string"?v:"Please add feature.txt")' "$3")
+         printf '# #%s: Add a feature\nhttps://github.com/owner/repo/issues/%s\n\n%s\n' "$3" "$3" "$b"
          if [ -n "$FAKE_GH_ISSUE_EXTRA" ]; then printf '%s\n' "$FAKE_GH_ISSUE_EXTRA"; fi ;;
     esac ;;
   "issue comment"|"pr comment") echo "--- comment on #$3:" >> "$FAKE_GH_LOG"

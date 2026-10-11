@@ -428,7 +428,12 @@ const TASK_LINES = [
   "What the person who started this run wrote (it may be empty; it comes on top of the issue):",
   "{{task}}",
 ];
-const planPhase = (post, { risk = false, split = false, sized = false, reviseAbove = false } = {}) => [
+// A planner with a skill catalogue (`skills: catalog`) must be read-only by its tool list alone (dontAsk, no Bash tools).
+const planTools = (catalogue) =>
+  catalogue
+    ? { skills: "catalog", allowed_tools: ["Read", "Glob", "Grep"] }
+    : { allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(ls*)"] };
+const planPhase = (post, { risk = false, split = false, sized = false, reviseAbove = false, catalogue = false } = {}) => [
     {
       id: "plan",
       type: "claude",
@@ -436,7 +441,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
       // high for every plan; a plan that turns out risky is revised at xhigh (revise_plan)
       effort: "high",
       permission_mode: "dontAsk",
-      allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(ls*)"],
+      ...planTools(catalogue),
       prompt: [
         "You are the lead architect for this repository. Plan the work for the GitHub issue below so that",
         "another engineer can implement it without having to make design decisions. Do NOT modify files.",
@@ -532,7 +537,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
       jump_only: true,
       description: "Fresh session: check only the reviewer's points, then write the final plan (falls back to the draft on failure)",
       permission_mode: "dontAsk",
-      allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(ls*)"],
+      ...planTools(catalogue),
       prompt: [
         "You are the lead architect for this repository. Below are a GitHub issue, the implementation plan",
         "you drafted for it, and a second reviewer's check of that plan against the code. Do NOT modify files.",
@@ -625,7 +630,7 @@ write("issue-plan", {
       run: clone.run + '\nb=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE)\n' +
         'if [ "$b" != NONE ] && git checkout -q --detach "origin/$b"; then echo "Code: main plus unmerged work on $b"; else echo "Code: main"; fi',
     },
-    ...planPhase("post_plan"),
+    ...planPhase("post_plan", { catalogue: true }),
     {
       id: "post_plan",
       type: "shell",
@@ -1811,7 +1816,7 @@ write("issue-plan", {
     fetchMain,
     baselineMain,
     hotfixBranch,
-    ...planPhase("size_gate", { risk: true, split: true, sized: true, reviseAbove: true }),
+    ...planPhase("size_gate", { risk: true, split: true, sized: true, reviseAbove: true, catalogue: true }),
     ...splitSteps.map((x) => (x.id === "split_gate" ? hotfixSplitGate(x) : x)),
     sizeGate,
     forceSplit,

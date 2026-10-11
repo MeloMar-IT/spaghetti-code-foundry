@@ -234,7 +234,7 @@ Skills are optional. Leave the fields out and the flow works as before: a plan g
 | Value | What happens |
 |---|---|
 | `selected` | The step gets the locked skills. This is the default. |
-| `catalog` | Marks a planner step. The step must be read-only. It runs like `selected` for now. |
+| `catalog` | A planner step: it gets the skill catalogue before its prompt and no skill block. The step must be read-only. The lock is still verified. |
 | `off` | This session gets no skill block. The lock is still verified. A step with `skills: off` always starts a new session: it does not resume another step's session, because that one may hold a skill block. |
 
 Step `skills` cannot be set together with `skill_role: reviewer`.
