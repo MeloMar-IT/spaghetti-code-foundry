@@ -1832,7 +1832,11 @@ as another admin. Change a role with
 status, last sign-in and the number of runs. The status is **blocked**, **no password yet**,
 **locked** (too many wrong tries) or **active**; when more than one is true, the first in this list
 wins, so a blocked account reads "blocked" even if it is also locked. Your own account is
-marked "(you)".
+marked "(you)". The list has no action buttons: press a name to open the account page
+(`#/users/<id>`). It shows the same facts and the actions in three groups: **Actions** (Edit,
+Limits, App repositories, New link, View as user), **Security** (Reset password, Unlock, Block or
+Unblock) and **Danger** (Delete). The buttons below are on that page. An address for an account
+that does not exist shows "This account does not exist." with a link back to Users.
 
 - **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
@@ -1978,6 +1982,8 @@ An account with the role `user` never sees the link or the page; a user who open
 - **Use.** While the view runs, a `GET` call with `?as=<userId>` is answered as it would be for that user: the same rules (a call marked `no` for users is 403), and the same cut-down answers (no costs, no folders, no runs of other accounts; a foreign run is 404). This holds for `flows`, `queue`, `runs`, `runs/:id`, `runs/:id/events`, `runs/:id/diff`, `repos`, `repos/methods`, `credentials`, `refinement` and `refinement/:id`. Unexpected errors show the user's fixed sentence. `GET /api/session` still shows you as the admin. Calls without `as=` are not changed. Reads leave no audit line.
 - **Refused.** `as=` without a running view for that user is 403, and so is `as=` from a user. Any call that is not a `GET` and has `as=` is 403 "the preview is read-only", and nothing changes.
 - **End.** A view lasts 30 minutes and ends with the session. `DELETE /api/admin/view-as` ends it now. It also ends when the user is deleted or made an admin, or when you are no longer an admin. Views are kept in memory only: after a restart a new one must be started, which writes a new audit line. An open log stream started with `as=` is closed when the view ends.
+
+**The Audit page.** **Details** on a line opens a row with every field of the entry: time, who (with id), action, target (with id), detail and result. It makes no new call. When the actor or target is an account, its id links to the account page. **Hide** closes it; a filter change closes all opened lines.
 
 **Reading the audit log over the API.** Admins only; a user gets 403. `GET /api/audit` answers `{entries, more}`. An `actor` is `{type: "cli"}`, `{type: "anonymous"}` or `{type: "account", id, name}`; a `target` is an account in the same form, `{type: "text", text}`, or `null`. Account lines show `result: "ok"` and the account as target; a role change has `detail` like `user -> admin`, and a block that stops work has `stop work`. `name` is the current name, or `deleted user`; the file keeps ids only. Filters: `user` (the account id exactly as stored; it matches the actor or the target account), `action`, `from` and `to` (ISO times with seconds, such as `2026-10-02T09:00:00Z`; both are included). A `+` in an offset must be written `%2B`. An unknown, empty or repeated filter, a `user` that is not an id, an `action` that is not an audit action, a bad time, or `from` after `to` answers 400. At most 500 entries come back, newest first by the order of the lines; when `more` is true, narrow the filters or use the export. `GET /api/audit/export` takes the same filters and downloads every matching line as `audit.csv`, in the order of the file (oldest first), with the header row `time,actor,actor_name,action,target,target_name,result,detail`. A cell that starts with `=`, `+`, `-` or `@` gets a `'` in front. Stored secrets are hidden as in every other answer; a CSV row that would show one is hidden whole. Lines that do not parse are left out. An unreadable file answers a plain 500, and the log says `audit: audit.jsonl unreadable`. A download that breaks half-way is cut off, not ended early.
 

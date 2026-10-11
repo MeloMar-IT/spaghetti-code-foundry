@@ -52,7 +52,7 @@ export const PAGES: VisualPage[] = [
   { id: "admin-repos", kind: "display", role: "admin", hash: () => "#/repos", ready: [/No repositories yet/], masks: () => [REPO] },
   {
     id: "admin-users", kind: "display", role: "admin", hash: () => "#/users", ready: ["ann@example.com"],
-    masks: () => [REPO, "#main table.table tbody td:nth-child(5)"],
+    masks: () => [REPO, "#main table.scf-table tbody td:nth-child(5)"],
   },
   { id: "user-home", kind: "display", role: "user", hash: () => "#/home", ready: ["Seeded failed run"], masks: none },
   { id: "user-runs", kind: "display", role: "user", hash: () => "#/runs", ready: ["Seeded succeeded run"], masks: none },

@@ -11,7 +11,7 @@ const m: Record<string, any> = {};
 beforeAll(async () => {
   restore = installFakeDom();
   for (const [k, f] of Object.entries({
-    dom: "dom", auth: "auth", users: "users", repos: "repos", adminRepos: "admin-repos", admin: "admin", watcherForm: "watcher-form",
+    dom: "dom", auth: "auth", users: "users", userDetail: "user-detail", repos: "repos", adminRepos: "admin-repos", admin: "admin", watcherForm: "watcher-form",
     models: "models", audit: "audit", monitor: "monitor", problems: "problems",
   })) m[k] = await import(`../ui/${f}.js` as string);
 });
@@ -71,7 +71,7 @@ function tablesOk(root: FakeElement) {
     const ths = t.all("th");
     expect(ths.length).toBeGreaterThan(0);
     for (const th of ths) expect(th.attrs.scope).toBe("col");
-    const caption = t.all("caption").find((c) => (c.attrs.class ?? "") === "sr-only" && c.textContent.trim());
+    const caption = t.all("caption").find((c) => /(^| )(sr-only|scf-visually-hidden)( |$)/.test(c.attrs.class ?? "") && c.textContent.trim());
     expect(!!(t.attrs["aria-label"] || caption), `a name for the table with ${ths[0]!.textContent}`).toBe(true);
   }
 }
@@ -158,11 +158,28 @@ describe("pages", () => {
     noViolations(main());
     tablesOk(main());
   });
+  it("Audit with an open line", async () => {
+    routes = {
+      "GET /api/users": USERS,
+      "GET /api/audit": { more: false, entries: [{ time: NOW, actor: { id: "me", name: "Root" }, action: "block", target: { id: "u1", name: "Ann" }, detail: "x", result: "ok" }] },
+    };
+    m.audit.renderAudit(main());
+    await vi.waitFor(() => expect(main().all("table").length).toBe(1));
+    press(button(main(), "Details"));
+    expect(main().all("dl")).toHaveLength(1);
+    noViolations(main());
+    tablesOk(main());
+  });
   it("Users", async () => {
     routes = { "GET /api/users": USERS, "GET /api/users/limits": { defaults: {}, users: {} } };
     await m.users.renderUsers(main(), { me: "me", page });
     noViolations(main());
     tablesOk(main());
+  });
+  it("User detail", async () => {
+    routes = { "GET /api/users": USERS, "GET /api/users/limits": { defaults: {}, users: {} } };
+    await m.userDetail.renderUserDetail(main(), "u1", { me: "me", page });
+    noViolations(main());
   });
   it("My repositories", async () => {
     routes = { "GET /api/repos": [repo()], "GET /api/repos/methods": { methods: ["ssh-deploy-key", "https-token"] } };
@@ -260,7 +277,8 @@ describe("errorField", () => {
 // ---- users --------------------------------------------------------------------------------------
 
 describe("users", () => {
-  const rowOf = (name: string) => main().all("tr").find((tr) => tr.all("td")[0]?.textContent.startsWith(name))!;
+  // The actions are on the account's page: open it, then press the button.
+  const detailOf = (name: string) => m.userDetail.renderUserDetail(main(), USERS.find((u) => u.name === name)!.id, { me: "me", page });
   const show = async () => {
     routes = {
       ...routes, "GET /api/users": USERS, "GET /api/users/limits": { defaults: { maxRunsPerDay: 10 }, users: {} }, "GET /api/users/u1/app-repos": { repos: ["acme/app"] },
@@ -268,9 +286,19 @@ describe("users", () => {
     await m.users.renderUsers(main(), { me: "me", page });
   };
   const open = async (name: string, label: string) => {
-    press(button(rowOf(name), label));
+    await detailOf(name);
+    press(button(main(), label));
     await dialogUp();
   };
+  it("the account's page has no violations", async () => {
+    await show();
+    await detailOf("Ann");
+    noViolations(main());
+    expect(main().all("h2").map((h) => h.textContent)).toEqual(["Account", "Actions", "Security", "Danger"]);
+    await m.userDetail.renderUserDetail(main(), "nobody", { me: "me", page });
+    expect(main().textContent).toContain("This account does not exist.");
+    noViolations(main());
+  });
   const dialogs: [string, string][] = [
     ["Ann", "Edit"], ["Ann", "Limits"], ["Ann", "App repositories"], ["Ann", "Reset password"], ["Ann", "Block"], ["Ann", "Delete"],
     ["Cy", "New link"], ["Lou", "Unlock"], ["Bob", "Unblock"],

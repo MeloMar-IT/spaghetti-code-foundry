@@ -68,10 +68,6 @@ const gate = () => {
   const promise = new Promise<void>((r) => (release = r));
   return { promise, release };
 };
-const open = async (name: string, label: string) => {
-  button(rowOf(name), label)!.click();
-  await flush();
-};
 
 describe("loading", () => {
   it("draws a skeleton while /api/users is held", async () => {
@@ -125,23 +121,23 @@ describe("empty and partial", () => {
 });
 
 describe("a reload that fails", () => {
+  // The Add user dialog closed with Escape starts a reload; here that reload fails.
   const unlock = async () => {
-    users[1]!.lockedUntil = new Date(Date.now() + 600_000).toISOString();
     await show();
-    await open("Ann", "Unlock");
     gets.push({ status: 500, error: "down" });
-    button(root(), "Unlock")!.click();
+    button(main(), "+ Add user")!.click();
+    await flush();
+    (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
     await flush();
     await flush();
   };
   it("keeps the rows, shows a failed stale note and no error toast", async () => {
     await unlock();
-    expect(sent).toContain("POST /api/users/u1/unlock");
     expect(rows()).toHaveLength(2);
     expect(stale()).toHaveLength(1);
     expect(stale()[0]!.attrs.class).toContain("failed");
     expect(stale()[0]!.textContent).toContain("Could not refresh. Showing data from");
-    expect(toastText()).toBe("Ann is unlocked");
+    expect(toastText()).toBe("");
   });
   it("Retry with a good answer redraws and the note is gone", async () => {
     await unlock();
@@ -151,21 +147,11 @@ describe("a reload that fails", () => {
     expect(stale()).toHaveLength(0);
     expect(rows()).toHaveLength(2);
   });
-  it("the row buttons still work", async () => {
+  it("the buttons of the page still work", async () => {
     await unlock();
-    await open("Ann", "App repositories");
+    button(main(), "+ Add user")!.click();
+    await flush();
     expect(root().children.length).toBeGreaterThan(0);
-  });
-  it("after Block the notice is shown together with the stale note", async () => {
-    await show();
-    await open("Ann", "Block");
-    gets.push({ status: 500, error: "down" });
-    button(root(), "Block")!.click();
-    await flush();
-    await flush();
-    expect(main().textContent).toContain(ui.cancelledText("Ann", 1));
-    expect(stale()).toHaveLength(1);
-    expect(rows()).toHaveLength(2);
   });
   it("only the newest reload draws, even when an older one answers last", async () => {
     await show();

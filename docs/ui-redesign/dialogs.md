@@ -67,16 +67,16 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/user/runs.js` | Approve | Approve on `/user/#/runs/:id` | note (optional) | Approve | `decisionDialog` through `withDialog` |
 | `ui/user/runs.js` | Reject | Reject on `/user/#/runs/:id` | reason (optional) | Reject | `decisionDialog` through `withDialog` |
 | `ui/users.js` | Add user | Add user on `#/users` | the user form (`userForm`) | Add user | `callDialog` (`addDialog`) |
-| `ui/users.js` | New link | Row action | none | New link | `callDialog` (`linkDialog`) |
-| `ui/users.js` | Reset password | Row action | none | Reset password | `callDialog` (`resetDialog`) |
-| `ui/users.js` | Unlock | Row action, for a locked account | none | Unlock | `callDialog` (`unlockDialog`) |
-| `ui/users.js` | Edit | Row action | same form as Add user | Save | `callDialog` (`editDialog`) |
-| `ui/users.js` | Block | Row action | checkbox "Also stop all their work now" | Block | `callDialog` (`blockDialog`) |
-| `ui/users.js` | Unblock | Row action, for a blocked account | none | Unblock | `callDialog` (`unblockDialog`) |
-| `ui/users.js` | Delete | Row action | none | Delete | `callDialog` (`deleteDialog`) |
-| `ui/users.js` | Limits | Row action | runs at the same time, runs per day, daily budget | Save | `callDialog` (`limitsDialog`) |
+| `ui/users.js` | New link | Action on `#/users/:id` | none | New link | `callDialog` (`linkDialog`) |
+| `ui/users.js` | Reset password | Action on `#/users/:id` | none | Reset password | `callDialog` (`resetDialog`) |
+| `ui/users.js` | Unlock | Action on `#/users/:id`, for a locked account | none | Unlock | `callDialog` (`unlockDialog`) |
+| `ui/users.js` | Edit | Action on `#/users/:id` | same form as Add user | Save | `callDialog` (`editDialog`) |
+| `ui/users.js` | Block | Action on `#/users/:id` | checkbox "Also stop all their work now" | Block | `callDialog` (`blockDialog`) |
+| `ui/users.js` | Unblock | Action on `#/users/:id`, for a blocked account | none | Unblock | `callDialog` (`unblockDialog`) |
+| `ui/users.js` | Delete | Action on `#/users/:id` | none | Delete | `callDialog` (`deleteDialog`) |
+| `ui/users.js` | Limits | Action on `#/users/:id` | runs at the same time, runs per day, daily budget | Save | `callDialog` (`limitsDialog`) |
 | `ui/users.js` | Default limits | Button on `#/users` | same three fields | Save | `callDialog` (`defaultLimitsDialog`) |
-| `ui/users.js` | App repositories | Row action | repository list | Save | `callDialog` (`appReposDialog`) |
+| `ui/users.js` | App repositories | Action on `#/users/:id` | repository list | Save | `callDialog` (`appReposDialog`) |
 | `ui/watcher-form.js` | Add a watcher | Add a watcher on `#/watchers` | id, repository, source, flow, label, every, max per tick, enabled, variables | Save watcher | `modal` (`repoWatcherDialog`) |
 | `ui/watcher-form.js` | Edit watcher (repository) | Edit on a watcher card | same; id is fixed | Save watcher | `modal` (`repoWatcherDialog` with `existing`) |
 | `ui/watcher-form.js` | Add the monitor | Add the monitor on `#/watchers` | id, every, enabled | Save watcher | `modal` (`monitorDialog`) |

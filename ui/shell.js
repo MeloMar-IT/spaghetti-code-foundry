@@ -135,6 +135,20 @@ export function initShell(role, { user, store = safeStore(), media = globalThis.
   };
 }
 
+let lastCrumb = null; // the current page's crumb, so a detail page can show its name once it is loaded
+
+/** Replaces the id in the last crumb, the page name and the tab title with a name. It does not move focus or announce again. */
+export function namePage(name) {
+  const text = String(name ?? "").trim();
+  if (!text) return;
+  if (lastCrumb) lastCrumb.textContent = text;
+  pageTitle = text;
+  document.title = titleText(pageTitle, waiting);
+  const title = document.getElementById("page-title");
+  if (title) title.textContent = text;
+  document.getElementById("main")?.setAttribute("aria-label", text);
+}
+
 function hide(el, list) {
   el.hidden = list.length === 0;
 }
@@ -163,10 +177,11 @@ export function showPage(role, to) {
     hide(subnav, links);
   }
   const crumbs = document.getElementById("crumbs");
+  lastCrumb = null;
   if (crumbs) {
     mount(crumbs, to.crumbs.flatMap((c, i) => [
       i ? h("span", { "aria-hidden": "true" }, " › ") : null,
-      c.href ? h("a", { href: c.href }, c.label) : h("span", { "aria-current": "page" }, c.label),
+      c.href ? h("a", { href: c.href }, c.label) : (lastCrumb = h("span", { "aria-current": "page" }, c.label)),
     ]));
     hide(crumbs, to.crumbs);
   }

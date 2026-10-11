@@ -72,7 +72,7 @@ describe("user router", () => {
     "/repos.js": never,
     "/user/runs.js": never,
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
-    "/shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+    "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "/home.js": never,
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -132,7 +132,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -140,7 +140,7 @@ describe("admin router", () => {
       "./auth.js": { ...real.auth, enterDisplay: async () => ({ id: "a1" }) },
       "./dom.js": real.dom,
       "./ia.js": real.ia,
-      "./shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+      "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
       "./work.js": never,

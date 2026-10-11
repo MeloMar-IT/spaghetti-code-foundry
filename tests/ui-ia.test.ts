@@ -103,6 +103,15 @@ describe("resolve for an admin", () => {
     for (const h of ["#/nope", "#/runs/a/b", "#/runs/%E0%A4%A", "#/runs/"]) expect(r(h), h).toMatchObject({ hash: "#/home", reason: "unknown", redirected: true });
   });
 
+  it("knows one account's page under Users", () => {
+    expect(r("#/users/u1")).toMatchObject({ hash: "#/users/u1", arg: "u1", back: "#/users", dest: "administration", title: "u1", redirected: false });
+    expect(r("#/users/u1").page.id).toBe("user");
+    expect(r("#/users/u1").crumbs.map((c: any) => [c.label, c.href])).toEqual([["Administration", "#/users"], ["Users", "#/users"], ["u1", null]]);
+    expect(r("#/users/a%20b").arg).toBe("a b");
+    expect(ia.resolve("user", "#/users/x")).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
+    for (const h of ["#/users/a/b", "#/users/"]) expect(r(h), h).toMatchObject({ hash: "#/home", reason: "unknown" });
+  });
+
   it("keeps an encoded name", () => {
     expect(r("#/flows/my%20flow")).toMatchObject({ hash: "#/flows/my%20flow", arg: "my flow", title: "my flow" });
   });

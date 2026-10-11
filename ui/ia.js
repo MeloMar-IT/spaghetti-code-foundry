@@ -39,6 +39,7 @@ export const PAGES = [
   adminPage("models", "Models", "operations"),
   adminPage("dashboard", "Dashboard", "operations"),
   adminPage("users", "Users", "access"),
+  { id: "user", path: "#/users/:id", title: (id) => id, area: "administration", dest: "administration", parent: "users", nav: "detail", label: {}, roles: A },
   adminPage("all-repos", "All repositories", "access"),
   adminPage("credentials", "Credentials", "access"),
   adminPage("audit", "Audit", "access"),

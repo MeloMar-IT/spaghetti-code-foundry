@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, markInvalid, mount } from "./dom.js";
+import { entityLink, statusSummary } from "./kit/product.js";
 import { emptyState, errorState, explainError, loadingState } from "./states.js";
 
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
@@ -67,19 +68,62 @@ const onPage = () => {
 
 const isAccount = (x) => x && x.type !== "cli" && x.type !== "anonymous" && x.type !== "text";
 
+/**
+ * Every field of an entry for the detail row: `[{ label, value, id?, href? }]`. An account (actor or target) has its `id`, and an `href`
+ * to its page. The account may be gone by now; its page then says so.
+ */
+export function detailFields(e) {
+  const who = (x, text) => {
+    const field = { value: text || "—" };
+    if (isAccount(x) && x.id) {
+      field.id = String(x.id);
+      field.href = `#/users/${encodeURIComponent(x.id)}`;
+    }
+    return field;
+  };
+  return [
+    { label: "Time", value: `${timeText(e.time)} (${e.time})` },
+    { label: "Who", ...who(e.actor, actorText(e.actor)) },
+    { label: "Action", value: e.action || "—" },
+    { label: "Target", ...who(e.target, targetText(e.target)) },
+    { label: "Detail", value: e.detail || "—" },
+    { label: "Result", value: e.result || "—" },
+  ];
+}
+
+const fieldItem = (f) => ({ label: f.label, value: f.id ? entityLink({ kind: "user", id: f.id, label: f.value, href: f.href }) : f.value });
+
 function table(entries) {
-  const row = (e) => h("tr", {},
-    h("td", { class: "muted", title: e.time }, timeText(e.time)),
-    h("td", { title: isAccount(e.actor) ? e.actor.id : null }, actorText(e.actor)),
-    h("td", { class: "mono" }, e.action),
-    h("td", { title: isAccount(e.target) ? e.target.id : null },
-      targetText(e.target) || h("span", { class: "muted" }, "—"),
-      e.detail ? h("div", { class: "muted" }, e.detail) : null),
-    h("td", {}, h("span", { class: e.result === "failed" ? "pill fail" : "pill ok" }, e.result)));
+  const open = new Set(); // the lines that are open, by place in this table
+  const buttons = [];
+  const body = h("tbody", {});
+  const toggle = (i) => {
+    if (!open.delete(i)) open.add(i);
+    draw();
+    buttons[i]?.focus?.();
+  };
+  const row = (e, i) => {
+    const opened = open.has(i);
+    buttons[i] = h("button", { class: "small", "aria-expanded": String(opened), onClick: () => toggle(i) }, opened ? "Hide" : "Details");
+    return h("tr", {},
+      h("td", { class: "muted", title: e.time }, timeText(e.time)),
+      h("td", { title: isAccount(e.actor) ? e.actor.id : null }, actorText(e.actor)),
+      h("td", { class: "mono" }, e.action),
+      h("td", { title: isAccount(e.target) ? e.target.id : null },
+        targetText(e.target) || h("span", { class: "muted" }, "—"),
+        e.detail ? h("div", { class: "muted" }, e.detail) : null),
+      h("td", {}, h("span", { class: e.result === "failed" ? "pill fail" : "pill ok" }, e.result)),
+      h("td", {}, buttons[i]));
+  };
+  const detail = (e) => h("tr", {}, h("td", { colspan: 6 }, statusSummary({ label: "Entry details", items: detailFields(e).map(fieldItem) })));
+  function draw() {
+    mount(body, entries.flatMap((e, i) => (open.has(i) ? [row(e, i), detail(e)] : [row(e, i)])));
+  }
+  draw();
   return h("table", { class: "table" },
     h("caption", { class: "sr-only" }, "Audit log"),
-    h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result"].map((t) => h("th", { scope: "col" }, t)))),
-    h("tbody", {}, entries.map(row)));
+    h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result", h("span", { class: "sr-only" }, "Details")].map((t) => h("th", { scope: "col" }, t)))),
+    body);
 }
 
 /** The Audit page (admins). Draws at once and returns its cleanup at once; the data arrives later. */
