@@ -623,7 +623,8 @@ On a small screen some pages show their content but not the controls that change
 |---|---|---|
 | Users, one user, Settings | read-only | full |
 | Credentials, Audit, Dashboard | read-only (the note only; they have nothing to change) | full |
-| Overview, Watchers, All repositories, Models, Problems, Maintenance | full for now | full |
+| Overview, Watchers, one watcher | read-only | full |
+| All repositories, Models, Problems, Maintenance | full for now | full |
 | Flows and the flow editor | full for now | full for now |
 | Every other page, the Library included | full | full |
 
@@ -632,6 +633,10 @@ On a read-only page:
 - **Users:** the table stays; there is no "+ Add user", no "Default limits" and no action in the empty state.
 - **One user:** only "View as user" is offered; the Account card stays.
 - **Settings:** no Save button. You can select and scroll through text fields but not change them; lists and checkboxes are disabled.
+- **Watchers:** the ↻ button stays; there is no "+ Add watcher", "+ Add the monitor" or empty-state action.
+- **One watcher:** the settings text stays; there is no Check now, Edit, Enable/Disable or Delete.
+- **The monitor's page:** the findings table stays; there is no "Switch bug stories…" button, no "Mute a detector" row, no Actions column and no "End mute".
+- **Overview:** a problem that was closed elsewhere shows no "Cancel run" button. The health panel in the header and the Problems page are unchanged.
 
 Resizing the window across 768 px redraws the page only when its level changes. If a dialog is open, it stays and the page is redrawn when you close it. **Unsaved Settings fields are lost when the width crosses 768 px.** The lock is in the page only; the server still accepts changes made from a wider screen or through the API.
 

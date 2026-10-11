@@ -78,8 +78,8 @@ const table = (caption, heads, rows) => tableBox(h("table", { class: "table comp
   h("thead", {}, h("tr", {}, heads.map((t) => h("th", { scope: "col" }, t)))),
   h("tbody", {}, rows)));
 
-/** The Overview page of Administration: what needs attention, on one page. Returns a cleanup. */
-export async function renderOperations(main) {
+/** The Overview page of Administration: what needs attention, on one page. `readOnly`: no Cancel run. Returns a cleanup. */
+export async function renderOperations(main, { readOnly = false } = {}) {
   const mine = ++generation;
   const live = () => mine === generation && onPage();
   const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Overview"), h("span", { class: "muted" }, "What needs attention"));
@@ -107,7 +107,7 @@ export async function renderOperations(main) {
     let healthBody;
     if (ok(health)) {
       healthBody = h("div");
-      renderHealth(healthBody, health.value, { onCancel });
+      renderHealth(healthBody, health.value, { onCancel, readOnly });
     } else healthBody = notAvailable(health);
 
     const pv = ok(providers) ? providerSummary(providers.value) : null;

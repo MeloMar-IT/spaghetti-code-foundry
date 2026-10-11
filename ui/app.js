@@ -37,7 +37,7 @@ const healthEl = document.getElementById("health");
 const levelNote = document.getElementById("level-note");
 
 // Pages not wired to the support level yet: they keep their controls and get no notice.
-const NOT_YET = new Set(["operations", "watchers", "watcher", "flows", "flow", "new-flow", "all-repos", "models", "model", "problems", "problem", "maintenance"]);
+const NOT_YET = new Set(["flows", "flow", "new-flow", "all-repos", "models", "model", "problems", "problem", "maintenance"]);
 const levelOf = (id) => (NOT_YET.has(id) ? "full" : supportLevel(id, globalThis.innerWidth));
 let drawn = null; // { id, level } of the page route() drew last
 let missed = false; // the width crossed a breakpoint while a dialog was open
@@ -132,7 +132,7 @@ async function route() {
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);
-    else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg) : renderWatchers);
+    else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg, { readOnly }) : (box) => renderWatchers(box, { readOnly }));
     else if (section === "problems") await renderInBox(arg ? (box) => renderProblemDetail(box, arg) : renderProblems);
     else if (section === "settings") await renderInBox((box) => renderSettings(box, { readOnly }));
     else if (section === "maintenance") await renderMaintenance(main);
@@ -148,7 +148,7 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "operations") {
-      const off = await renderOperations(main);
+      const off = await renderOperations(main, { readOnly });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

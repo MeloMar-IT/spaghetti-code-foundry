@@ -223,7 +223,7 @@ describe("admin router", () => {
   it("routes the watcher and problem pages with an id, and the lists without", async () => {
     const page = (name: string) => vi.fn(async (box: FakeElement) => { real.dom.mount(box, el(name)); });
     for (const [hash, fn, expected] of [
-      ["#/watchers/w1", "renderWatcherDetail", ["w1"]], ["#/watchers", "renderWatchers", []],
+      ["#/watchers/w1", "renderWatcherDetail", ["w1", { readOnly: false }]], ["#/watchers", "renderWatchers", [{ readOnly: false }]],
       ["#/problems/abc", "renderProblemDetail", ["abc"]], ["#/problems", "renderProblems", []],
     ] as const) {
       setup(hash);
@@ -353,9 +353,9 @@ describe("support levels", () => {
   });
 
   it("shows no notice on pages that are not wired yet", async () => {
-    for (const hash of ["#/watchers", "#/models", "#/flows"]) {
+    for (const hash of ["#/problems", "#/models", "#/flows"]) {
       note().hidden = true;
-      await load(hash, 360, { "./watchers.js": { renderWatchers: page() } });
+      await load(hash, 360, { "./problems.js": { renderProblems: page() } });
       await tick();
       expect(note().hidden, hash).toBe(true);
     }
@@ -379,12 +379,12 @@ describe("support levels", () => {
   });
 
   it("draws nothing on a crossing on a page whose level does not change", async () => {
-    const renderWatchers = page();
-    await load("#/watchers", 1024, { "./watchers.js": { renderWatchers } });
-    await vi.waitFor(() => expect(renderWatchers).toHaveBeenCalledTimes(1));
+    const renderProblems = page();
+    await load("#/problems", 1024, { "./problems.js": { renderProblems } });
+    await vi.waitFor(() => expect(renderProblems).toHaveBeenCalledTimes(1));
     width(360);
     await fire("compact");
-    expect(renderWatchers).toHaveBeenCalledTimes(1);
+    expect(renderProblems).toHaveBeenCalledTimes(1);
     const renderRuns = page();
     await load("#/runs", 1024, { "./runs.js": { renderRunsList: renderRuns } });
     await vi.waitFor(() => expect(renderRuns).toHaveBeenCalledTimes(1));
@@ -436,10 +436,44 @@ describe("support levels", () => {
     expect(readFileSync("ui/app.js", "utf8")).toContain("setTimeout(onWidth, 0)");
   });
 
-  it("keeps NOT_YET to the twelve pages not wired yet", () => {
+  it("passes readOnly to Watchers, one watcher and the Overview", async () => {
+    const renderWatchers = page();
+    await load("#/watchers", 360, { "./watchers.js": { renderWatchers } });
+    await vi.waitFor(() => expect(renderWatchers).toHaveBeenCalledTimes(1));
+    expect(renderWatchers.mock.calls[0]![1].readOnly).toBe(true);
+    expect(note().hidden).toBe(false);
+    expect(note().textContent).toBe("Editing needs a wider screen (768 px or more).");
+    const renderWatcherDetail = page();
+    await load("#/watchers/w1", 360, { "./watchers.js": { renderWatcherDetail } });
+    await vi.waitFor(() => expect(renderWatcherDetail).toHaveBeenCalledTimes(1));
+    expect(renderWatcherDetail.mock.calls[0]![2].readOnly).toBe(true);
+    expect(note().hidden).toBe(false);
+    const renderOperations = vi.fn(async () => () => {});
+    await load("#/operations", 360, { "./operations.js": { renderOperations } });
+    await vi.waitFor(() => expect(renderOperations).toHaveBeenCalledTimes(1));
+    expect((renderOperations.mock.calls[0] as any[])[1].readOnly).toBe(true);
+    expect(note().hidden).toBe(false);
+    const wide = page();
+    await load("#/watchers", 768, { "./watchers.js": { renderWatchers: wide } });
+    await vi.waitFor(() => expect(wide).toHaveBeenCalledTimes(1));
+    expect(wide.mock.calls[0]![1].readOnly).toBe(false);
+    expect(note().hidden).toBe(true);
+  });
+
+  it("redraws Watchers read-only on a crossing", async () => {
+    const renderWatchers = page();
+    await load("#/watchers", 1024, { "./watchers.js": { renderWatchers } });
+    await vi.waitFor(() => expect(renderWatchers).toHaveBeenCalledTimes(1));
+    width(360);
+    await fire("compact");
+    await vi.waitFor(() => expect(renderWatchers).toHaveBeenCalledTimes(2));
+    expect(renderWatchers.mock.calls[1]![1].readOnly).toBe(true);
+  });
+
+  it("keeps NOT_YET to the nine pages not wired yet", () => {
     const src = readFileSync("ui/app.js", "utf8");
     const ids = [...src.match(/const NOT_YET = new Set\(\[([^\]]*)\]/)![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect([...ids].sort()).toEqual(["all-repos", "flow", "flows", "maintenance", "model", "models", "new-flow", "operations", "problem", "problems", "watcher", "watchers"]);
+    expect([...ids].sort()).toEqual(["all-repos", "flow", "flows", "maintenance", "model", "models", "new-flow", "problem", "problems"]);
     const known = real.ia.PAGES.map((p: { id: string }) => p.id);
     for (const id of ids) expect(known).toContain(id);
   });
