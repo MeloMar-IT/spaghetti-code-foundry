@@ -66,7 +66,8 @@ export function switcherView(model, handlers) {
         const place = () => {
           const bar = node.closest?.("header");
           const compact = window.matchMedia(COMPACT).matches;
-          panel.style.top = compact && bar ? `${Math.round(bar.getBoundingClientRect().bottom)}px` : "";
+          // The one inline value: it is measured from the page, so no class can hold it.
+          Object.assign(panel.style, { top: compact && bar ? `${Math.round(bar.getBoundingClientRect().bottom)}px` : "" });
         };
         // The node is not in the page yet (the caller mounts it after this returns): measure on the next frame.
         const frame = typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame(place) : (place(), null);
