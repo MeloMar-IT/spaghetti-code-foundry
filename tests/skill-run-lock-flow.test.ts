@@ -336,7 +336,7 @@ ${fixExtra}    prompt: |
     const last = (s: { history: { id: string; output: string; skills?: unknown }[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)!;
     // versions of their own: pins of earlier tests stay in the data folder
     const shellSkill = (v: string) => demo(v, low, "Use the shell.", "", "risk: medium\ntool_profile: {shell: true}\n");
-    const noIso = () => ConfigSchema.parse({ skills: { roots: [low] }, isolate_agents: false });
+    const noIso = () => ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low] }, isolate_agents: false });
     const logOf = (s: { runDir: string }) => readFileSync(join(s.runDir, "live.log"), "utf8");
 
     it("never grants allowed-tools of SKILL.md, and records what the session was given", async () => {
@@ -385,7 +385,7 @@ ${fixExtra}    prompt: |
       expect(s.status).toBe("succeeded");
       expect(split(last(s, "fix").output).args).toContain("--resume");
       expect(last(s, "fix").skills).toMatchObject({ state: "reused" });
-      const cfg = (tools: object) => ConfigSchema.parse({ skills: { roots: [low], tools }, isolate_agents: false });
+      const cfg = (tools: object) => ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low], tools }, isolate_agents: false });
 
       const a = await resumeRun({ runId: s.runId, runsDir: join(tmp, "runs"), claudeBin, config: cfg({ shell: false, missing: "degrade" }), from: "fix" });
       expect(a.status).toBe("succeeded");
