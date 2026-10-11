@@ -83,6 +83,28 @@ describe("helpers", () => {
   });
 });
 
+describe("runCard labels", () => {
+  it("labels the task, repository and next text of a run; the link is first in the row", () => {
+    const card = ui.runCard({ run: run("a", { vars: { github_repo: "o/r", issue: 7 } }), job: null }, () => {});
+    expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("task a");
+    expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
+    expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
+    expect(one(card, "a", { class: "run-link" }).attrs.href).toBe("#/runs/a");
+  });
+  it("labels a queued card the same way and puts Remove last", () => {
+    const card = ui.runCard({ run: null, job: job("q", { githubRepo: "o/r", issue: 3 }) }, () => {});
+    expect(find(card, "div", { "data-label": "Task" })[0]!.textContent).toBe("queued q");
+    expect(find(card, "div", { "data-label": "Repository" })).toHaveLength(1);
+    expect(find(card, "p", { "data-label": "What happens next" })).toHaveLength(1);
+    const buttons = card.all("button");
+    expect(buttons[buttons.length - 1]!.textContent).toBe("Remove");
+  });
+  it("leaves out the label of a part that is not there", () => {
+    const card = ui.runCard({ run: run("x", { task: "", next: undefined }), job: null }, () => {});
+    expect(card.all("*").filter((e: FakeElement) => e.attrs["data-label"])).toEqual([]);
+  });
+});
+
 describe("dialogs", () => {
   beforeEach(() => {
     modalRoot().replaceChildren();

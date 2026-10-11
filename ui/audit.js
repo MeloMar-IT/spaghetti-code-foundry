@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, markInvalid, mount } from "./dom.js";
+import { h, markInvalid, mount, tableBox } from "./dom.js";
 import { entityLink, statusSummary } from "./kit/product.js";
 import { emptyState, errorState, explainError, loadingState } from "./states.js";
 
@@ -120,10 +120,10 @@ function table(entries) {
     mount(body, entries.flatMap((e, i) => (open.has(i) ? [row(e, i), detail(e)] : [row(e, i)])));
   }
   draw();
-  return h("table", { class: "table" },
+  return tableBox(h("table", { class: "table" },
     h("caption", { class: "sr-only" }, "Audit log"),
     h("thead", {}, h("tr", {}, ["Time", "Who", "Action", "Target", "Result", h("span", { class: "sr-only" }, "Details")].map((t) => h("th", { scope: "col" }, t)))),
-    body);
+    body));
 }
 
 /** The Audit page (admins). Draws at once and returns its cleanup at once; the data arrives later. */

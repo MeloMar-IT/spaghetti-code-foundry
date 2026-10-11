@@ -420,8 +420,10 @@ button, .btn, .table a { min-width: 24px; min-height: 24px; }
 button.icon { justify-content: center; }
 
 /* ── a wide table scrolls in its own box ── */
-.table-box { overflow-x: auto; }
+.table-box { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; }
 .table tr.link td > a { text-decoration: none; }
+.table td > a.repo-link { color: inherit; }
+.table td > a.repo-link:hover { text-decoration: underline; }
 
 /* ── the user display (ui/user/) ── */
 .user-display .top { height: auto; min-height: var(--size-bar); flex-wrap: wrap; gap: 4px 16px; padding-top: 6px; padding-bottom: 6px; }
@@ -735,4 +737,22 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
   .toolbar > h1 { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
   .toolbar > :not(button, .btn, a, select, input) { min-width: 0; max-width: 100%; }
   .toolbar > .spacer { display: none; }
+}
+
+/* critical tables are cards below the compact breakpoint: same DOM, labels from data-label */
+@media (max-width: 767px) {
+  .table-box > .table.cards { display: block; border: 0; background: none; overflow: visible; }
+  .table.cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .table.cards tbody { display: grid; gap: var(--space-md); }
+  .table.cards tbody tr { display: flex; flex-direction: column; padding: var(--space-md) var(--space-lg); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+  .table.cards td { display: block; padding: var(--space-xs) 0; border-bottom: 0; min-width: 0; max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .table.cards td:empty { display: none; }
+  .table.cards td.actions { order: 1; }
+  .table.cards td[data-label]::before { content: attr(data-label); content: attr(data-label) / ""; display: block; color: var(--muted); font-size: var(--text-table-head); font-weight: 550; }
+  .table.cards .task div { white-space: normal; }
+  .table.cards .pill { white-space: normal; max-width: 100%; }
+  .table.cards tr.link:hover td { background: none; }
+  .run-card .row > .run-link { order: -1; }
+  .run-card .pill { white-space: normal; max-width: 100%; }
+  .run-card [data-label]::before { content: attr(data-label); content: attr(data-label) / ""; display: block; color: var(--muted); font-size: var(--text-table-head); font-weight: 550; }
 }

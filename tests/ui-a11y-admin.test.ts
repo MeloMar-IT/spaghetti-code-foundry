@@ -62,11 +62,12 @@ afterAll(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Every table has a head with `scope="col"` cells and a name. */
+/** Every table has a head with `scope="col"` cells, a name and its own scroll box (`.table-box` around it). */
 function tablesOk(root: FakeElement) {
   const tables = root.all("table");
   expect(tables.length).toBeGreaterThan(0);
   for (const t of tables) {
+    expect((t.parent?.attrs.class ?? "").split(" "), "a .table-box around the table").toContain("table-box");
     expect(t.all("thead").length, "thead").toBe(1);
     const ths = t.all("th");
     expect(ths.length).toBeGreaterThan(0);

@@ -305,6 +305,37 @@ describe("the list", () => {
     expect(walk(main()).filter((e) => e.tag === "th").map((e) => e.textContent)).toContain("Owner");
     expect(main().textContent).toContain("Ann");
   });
+  it("is a card table: labels for every cell, the title link first, Owner only for an admin", async () => {
+    sessions = [session({ ownerName: "Ann" })];
+    await showList();
+    const table = walk(main()).find((e) => e.tag === "table")!;
+    expect(table.attrs.class).toBe("table cards");
+    expect(table.parent!.attrs.class).toBe("table-box");
+    const cells = (tr: FakeElement) => tr.children.filter((c): c is FakeElement => c instanceof FakeElement);
+    const row = () => walk(main()).find((e) => e.tag === "tr" && e.parent!.tag === "tbody")!;
+    expect(cells(row()).map((c) => c.attrs["data-label"])).toEqual(["Title", "Repository", "State", "Last change"]);
+    expect((cells(row())[0]!.children[0] as FakeElement).tag).toBe("a");
+    await showList(true);
+    expect(cells(row()).map((c) => c.attrs["data-label"])).toEqual(["Title", "Repository", "State", "Last change", "Owner"]);
+  });
+  it("marks the State cell with Restore as the actions cell, so cards put it last", async () => {
+    sessions = [dropped({ title: "Gone" }), dropped({ id: "s2", title: "Theirs", mine: false })];
+    await showList(true);
+    press(button(main(), "Dropped"));
+    await flush();
+    const rows = walk(main()).filter((e) => e.tag === "tr" && e.parent!.tag === "tbody");
+    const cells = (tr: FakeElement) => tr.children.filter((c): c is FakeElement => c instanceof FakeElement);
+    const [mine, theirs] = rows;
+    const withRestore = cells(mine!).filter((c) => (c.attrs.class ?? "") === "actions");
+    expect(withRestore.map((c) => c.attrs["data-label"])).toEqual(["State"]);
+    expect(walk(withRestore[0]!).some((e) => e.tag === "button" && e.textContent === "Restore")).toBe(true);
+    expect(cells(theirs!).some((c) => c.attrs.class === "actions")).toBe(false);
+    press(button(main(), "Restore"));
+    await flush();
+    expect((globalThis as any).location.hash).toBe("#/refinement");
+    press(button(main(), "Open sessions"));
+    await flush();
+  });
   it("shows the empty text and keeps dropped sessions out of the open list", async () => {
     await showList();
     expect(main().textContent).toContain("No refinement sessions yet.");

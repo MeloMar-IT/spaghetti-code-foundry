@@ -1,6 +1,6 @@
 import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
-import { confirmDialog, h, modal, mount, timeAgo, toast } from "./dom.js";
+import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { dialogOpen } from "./live.js";
 import { announcer, failState } from "./refinement-states.js";
@@ -567,7 +567,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
-    h("td", {}, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
+    h("td", { class: s.state === "dropped" && s.mine ? "actions" : null }, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
       s.state === "dropped" ? [" ", h("span", { class: "muted" }, `removed on ${date(s.removedOn)}`)] : null,
       s.state === "dropped" && s.mine ? [" ", h("button", { class: "small", onClick: (e) => {
         e.stopPropagation();
@@ -604,9 +604,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const known = !filters.repo || inRepo.length > 0 || repos.some((r) => sameRepo(r, filters.repo));
     mount(head, toolbar(true), filterBar(filters, { onRemove: clear, onClear: clear }));
     mount(body, shown.length
-      ? h("div", { class: "table-box" }, h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
-        h("tbody", {}, shown.map(row))))
+      ? table(["Title", "Repository", "State", "Last change", admin ? "Owner" : null], shown.map(row), { cards: true, caption: showDropped ? "Dropped sessions" : "Refinement sessions" })
       : !known ? filterGone({ onClear: clear })
         : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear })
           : emptyState(showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));

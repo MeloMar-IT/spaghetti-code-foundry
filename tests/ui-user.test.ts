@@ -109,7 +109,7 @@ describe("ui/style.css", () => {
   const css = readUiCss();
   it("wraps the user top bar, scrolls tables in a box and marks the keyboard focus", () => {
     expect(css).toMatch(/\.user-display \.top \{[^}]*flex-wrap: wrap/);
-    expect(css).toContain(".table-box { overflow-x: auto; }");
+    expect(css).toContain(".table-box { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
     expect(css).toContain(".view-bar {");
   });

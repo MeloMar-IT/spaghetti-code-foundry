@@ -456,7 +456,7 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
       h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
       h("button", { class: "primary", onClick: add }, "+ Add user")),
     note,
-    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : table({ caption: "Users", hideCaption: true, columns, rows: users }));
+    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : table({ caption: "Users", hideCaption: true, columns, rows: users, class: "table-box" }));
   return () => {
     generation++;
   };

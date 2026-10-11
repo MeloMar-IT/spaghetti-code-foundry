@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
+import { fieldFor, h, modal, mount, showError, tableBox, toast } from "./dom.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { connectionProblem, connectionStatus, loadFailed, methodLabel, plainError } from "./repos.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
@@ -272,10 +272,10 @@ export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) 
       filterBar(state.filters, { onRemove: clear, onClear: clear }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
       shown.length
-        ? h("table", { class: "table" },
+        ? tableBox(h("table", { class: "table" },
           h("caption", { class: "sr-only" }, "Repositories of all accounts"),
           h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, sortRepos(shown).map(row)))
+          h("tbody", {}, sortRepos(shown).map(row))))
         : state.filters.repo ? filterGone({ onClear: clear }) : emptyState("No repositories yet."));
   };
   await load();

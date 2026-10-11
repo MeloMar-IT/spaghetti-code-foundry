@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { h, mount, timeAgo, toast } from "./dom.js";
+import { h, mount, table, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
 import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
@@ -157,9 +157,7 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
     const pending = filters.repo ? (queue?.pending ?? []).filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue?.pending ?? [];
     const yours = needsYou(shown);
     const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
-    const table = (list, scope) => h("div", { class: "table-box" }, h("table", { class: "table" },
-      h("thead", {}, h("tr", {}, cols.map((t) => h("th", {}, t)))),
-      h("tbody", {}, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })))));
+    const runsTable = (list, scope) => table(cols, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })), { cards: true, caption: "Runs" });
     const filter = admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
       h("option", { value: "" }, "All owners"),
       owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
@@ -188,8 +186,8 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
             gen++; // an answer asked before the cancel still shows the job
             refresh();
           }))) : null,
-      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), table(yours, "needs")) : null,
-      shown.length ? table(shown, "run")
+      yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), runsTable(yours, "needs")) : null,
+      shown.length ? runsTable(shown, "run")
         : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear }))
           : noRuns());
   };

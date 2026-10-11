@@ -1,5 +1,5 @@
 import { api } from "./api.js";
-import { confirmDialog, fieldFor, h, modal, showError, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, modal, showError, tableBox, toast } from "./dom.js";
 
 /** Asks before the monitor is switched on over a state file that cannot be read; resolves true on "Switch on". */
 export const confirmUnreadable = () => confirmDialog({
@@ -88,14 +88,14 @@ export const mutesTable = (m, reload) => {
     }
     await reload();
   };
-  return h("table", { class: "table compact", "aria-label": "Mutes" },
+  return tableBox(h("table", { class: "table compact", "aria-label": "Mutes" },
     h("thead", {}, h("tr", {}, ["What", "Reason", "Since", "Until", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, m.mutes.map((x) => h("tr", {},
       h("td", {}, x.kind === "finding" ? `${x.detector}: ${x.summary ?? x.finding}` : x.detector),
       h("td", {}, x.reason),
       h("td", {}, when(x.since)),
       h("td", {}, x.until ? when(x.until) : "for good"),
-      h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute"))))));
+      h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute")))))));
 };
 
 // A row has no buttons: each finding's page (#/problems/:id) has its actions.
@@ -113,7 +113,7 @@ const findingsTable = (m, redraw) => {
       h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : "")))));
   const left = m.findings.length - rows.length;
   return h("div", {},
-    table,
+    tableBox(table),
     left > 0 ? h("button", { class: "small", onClick: () => { shown += PAGE; redraw(); } }, `Show ${Math.min(PAGE, left)} more`) : null);
 };
 
