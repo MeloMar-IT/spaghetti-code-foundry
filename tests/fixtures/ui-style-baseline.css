@@ -719,8 +719,8 @@ body.side-closed .side { display: none; }
 .modal { overflow-wrap: anywhere; }
 select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand { min-height: var(--size-touch-min); min-width: var(--size-touch-min); }
 @media (pointer: coarse) {
-  :is(button, .btn, select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .brand, .table a, .modal .row > a, .modal > a):not([hidden]) { min-width: var(--size-touch); min-height: var(--size-touch); }
-  .subnav a, .top a[data-nav], .modal .row > a, .modal > a { display: inline-flex; align-items: center; }
+  :is(button, .btn, select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .side a, .subnav a, .top a[data-nav], .account-menu > a, .brand, .table a, .modal .row > a, .modal > a):not([hidden]) { min-width: var(--size-touch); min-height: var(--size-touch); }
+  .subnav a, .top a[data-nav], .account-menu > a, .modal .row > a, .modal > a { display: inline-flex; align-items: center; }
   label:has(> input[type="checkbox"]), label:has(> input[type="radio"]), .check-row, .scf-checkbox { display: flex; align-items: center; min-height: var(--size-touch); }
   .side, .subnav, .top-actions, .row.tight, .row.tighter, .filter-bar, .chips, .stack.tight, .seg, .checks { gap: var(--space-md); }
   .table td > button, .table td > .btn { margin: var(--space-xs); }
