@@ -1,7 +1,7 @@
 // Start work: required decisions first (repository, task, required inputs), the rest under "More options"; a flow
 // picker only with several flows. The server does every real check
 // (published flow, inputs, ownership); this page only shows its answer. "Review" shows what will be sent, "Start" sends
-// it; the draft is kept in page memory (start-draft.js). Relative imports, so a test can load it:
+// it; the draft is kept in page memory (start-draft.js). The choices of how to begin (start-entry.js) come above. Relative imports, so a test can load it:
 // in the browser "../api.js" from /user/start.js is the same module as "/api.js". The admin display uses the page too.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
@@ -11,6 +11,7 @@ import { onWish, takeWish } from "../palette-data.js";
 import { connectionStatus, repoDialog } from "../repos.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "../states.js";
 
+import { entryChoices } from "./start-entry.js";
 import { clearDraft, draftRevision, DRAFT_LINE, readDraft, REPO_FIELD, restoreDraft, reviewView, writeDraft } from "./start-draft.js";
 
 export { REPO_FIELD };
@@ -108,15 +109,20 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   let gone = false;
   let off = () => {};
   const heading = () => h("h1", {}, "Start work");
+  // The choices of how to begin: drawn in every state, so a refinement can start without a published flow.
+  // `gone` is only set when the page is left after it has finished loading, so the address is checked too.
+  const onPage = () => typeof location === "undefined" || /^#\/start(?:[/?]|$)/.test(location.hash ?? "#/start");
+  const choices = (opts = {}) => entryChoices({ a, go, readOnly, isGone: () => gone || !onPage(), ...opts });
+  const entryNode = () => choices().node;
 
   async function load() {
-    mount(main, heading(), loadingState("Loading the flows…", { rows: 4, shape: "detail" }));
+    mount(main, heading(), entryNode(), loadingState("Loading the flows…", { rows: 4, shape: "detail" }));
     let flows;
     try {
       flows = admin ? await a.flows(true) : await a.flows();
     } catch (e) {
       if (gone) return;
-      mount(main, heading(), e?.status === 403
+      mount(main, heading(), entryNode(), e?.status === 403
         ? permissionState(FLOWS_DENIED)
         : errorState(explainError(e, { what: FLOWS_FAILED }), { onRetry: load }));
       return;
@@ -127,7 +133,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     if (!Array.isArray(flows) || flows.length === 0) {
       const box = emptyState(admin ? NO_FLOWS_ADMIN : NO_FLOWS);
       if (admin) box.append(h("a", { href: "#/flows" }, "Open the flow editor"));
-      mount(main, heading(), box);
+      mount(main, heading(), entryNode(), box);
       return;
     }
     await showForm(flows, wished);
@@ -206,6 +212,10 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     /** Typing in, or choosing for, the marked field takes the mark off. */
     const edited = (el) => () => { if (invalid === el) unmark(); };
     const failBox = h("div", {});
+    const entry = choices({
+      hasDraft: from.restored && !readOnly,
+      onTask: readOnly ? undefined : () => (state.flow.usesTask !== false ? taskBox : submitBtn).focus(),
+    });
     const submitBtn = h("button", { class: "primary", type: "submit", "data-focus": "start-review" }, "Review");
     const clearBtn = h("button", { type: "button", onClick: () => clear() }, "Clear");
     const draftBox = h("div", {}, from.restored && !readOnly ? h("p", { class: "start-note", role: "status" }, DRAFT_LINE) : null);
@@ -391,7 +401,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     function back() {
       if (busy) return;
       reviewing = null;
-      mount(main, heading(), form);
+      mount(main, heading(), entry.node, form);
       submitBtn.focus();
     }
 
@@ -420,7 +430,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
         mount(failBox, errorState(explainStart(e)));
         syncStart();
         reviewing = null;
-        mount(main, heading(), form);
+        mount(main, heading(), entry.node, form);
         submitBtn.focus();
       }
     }
@@ -437,6 +447,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
       for (const r of radios) r.checked = r.value === state.flow.name;
       mount(failBox);
       mount(draftBox);
+      entry.setDraft(false);
       moreOpen = false;
       if (needsRepos(state.flow)) loadRepos();
       syncStart();
@@ -448,7 +459,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     drawRest();
     const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
       draftBox, flowStep(), rest, failBox, err, readOnly ? null : h("div", { class: "row" }, submitBtn, clearBtn));
-    mount(main, heading(), form);
+    mount(main, heading(), entry.node, form);
     /** The palette chose a flow: the radios and the page follow; typed text is kept. */
     const pick = (name) => {
       const flow = flows.find((f) => f.name === name);

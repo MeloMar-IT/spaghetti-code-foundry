@@ -7,7 +7,8 @@ import { dialogOpen } from "./live.js";
 import { announcer, failState } from "./refinement-states.js";
 import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
-import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
+import { importLogText, sourceSection } from "./refinement-import.js";
+import { newSessionDialog } from "./refinement-new.js";
 import { publishSection } from "./refinement-publish.js";
 import { impactLogText } from "./refinement-impact.js";
 import { splitLogText } from "./refinement-split.js";
@@ -26,21 +27,9 @@ export const STATE_LABELS = {
   dropped: "Dropped",
 };
 
+export { sessionBody, sessionProblem } from "./refinement-new.js";
+
 const text = (s) => String(s ?? "").trim();
-
-/** What is missing in the input, or "" when it can be sent. */
-export function sessionProblem({ repo, idea } = {}) {
-  if (!text(repo)) return "Choose a repository.";
-  if (!text(idea)) return "Describe your idea.";
-  return "";
-}
-
-/** The request body: the title is left out when it is blank. */
-export function sessionBody({ repo, idea, title }) {
-  const body = { repo: text(repo), idea: String(idea ?? "") };
-  if (text(title)) body.title = text(title);
-  return body;
-}
 
 /** One line of the log in words. */
 export function logText(entry) {
@@ -209,47 +198,6 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
     if (![...talkDrafts.values()].some(text)) return;
     e.preventDefault();
     e.returnValue = "";
-  });
-}
-
-/** Asks for the repository, the idea and an optional title. Resolves with the new session, or undefined when closed. */
-function newSessionDialog(repos, onMade, preferred) {
-  return modal("New refinement session", (close) => {
-    if (!repos.length) {
-      return h("div", { class: "stack" },
-        h("p", { class: "muted" }, "You need a GitHub repository first. Add one under My repositories."),
-        h("a", { href: "#/repos", onClick: () => close(undefined) }, "Go to My repositories"));
-    }
-    const select = h("select", { name: "repo" }, repos.map((r) => h("option", { value: r }, r)));
-    select.value = repos.find((r) => sameRepo(r, preferred)) ?? repos[0];
-    const title = h("input", { name: "title", placeholder: "Optional. The first line of the idea is used when empty.", autocomplete: "off" });
-    const idea = h("textarea", { name: "idea", rows: 8, placeholder: "Describe your idea in your own words" });
-    const err = h("p", { class: "status bad flush" });
-    let busy = false;
-    const run = async () => {
-      if (busy) return;
-      const input = { repo: select.value, idea: idea.value, title: title.value };
-      const problem = sessionProblem(input);
-      if (problem) return void (err.textContent = problem);
-      busy = true;
-      start.disabled = true;
-      err.textContent = "";
-      try {
-        const made = await api.createRefinement(sessionBody(input));
-        onMade?.(made); // also when the dialog was closed while the request ran
-        close(made);
-      } catch (e) {
-        busy = false;
-        err.textContent = errorText(e);
-        start.disabled = false;
-      }
-    };
-    const start = h("button", { class: "primary", onClick: run }, "Start session");
-    return h("div", { class: "stack" },
-      h("label", { class: "field" }, h("span", {}, "Repository"), select),
-      h("label", { class: "field" }, h("span", {}, "Title"), title),
-      h("label", { class: "field" }, h("span", {}, "Your idea"), idea),
-      err, h("div", { class: "row" }, h("span", { class: "spacer" }), start));
   });
 }
 
@@ -594,9 +542,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     h("span", { class: "spacer" }), full ? [filter("Open sessions", false), filter("Dropped", true)] : null,
     full && !readOnly ? [
       h("a", { class: "button", href: "#/refinement/backlog" }, "Backlog readiness"),
-      h("button", { onClick: () => importDialog(repos, opened, errorText) }, "Refine an existing issue"),
+      h("button", { onClick: () => newSessionDialog(repos, opened, { kind: "issue", preferred: view.filters.repo }) }, "Refine an existing issue"),
       h("button", { class: "primary", onClick: async () => {
-        await newSessionDialog(repos, opened, view.filters.repo);
+        await newSessionDialog(repos, opened, { preferred: view.filters.repo });
       } }, "New session"),
     ] : null);
   const drawList = () => {

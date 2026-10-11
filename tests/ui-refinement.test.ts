@@ -7,9 +7,11 @@ import { answerDialog, autoDialog, dialogText } from "./helpers/confirm-dialog.j
 let restore: () => void;
 let ui: any;
 let api: any;
+let fresh: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/refinement.js" as string);
+  fresh = await import("../ui/refinement-new.js" as string);
   api = (await import("../ui/api.js" as string)).api;
 });
 afterAll(() => restore());
@@ -43,6 +45,7 @@ const session = (over: object = {}) => ({
 const dropped = (over: object = {}) => session({ state: "dropped", droppedAt: new Date().toISOString(), removedOn: new Date(Date.now() + 30 * 864e5).toISOString(), ...over });
 
 beforeEach(async () => {
+  fresh.clearKeptSession();
   sessions = [];
   repos = ["acme/app"];
   sent = [];
@@ -116,6 +119,18 @@ describe("pure functions", () => {
     expect(ui.sessionProblem({ repo: "a/b", idea: "x" })).toBe("");
     expect(ui.sessionBody({ repo: "a/b", idea: "x", title: "  " })).toEqual({ repo: "a/b", idea: "x" });
     expect(ui.sessionBody({ repo: "a/b", idea: "x", title: " T " })).toEqual({ repo: "a/b", idea: "x", title: "T" });
+  });
+  it("sessionProblem and sessionBody for an issue", () => {
+    for (const issue of ["", " ", "0", "abc", "1.5", "2147483648"]) {
+      expect(ui.sessionProblem({ repo: "a/b", kind: "issue", issue }), issue).toBe("Give the issue number.");
+    }
+    expect(ui.sessionProblem({ repo: "a/b", kind: "issue", issue: "12" })).toBe("");
+    expect(ui.sessionProblem({ repo: "a/b", kind: "issue", issue: "#12" })).toBe("");
+    expect(ui.sessionProblem({ repo: "", kind: "issue", issue: "12" })).toBe("Choose a repository.");
+    expect(ui.sessionBody({ repo: " a/b ", kind: "issue", issue: "#12", idea: "x", title: "T" })).toEqual({ repo: "a/b", issue: 12 });
+  });
+  it("keeps a copy of the typed text", () => {
+    expect(fresh.keptSession()).toBeNull();
   });
   it("logText and errorText", () => {
     expect(ui.logText({ what: "created", who: "Ann" })).toBe("Ann started the session");
@@ -485,6 +500,198 @@ describe("new session", () => {
     expect(root().textContent).toContain("You need a GitHub repository first.");
     expect(walk(root()).some((e) => e.tag === "a" && e.attrs.href === "#/repos")).toBe(true);
     expect(field(root(), "idea")).toBeUndefined();
+  });
+
+  const kindRadio = (kind: string) => walk(root()).find((e) => e.attrs.name === "kind" && e.value === kind)!;
+  const chooseKind = (kind: string) => {
+    for (const k of ["idea", "issue"]) kindRadio(k).checked = k === kind;
+    kindRadio(kind).fire("change");
+  };
+  const type = (name: string, value: string) => {
+    const el = field(root(), name)!;
+    el.value = value;
+    el.fire("input");
+  };
+  const escape = () => (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
+  const labels = () => walk(root()).filter((e) => e.tag === "span").map((e) => e.textContent);
+
+  it("offers an idea and an existing issue; an idea is the default", async () => {
+    await open();
+    expect(walk(root()).filter((e) => e.tag === "legend").map((e) => e.textContent)).toEqual(["What do you want to refine?"]);
+    expect(walk(root()).filter((e) => e.tag === "b").map((e) => e.textContent)).toEqual(["An idea", "An existing issue"]);
+    expect(kindRadio("idea").checked).toBe(true);
+    expect(kindRadio("issue").checked).toBe(false);
+    expect(labels()).toContain("Title (optional)");
+    expect(field(root(), "issue")).toBeUndefined();
+  });
+  it("switches the fields with the kind and loses nothing", async () => {
+    await open();
+    type("idea", "An idea");
+    chooseKind("issue");
+    expect(field(root(), "issue")).toBeDefined();
+    expect(field(root(), "idea")).toBeUndefined();
+    expect(field(root(), "title")).toBeUndefined();
+    expect(root().textContent).toContain("Nothing on GitHub changes.");
+    chooseKind("idea");
+    expect(field(root(), "idea")!.value).toBe("An idea");
+  });
+  it("sends exactly repo and issue for an issue, whatever was typed before", async () => {
+    await open();
+    type("idea", "An idea");
+    type("title", "A title");
+    chooseKind("issue");
+    type("issue", "#12");
+    press(button(root(), "Start session"));
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/refinement", body: { repo: "acme/app", issue: 12 } }]);
+    expect((globalThis as any).location.hash).toBe("#/refinement/new1");
+  });
+  it.each(["", "0", "abc", "1.5", "99999999999"])("refuses the issue number %j on the page", async (value) => {
+    await open();
+    chooseKind("issue");
+    type("issue", value);
+    press(button(root(), "Start session"));
+    await flush();
+    expect(bad(root())).toEqual(["Give the issue number."]);
+    expect(sent).toEqual([]);
+  });
+  it("keeps a server refusal for an issue in the form", async () => {
+    await open();
+    chooseKind("issue");
+    type("issue", "12");
+    const error = 'issue #12 already has an open refinement session: "T"';
+    answers.push({ status: 409, error });
+    const start = button(root(), "Start session")!;
+    press(start);
+    await flush();
+    expect(bad(root())).toEqual([error]);
+    expect(start.disabled).toBe(false);
+    expect(field(root(), "issue")!.value).toBe("12");
+    expect((globalThis as any).location.hash).toBe("#/refinement");
+  });
+  it("keeps the typed text after Escape and shows it again", async () => {
+    repos = ["a/one", "b/two"];
+    await open();
+    type("title", "A title");
+    type("idea", "An idea");
+    const repo = field(root(), "repo")!;
+    repo.value = "b/two";
+    repo.fire("change");
+    escape();
+    expect(root().children).toHaveLength(0);
+    await open();
+    expect(field(root(), "repo")!.value).toBe("b/two");
+    expect(field(root(), "title")!.value).toBe("A title");
+    expect(field(root(), "idea")!.value).toBe("An idea");
+    chooseKind("issue");
+    type("issue", "7");
+    escape();
+    await open();
+    expect(kindRadio("issue").checked).toBe(true);
+    expect(field(root(), "issue")!.value).toBe("7");
+    chooseKind("idea");
+    expect(field(root(), "idea")!.value).toBe("An idea");
+    expect(fresh.keptSession()).toMatchObject({ repo: "b/two", kind: "idea", title: "A title", idea: "An idea", issue: "7" });
+  });
+  it("keeps the typed text after a failed request", async () => {
+    await open();
+    type("idea", "An idea");
+    answers.push({ status: 502, error: "GitHub could not be reached" });
+    press(button(root(), "Start session"));
+    await flush();
+    expect(bad(root())).toEqual(["GitHub could not be reached"]);
+    root().replaceChildren();
+    await open();
+    expect(field(root(), "idea")!.value).toBe("An idea");
+  });
+  it("clears the typed text after the session is made", async () => {
+    await open();
+    type("idea", "An idea");
+    chooseKind("issue");
+    type("issue", "12");
+    press(button(root(), "Start session"));
+    await flush();
+    expect(fresh.keptSession()).toBeNull();
+    await open();
+    expect(kindRadio("idea").checked).toBe(true);
+    expect(field(root(), "idea")!.value).toBe("");
+    expect(field(root(), "title")!.value).toBe("");
+    chooseKind("issue");
+    expect(field(root(), "issue")!.value).toBe("");
+  });
+  it("keeps newer text when an older request is answered late, in the same dialog", async () => {
+    await open();
+    type("idea", "First");
+    holdNext = true;
+    press(button(root(), "Start session"));
+    await flush();
+    type("idea", "Second");
+    hold!.release();
+    await flush();
+    expect(fresh.keptSession()).toMatchObject({ idea: "Second" });
+  });
+  it("keeps newer text typed in a reopened dialog when an older request is answered late", async () => {
+    await open();
+    type("idea", "First");
+    holdNext = true;
+    press(button(root(), "Start session"));
+    await flush();
+    escape();
+    root().replaceChildren();
+    await open();
+    expect(field(root(), "idea")!.value).toBe("First");
+    type("idea", "Newer");
+    hold!.release();
+    await flush();
+    expect(fresh.keptSession()).toMatchObject({ idea: "Newer" });
+  });
+  it("clears an unchanged text when the answer is late", async () => {
+    await open();
+    type("idea", "First");
+    holdNext = true;
+    press(button(root(), "Start session"));
+    await flush();
+    hold!.release();
+    await flush();
+    expect(fresh.keptSession()).toBeNull();
+  });
+  it("keeps the page and the text on a 401", async () => {
+    const reload = vi.fn();
+    (globalThis as any).location.reload = reload;
+    await open();
+    type("idea", "An idea");
+    answers.push({ status: 401, error: "Sign in again." });
+    press(button(root(), "Start session"));
+    await flush();
+    expect(reload).not.toHaveBeenCalled();
+    expect(bad(root())).toEqual(["Sign in again."]);
+    expect(field(root(), "idea")!.value).toBe("An idea");
+  });
+  it("opens with the issue kind from Refine an existing issue, and a kept repository wins over the filter", async () => {
+    repos = ["a/one", "b/two"];
+    await showList();
+    press(button(main(), "Refine an existing issue"));
+    expect(kindRadio("issue").checked).toBe(true);
+    expect(field(root(), "issue")).toBeDefined();
+    root().replaceChildren();
+    await open();
+    expect(kindRadio("idea").checked).toBe(true);
+    type("idea", "x");
+    const repo = field(root(), "repo")!;
+    repo.value = "b/two";
+    repo.fire("change");
+    root().replaceChildren();
+    await ui.renderRefinement(main(), { query: { repo: "a/one" } });
+    press(button(main(), "New session"));
+    expect(field(root(), "repo")!.value).toBe("b/two");
+  });
+  it("shows the hint and the link for the issue kind too", async () => {
+    repos = [];
+    await showList();
+    press(button(main(), "Refine an existing issue"));
+    expect(root().textContent).toContain("You need a GitHub repository first.");
+    expect(walk(root()).some((e) => e.tag === "a" && e.attrs.href === "#/repos")).toBe(true);
+    expect(field(root(), "issue")).toBeUndefined();
   });
 });
 

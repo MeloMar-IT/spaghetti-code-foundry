@@ -120,8 +120,10 @@ export const api = {
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
   allCredentials: () => req("GET", "/api/admin/credentials"),
-  refinement: () => req("GET", "/api/refinement"),
-  createRefinement: (body) => req("POST", "/api/refinement", body),
+  // `stay`: a 401 must not reload the page while a typed idea is kept in memory
+  refinement: (stay = false) => req("GET", "/api/refinement", undefined, stay),
+  // `stay`: a 401 must not reload the page, so the typed idea is still there
+  createRefinement: (body) => req("POST", "/api/refinement", body, true),
   refinementBacklog: (repo) => req("GET", `/api/refinement/backlog?repo=${enc(repo)}`),
   // `stay`: a poll that runs while text is typed must not reload the page on a 401
   refinementSession: (id, stay = false) => req("GET", `/api/refinement/${enc(id)}`, undefined, stay),

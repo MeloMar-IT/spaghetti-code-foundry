@@ -140,7 +140,7 @@ describe("renderStart: flows", () => {
     expect(box.attrs["data-kind"]).toBe("server");
     expect(box.textContent).toContain(ui.FLOWS_FAILED);
     expect(box.textContent).toContain("db down");
-    expect(find(main, "button")).toHaveLength(1);
+    expect(find(box, "button")).toHaveLength(1);
     expect(find(main, "form")).toHaveLength(0);
     one(main, "button", { "data-focus": "retry" }).click();
     await flush();
@@ -165,7 +165,7 @@ describe("renderStart: flows", () => {
     await open();
     const box = one(main, "div", { class: "state-error state-permission" });
     expect(box.textContent).toContain(ui.FLOWS_DENIED);
-    expect(find(main, "button")).toHaveLength(0);
+    expect(find(box, "button")).toHaveLength(0);
   });
 
   it("shows the error again when Retry fails again, and never rejects", async () => {
@@ -194,7 +194,7 @@ describe("renderStart: flows", () => {
   it("says what to do with no flows: a user asks the administrator", async () => {
     await open();
     expect(one(main, "div", { class: "empty" }).textContent).toContain(ui.NO_FLOWS);
-    expect(find(main, "a")).toHaveLength(0);
+    expect(find(one(main, "div", { class: "empty" }), "a")).toHaveLength(0);
   });
 
   it("links an admin to the flow editor", async () => {
