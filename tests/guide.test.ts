@@ -3,7 +3,16 @@ import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseFlow } from "../src/flow/load.js";
 import { ApprovalStepSchema, ClaudeStepSchema, DefaultsSchema, FlowSchema, FlowStepSchema, ParallelStepSchema, PublishSchema, PublishVarSchema, SandboxSchema, ShellStepSchema, StepSchema } from "../src/flow/schema.js";
-import { FLOW_SKILL_MODES, STEP_SKILL_MODES } from "../src/skills/schema.js";
+import { ConfigSchema } from "../src/config.js";
+import { SKILL_BLOCKED_PREFIX, SKILL_INTEGRITY_PREFIX } from "../src/engine/skill-lock.js";
+import type { StepRecord } from "../src/engine/state.js";
+import { classifyFailure } from "../src/failure.js";
+import { CATALOGUE_DEFAULTS } from "../src/skills/catalogue-rules.js";
+import type { RegisteredSkill } from "../src/skills/registry.js";
+import { resolveSkills } from "../src/skills/resolve.js";
+import { RESOLVE_DEFAULTS, RESOLVE_REJECT_CODES, UNRESOLVED_HIGH_RISK_DEFAULT, UNRESOLVED_KIND } from "../src/skills/resolve-rules.js";
+import { FLOW_SKILL_MODES, REVIEW_DEFAULTS, STEP_SKILL_MODES } from "../src/skills/schema.js";
+import { assessSkills } from "../src/skills/unresolved.js";
 import { detectorInfo } from "../src/monitor/work-detectors.js";
 import { flowGuide } from "../src/server/generate.js";
 import { statusName } from "../src/words.js";
@@ -165,5 +174,115 @@ describe("user guide: self-repair", () => {
 
   it('explains in "Why is nothing happening?" that a bug story goes first', () => {
     expect(section(manual, "#### Why is nothing happening?")).toContain(statusName("bug_first", {}));
+  });
+});
+
+describe("user guide: automatic skills", () => {
+  const manual = readFileSync("docs/USER_GUIDE.md", "utf8");
+  const auto = section(manual, "### Automatic skills");
+  const row = (code: string) => auto.split("\n").find((l) => l.startsWith(`| \`${code}\` |`));
+
+  it("sits in chapter 7, before the skill sections, and is in the contents list", () => {
+    expect(manual).toContain("  - [Automatic skills](#automatic-skills)");
+    const at = manual.indexOf("### Automatic skills");
+    expect(at).toBeGreaterThan(manual.indexOf("## 7. Settings and safety"));
+    expect(at).toBeLessThan(manual.indexOf("### Skill sources"));
+  });
+
+  it("has its sub-sections in order", () => {
+    expect([...auto.matchAll(/^#### (.+)$/gm)].map((m) => m[1])).toEqual([
+      "What happens by itself", "What policy decides", "Write a skill", "Context budgets", "Trust",
+      "The two pipelines and skills", "Find out why a run stopped",
+    ]);
+  });
+
+  it("names the policy keys and the stages", () => {
+    for (const k of ["catalogue", "selection", "unresolved", "review"]) expect(auto).toContain(`\`skills.${k}\``);
+    for (const w of ["Profile", "Catalogue", "Request", "Resolution", "Lock", "Loading", "Review checks"]) expect(auto).toContain(`| ${w} |`);
+  });
+
+  it("shows the defaults of the code", () => {
+    const doc = parse(/```yaml\n([\s\S]*?)```/.exec(auto)![1]!) as { skills: unknown };
+    const want = ConfigSchema.parse({}).skills;
+    const s = doc.skills as typeof want;
+    expect(s.builtin).toBe(want.builtin);
+    expect(s.roots).toEqual(want.roots);
+    expect(s.repository).toBe(want.repository);
+    expect(s.catalogue).toEqual(want.catalogue);
+    expect(s.selection).toEqual(want.selection);
+    expect(s.review).toEqual(want.review);
+    expect(s.unresolved).toEqual(want.unresolved);
+    expect(s.catalogue.max_candidates).toBe(CATALOGUE_DEFAULTS.maxCandidates);
+    expect(s.selection.max_tokens).toBe(RESOLVE_DEFAULTS.maxTokens);
+    expect(s.review.max_tokens).toBe(REVIEW_DEFAULTS.maxTokens);
+    expect(s.unresolved.high_risk).toEqual([...UNRESOLVED_HIGH_RISK_DEFAULT]);
+  });
+
+  it("has a row for every reason code, with the kind of the code", () => {
+    for (const code of RESOLVE_REJECT_CODES) {
+      const cells = row(code)?.split("|").map((c) => c.trim());
+      expect(cells, code).toBeTruthy();
+      expect(cells![2]!.startsWith(UNRESOLVED_KIND[code]), code).toBe(true);
+    }
+  });
+
+  it("says that a failing dependency follows the kind of its own problem", () => {
+    const sk = (id: string, o: { pin?: string; instructions?: string; deps?: { id: string }[] } = {}) => {
+      const pkg = { id, version: "1.0.0", description: "d", instructions: o.instructions ?? "x", roles: [], dependencies: o.deps ?? [], conflicts: [], category: "general", capabilities: [], risk: "low" };
+      return { key: `${id}@1.0.0`, id, version: "1.0.0", source: "admin", label: "x", dir: "/d", active: true, trust: "approved", pin: o.pin ?? "pinned", digest: `sha256:${"a".repeat(64)}`, pkg } as unknown as RegisteredSkill;
+    };
+    const first = (dep?: RegisteredSkill, limits?: { maxSkillTokens: number }) => {
+      const skills = [sk("a", { deps: [{ id: "d" }] }), ...(dep ? [dep] : [])];
+      const reg = { skills, byKey: new Map(skills.map((s) => [s.key, s])), problems: [] };
+      return assessSkills(resolveSkills(reg, ["a"], limits ? { limits } : {}), reg, ConfigSchema.parse({}).skills.unresolved).unresolved[0]!;
+    };
+    expect(first()).toMatchObject({ code: "dependency-unavailable", kind: "missing" });
+    expect(first(sk("d", { pin: "unpinned" }))).toMatchObject({ code: "dependency-unavailable", kind: "untrusted" });
+    expect(first(sk("d", { instructions: "x".repeat(4000) }), { maxSkillTokens: 1000 })).toMatchObject({ code: "dependency-unavailable", kind: "oversized" });
+    const cell = row("dependency-unavailable")!;
+    expect(cell).toContain("untrusted");
+    expect(cell).toContain("oversized");
+  });
+
+  it("has the fixes of the failure classifier and the reasons of the plan record", () => {
+    const flat = auto.replace(/\s+/g, " ");
+    for (const error of [
+      "skill integrity: a@1.0.0 is missing; this run locked it (sha256:x)",
+      "skill selection is blocked: a@1.0.0 does not fit the skill context budget (skills.selection.max_tokens)",
+      "skill selection is blocked: a (unpinned)",
+      "planning failed: the skill request of the plan is not valid",
+    ]) {
+      const history = [{ id: "marked", type: "shell", visit: 1, ok: false, output: error, error, startedAt: "x", durationMs: 1, logFile: "l" }] as unknown as StepRecord[];
+      const f = classifyFailure({ status: "failed", reason: `step "marked" failed: ${error}`, history });
+      expect(f.fix, error).toBeTruthy();
+      expect(flat, error).toContain(f.fix!);
+    }
+    for (const p of [SKILL_INTEGRITY_PREFIX, SKILL_BLOCKED_PREFIX, "skills not resolved:"]) expect(auto).toContain(p.trim());
+    for (const r of ["the plan records of this issue are not valid", "the plan record could not be written", "the plan record could not be checked"]) expect(auto).toContain(r);
+  });
+
+  it("shows both pipelines", () => {
+    for (const w of ["issue-gitflow", "issue-plan", "issue-code-daily", "plan", "plan_review", "risk_gate", "post_plan", "plan_check", "implement", "review_1"]) expect(auto).toContain(`\`${w}\``);
+  });
+
+  it("has links that lead to a heading of the guide", () => {
+    const slug = (h: string) => h.toLowerCase().replace(/[^a-z0-9_ -]/g, "").replace(/ /g, "-");
+    const slugs = new Set([...manual.matchAll(/^#{1,6} (.+)$/gm)].map((m) => slug(m[1]!.replace(/`/g, ""))));
+    for (const [, anchor] of auto.matchAll(/\]\(#([^)]+)\)/g)) expect(slugs.has(anchor!), anchor).toBe(true);
+  });
+
+  it("no longer says that nothing loads or uses skills", () => {
+    expect(manual).not.toContain("Nothing uses the list yet");
+    expect(manual).not.toContain("Nothing loads the skills yet");
+    expect(manual).not.toContain("Checked, not loaded");
+    expect(manual).not.toContain("(`issue-plan`: the plan step)");
+  });
+
+  it("is matched in the flow guide and the design", () => {
+    expect(section(guide, "## Skills")).toContain("### Skills in your own flow");
+    const design = readFileSync("docs/DESIGN.md", "utf8");
+    expect(design).toContain("### The skill path");
+    expect(design).toContain("ensureSkillLock");
+    expect(design).toContain("carryRunSkills");
   });
 });

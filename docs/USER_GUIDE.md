@@ -23,6 +23,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [6. Automate with watchers](#6-automate-with-watchers)
   - **[Label cheat sheet: which label does what](#the-label-pipeline-one-label--plan--code--one-pull-request)**
 - [7. Settings and safety](#7-settings-and-safety)
+  - [Automatic skills](#automatic-skills)
 - [8. Costs, dashboard and evals](#8-costs-dashboard-and-evals)
 - [9. Command line](#9-command-line)
 - [10. Troubleshooting](#10-troubleshooting)
@@ -578,7 +579,8 @@ the code", what went wrong and the fix. The causes and fixes:
   lines): resume the run to try the step again.
 - A skill request in the plan that is not valid ("planning failed: the skill request of the plan is
   not valid"): resuming does not help, because the stored plan is the same. Start the run again so
-  the issue is planned again. The step output says what was wrong.
+  the issue is planned again. The step output says what was wrong. For every skill stop reason
+  see [Find out why a run stopped](#find-out-why-a-run-stopped).
 - An internal error, an unknown step, or a run that failed before any step ran (workspace, bot
   identity, GitHub App token): fix the setting, or restart or update the Foundry, then resume.
 - A git or gh login error, or a network error, in a command of the flow: log in again (`gh auth
@@ -2471,9 +2473,159 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 
 **What comes later.** Pages for users (starting runs).
 
+### Automatic skills
+
+Skills are on by default. For the shipped flows nobody has to set anything up: the Foundry picks the skills, checks them, locks them and loads them. It never installs, downloads or grants anything. This part gives the whole picture and links to the sections below for the detail.
+
+#### What happens by itself
+
+| Stage | What the Foundry does | Detail |
+|---|---|---|
+| Profile | Reads the repository for evidence of its technology. | [Skill catalogue](#skill-catalogue) |
+| Catalogue | Planner steps with `skills: catalog` get a short list of approved or built-in skills with a matching pin that pass coder resolution. | [Skill catalogue](#skill-catalogue) |
+| Request | The final plan ends with one `SKILL_REQUEST:` line. | [Skill request](#skill-request) |
+| Resolution | The ids become exact `id@version` plus their dependencies, and are checked under `skills.unresolved` after the plan gate. | [Skill selection](#skill-selection), [Missing and conflicting skills](#missing-and-conflicting-skills) |
+| Lock | The first agent step writes `skill-lock.json`. It is checked again before every agent session. | [Skill lock of a run](#skill-lock-of-a-run) |
+| Loading | A Claude session gets one `<foundry-skills>` block; a resumed session gets a one-line reminder. | [Skills in Claude sessions](#skills-in-claude-sessions) |
+| Review checks | Steps with `skill_role: reviewer` get the `REVIEW.md` checks of the loaded skills, on Claude and Codex. | [Review checks for reviewers](#review-checks-for-reviewers) |
+
+#### What policy decides
+
+- `skills.catalogue`: what a planner may see.
+- `skills.selection`: what a coder may get. `include` makes a skill mandatory.
+- `skills.unresolved`: what happens to a skill that cannot be used: stop, or warn for low-risk work.
+- `skills.review`: the size of the review block.
+- **Pins** (`scf skills pin`): which content is approved. `include` is never a pin.
+
+These are all the settings with their defaults:
+
+```yaml
+skills:
+  builtin: true
+  roots: []
+  repository: false
+  catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
+  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] }
+  review: { max_tokens: 3000, max_skill_tokens: 1000 }
+  unresolved:
+    unknown: stop
+    missing: stop
+    untrusted: stop
+    conflict: stop
+    oversized: stop
+    high_risk: [migration, migrations, security, messaging, kafka, rabbitmq, amqp, queue, outbox]
+```
+
+`skills.tools` is read but no run uses it yet.
+
+#### Write a skill
+
+1. Make a folder `<data folder>/skills/<id>/`, or one under a folder of `skills.roots`. Optional sub-folders are `references`, `scripts`, `assets` and `evals`.
+2. Write `SKILL.md`: frontmatter with `name` (the same as the id) and `description` (at most 1024 characters), then the instructions. At most 64 KiB. Only the description and the instructions reach a session.
+3. Write `skill.yaml`:
+
+   ```yaml
+   id: my-skill
+   version: 1.0.0
+   category: language
+   capabilities: [strict-typing]
+   dependencies:
+     - id: small-changes
+       min_version: 1.0.0
+   conflicts: []
+   roles: [coder, reviewer]
+   risk: low
+   ```
+
+   More fields: `detectors`, `connectors`, `tool_profile`. The five built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
+4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
+5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
+6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
+7. Evidence for a new version: see [Evidence to promote a skill version](#evidence-to-promote-a-skill-version).
+8. No credentials and no live endpoints: see [Credentials, endpoints and connectors](#credentials-endpoints-and-connectors).
+
+#### Context budgets
+
+| Limit | Default | When it is passed |
+|---|---|---|
+| `catalogue.max_tokens` | 2000 | The lowest-ranked skills are dropped, then descriptions are shortened. |
+| `selection.max_skill_tokens` | 5000 | The skill is refused as `too-large`. |
+| `selection.max_skills` / `selection.max_tokens` | 6 / 15000 | The skill is refused as `over-count` / `over-budget`. |
+| `review.max_tokens` / `review.max_skill_tokens` | 3000 / 1000 | The skill is left out of the review block and logged. |
+
+The estimate counts the description and `SKILL.md`, not reference files. A resumed session costs one reminder line; a new session gets the block once.
+
+#### Trust
+
+- **Sources** come in this order: the data folder, `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
+- **Pins** tie a version to its digest. A mismatch blocks the skill until you pin it again or give it a new version.
+- **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
+- **Isolation.** A Claude session that gets a skill block, or that is a reviewer, runs without your personal Claude setup, even with `isolate_agents` off. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn it on by themselves. Codex reviewers ignore your Codex user config.
+- **No grants.** A skill cannot give a tool, a permission or network access. The Foundry's rules and the task win.
+
+#### The two pipelines and skills
+
+| Step | Flow | What it does for skills |
+|---|---|---|
+| `plan`, `revise_plan` | `issue-gitflow`, `issue-plan` | Gets the catalogue (`skills: catalog`) and writes the `SKILL_REQUEST` line. |
+| `plan_review` | `issue-gitflow`, `issue-plan` | Review checks for the draft request (`skill_role: reviewer`). |
+| `risk_gate` | `issue-gitflow` | Plan gate: the request is validated and resolved under `skills.unresolved`. The run stops here on a problem. |
+| `post_plan` | `issue-plan` | Plan gate: the same check. Posts "Required skills" and writes the plan record. |
+| `plan_check` | `issue-code-daily` | Compares the plan comment with the plan record and carries the request. |
+| `implement` | `issue-gitflow`, `issue-code-daily` | The first agent step: writes `skill-lock.json` and loads the block. |
+| `fix_guard`, `fix_tests`, `address_review_N`, `docs` | `issue-gitflow`, `issue-code-daily` | The lock is checked again. A resumed session gets a reminder, a new session the full block. |
+| `review_1`, `review_2` | `issue-gitflow`, `issue-code-daily` | Review checks from the lock. |
+
+For the same plan and commit, both pipelines lock the same skills.
+
+#### Find out why a run stopped
+
+Look here, in this order:
+
+1. The **Skills** card of the run page ([Skills on the run page](#skills-on-the-run-page)).
+2. The stop reason of the run.
+3. The log lines: `skill catalogue: …`, `skill context: loaded|reloaded|reused …`, `! skill context: rejected (…)`, `⚠ skill …` and `· skills: off for this flow`.
+4. `scf skills`: pin state, both digests and problems.
+5. [The health line](#the-health-line): skill problems and `skill lock`.
+
+| The stop reason starts with | What to do |
+|---|---|
+| `planning failed: the skill request of the plan is not valid` | start the run again so the issue is planned again |
+| `skill integrity:` (a skill changed, is missing, is no longer pinned, now comes from the repository or cannot be verified; or the lock of the run is missing or changed) | restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills |
+| `skill selection is blocked: … does not fit the skill context budget` | raise skills.selection.max_tokens, then resume the run |
+| `skill selection is blocked:` | pin the skill or change skills.selection.include, then resume the run |
+| `skills not resolved: N skill(s) cannot be used — id [code]: …` | see the table of codes below |
+| `skills not resolved: skills.selection include/exclude is not valid` | correct the lists in the config, then resume the run |
+| `skills not resolved: …` with "plan the issue again" (the plan comment is gone or was edited, a newer plan has no record, the record was cleaned up, the comments could not be read) | plan the issue again, then resume the run |
+| `skills not resolved: the skills could not be checked`, `the skill request of the plan could not be read again` or `the plan record could not be checked` | resume the run; if it stays, plan the issue again |
+| `skills not resolved: the plan records of this issue are not valid` | the stored plan records of the issue cannot be read: plan the issue again, or ask an admin to check the plan records in the data folder, then resume the run |
+| `skills not resolved: the plan record could not be written (…)` | fix what the reason names (often the data folder cannot be written), then resume the run to try the step again |
+
+The reason code of each skill, the kind of policy that decides it, and what to do:
+
+| Code | Kind | What to do |
+|---|---|---|
+| `unknown` | unknown | Put it in the skills folder of the data folder, pin it with `scf skills pin`, then resume the run |
+| `excluded` | untrusted | Take it off `skills.selection.exclude` or `skills.catalogue.exclude`, then resume the run |
+| `unapproved` | untrusted | Copy it to an administrator skills folder, pin it, then resume the run |
+| `unpinned` | untrusted | Check the package, run `scf skills pin <id@version> <digest>`, then resume the run |
+| `mismatch` | untrusted | Run `scf skills` to see both digests, then pin it with `--replace` or give it a new version |
+| `unverified` | untrusted | Fix or delete `skills.lock.json`, pin again, then resume the run |
+| `role` | untrusted | Release a version that allows the role, or plan without it |
+| `too-large` | oversized | Raise `skills.selection.max_skill_tokens` or shorten the skill |
+| `over-count` | oversized | Raise `skills.selection.max_skills` or request fewer skills |
+| `over-budget` | oversized | Raise `skills.selection.max_tokens` or request fewer skills |
+| `dependency-unavailable` | missing, or the kind of the dependency's own problem (`untrusted` for an unpinned dependency, `oversized` for a large one) | Fix the dependency by its own code (the message names it); or shorten the chain |
+| `dependency-version` | missing | Install a newer version of the dependency and pin it, then resume the run |
+| `dependency-cycle` | missing | Remove the cycle from the skill packages, then resume the run |
+| `conflict` | conflict | Put one of them on `skills.selection.exclude` |
+| `blocked` | conflict | A mandatory skill was refused or the include/exclude lists are not valid. Fix that first |
+
+A kind set to `warn` lets low-risk work go on. Medium and high risk, and mandatory skills, always stop; see [Missing and conflicting skills](#missing-and-conflicting-skills).
+
 ### Skill sources
 
-The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). Nothing uses the list yet.
+The Foundry reads skill packages only from approved folders and builds one list from them. A package that does not pass the skill schema is not listed, and the problem shows in [the health line](#the-health-line). The planner's catalogue and the resolver read this list; see [Automatic skills](#automatic-skills).
 
 ```yaml
 skills:
@@ -2498,7 +2650,7 @@ risk: medium
 connectors: [kafka, oracle]
 ```
 
-- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. Nothing uses them yet.
+- **Connectors** are slugs only, at most 16, no duplicates. The package needs `risk: medium` or `high`. Connectors are recorded only; no run connects to anything.
 - **Refused:** credential files by name (`.env`, `*.pem`, `id_rsa`, `*.key`, `*.p12` and similar; `.example`, `.sample` and `.template` copies are fine), credentials and live endpoints in any file, and file or folder names that look like a credential.
 - **Write endpoints like this:** `kafka://<broker>:9092`, `redis://${REDIS_HOST}:6379`, `amqp://mq.example.com`, `localhost`, the words `host`, `hostname`, `server`, `broker` or `db`, and names ending in `.example`, `.test` or `.invalid`. A placeholder user or password does not help when the host is real.
 - **Messages:** `is a credential file by its name; a skill must not hold credentials`, `holds what looks like a credential or a live endpoint (<rule>); use a placeholder`, `a file name looks like a credential (<rule>)` and `the folder name looks like a credential (<rule>)`. They name the rule, never the value.
@@ -2554,8 +2706,8 @@ A final plan that is ready to code ends with one line, `SKILL_REQUEST: {"version
 
 - **In the posted plan:** the plan comment gets a "Required skills" section (`None.` when empty). The line itself is not posted and is removed from notes, send-back comments and created split issues.
 - **Which plans:** only plans that are ready to code. Plans that ask questions, are not code, or are too big do not carry a request. A request in the issue text or its comments is never copied.
-- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the risk gate (`issue-plan`: the plan step), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
-- **Checked, not loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). The planner picks from the [skill catalogue](#skill-catalogue); the run checks the ids, locks them and loads them for the coder. A plan that picks nothing gives an empty request.
+- **What fails the run:** a line that is present but not valid (bad JSON, unknown version or key, too many skills, a bad id, reason or evidence, a repeated id, two request lines, a line over 8,000 bytes). The run stops at the plan gate (`risk_gate` in `issue-gitflow`, `post_plan` in `issue-plan`), before any coding, and nothing is posted. A plan with no line at all is accepted as an empty request. Start the run again to plan again.
+- **Checked, locked and loaded.** After the plan gate the run checks the ids; see [Missing and conflicting skills](#missing-and-conflicting-skills). The planner picks from the [skill catalogue](#skill-catalogue); the run checks the ids, locks them and loads them for the coder. A plan that picks nothing gives an empty request.
 - **`issue-code-daily`** has no plan gate, so it takes the request from the plan record, never from a comment; see [Skills from the plan to the coding run](#skills-from-the-plan-to-the-coding-run).
 - **Docker mode** needs `node` in the image for the checking tool, as `create-split` does.
 
@@ -2607,7 +2759,7 @@ When `issue-plan` posts a plan, the Foundry keeps its own record of the skill re
 
 ### Missing and conflicting skills
 
-After the plan gate (`issue-plan`: the plan step) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.
+After the plan gate (`risk_gate` in `issue-gitflow`, `post_plan` in `issue-plan`) the run checks the skills the plan asked for. A skill that cannot be used stops the run before the next step. The Foundry does not carry on with the generic coder without telling you.
 
 ```yaml
 skills:
@@ -2625,19 +2777,19 @@ skills:
 - **High risk always stops,** whatever the policy says. A skill is high risk when its id, category or a capability equals a `high_risk` term. Terms match whole hyphen-separated words, so `insecurity-notes` is not high risk. A package that says `risk: high` is high risk too. A `medium` skill also always stops; only `low` can be warned about. A mandatory skill (`skills.selection.include`) that cannot be used also stops.
 - **Resume:** resuming a stopped run checks the skills again. Install, approve or pin the skill (see [Pinned versions and integrity](#pinned-versions-and-integrity)), then resume. If the stored request cannot be read again, the run stays stopped.
 - **Unchanged:** a run whose plan asks for no skills, with no `skills.selection.include`, is not checked. Older run files stay valid.
-- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). GitHub comments do not show them yet.
+- **Where to see it:** the stop reason and warnings are in `run.json` and the live log. The run page shows the skills in a card; see [Skills on the run page](#skills-on-the-run-page). The plan comment lists the required skills; stop reasons are not posted to GitHub.
 
 ### Skills in Claude sessions
 
 A Claude session gets only the skills of the run's lock. The Foundry puts their text in one `<foundry-skills>` block at the start of the prompt, in front of the task. Nothing is written to the repository, so no skill file can appear in a diff or a commit.
 
-- **Only locked skills.** The note every session gets says that the block is the only skill guidance to follow; the agent must not use, load or look for any other skill. A Claude session whose lock holds skills also runs without your personal Claude setup (skills, MCP servers, plugins, hooks and settings), even when `isolate_agents` is off. The log says so.
+- **Only locked skills.** The note every session gets says that the block is the only skill guidance to follow; the agent must not use, load or look for any other skill. A Claude session whose lock holds skills also runs without your personal Claude setup (skills, MCP servers, plugins, hooks and settings), even when `isolate_agents` is off. The log says so. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn this on by themselves; reviewer steps always run isolated.
 - **Rules win.** The block says that the Foundry's safety rules and the instructions of the user and the task win over a skill, and that a skill cannot grant a tool, a permission or network access. Only the description and the instructions of a package are used; its tools, profile and files never reach the session. Text that looks like a block tag is escaped.
 - **Size.** The block may not be larger than `skills.selection.max_tokens`. A skill is added together with the skills it needs, or not at all. A skill that does not fit is left out and logged. If a mandatory skill does not fit, the step stops with `skill selection is blocked: … does not fit the skill context budget`; raise `max_tokens`, then resume.
 - **Recorded.** The step record in `run.json` gets `skills`: `loaded` (`id@version`, in load order), `omitted` (only when something was left out), `bytes` and `estimatedTokens`. Steps without a lock have no `skills`. The log shows the same sizes.
 - **Repairs and fallbacks.** The full text is given once per Claude session. A step with `resume:` that continues the session of an earlier step (same agent, same locked block) gets only a one-line reminder with the skill ids, not the text again. A new session gets the complete block exactly once: a retry, a fallback to another model or provider, or a resume that cannot continue the old session. Before every session the lock is checked again; if the skills changed, the step stops.
 - **Log.** `skill context: reused …` (nothing added), `skill context: loaded …` (first session), `skill context: reloaded … new session` (retry, fallback or fresh session) and `! skill context: rejected (…)` (lock check failed). The log shows ids, sizes and token estimates, never the package text. The step record `skills` also gets `state`, `digest`, `attachedBytes` and `attachedEstimatedTokens`; `skills_digest` is kept for the next resume. Older run files without them still work.
-- **Codex** coding sessions get no skills yet. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
+- **Codex** coding sessions get no skills. The lock is still checked before them. Reviewer steps get review checks on both agents; see below.
 
 ### Skills on the run page
 
@@ -2660,7 +2812,7 @@ The same data is the `skillView` field of `GET /api/runs/:id` and of the `update
 
 A skill package may hold an optional `REVIEW.md` next to `SKILL.md`: a few short checks for a reviewer (for example a Kafka skill checks delivery and ordering; a database skill checks the data model and migration risks). It is at most 8 KiB, must not be empty, and needs the `reviewer` role in `skill.yaml` (or no roles). It is part of the package digest, so a change needs a new pin.
 
-A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step and the `review_N` steps of `issue-plan` have it. Without `skill_role` a step is a coder, as before.
+A flow step gets these checks with `skill_role: reviewer` on a `claude` step. The `plan_review` step of `issue-gitflow` and `issue-plan`, and the `review_N` steps of `issue-gitflow` and `issue-code-daily`, have it. Without `skill_role` a step is a coder, as before.
 
 - **Compact.** The block (`<foundry-skills role="reviewer">`) holds only the description and `REVIEW.md` of each skill, never `SKILL.md`, references, scripts or other files. It is limited by `skills.review.max_tokens` (100–20000, default 3000) and `skills.review.max_skill_tokens` (50–5000, default 1000). It is always smaller than the coding block of the same run and never above `skills.selection.max_tokens`. A skill over its limit is left out and logged.
 - **Only coding skills.** Only skills that were loaded for coding and allow the `reviewer` role are used. Skills that were not selected do not appear. Code review uses the run's skill lock. Plan review, before any lock exists, uses the skills of the draft plan's `SKILL_REQUEST` if they resolve; otherwise the reviewer gets none and the log says why.
