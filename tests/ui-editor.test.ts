@@ -262,6 +262,56 @@ describe("flow settings", () => {
   });
 });
 
+describe("read-only", () => {
+  const ro = (f: any, over: Record<string, unknown> = {}) => make(f, { readOnly: true, ...over });
+  const kv = (root: FakeElement) => root.all("div").filter((d) => d.attrs.class === "kv");
+  const cls = (root: FakeElement, c: string) => root.all("div").filter((d) => d.classList.contains(c));
+  const byId = (root: FakeElement, id: string) => root.querySelectorAll("[id]").find((e) => e.attrs.id === id)!;
+
+  it("leaves out the add-step bar, and rows still select", () => {
+    const { root, ctx } = ro(flow());
+    expect(cls(root, "insert")).toHaveLength(0);
+    rows(root)[2].click();
+    expect(ctx.onSelect.mock.calls).toEqual([[1]]);
+    expect(cls(make(flow()).root, "insert")).toHaveLength(1);
+  });
+
+  it("locks the settings card", () => {
+    const { root } = ro(flow());
+    const card = byId(root, "flow-settings");
+    expect(card.classList.contains("read-only")).toBe(true);
+    expect(card.all("button")).toHaveLength(0);
+    for (const i of card.all("input")) {
+      if (i.attrs.type === "checkbox") expect(i.disabled).toBe(true);
+      else expect(i.readOnly).toBe(true);
+    }
+    for (const s of card.all("select")) expect(s.disabled).toBe(true);
+  });
+
+  it("locks a step: the prompt cannot be edited and no button is left", () => {
+    const { root } = ro(flow(), { selected: 0 });
+    const card = byId(root, "step-0");
+    expect(card.classList.contains("read-only")).toBe(true);
+    expect(card.all("textarea").length).toBeGreaterThan(0);
+    for (const t of card.all("textarea")) expect(t.readOnly).toBe(true);
+    expect(card.all("button")).toHaveLength(0);
+  });
+
+  it("leaves a name and a value per variable in the flow settings", () => {
+    const f: any = flow();
+    f.vars = { a: "1", b: "2" };
+    const { root } = ro(f);
+    expect(kv(root)[0].children).toHaveLength(4);
+  });
+
+  it("leaves a name and a value per variable of a sub-flow step", () => {
+    const f: any = flow();
+    f.steps.push({ id: "sub", type: "flow", flow: "x", vars: { a: "1", b: "2" } });
+    const { root } = ro(f, { selected: 3 });
+    expect(kv(root)[0].children).toHaveLength(4);
+  });
+});
+
 describe("the YAML of an unchanged flow", () => {
   for (const file of ["issue-gitflow.yaml", "refine-brief.yaml"]) {
     it(`stays the same after a draw of ${file}`, () => {

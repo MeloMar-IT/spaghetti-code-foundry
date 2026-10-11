@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
-import { held, httpError } from "./helpers/flow-app.js";
+import { dropBrowser, held, httpError, launchApp } from "./helpers/flow-app.js";
 import { loadUiSource } from "./helpers/ui-load.js";
 
 // The Library page and "Save step as block" on the fake DOM, with the api as `vi.fn`s.
@@ -200,5 +200,52 @@ describe("Save step as block", () => {
   it("has no native confirm", async () => {
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("ui/library.js", "utf8")).not.toMatch(/\bconfirm\(/);
+  });
+});
+
+describe("the flow list at 1024 px", () => {
+  const listeners: Record<string, () => unknown> = {};
+  const entry = { name: "a", scope: "repo", description: "" };
+  const fire = async (name: "compact" | "wide") => { listeners[name]!(); await new Promise((r) => setTimeout(r, 0)); };
+  const side = () => el("sidebar");
+  const blank = () => btn(side(), "+ Blank flow");
+  const hrefs = () => side().all("a").map((a) => a.getAttribute("href"));
+
+  async function start() {
+    const renderLibrary = vi.fn(async (box: FakeElement) => { real.dom.mount(box, real.dom.h("p", {}, "library page")); });
+    g.matchMedia = (q: string) => ({ addEventListener: (_t: string, fn: () => unknown) => { listeners[q.includes("max-width: 767") ? "compact" : "wide"] = fn; } });
+    g.innerWidth = 1200;
+    await launchApp({ ...real, ia: await import("../ui/ia.js" as string), auth: await import("../ui/auth.js" as string) }, "#/library",
+      { flows: async () => [entry] }, { "./library.js": { renderLibrary } });
+    await vi.waitFor(() => expect(hrefs()).toContain("#/flows/a"));
+    return renderLibrary;
+  }
+  afterEach(() => {
+    dropBrowser();
+    delete g.matchMedia;
+    delete g.innerWidth;
+  });
+
+  it("redraws the list at the crossing in both directions, and not the page", async () => {
+    const renderLibrary = await start();
+    expect(blank()).toBeDefined();
+    g.innerWidth = 800;
+    await fire("wide");
+    expect(blank()).toBeUndefined();
+    expect(hrefs()).toContain("#/flows/a");
+    g.innerWidth = 1200;
+    await fire("wide");
+    expect(blank()).toBeDefined();
+    expect(renderLibrary).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the list alone at a crossing that is not the 1024 px limit", async () => {
+    await start();
+    g.innerWidth = 800;
+    await fire("wide");
+    const first = side().children[0];
+    g.innerWidth = 700;
+    await fire("compact");
+    expect(side().children[0]).toBe(first);
   });
 });

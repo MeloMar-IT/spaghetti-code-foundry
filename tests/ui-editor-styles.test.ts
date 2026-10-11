@@ -127,6 +127,14 @@ describe("checkbox rows", () => {
   });
 });
 
+describe("the read-only variable grid", () => {
+  it("has two columns in a locked inspector, after the three-column rule", () => {
+    expect(decls(".inspector.read-only .kv")).toContain("grid-template-columns: 1fr 2fr");
+    expect(index(".inspector.read-only .kv")).toBeGreaterThan(index(".kv"));
+    expect(decls(".kv")).toContain("grid-template-columns: 1fr 2fr auto");
+  });
+});
+
 describe("class toggling", () => {
   it("fake classList.toggle adds and removes the class", () => {
     const el = new FakeElement("span");

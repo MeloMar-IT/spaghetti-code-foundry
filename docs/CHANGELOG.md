@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Small screens 1e-3 — the flow builder is view-and-run below 1024 px (#454). Part 3 of 3 of #371. At 1024 px and wider nothing changes.
+  - **Flow pages.** `flows`, `flow` and `new-flow` leave `NOT_YET`. Below 1024 px the header has no Save and no More menu, and "Test run" is the primary action; the list has no "Draft flow" or "Blank flow"; Visual mode has no add-step bar and the settings card and step inspector are locked with `lockReadOnly`; YAML mode is `readonly`; variable lists show name and value in two columns (`.kv` rule in `ui/css/pages/editor.css`). `renderHeader`, `renderNavigator` and `renderEditor` take `readOnly`; `createFlowPage` takes `isReadOnly`.
+  - **Asked at every change.** `save`, `remove`, `newBlank`, `generateDialog` and Ctrl/Cmd+S do nothing when the window is narrow. A delete or rename clean-up that fails after the window shrank offers no Retry, and its callback does nothing.
+  - **`#/new` and `#/flows`.** `#/new` shows "needs a wider screen" unless an unsaved draft exists; then the draft is shown read-only. The welcome page offers no create buttons.
+  - **Resize.** Crossing 1024 px redraws the flow page; a dirty flow keeps its edits in both directions and the notice says "unsaved changes are kept". On `#/library` the flow list in the sidebar redraws at the crossing, although the Library page stays full.
+  - Tests: unit tests in `ui-flow-page`, `ui-editor`, `ui-flow-states`, `ui-flow-save`, `ui-library-states` and `ui-editor-styles`; the browser spec `support-levels.spec.ts` covers `#/flows/gate` at 768 and 1024 px and a resize from 1024 to 800 px.
 - Page templates 5b — the runs list, the board and the run page (#448). Part 2 of 3 of #341. Nothing changes for the eye; focus and scroll behave as before.
   - **Runs list.** `renderRunsList` mounts one `collectionPage` in every state (loading, first-load error, 403, data). With data the slots are `actions` (queue text, owner filter, spacer, note, Refresh), `notices`, `filters`, `list` and `empty`.
   - **Board.** `boardView` returns one node, a `boardPage`, on all three return paths; `data-scroll="board"` sits in `.page-columns`. `renderBoard` still mounts the banner, the body and the note into `main` in that order. `.board` moved from `ui/css/pages/board.css` to `ui/css/templates.css` as `.page-board .board`, with the same declarations.

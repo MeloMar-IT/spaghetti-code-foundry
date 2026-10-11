@@ -159,6 +159,7 @@ button.problem-link { border: none; background: transparent; padding: 0; color: 
 .pill.approval { background: var(--color-waiting-soft); color: var(--color-waiting); }
 .pill.parallel, .pill.flow { background: var(--run-soft); color: var(--run); }
 .kv { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; align-items: center; }
+.inspector.read-only .kv { grid-template-columns: 1fr 2fr; }
 
 /* ── graph ── */
 .graph { max-width: 100%; height: auto; display: block; }

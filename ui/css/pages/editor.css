@@ -32,6 +32,7 @@
 .route-list { display: grid; gap: 6px; margin-bottom: 8px; }
 .route { display: grid; grid-template-columns: auto 1fr auto 160px auto; gap: 6px; align-items: center; font-size: var(--text-small); }
 .kv { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; align-items: center; }
+.inspector.read-only .kv { grid-template-columns: 1fr 2fr; }
 
 /* ── graph ── */
 .graph { max-width: 100%; height: auto; display: block; }
