@@ -266,6 +266,12 @@ export function assessSkillTools(needs: SkillToolNeed[], flow: FlowTools, policy
   return checkSkillTools(needs, flow.capabilities, policy, "flow", flow.partial);
 }
 
+/** One log line for what a Claude session was given. Counts and sources only, never rule text. */
+export function sessionToolsLine(t: SessionTools): string {
+  const c = t.capabilities;
+  return `skill tools: mode ${t.mode.value} (${t.mode.source}); ${t.approved.rules.length} approved rule(s) (${t.approved.source}); sandbox ${t.sandbox ? "on" : "off"}; shell ${c.shell ? "yes" : "no"}, network ${c.network ? "yes" : "no"}, files ${c.filesystem}; connectors: none`;
+}
+
 export function sessionToolGrant(tools: SessionTools, check: ToolCheck, isolated = false): SessionToolGrant {
   const out = new Set(check.leftOut.map((l) => l.key));
   return {

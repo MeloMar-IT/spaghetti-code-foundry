@@ -60,6 +60,7 @@ describe("classifyFailure", () => {
     [["skill integrity: a@1.0.0 is missing; this run locked it (sha256:x)", "skill integrity: the skill lock of this run is missing or was changed"], "a skill this run locked is missing or changed", "restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills"],
     [["skill selection is blocked: a@1.0.0 does not fit the skill context budget (skills.selection.max_tokens)"], "a mandatory skill does not fit the skill context budget", "raise skills.selection.max_tokens, then resume the run"],
     [["skill selection is blocked: a (unpinned)"], "a mandatory skill cannot be used", "pin the skill or change skills.selection.include, then resume the run"],
+    [["skill tools: 1 skill(s) cannot be used — kafka [tool-not-approved]: It needs a shell, which skills.tools.shell does not allow."], "a skill of this run needs a tool or connector the run may not use", "allow it under skills.tools, or set skills.tools.missing: degrade, then resume the run"],
   ])("is factory for the sentences of a deploy key, the GitHub App or a skill lock: %#", (errors, what, fix) => {
     for (const error of errors) {
       const h = [rec({ id: "marked", output: error, error })];

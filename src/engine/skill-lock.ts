@@ -11,6 +11,7 @@ import {
   buildRunSkillLock, integrityReason, planHashOf, readRunSkillLock, runSkillLockSummary, verifyRunSkillLock, writeRunSkillLock,
   type RunSkillLock,
 } from "../skills/run-lock.js";
+import { checkSkillTools, type SessionTools, type SkillToolNeed, type ToolCheck } from "../skills/tool-policy.js";
 import type { Engine } from "./execute.js";
 
 // The skill lock of a run, made at the first agent step after a checked plan (or a plan record carried at plan_check) and verified before every agent session.
@@ -163,7 +164,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
 export type SkillSession =
   | { refused: string }
   /** `draft`: The block is for a draft plan under review; the run has no lock for it. */
-  | { payload?: SkillPayload; draft?: true };
+  | { payload?: SkillPayload; draft?: true; tools?: ToolCheck };
 
 type SessionEngine = Pick<Engine, "summary" | "config" | "log" | "save">;
 
@@ -225,9 +226,10 @@ function reviewSession(engine: SessionEngine, list: PayloadSkill[], reg: ReturnT
 /**
  * The skill check before a session of this agent, plus the payload: the coder gets the lock of the current plan,
  * a reviewer gets the compact review checks of the same skills, on both agents. A block from a draft plan is marked `draft`.
+ * With `tools` (a Claude coder session) the locked skills are also checked against the policy and what the step gives; `tools` in the result is that check.
  * Synchronous; never throws.
  */
-export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, role: StepSkillRole = "coder", block = true): SkillSession {
+export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, role: StepSkillRole = "coder", block = true, tools?: SessionTools): SkillSession {
   try {
     if (flowSkillSource(engine.summary.flowDef).mode === "off") return {};
     // A step with `skills: off` (block = false) still has the lock made or verified, but gets no skill block.
@@ -257,10 +259,30 @@ export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, ro
     if (!out.lock) return {};
     const list = lockList(out.lock, out.reg);
     if ("refused" in list) return list;
-    const payload = renderSkillPayload(list, { maxTokens: engine.config.skills.selection.max_tokens });
+    let check: ToolCheck | undefined;
+    let usable = list;
+    if (tools && list.length > 0) {
+      const needs: SkillToolNeed[] = out.lock.skills.map((e) => {
+        const key = `${e.id}@${e.version}`;
+        return { key, id: e.id, selection: e.selection, requiredBy: e.requiredBy, pkg: out.reg!.byKey.get(key)!.pkg };
+      });
+      check = checkSkillTools(needs, tools.capabilities, engine.config.skills.tools, "session");
+      if (check.action === "stop") return { refused: check.reason! };
+      for (const l of check.leftOut) {
+        const via = l.via ? ` (with ${l.via})` : "";
+        engine.log(
+          l.code === "tool-not-in-step"
+            ? `    · skill tools: ${l.key} not loaded in this step [${l.code}]${via}`
+            : `    ! skill tools: ${l.key} left out [${l.code}]${via}`,
+        );
+      }
+      const gone = new Set(check.leftOut.map((l) => l.key));
+      usable = list.filter((s) => !gone.has(`${s.id}@${s.version}`));
+    }
+    const payload = renderSkillPayload(usable, { maxTokens: engine.config.skills.selection.max_tokens });
     if (payload.blocked) return { refused: `${SKILL_BLOCKED_PREFIX}${payload.blocked} does not fit the skill context budget (skills.selection.max_tokens)` };
     for (const k of payload.omitted) engine.log(`    ! skill context: ${k} left out: over budget`);
-    return { payload };
+    return check ? { payload, tools: check } : { payload };
   } catch {
     return { refused: NOT_WRITTEN };
   }

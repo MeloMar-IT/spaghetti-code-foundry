@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { sessionTools } from "../src/skills/tool-policy.js";
 import { SKILL_LOCK_CHANGED, ensureSkillLock, skillSession } from "../src/engine/skill-lock.js";
 import type { RunSkillCarry } from "../src/engine/plan-carry.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
@@ -418,5 +419,102 @@ describe("flow skill modes", () => {
     expect(existsSync(file(t.runDir))).toBe(true);
     const changed = () => reg(sk("a", { digest: digestOf("b") }));
     expect(skillSession(t.engine, { discover: changed }, "coder", false)).toHaveProperty("refused");
+  });
+});
+
+describe("skillSession with session tools", () => {
+  const shellSkill = (id: string, extra: Record<string, unknown> = {}) => {
+    const s = sk(id);
+    Object.assign(s.pkg, { risk: "medium", tool_profile: { shell: true, network: false, filesystem: "read" }, connectors: [], ...extra });
+    return s;
+  };
+  const withDeps = (s: RegisteredSkill, deps: string[]) => {
+    Object.assign(s.pkg, { dependencies: deps.map((id) => ({ id, version: "^1.0.0" })) });
+    return s;
+  };
+  const cfg = (tools: Record<string, unknown> = {}, include: string[] = []) => ConfigSchema.parse({ skills: { tools, selection: { include } } });
+  const step = (rules: string[]) => sessionTools({ stepId: "impl", step: { allowed_tools: rules }, defaults: {}, sandbox: { boxed: false } });
+  const noShell = step(["Read"]);
+  const shell = step(["Bash"]);
+  const keys = (r: ReturnType<typeof skillSession>) => ("payload" in r ? r.payload?.loaded : undefined);
+
+  it("leaves a shell skill out of a step without shell, and does not refuse", () => {
+    const t = setup(gateOutput(["a"]));
+    const r = skillSession(t.engine, { discover: () => reg(shellSkill("a")) }, "coder", true, noShell);
+    expect(r).toMatchObject({ payload: { loaded: [], text: "" }, tools: { leftOut: [{ key: "a@1.0.0", code: "tool-not-in-step" }] } });
+    expect(r).not.toHaveProperty("refused");
+    expect(t.logs).toContain("    · skill tools: a@1.0.0 not loaded in this step [tool-not-in-step]");
+  });
+
+  it("loads it into a step with shell", () => {
+    const t = setup(gateOutput(["a"]));
+    const r = skillSession(t.engine, { discover: () => reg(shellSkill("a")) }, "coder", true, shell);
+    expect(keys(r)).toEqual(["a@1.0.0"]);
+    expect(r).toMatchObject({ tools: { action: "continue", leftOut: [], met: [{ key: "a@1.0.0", need: "shell" }] } });
+  });
+
+  it("refuses when the policy changed after the lock, and decides again on the next call", () => {
+    const t = setup(gateOutput(["a"]));
+    const discover = () => reg(shellSkill("a"));
+    expect(keys(skillSession(t.engine, { discover }, "coder", true, shell))).toEqual(["a@1.0.0"]);
+    const bytes = readFileSync(file(t.runDir));
+    t.engine.config = cfg({ shell: false });
+    const r = skillSession(t.engine, { discover }, "coder", true, shell) as { refused: string };
+    expect(r.refused).toMatch(/^skill tools: .*a \[tool-not-approved\]/);
+    t.engine.config = cfg();
+    expect(keys(skillSession(t.engine, { discover }, "coder", true, shell))).toEqual(["a@1.0.0"]);
+    expect(Buffer.compare(readFileSync(file(t.runDir)), bytes)).toBe(0);
+  });
+
+  it("leaves the skill out under degrade", () => {
+    const t = setup(gateOutput(["a"]));
+    const discover = () => reg(shellSkill("a"));
+    skillSession(t.engine, { discover }, "coder", true, shell);
+    t.engine.config = cfg({ shell: false, missing: "degrade" });
+    const r = skillSession(t.engine, { discover }, "coder", true, shell);
+    expect(r).toMatchObject({ payload: { loaded: [] }, tools: { leftOut: [{ key: "a@1.0.0", code: "tool-not-approved" }] } });
+    expect(t.logs).toContain("    ! skill tools: a@1.0.0 left out [tool-not-approved]");
+  });
+
+  it("refuses a locked skill that needs the network under the default policy", () => {
+    const t = setup(gateOutput(["a"]));
+    const net = () => reg(shellSkill("a", { tool_profile: { shell: false, network: true, filesystem: "read" } }));
+    expect(skillSession(t.engine, { discover: net }, "coder", true, shell)).toHaveProperty("refused");
+  });
+
+  it("leaves out a skill with a connector under degrade", () => {
+    const t = setup(gateOutput(["a"]));
+    const discover = () => reg(shellSkill("a", { tool_profile: { shell: false, network: false, filesystem: "read" }, connectors: ["slack"] }));
+    t.engine.config = cfg({ missing: "degrade" });
+    const r = skillSession(t.engine, { discover }, "coder", true, shell);
+    expect(r).toMatchObject({ tools: { leftOut: [{ key: "a@1.0.0", code: "connector-unavailable" }] } });
+  });
+
+  it("still refuses a mandatory skill under degrade", () => {
+    const t = setup(gateOutput(["a"]));
+    t.engine.config = cfg({}, ["a"]);
+    const discover = () => reg(shellSkill("a"));
+    skillSession(t.engine, { discover }, "coder", true, shell);
+    t.engine.config = cfg({ shell: false, missing: "degrade" }, ["a"]);
+    expect(skillSession(t.engine, { discover }, "coder", true, shell)).toHaveProperty("refused");
+  });
+
+  it("leaves a dependant out with its dependency and keeps a plain skill", () => {
+    const t = setup(gateOutput(["a", "b", "c"]));
+    const discover = () => reg(shellSkill("a"), withDeps(sk("b"), ["a"]), sk("c"));
+    const r = skillSession(t.engine, { discover }, "coder", true, noShell);
+    expect(keys(r)).toEqual(["c@1.0.0"]);
+    expect(r).toMatchObject({ tools: { leftOut: expect.arrayContaining([{ key: "a@1.0.0", code: "tool-not-in-step" }, expect.objectContaining({ key: "b@1.0.0", via: expect.any(String) })]) } });
+  });
+
+  it("is as before without tools, for a reviewer and for an empty lock", () => {
+    const t = setup(gateOutput(["a"]));
+    const discover = () => reg(shellSkill("a"));
+    const plain = skillSession(t.engine, { discover });
+    expect(plain).not.toHaveProperty("tools");
+    expect(keys(plain)).toEqual(["a@1.0.0"]);
+    expect(skillSession(t.engine, { discover }, "reviewer", true, noShell)).not.toHaveProperty("tools");
+    const e = setup(gateOutput([]));
+    expect(skillSession(e.engine, { discover: () => reg() }, "coder", true, noShell)).not.toHaveProperty("tools");
   });
 });

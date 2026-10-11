@@ -175,6 +175,8 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - The scan is pattern matching. Encoded or split secrets and unusual formats pass, also a YAML escape that only becomes a token after parsing.
 - An Oracle TNS descriptor (`@(DESCRIPTION=…)`) and `http(s)` endpoints are not seen. A single-label host such as `kafka` counts as real.
 - A skill that names a connector stops the run at the plan gate. Under `skills.tools.missing: degrade` it stops only when the skill is mandatory or is required, directly or transitively, by a mandatory skill; otherwise the run goes on with a warning and the skill's text can still reach sessions. `skills.tools` does not limit what a session can do.
+- Before every Claude coder session the locked skills are checked again against the current `skills.tools` and the real step. A skill that needs a shell is not loaded into a step without one. A skill the policy no longer allows, or a locked version with `network` that the gate never saw, refuses the session (under `degrade` it is left out with its dependants). `allowed-tools` in a SKILL.md is never passed on. The step record has `skills.grant`.
+- The grant is an estimate from the mode, rule names and sandbox. It decides only which skills are loaded. The repository's `.claude/settings.json` can approve more tools than the record lists. Codex sessions and reviewer steps are not checked.
 
 ## Open findings
 

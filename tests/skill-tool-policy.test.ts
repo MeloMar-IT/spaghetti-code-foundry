@@ -5,9 +5,10 @@ import { DEFAULT_PERMISSION_MODE } from "../src/engine/execute.js";
 import { parseFlow } from "../src/flow/load.js";
 import { SKILL_REFUSED_RE } from "../src/skills/eval.js";
 import {
-  FLOW_DEFAULT_MODE, SKILL_TOOLS_PREFIX, assessSkillTools, checkSkillTools, flowTools, sessionToolGrant, sessionTools, skillNeeds,
+  FLOW_DEFAULT_MODE, SKILL_TOOLS_PREFIX, assessSkillTools, checkSkillTools, flowTools, sessionToolGrant, sessionTools, sessionToolsLine, skillNeeds,
   type Capabilities, type SkillToolNeed,
 } from "../src/skills/tool-policy.js";
+import { claudeIsolated, isolationSkills, resumeHoldsLeftOut } from "../src/agents/run.js";
 import { flowPath } from "./helpers/fake-github.js";
 
 const policy = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ skills: { tools: over } }).skills.tools;
@@ -274,5 +275,31 @@ describe("sessionToolGrant", () => {
     expect(g.leftOut).toEqual(check.leftOut);
     expect(g.settingSources).toEqual(["user", "project", "local"]);
     expect(sessionToolGrant(tools, check, true).settingSources).toEqual(["project", "local"]);
+  });
+});
+
+describe("sessionToolsLine", () => {
+  it("names counts and sources, never rules", () => {
+    expect(sessionToolsLine(st({ stepId: "x", step: { allowed_tools: ["Read"] } }))).toBe(
+      "skill tools: mode acceptEdits (default); 1 approved rule(s) (flow:step:x); sandbox off; shell no, network no, files write; connectors: none",
+    );
+    expect(sessionToolsLine(st({ step: { permission_mode: "bypassPermissions" }, sandbox: { step: true } }))).toContain("sandbox on; shell yes, network yes");
+  });
+});
+
+describe("isolationSkills and resumeHoldsLeftOut", () => {
+  const out = { leftOut: [{ key: "a@1.0.0", code: "tool-not-in-step" as const }] };
+  const empty = { loaded: [], omitted: [], text: "", bytes: 0, estimatedTokens: 0 } as never;
+  it("a skill left out still isolates the session", () => {
+    expect(claudeIsolated(false, false, isolationSkills(empty, out))).toBe(true);
+    expect(claudeIsolated(false, false, isolationSkills(empty))).toBe(false);
+    expect(isolationSkills(undefined, out)).toBeUndefined();
+  });
+  it.each([
+    [undefined, false],
+    [{ leftOut: [] }, false],
+    [out, true],
+  ])("resumeHoldsLeftOut %#", (check, want) => {
+    expect(resumeHoldsLeftOut(check)).toBe(want);
   });
 });
