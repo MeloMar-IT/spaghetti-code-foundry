@@ -6,6 +6,7 @@ import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
 import { renderStart } from "/user/start.js";
+import { initPalette } from "/palette.js";
 import { initShell, showPage } from "/shell.js";
 import { errorState, explainError } from "/states.js";
 import { beginView } from "/view-as.js";
@@ -17,6 +18,8 @@ let generation = 0;
 let readOnly = false;
 // Nothing is drawn when the view has ended, or when it cannot be named: the card on the page says so.
 let stopped = false;
+// Stops the search dialog when the view ends.
+let stopPalette = null;
 
 async function route() {
   // A set-password link is only for the sign-in page: load it again to show that page.
@@ -61,6 +64,8 @@ const view = beginView(as, me, {
   main,
   onEnded: () => {
     stopped = true;
+    stopPalette?.();
+    stopPalette = null;
     generation++;
     cleanup?.();
     cleanup = null;
@@ -68,6 +73,7 @@ const view = beginView(as, me, {
 });
 readOnly = view.readOnly;
 stopped = !view.ready;
+if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 // Only now: before the role is known, a hash change must not draw a page.
 window.addEventListener("hashchange", route);
 await route();

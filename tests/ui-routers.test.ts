@@ -73,6 +73,7 @@ describe("user router", () => {
     "/user/runs.js": never,
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+    "/palette.js": { initPalette: vi.fn(() => () => {}) },
     "/home.js": never,
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -121,6 +122,27 @@ describe("user router", () => {
     expect(main().textContent).toContain("repos page");
   });
 
+  it("starts the palette for a user, and stops it when the view ends", async () => {
+    const stop = vi.fn();
+    const initPalette = vi.fn(() => stop);
+    let onEnded!: () => void;
+    const beginView = (_as: string, _me: unknown, opts: { onEnded: () => void }) => {
+      onEnded = opts.onEnded;
+      return { readOnly: true, ready: true };
+    };
+    await loadRouter("user/app.js", deps({ "/palette.js": { initPalette }, "/view-as.js": { beginView } }));
+    expect(initPalette).toHaveBeenCalledWith({ role: "user", user: { id: "u1" }, preview: true });
+    expect(stop).not.toHaveBeenCalled();
+    onEnded();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts no palette when the view cannot be shown", async () => {
+    const initPalette = vi.fn();
+    await loadRouter("user/app.js", deps({ "/palette.js": { initPalette }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
+    expect(initPalette).not.toHaveBeenCalled();
+  });
+
   it("keeps the generation check", () => {
     const src = readFileSync("ui/user/app.js", "utf8");
     expect(src).toContain("mine === generation && !stopped");
@@ -141,6 +163,7 @@ describe("admin router", () => {
       "./dom.js": real.dom,
       "./ia.js": real.ia,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn() },
+      "./palette.js": { initPalette: vi.fn() },
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
       "./work.js": never,
@@ -182,6 +205,13 @@ describe("admin router", () => {
     await tick();
     expect(alerts()).toHaveLength(0);
     expect(main().textContent).toContain("problems page");
+  });
+
+  it("starts the palette for an admin", async () => {
+    setup("#/dashboard");
+    const initPalette = vi.fn();
+    await loadRouter("app.js", stub({ "./palette.js": { initPalette }, "./dashboard.js": { renderDashboard: vi.fn() } }));
+    expect(initPalette).toHaveBeenCalledWith({ role: "admin", user: { id: "a1" } });
   });
 
   it("keeps the generation check before the error state", () => {

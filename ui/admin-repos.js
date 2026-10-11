@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
-import { connectionStatus, methodLabel, plainError } from "./repos.js";
+import { onWish, takeWish } from "./palette-data.js";
+import { connectionStatus, focusRepoRow, methodLabel, plainError } from "./repos.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
 const PATTERN_HINT = '"*" matches any text, ? one character.';
@@ -191,6 +192,8 @@ export function transferDialog(repo) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
+let unwish = () => {};
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
@@ -206,7 +209,7 @@ export async function renderAllRepos(main) {
   const repos = await api.allRepos();
   if (mine !== generation || !onPage()) return () => {};
   const reload = () => renderAllRepos(main).catch((e) => toast(plainError(e), "error"));
-  const row = (repo) => h("tr", {},
+  const row = (repo) => h("tr", { "data-repo": repo.id },
     h("td", { class: "mono" }, repo.url),
     h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
     h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
@@ -232,7 +235,11 @@ export async function renderAllRepos(main) {
         h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
         h("tbody", {}, sortRepos(repos).map(row)))
       : h("div", { class: "empty" }, "No repositories yet."));
+  focusRepoRow(main, takeWish("all-repos")?.repo);
+  unwish();
+  unwish = onWish("all-repos", (w) => focusRepoRow(main, w?.repo));
   return () => {
     generation++;
+    unwish();
   };
 }

@@ -696,6 +696,70 @@ describe("the page", () => {
   });
 });
 
+describe("a wish from the command palette", () => {
+  let wishes: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+  });
+  beforeEach(() => {
+    wishes.resetWishes();
+    (document as any).activeElement = null;
+  });
+  const rowOf = (id: string) => walk(main()).find((e) => e.tag === "tr" && e.attrs["data-repo"] === id)!;
+
+  it("focuses the row of a wish that came before the page was drawn", async () => {
+    repos = [rec({ id: "x1" }), rec({ id: "x2" })];
+    wishes.sendWish("repos", { repo: "x2" });
+    await show();
+    expect(rowOf("x2").attrs.tabindex).toBe("-1");
+    expect((document as any).activeElement).toBe(rowOf("x2"));
+    expect(rowOf("x1").attrs.tabindex).toBeUndefined();
+  });
+
+  it("does the same on the page that is open", async () => {
+    repos = [rec({ id: "x1" }), rec({ id: "x2" })];
+    await show();
+    wishes.sendWish("repos", { repo: "x1" });
+    expect((document as any).activeElement).toBe(rowOf("x1"));
+  });
+
+  it("leaves the focus alone for an id that is not listed", async () => {
+    repos = [rec({ id: "x1" })];
+    await show();
+    wishes.sendWish("repos", { repo: "nope" });
+    wishes.sendWish("repos", {});
+    expect((document as any).activeElement).toBeNull();
+  });
+
+  it("frees the slot when the page is left, also after a reload", async () => {
+    repos = [rec({ id: "x1" })];
+    const cleanup = await ui.renderRepos(main(), { admin: false });
+    await ui.renderRepos(main(), { admin: false });
+    cleanup();
+    wishes.sendWish("repos", { repo: "x1" });
+    expect((document as any).activeElement).toBeNull();
+    expect(wishes.takeWish("repos")).toEqual({ repo: "x1" });
+  });
+
+  it("focusRepoRow works with a NodeList, which has no find()", async () => {
+    repos = [rec({ id: "x1" })];
+    await show();
+    const row = rowOf("x1");
+    const nodeList = { 0: row, length: 1, [Symbol.iterator]: function* () { yield row; } };
+    ui.focusRepoRow({ querySelectorAll: () => nodeList }, "x1");
+    expect((document as any).activeElement).toBe(row);
+  });
+
+  it("focusRepoRow scrolls the row into view when the browser can", async () => {
+    repos = [rec({ id: "x1" })];
+    await show();
+    const scroll = vi.fn();
+    (rowOf("x1") as any).scrollIntoView = scroll;
+    ui.focusRepoRow(main(), "x1");
+    expect(scroll).toHaveBeenCalledWith({ block: "center" });
+  });
+});
+
 describe("late answers", () => {
   it("does not draw over another page after the person left", async () => {
     (globalThis as any).location = { hash: "#/repos" };

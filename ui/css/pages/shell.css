@@ -1,5 +1,5 @@
 /* pages/shell.css — the frame content around every page.
-   Belongs here: top bar, health line, since line, subnav, crumbs, sidebar, sign-in card, view bar, the user display, the application shell (content frame, drawer sidebar, account menu).
+   Belongs here: top bar, health line, since line, subnav, crumbs, sidebar, sign-in card, view bar, the user display, the application shell (content frame, drawer sidebar, account menu), the Search button and the command palette.
    Does not belong here: the page frame (layout.css). */
 
 /* ── top bar ── */
@@ -134,3 +134,14 @@ body.side-closed .side { display: none; }
   main { overflow-wrap: break-word; }
   main pre { max-width: 100%; overflow-x: auto; }
 }
+
+/* ── search button and command palette ── */
+.search-btn { color: var(--muted); }
+.palette { align-self: start; margin-top: 10vh; gap: var(--space-md); }
+.palette-input { width: 100%; }
+.palette-list { max-height: 50vh; overflow: auto; display: grid; gap: var(--space-xs); }
+.palette-head { font-size: var(--text-meta); color: var(--muted); padding: var(--space-xs) var(--space-md); }
+.palette-opt { display: flex; gap: var(--space-md); align-items: baseline; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); cursor: pointer; }
+.palette-opt[aria-selected="true"] { background: var(--panel-2); outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.palette-meta { margin-left: auto; color: var(--muted); font-size: var(--text-meta); }
+.palette-key { font-family: var(--mono); font-size: var(--text-meta); color: var(--muted); }

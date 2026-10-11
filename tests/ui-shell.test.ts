@@ -363,3 +363,64 @@ describe("showPage with the shell", () => {
     expect(doc().activeElement).toBe(field);
   });
 });
+
+describe("helpers for the command palette", () => {
+  it("announcePage focuses main and announces the open page again, also for the same title", () => {
+    vi.useFakeTimers();
+    try {
+      stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(false) });
+      shell.showPage("admin", ia.resolve("admin", "#/board"));
+      shell.showPage("admin", ia.resolve("admin", "#/board"));
+      vi.advanceTimersByTime(60);
+      doc().activeElement = null;
+      shell.announcePage();
+      expect(doc().activeElement).toBe(byId("main"));
+      expect(byId("route-status").textContent).toBe("");
+      vi.advanceTimersByTime(60);
+      expect(byId("route-status").textContent).toBe("Board");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closeDrawer closes an open drawer and does nothing otherwise", () => {
+    stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(true) });
+    shell.closeDrawer(null);
+    byId("menu-btn").click();
+    expect(doc().body.classList.contains("drawer-open")).toBe(true);
+    shell.closeDrawer(null);
+    expect(doc().body.classList.contains("drawer-open")).toBe(false);
+  });
+
+  it("Tab stays with a dialog that was opened over the drawer", () => {
+    stop = shell.initShell("admin", { store: mkStore(null), media: mkMedia(true) });
+    byId("menu-btn").click();
+    byId("modal-root").append(new FakeElement("div"));
+    links[2]!.focus();
+    expect(press("Tab")).toBe(false);
+    expect(doc().activeElement).toBe(links[2]);
+  });
+
+  it("safeStore survives a missing or throwing localStorage", () => {
+    const g = globalThis as any;
+    const saved = g.localStorage;
+    try {
+      delete g.localStorage;
+      const none = shell.safeStore();
+      expect(none.getItem("k")).toBeNull();
+      expect(() => none.setItem("k", "v")).not.toThrow();
+      g.localStorage = { getItem: () => { throw new Error("off"); }, setItem: () => { throw new Error("off"); } };
+      const broken = shell.safeStore();
+      expect(broken.getItem("k")).toBeNull();
+      expect(() => broken.setItem("k", "v")).not.toThrow();
+      const mem: Record<string, string> = {};
+      g.localStorage = { getItem: (k: string) => mem[k] ?? null, setItem: (k: string, v: string) => { mem[k] = v; } };
+      const ok = shell.safeStore();
+      ok.setItem("k", "v");
+      expect(ok.getItem("k")).toBe("v");
+    } finally {
+      if (saved === undefined) delete g.localStorage;
+      else g.localStorage = saved;
+    }
+  });
+});

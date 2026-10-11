@@ -179,6 +179,9 @@ export const api = {
   stats: () => req("GET", "/api/stats"),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
+  search: (q) => req("GET", `/api/search?q=${enc(q)}`),
+  /** The recent items again, as the server sees them now: `refs` are { type, id }, answered in the groups of a search. */
+  recent: (refs) => req("GET", `/api/search?${refs.map((r) => `id=${enc(`${r.type}:${r.id}`)}`).join("&")}`),
   events: (id) => {
     if (viewAs && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
     return new EventSource(withAs(`/api/runs/${enc(id)}/events`));

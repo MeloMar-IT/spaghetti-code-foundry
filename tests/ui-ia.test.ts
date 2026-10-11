@@ -180,3 +180,55 @@ describe("the grouped shell", () => {
     }
   });
 });
+
+describe("commandsFor", () => {
+  const keys = (list: any[]) => list.filter((c) => c.key).map((c) => c.key).sort();
+
+  it("lists 16 pages for an admin, in the order of PAGES", () => {
+    const { goTo } = ia.commandsFor("admin");
+    expect(goTo).toHaveLength(16);
+    const order = ia.PAGES.map((p: any) => p.id);
+    const at = goTo.map((c: any) => order.indexOf(c.id));
+    expect(at).toEqual([...at].sort((a: number, b: number) => a - b));
+    expect(goTo.find((c: any) => c.id === "users")).toMatchObject({ label: "Users", hint: "Administration", href: "#/users" });
+  });
+
+  it("gives the admin the g keys h b e r p f a, and s on Start work", () => {
+    const { goTo, actions } = ia.commandsFor("admin");
+    expect(keys(goTo)).toEqual(["a", "b", "e", "f", "h", "p", "r"]);
+    expect(actions.find((a: any) => a.id === "start")).toMatchObject({ key: "s", href: "#/start", intent: null });
+  });
+
+  it("gives a user four pages and two actions, without board, flows or users", () => {
+    const { goTo, actions } = ia.commandsFor("user");
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Refinement", "My runs", "My repositories"]);
+    expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
+    expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
+  });
+
+  it("has no New refinement session in a preview", () => {
+    for (const role of ["admin", "user"]) {
+      expect(ia.commandsFor(role, { preview: true }).actions.map((a: any) => a.id)).toEqual(["start"]);
+      expect(ia.commandsFor(role).actions.map((a: any) => a.id)).toEqual(["start", "new-refinement"]);
+    }
+  });
+
+  it("only has addresses that resolve for the role without a redirect", () => {
+    for (const role of ["admin", "user"]) {
+      const { goTo, actions } = ia.commandsFor(role);
+      for (const c of [...goTo, ...actions]) {
+        const to = ia.resolve(role, c.href);
+        expect(to.redirected, `${role} ${c.href}`).toBe(false);
+        expect(to.hash).toBe(c.href);
+      }
+    }
+  });
+
+  it("uses page ids in GO_KEYS and PALETTE_ACTIONS, and every letter once", () => {
+    const ids = ia.PAGES.map((p: any) => p.id);
+    for (const id of Object.keys(ia.GO_KEYS)) expect(ids, id).toContain(id);
+    for (const a of ia.PALETTE_ACTIONS) expect(ids, a.id).toContain(a.page);
+    const letters = Object.values(ia.GO_KEYS) as string[];
+    expect(new Set(letters).size).toBe(letters.length);
+  });
+});

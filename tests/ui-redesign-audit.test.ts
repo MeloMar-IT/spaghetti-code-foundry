@@ -62,6 +62,15 @@ function adminRoutes(appSource: string): { sections: string[]; detail: string[] 
 
 const asDetail = (route: string) => route.replace(/^(#\/[\w-]+\/:)\w*$/, "$1");
 const uiFiles = (): string[] => [...readdirSync("ui").filter((f) => f.endsWith(".js")).map((f) => `ui/${f}`), ...readdirSync("ui/user").filter((f) => f.endsWith(".js")).map((f) => `ui/user/${f}`)];
+/** Every `.js` file under ui/ (not the vendored libraries), so a dialog built in a nested folder is seen too. */
+const allUiJs = (dir = "ui"): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) return p === "ui/vendor" ? [] : allUiJs(p);
+    return e.name.endsWith(".js") ? [p] : [];
+  });
+/** A file that builds its own dialog: `role: "dialog"`, `"role": 'dialog'`, or the attribute form. */
+const buildsDialog = (src: string) => /["']?\brole["']?\s*[:=]\s*["']dialog["']/.test(src);
 const count = (text: string, re: RegExp) => (text.match(re) ?? []).length;
 const sectionText = (text: string, heading: string) => {
   const at = text.indexOf(`\n${heading}\n`);
@@ -196,6 +205,20 @@ describe("the dialogs match the code", () => {
     const keys = dialogs.map((r) => `${code(r[0]!)}|${r[1]}`);
     expect(new Set(keys).size).toBe(keys.length);
     for (const r of dialogs) expect(files, `unknown file in dialogs: ${r[0]}`).toContain(code(r[0]!));
+  });
+
+  it("finds a dialog built by hand in all spellings, and nothing else", () => {
+    expect(buildsDialog('h("div", { role: "dialog" })')).toBe(true);
+    expect(buildsDialog('{ "role": \'dialog\' }')).toBe(true);
+    expect(buildsDialog('el.setAttribute("x"); role="dialog"')).toBe(true);
+    expect(buildsDialog('h("div", { role: "listbox" })')).toBe(false);
+    expect(buildsDialog('h("div", { class: "dialog" })')).toBe(false);
+  });
+
+  it("has a row for every file that builds its own role=dialog", () => {
+    const owners = allUiJs().filter((f) => f !== "ui/dom.js" && buildsDialog(read(f)));
+    expect(owners, "ui/palette.js builds one").toContain("ui/palette.js");
+    for (const f of owners) expect(dialogs.filter((r) => code(r[0]!) === f).length, `${f} needs a row in ## Dialogs`).toBeGreaterThanOrEqual(1);
   });
 
   it("has a row for every native confirm or prompt", () => {

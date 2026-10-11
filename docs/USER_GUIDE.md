@@ -109,7 +109,9 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 
 | Where | Keys |
 |---|---|
-| Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. There are no single-key shortcuts. |
+| Whole page | Tab and Shift+Tab move between controls. Enter opens a link or presses a button; Space presses a button. Ctrl/⌘+K opens Search, also from a form field. Single-key shortcuts (below) work only outside form fields and can be switched off. |
+| Search | Up and Down arrows move (and wrap), Enter opens, Ctrl/⌘+Enter opens in a new tab and keeps Search open, Escape closes. Tab stays inside. |
+| Single keys | `/` opens Search. `g` then a letter, within 1 second, opens a page: `h` Home, `b` Board, `r` Runs, `e` Refinement, `p` Repositories, `f` Flows, `a` Administration, `s` Start work. Only pages your role has. |
 | Dialogs | Escape closes. Tab stays inside. Focus returns to the button that opened it. |
 | Help mark (**?**) | Enter or Space opens, Escape closes. |
 | Board | Tab to a card, Enter opens it. |
@@ -117,6 +119,8 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 | Run log | Tab to the log, then the arrow keys, Page Up/Down, Home and End scroll it. |
 | Editor | Tab moves between fields. Escape closes its dialogs. |
 | Forms | Tab moves between fields. The arrow keys change a select. Enter sends the form. |
+
+**Search.** The **Search** button in the top bar, Ctrl/⌘+K (also from a form field) or `/` opens a box with a list under it. With no text it shows **Recent**, **Go to** (pages) and **Actions**. With text it also shows what the server finds: runs, repositories, refinement sessions and flows, and for admins issues. A user sees only their own things and the flows they can start; an admin sees all accounts. A result shows its title and, when known, its status, repository, owner and last activity. Search only opens things: a page, a run, **Start work**, **New refinement session**. It changes nothing. A flow result on the user display opens Start work with that flow chosen (what you typed is kept); a repository result opens the list with that row selected. Recent items are kept in this browser, for each account, as ids only (no titles, 8 at most), and are shown only if the server still lets you see them. In a view-as preview there are no recent items and no "New refinement session". If search is not available, the box says so and pages still work. The single-key shortcuts never act inside form fields or while a dialog or the menu is open. A checkbox in Search switches them off for this browser; Ctrl/⌘+K always works.
 
 **Pages that refresh themselves.** Your focus stays on the same control after a refresh. If that control is gone, focus moves to the page heading. A refresh waits while a select or text field in it has focus, or while a dialog is open. When a run changes status while you look at it, a screen reader announces it once. The run log is read out politely as lines arrive.
 
@@ -338,7 +342,7 @@ is wrong yet: look at the live log.
 ### Search (API)
 
 `GET /api/search` finds runs, issues, refinement sessions, repositories and flows by text or by id.
-There is no page for it yet; the new navigation will use it.
+The Search box in the top bar (see "Search" under Keyboard) uses it.
 
 - `?q=text` — words separated by spaces. Every word must match. Equal matches rank above
   prefixes, prefixes above word starts, word starts above "contains". A word like `#254` matches

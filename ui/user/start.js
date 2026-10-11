@@ -4,6 +4,7 @@
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, mount, toast } from "../dom.js";
+import { onWish, takeWish } from "../palette-data.js";
 import { connectionStatus, repoDialog } from "../repos.js";
 
 export const REPO_FIELD = "github_repo";
@@ -51,9 +52,15 @@ export function startBody(flow, task, values) {
 const fixedField = (f, label) =>
   h("div", { class: "field" }, h("span", {}, label), h("span", { class: "mono" }, f.value === "" ? "—" : f.value), f.help ? h("small", {}, f.help) : null);
 
+// Only the newest render may take or register a wish: an older one that finishes late must not.
+let renders = 0;
+
 /** The Start work page. Returns a cleanup. */
 export async function renderStart(main, { a = api, dialog = repoDialog, go = (hash) => { location.hash = hash; }, admin = false, readOnly = false } = {}) {
+  const newest = ++renders;
   const flows = admin ? await a.flows(true) : await a.flows();
+  // Taken before the empty-list return, so a wish is always used up.
+  const wished = newest === renders ? takeWish("start") : null;
   if (!Array.isArray(flows) || flows.length === 0) {
     mount(main, h("h1", {}, "Start work"), h("div", { class: "empty" }, admin ? NO_FLOWS_ADMIN : NO_FLOWS));
     return () => {};
@@ -61,7 +68,8 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   let gone = false;
   let busy = false;
   let drawn = 0;
-  const state = { flow: flows[0], task: "", values: {} };
+  const state = { flow: flows.find((f) => f.name === wished?.flow) ?? flows[0], task: "", values: {} };
+  const radios = new Map();
   let loading = false;
   for (const f of flows) state.values[f.name] = Object.fromEntries(f.fields.filter((x) => x.mode === "input").map((x) => [x.name, x.value]));
 
@@ -153,6 +161,7 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     return h("fieldset", {}, h("legend", {}, "1. Flow"),
       flows.map((f) => {
         const radio = h("input", { type: "radio", name: "flow", value: f.name, checked: f === state.flow });
+        radios.set(f.name, radio);
         radio.addEventListener("change", () => choose(f));
         return h("label", { class: "choice" }, radio, h("b", {}, f.title), f.description ? h("span", { class: "muted" }, f.description) : null);
       }));
@@ -172,6 +181,14 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
     submitBtn.disabled = busy;
     state.flow = flow;
     drawRest();
+  }
+
+  /** The palette chose a flow: the radios and the page follow; typed text is kept. */
+  function pick(name) {
+    const flow = flows.find((f) => f.name === name);
+    if (!flow || flow === state.flow) return;
+    for (const [n, radio] of radios) radio.checked = n === name;
+    void choose(flow);
   }
 
   async function addRepository() {
@@ -226,5 +243,11 @@ export async function renderStart(main, { a = api, dialog = repoDialog, go = (ha
   const form = h("form", { class: "start-form", novalidate: true, onSubmit: (e) => { e?.preventDefault?.(); submit(); } },
     flowStep(), rest, err, readOnly ? null : h("div", { class: "row" }, submitBtn));
   mount(main, h("h1", {}, "Start work"), form);
-  return () => { gone = true; };
+  const off = newest === renders ? onWish("start", (w) => pick(w?.flow)) : () => {};
+  // A wish that came while repositories were loading waited for this handler.
+  if (newest === renders) pick(takeWish("start")?.flow);
+  return () => {
+    gone = true;
+    off();
+  };
 }

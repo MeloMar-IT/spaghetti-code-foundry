@@ -355,6 +355,44 @@ describe("transfer dialog", () => {
   });
 });
 
+describe("a wish from the command palette", () => {
+  let wishes: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+  });
+  beforeEach(() => {
+    wishes.resetWishes();
+    (document as any).activeElement = null;
+  });
+  const rowOf = (id: string) => walk(main()).find((e) => e.tag === "tr" && e.attrs["data-repo"] === id)!;
+
+  it("focuses the row of a wish that came before the page was drawn", async () => {
+    repos = [rec({ id: "x1" }), rec({ id: "x2" })];
+    wishes.sendWish("all-repos", { repo: "x2" });
+    await show();
+    expect(rowOf("x2").attrs.tabindex).toBe("-1");
+    expect((document as any).activeElement).toBe(rowOf("x2"));
+  });
+
+  it("does the same on the page that is open, and leaves the focus alone for an unknown id", async () => {
+    repos = [rec({ id: "x1" })];
+    await show();
+    wishes.sendWish("all-repos", { repo: "nope" });
+    expect((document as any).activeElement).toBeNull();
+    wishes.sendWish("all-repos", { repo: "x1" });
+    expect((document as any).activeElement).toBe(rowOf("x1"));
+  });
+
+  it("frees the slot when the page is left", async () => {
+    repos = [rec({ id: "x1" })];
+    const cleanup = await show();
+    cleanup();
+    wishes.sendWish("all-repos", { repo: "x1" });
+    expect((document as any).activeElement).toBeNull();
+    expect(wishes.takeWish("all-repos")).toEqual({ repo: "x1" });
+  });
+});
+
 describe("late answers", () => {
   it("draws nothing after the person left the page", async () => {
     (globalThis as any).location = { hash: "#/all-repos" };

@@ -2,10 +2,11 @@
 
 Read from the code at commit `27479e3`. Part of the audit in `README.md`; the routes are in `inventory.md`.
 
-Three mechanisms draw a dialog:
+Four mechanisms draw a dialog:
 
 - **`modal(title, build, { busy })`** in `ui/dom.js:68`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 26 sites in 17 files.
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` and `decisionDialog` (`ui/user/runs.js:81` and `:94`), `withDialog` (`ui/user/runs.js:402`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
+- **A dialog of its own:** the command palette in `ui/palette.js` (combobox and listbox, drawn in `#modal-root` next to any open dialog). The audit test requires a row for every file that builds its own `role="dialog"`.
 - **Native `confirm` and `prompt`:** 24 calls in 12 files (second table).
 
 The call-site count is only where to start. One site can serve several dialogs; each variant a person can see has its own row. A row is keyed by file and dialog name; the test checks that the rows are unique and that no call site is left out. It cannot see a new variant added inside a call site other than `callDialog`.
@@ -21,6 +22,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/app.js` | Draft a flow with Claude | Sidebar button, `welcome()` button | request text | Draft | `modal` (`generateDialog(false)`) |
 | `ui/app.js` | Ask Claude to change this flow | Editor button | request text | Apply | `modal` (`generateDialog(true)`) |
 | `ui/auth.js` | Change password | Change password button in the header | current password, new password | Change password | `modal` |
+| `ui/palette.js` | Search | Search button, Ctrl/⌘+K, `/` | search text; Single-key shortcuts checkbox | Enter opens the active result | own dialog |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`app.js:195`) | search; one card per block | Click a block card (closes with that block) | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |
@@ -73,10 +75,10 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/admin.js:155` | confirm | Delete watcher <id>? | Delete a watcher (button) |
 | `ui/admin.js:160` | confirm | Delete watcher <id>? | Delete a watcher (second path) |
 | `ui/admin.js:228` | confirm | Remove these workspaces now? | Clean workspaces |
-| `ui/app.js:96` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
-| `ui/app.js:259` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
-| `ui/app.js:280` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
-| `ui/app.js:301` | confirm | Run without a task description? | Run (inside the Run dialog) |
+| `ui/app.js:97` | confirm | Discard unsaved changes to "<flow>"? | Leave an edited flow |
+| `ui/app.js:260` | confirm | A flow named "<name>" already exists. Overwrite it? | Save over a flow |
+| `ui/app.js:281` | confirm | Delete flow "<name>"? This removes the file. | Delete a flow |
+| `ui/app.js:302` | confirm | Run without a task description? | Run (inside the Run dialog) |
 | `ui/health.js:52` | confirm | Cancel this run? You can resume it later. | Cancel from the health bar |
 | `ui/library.js:90` | confirm | Overwrite block "<id>"? | Save a block (inside a dialog) |
 | `ui/library.js:128` | confirm | Delete block "<id>"? | Delete a block |
@@ -88,9 +90,9 @@ The browser's own `confirm` (yes or no) and `prompt` (one line of text). They ca
 | `ui/refinement-ready.js:105` | confirm | Remove this reason? The item then counts as not accepted. | Remove an accepted item |
 | `ui/refinement-suggest.js:142` | confirm | Replace the text of this field with the suggestion? | Accept a suggestion over other text |
 | `ui/refinement-talk.js:242` | confirm | Remove this entry from the map? | Remove a map entry |
-| `ui/refinement.js:411` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
-| `ui/repos.js:338` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
-| `ui/repos.js:392` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
+| `ui/refinement.js:414` | confirm | Drop "<title>"? You can restore it for 30 days. | Drop a session |
+| `ui/repos.js:350` | confirm | Generate a new key for <url>? The old key stops working ... | New deploy key |
+| `ui/repos.js:404` | confirm | Remove <url>? (text depends on the method) | Remove a repository |
 | `ui/runs.js:291` | prompt | Approve — note (optional) | Approve a run (admin) |
 | `ui/runs.js:292` | prompt | Why reject? (optional) | Reject a run (admin) |
 | `ui/runs.js:301` | confirm | Re-run this run from "<step>"? Earlier step outputs are kept. | Re-run from a step |

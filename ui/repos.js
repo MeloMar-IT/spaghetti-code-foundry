@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { onWish, takeWish } from "./palette-data.js";
 
 /**
  * The ways to sign in to a repository. A later method (the GitHub App) is another entry:
@@ -300,6 +301,8 @@ export async function readyView(repo) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
+// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
+let unwish = () => {};
 const onPage = () => {
   if (typeof location === "undefined") return true;
   try {
@@ -308,6 +311,15 @@ const onPage = () => {
     return false;
   }
 };
+
+/** Gives the row of repository `id` the focus and scrolls it into view; nothing happens when it is not listed. */
+export function focusRepoRow(main, id) {
+  const row = id ? [...main.querySelectorAll("tr[data-repo]")].find((r) => r.getAttribute("data-repo") === id) : null;
+  if (!row) return;
+  row.setAttribute("tabindex", "-1");
+  row.scrollIntoView?.({ block: "center" });
+  row.focus();
+}
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
 export async function renderRepos(main, { admin = false, notice, readOnly = false } = {}) {
@@ -373,7 +385,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       installLink(options),
       h("small", {}, "Install the app on this repository, or change which repositories it may use. Then press Test connection."))
     : h("div", { class: "status bad" }, "The administrator removed the GitHub App. Choose another authentication.");
-  const row = (repo) => h("tr", {},
+  const row = (repo) => h("tr", { "data-repo": repo.id },
     h("td", { class: "mono" }, repo.url),
     h("td", {}, methodLabel(repo, admin),
       repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
@@ -407,7 +419,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
         h("tbody", {}, repos.map(row))))
       : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", readOnly ? null : h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository"))));
+  // The palette's repository result: a wish that came before this page, or one for the page as it is.
+  focusRepoRow(main, takeWish("repos")?.repo);
+  unwish();
+  unwish = onWish("repos", (w) => focusRepoRow(main, w?.repo));
   return () => {
     generation++;
+    unwish();
   };
 }

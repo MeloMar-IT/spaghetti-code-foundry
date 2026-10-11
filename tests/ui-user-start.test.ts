@@ -477,3 +477,85 @@ describe("renderStart: admin", () => {
     }
   });
 });
+
+describe("renderStart: a wish from the command palette", () => {
+  let wishes: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+  });
+  beforeEach(() => {
+    wishes.resetWishes();
+    data.flows = [flow("a"), flow("b")];
+  });
+  const checkedIn = (root: FakeElement) => find(root, "input", { name: "flow" }).filter((r) => r.checked).map((r) => r.value);
+  const checked = () => checkedIn(main);
+
+  it("chooses the flow that was wished before the page was drawn", async () => {
+    wishes.sendWish("start", { flow: "b" });
+    await open();
+    expect(checked()).toEqual(["b"]);
+    expect(wishes.takeWish("start")).toBeNull();
+  });
+
+  it("falls back to the first flow for an unknown name, and uses the wish up when there are no flows", async () => {
+    wishes.sendWish("start", { flow: "nope" });
+    await open();
+    expect(checked()).toEqual(["a"]);
+    data.flows = [];
+    wishes.sendWish("start", { flow: "b" });
+    await open();
+    expect(wishes.takeWish("start")).toBeNull();
+  });
+
+  it("switches the flow on the open page, keeps the typed text and checks the radio, also for an admin", async () => {
+    for (const admin of [false, true]) {
+      await open(admin);
+      one(main, "textarea", { name: "task" }).value = "my text";
+      wishes.sendWish("start", { flow: "b" });
+      await flush();
+      expect(checked()).toEqual(["b"]);
+      expect(one(main, "textarea", { name: "task" }).value).toBe("my text");
+      wishes.sendWish("start", { flow: "b" });
+      wishes.sendWish("start", { flow: "nope" });
+      await flush();
+      expect(checked()).toEqual(["b"]);
+    }
+  });
+
+  it("does not lose a wish that arrives while repositories are loading", async () => {
+    data.flows = [flow("a", [field("github_repo")]), flow("b")];
+    data.holdRepos = true;
+    const opening = open();
+    await flush();
+    wishes.sendWish("start", { flow: "b" });
+    releaseRepos();
+    await opening;
+    expect(checked()).toEqual(["b"]);
+  });
+
+  it("frees the slot when the page is left", async () => {
+    const cleanup = await open();
+    cleanup();
+    wishes.sendWish("start", { flow: "b" });
+    expect(wishes.takeWish("start")).toEqual({ flow: "b" });
+  });
+
+  it("lets only the newest render take the wish and own the handler, whatever order they finish in", async () => {
+    let finishOld!: () => void;
+    const slow = { ...fakeApi(), flows: () => new Promise<any[]>((r) => { finishOld = () => r(data.flows); }) };
+    const mainOld = document.createElement("div") as unknown as FakeElement;
+    wishes.sendWish("start", { flow: "b" });
+    const oldRender = ui.renderStart(mainOld, { a: slow, dialog, go });
+    await open();
+    expect(checked()).toEqual(["b"]);
+    finishOld();
+    const cleanOld = await oldRender;
+    // the older render did not take the wish: it shows the first flow
+    expect(checkedIn(mainOld)).toEqual(["a"]);
+    cleanOld();
+    // the older render's cleanup does not remove the handler of the newer page
+    wishes.sendWish("start", { flow: "a" });
+    await flush();
+    expect(checked()).toEqual(["a"]);
+  });
+});

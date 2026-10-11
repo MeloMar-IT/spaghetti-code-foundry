@@ -134,3 +134,26 @@ export function resolve(role, hash) {
   if (!m) return fallback("unknown");
   return describe(role, m.page, m.arg, hash, null);
 }
+
+/** The letter after `g` for a page ("g r" goes to Runs). Only the pages a role has are offered. */
+export const GO_KEYS = { home: "h", board: "b", refinement: "e", runs: "r", repos: "p", flows: "f", users: "a", start: "s" };
+
+/** Actions of the command palette. They only open things: `page` is where they lead, `intent` is set when the page does something on arrival. */
+export const PALETTE_ACTIONS = [
+  { id: "start", page: "start" },
+  { id: "new-refinement", page: "refinement", label: "New refinement session", intent: true, preview: false },
+];
+
+const command = (p, role, extra = {}) => ({
+  id: p.id, label: labelOf(p, role), href: p.path, hint: AREAS.find((a) => a.id === p.area)?.label ?? "", key: GO_KEYS[p.id] ?? null, intent: null, ...extra,
+});
+
+/** The pages ("goTo") and actions a role can reach from the palette. A preview has no action that would change something. */
+export function commandsFor(role, { preview = false } = {}) {
+  const goTo = PAGES.filter((p) => forRole(role)(p) && (p.nav === "primary" || p.nav === "secondary")).map((p) => command(p, role));
+  const actions = PALETTE_ACTIONS.filter((a) => !(preview && a.preview === false))
+    .map((a) => ({ a, p: pageById(a.page) }))
+    .filter(({ p }) => forRole(role)(p))
+    .map(({ a, p }) => command(p, role, { id: a.id, label: a.label ?? labelOf(p, role), key: a.intent ? null : GO_KEYS[a.id] ?? null, intent: a.intent ? a.page : null }));
+  return { goTo, actions };
+}

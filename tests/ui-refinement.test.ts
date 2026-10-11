@@ -197,6 +197,60 @@ describe("the list", () => {
   });
 });
 
+describe("a wish from the command palette", () => {
+  let wishes: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+  });
+  beforeEach(() => wishes.resetWishes());
+
+  it("opens the New refinement session dialog when the wish came before the page was drawn", async () => {
+    wishes.sendWish("refinement", {});
+    await showList();
+    expect(button(root(), "Start session")).toBeDefined();
+    expect(wishes.takeWish("refinement")).toBeNull();
+  });
+
+  it("opens it on the list that is already open", async () => {
+    await showList();
+    expect(root().children).toHaveLength(0);
+    wishes.sendWish("refinement", {});
+    await flush();
+    expect(button(root(), "Start session")).toBeDefined();
+  });
+
+  it("does neither in a preview", async () => {
+    wishes.sendWish("refinement", {});
+    await ui.renderRefinement(main(), { readOnly: true });
+    expect(root().children).toHaveLength(0);
+    // no handler was registered, so the wish waits for a page that can use it
+    expect(wishes.takeWish("refinement")).toEqual({});
+  });
+
+  it("frees the slot when the page is left", async () => {
+    const cleanup = await ui.renderRefinement(main(), {});
+    cleanup();
+    wishes.sendWish("refinement", {});
+    await flush();
+    expect(root().children).toHaveLength(0);
+    expect(wishes.takeWish("refinement")).toEqual({});
+  });
+
+  it("keeps the handler of a reloaded list, and removes it when the page is left", async () => {
+    const cleanup = await ui.renderRefinement(main(), {});
+    press(button(main(), "Dropped"));
+    await flush();
+    wishes.sendWish("refinement", {});
+    await flush();
+    expect(button(root(), "Start session")).toBeDefined();
+    root().replaceChildren();
+    cleanup();
+    wishes.sendWish("refinement", {});
+    await flush();
+    expect(root().children).toHaveLength(0);
+  });
+});
+
 describe("new session", () => {
   const open = async () => {
     await showList();

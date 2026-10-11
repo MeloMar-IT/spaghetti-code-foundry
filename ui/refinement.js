@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { h, modal, mount, timeAgo, toast } from "./dom.js";
+import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { renderBacklog } from "./refinement-backlog.js";
 import { importDialog, importLogText, sourceSection } from "./refinement-import.js";
@@ -290,8 +291,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       await reload();
     });
   let leaveDrafts = () => {};
+  let unwish = () => {};
   const cleanup = () => {
     if (reloaded) return reloaded();
+    unwish();
     leaveDrafts(); // text that waits for its timer is sent now
     generation++;
     stopPoll();
@@ -501,5 +504,10 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
         h("tbody", {}, shown.map(row))))
       : h("div", { class: "empty" }, showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
+  if (!readOnly) {
+    // The palette's "New refinement session": a wish that came before this page, or one for the page as it is.
+    if (takeWish("refinement")) void newSessionDialog(repos, opened);
+    unwish = onWish("refinement", () => void newSessionDialog(repos, opened));
+  }
   return cleanup;
 }
