@@ -532,9 +532,12 @@ body.side-closed .menu-btn .badge:not([hidden]) { display: inline-block; }
 .account summary { list-style: none; cursor: pointer; padding: 6px 10px; border-radius: var(--radius-md); border: 1px solid var(--border); display: flex; align-items: center; }
 .account summary::-webkit-details-marker { display: none; }
 .account-name { display: block; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account > .user { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: var(--layer-menu); flex-direction: column; align-items: stretch; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); white-space: normal; width: max-content; max-width: min(320px, 90vw); }
-.account > .user > span { overflow-wrap: anywhere; }
-.account:not([open]) > .user { display: none; }
+.account-menu { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: var(--layer-menu); display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); font-size: var(--text-small); width: max-content; max-width: min(320px, 90vw); }
+.account-menu > .user { flex-direction: column; align-items: stretch; white-space: normal; margin-left: 0; }
+.account-menu > .user > span { overflow-wrap: anywhere; }
+.account-menu > a { display: block; min-height: 24px; }
+.account:not([open]) > .account-menu { display: none; }
+.statement { max-width: 70ch; margin: 0 auto; }
 
 /* ── sidebar ── */
 .side { flex: none; width: 208px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; background: var(--panel); border-right: 1px solid var(--border); position: sticky; top: var(--size-bar); height: calc(100vh - var(--size-bar)); overflow-y: auto; align-self: flex-start; }
@@ -571,7 +574,7 @@ body.side-closed .side { display: none; }
 }
 
 @media (pointer: coarse) {
-  .side a, .top button, .top a[data-nav], .account summary { min-height: 44px; }
+  .side a, .top button, .top a[data-nav], .account summary, .account-menu > a { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

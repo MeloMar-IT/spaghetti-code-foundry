@@ -592,6 +592,10 @@ are code failures and keep the usual text. A step budget that is used up is a li
 rejection is a person's decision. If a command was blocked earlier in such a run, the
 sentence adds a hint to allow it in the flow if it was needed.
 
+### Accessibility
+
+The Foundry aims to meet WCAG 2.2 AA. Open **Account → Accessibility** to read the statement: what is checked, the known limits and how to report a problem. The statement is also in [ACCESSIBILITY.md](ACCESSIBILITY.md), and [ACCESSIBILITY_SCRIPTS.md](ACCESSIBILITY_SCRIPTS.md) has keyboard and screen-reader scripts for the owner. Nothing was run in a browser or with a screen reader yet.
+
 ### Words the Foundry uses
 
 One glossary decides the words. The app, the comments on GitHub and the labels all use them.
