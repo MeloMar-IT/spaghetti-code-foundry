@@ -133,9 +133,9 @@ describe("resolve for an admin", () => {
 
   it("builds the crumbs of a watcher and a problem, and keeps the list address", () => {
     const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
-    expect(crumbs("#/watchers/w-1")).toEqual([["Administration", "#/users"], ["Watchers", "#/watchers"], ["w-1", null]]);
+    expect(crumbs("#/watchers/w-1")).toEqual([["Administration", "#/operations"], ["Watchers", "#/watchers"], ["w-1", null]]);
     expect(r("#/watchers/w-1").back).toBe("#/watchers");
-    expect(crumbs("#/problems/00000000000000a1")).toEqual([["Administration", "#/users"], ["Problems", "#/problems"], ["00000000000000a1", null]]);
+    expect(crumbs("#/problems/00000000000000a1")).toEqual([["Administration", "#/operations"], ["Problems", "#/problems"], ["00000000000000a1", null]]);
     expect(r("#/problems/00000000000000a1").back).toBe("#/problems");
     expect(r("#/problems")).toMatchObject({ hash: "#/problems", redirected: false });
     expect(r("#/problems").page.id).toBe("problems");
