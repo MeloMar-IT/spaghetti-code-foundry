@@ -531,6 +531,9 @@ button.icon { justify-content: center; }
 .drafts .ready .pill, .drafts .ready li > small { margin: 0 6px; }
 .drafts .ready li > button { margin-left: 6px; }
 .publish { display: grid; gap: 8px; justify-items: start; margin-top: 16px; }
+.session-parts .part-state { margin-left: 6px; font-size: var(--text-small); color: var(--muted); font-weight: normal; }
+.session-parts .ws-next { justify-self: start; }
+.session-parts > div:empty { display: none; }
 .modal ol.plan li { margin-bottom: 12px; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }

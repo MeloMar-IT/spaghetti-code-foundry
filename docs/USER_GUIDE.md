@@ -3396,7 +3396,26 @@ The folder of your clone can keep its name.
 
 **States.** A session is *exploring*, *drafting*, *ready*, *published* or *dropped*. It starts as *exploring*. The state changes only by what you do. The first story draft makes it *drafting*, and removing the last draft makes it *exploring* again. **Drop** and **Restore** change it too. A session is *ready* when it has drafts and every draft is ready (see "Ready" below); a change that makes a draft *drafting* again makes the session *drafting*. It becomes *published* when every draft of the session has a GitHub issue (see "Publishing"); with only some published it stays as it was. Later steps add the others.
 
-**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner.
+**The session page.** It shows the idea, the **Context brief** (see below), the **Questions** and **Map** parts (see "The talk" below), the **Story drafts** (see "Story drafts" below) and the log: who did what, and when, also when the architect was asked, wrote the brief or could not finish. The list shows title, repository, state and last change; an admin also sees the owner. See "The session page" below for how the page is laid out.
+
+### The session page
+
+The session page `#/refinement/:id` is one workspace. The title, the state, the repository and the **Rename**, **Drop** and **Restore** buttons stay on top. Under them is a row of five parts; one part is shown at a time:
+
+| Part | Shows | State on its button |
+|---|---|---|
+| **Idea and brief** | the idea and the architect's context brief | "none", "made", or "working" |
+| **Conversation** | the questions, the proposals and the map | the open questions, for example "2 questions open" |
+| **Story drafts** | the drafts, their readiness, impact and suggestions | "n drafts, m ready" |
+| **Hand off** | publishing to GitHub | "n on GitHub", or "nothing ready" |
+| **Log** | who did what, and when | — |
+
+- **Next.** A line "Next:" names the next step: ask the architect to look at the code, answer the questions, add a draft, check readiness, or publish. Click it to go to that part. It is advice only. Nothing is done for you, and you can open any part at any time.
+- **Which part opens.** A new session opens on **Idea and brief**. A session with drafts opens on **Story drafts**. The part you choose is kept for that session while the page is open, also when the page refreshes by itself. It is not kept after you close the page.
+- **Nothing is lost.** Switching parts hides a part; it does not rebuild it. Text you typed in a draft or an answer is kept and is still saved. Leaving the page saves it as before.
+- **The architect's line.** While the architect works, its status line shows in whichever part is open.
+- **Keyboard and screen readers.** The row is a tab list. Use the left and right arrow keys to move between the parts. Enter or Space chooses one. The chosen part keeps the focus when the page refreshes.
+- **Rules are the same.** Who may change what, the read-only preview, dropped sessions, a hidden brief, talk or drafts, a missing repository, and publishing only after you confirm are all unchanged. The address `#/refinement/:id` is unchanged.
 
 **Rename, drop, restore.** **Rename** changes the title. **Drop** (after a confirmation) takes the session out of **Open sessions**. Find it again under **Dropped**: **Restore** brings it back in the state it had. A dropped session is removed after 30 days.
 
