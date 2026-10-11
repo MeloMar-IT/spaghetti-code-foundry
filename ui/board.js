@@ -63,8 +63,17 @@ export function boardOwners(cards) {
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** The cards of a column that show: all, or those of one owner. */
+export const shownCards = (col, owner = "") => (owner ? col.cards.filter((c) => c.owner === owner) : col.cards);
+
+/** The id of the column a narrow screen shows: `wanted` while it exists, else the first column with shown cards, else the first. Undefined without columns. */
+export function pickColumn(columns, wanted, owner = "") {
+  if (wanted != null && columns.some((c) => c.id === wanted)) return wanted;
+  return (columns.find((c) => shownCards(c, owner).length) ?? columns[0])?.id;
+}
+
 /** The page for one answer of the server: returns nodes. `owner` hides the cards of other accounts (and cards without an owner). */
-export function boardView(data, wanted, { highlight, owner = "", onOwner, onChain, onClear, onLeave }) {
+export function boardView(data, wanted, { highlight, owner = "", column, onOwner, onColumn, onChain, onClear, onLeave }) {
   const picked = pickRepo(data, wanted);
   const repos = data?.repos ?? [];
   const all = picked ? picked.columns.flatMap((c) => c.cards) : [];
@@ -95,21 +104,30 @@ export function boardView(data, wanted, { highlight, owner = "", onOwner, onChai
       " ", h("button", { class: "small", "data-focus": "chain-clear", onClick: () => onClear() }, "Show all"))
     : null;
 
+  const current = pickColumn(picked.columns, column, owner);
+  const label = (col) => {
+    const shown = shownCards(col, owner);
+    return `${col.title} (${shown.length})${lit && shown.some((c) => lit.has(c.issue)) ? " — in the chain" : ""}`;
+  };
+  const picker = h("label", { class: "board-pick" }, "Column",
+    h("select", { class: "small-select", "aria-label": "Show one column", "data-focus": "column-picker", onChange: (e) => onColumn?.(e.target.value) },
+      picked.columns.map((col) => h("option", { value: col.id, selected: col.id === current }, label(col)))));
+
   const cols = picked.columns.map((col) => {
     let group;
     const body = [];
-    const shown = owner ? col.cards.filter((c) => c.owner === owner) : col.cards;
+    const shown = shownCards(col, owner);
     for (const card of shown) {
       if (card.group && card.group !== group) body.push(h("div", { class: "board-sub muted" }, card.group));
       group = card.group;
       body.push(cardView(card, picked.repo, handlers));
     }
-    return h("div", { class: `board-col ${col.id}` },
+    return h("div", { class: `board-col ${col.id}${col.id === current ? " picked" : ""}` },
       h("h3", {}, col.title, " ", h("span", { class: "muted" }, String(shown.length))),
       ...body);
   });
   if (owner && !all.some((c) => c.owner === owner)) return [toolbar, bar, chainLine, none()];
-  return [toolbar, bar, chainLine, h("div", { class: "board", "data-scroll": "board" }, ...cols)];
+  return [toolbar, bar, chainLine, picker, h("div", { class: "board", "data-scroll": "board" }, ...cols)];
 }
 
 /** Opens the page and returns at once a function that closes it. */
@@ -117,6 +135,7 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
   let data;
   let highlight;
   let owner = query.owner ?? "";
+  let column; // the column a narrow screen shows; undefined until the user picks one
   let left; // the watcher of a card whose GitHub link was opened: check GitHub again when the user comes back
   let live;
   const body = h("div");
@@ -131,7 +150,8 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
   mount(main, states.alert, body, states.note);
 
   const redraw = () => keepScroll(body, () => mount(body, boardView(data, wanted, {
-    highlight, owner,
+    highlight, owner, column,
+    onColumn: (id) => { column = id; redraw(); },
     onOwner: (id) => {
       owner = id;
       go(withQuery(wanted ? boardHash(wanted) : "#/board", owner ? { owner } : {}));
@@ -147,6 +167,12 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
     load: () => api.board(),
     draw: (next) => {
       data = next;
+      // keep what the screen showed: a default or a fallback becomes the choice, unless it is an empty column (then the first column with cards may still come)
+      const columns = pickRepo(data, wanted)?.columns ?? [];
+      if (!columns.some((c) => c.id === column)) {
+        const id = pickColumn(columns, undefined, owner);
+        column = columns.find((c) => c.id === id && shownCards(c, owner).length) ? id : undefined;
+      }
       if (highlight != null && !pickRepo(data, wanted)?.columns.some((c) => c.cards.some((k) => k.issue === highlight))) highlight = undefined;
       redraw();
     },
