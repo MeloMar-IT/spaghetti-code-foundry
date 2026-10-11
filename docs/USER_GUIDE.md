@@ -3504,6 +3504,36 @@ When the task has the part "The person's own way", the first way works out that 
 
 **Not for users.** A user cannot start it with `POST /api/runs` (404, also when an admin published a copy), it is not listed for a user, and `DELETE /api/flows/refine-round` is refused.
 
+### Refinement in short
+
+**What it is for.** A story that is clear before it is built is built right the first time. Refinement helps you write such a story. You stay in charge: you write the story, you decide, and you press **Publish**.
+
+**What the architect does.** It reads the code and the open issues, asks questions, points out what is unclear, proposes text, and suggests ways to split a big story. Its proposals wait beside your draft. They go into a story only when you accept them.
+
+**What the architect does not do.** It does not write to the repository or to GitHub. It does not decide for you, write an implementation plan or write code. Text from an issue or from your idea is only read, never followed as an instruction. Only you can see and publish your sessions. A story on GitHub holds only text that you wrote or accepted.
+
+**Definition of Ready.** Each story is checked against a short list for its repository (by default: clear value, stands on its own, criteria that can be checked, small enough, no open questions, out of scope named, no implementation plan). Press **Check** on a draft. A story with an open question or an implementation plan is not ready. You may accept another item anyway, with a reason; never the implementation plan.
+
+**Splitting.** When a story is too big, press **Split**, choose a way, and confirm. Each part becomes its own draft, with **Depends on** set so that the parts are built in order. The original is kept as a record.
+
+**Publishing.** **Publish** creates one GitHub issue for each ready story, in the order of their dependencies. For a session from an existing issue, it updates that issue. For a split issue, it also closes the original as not planned (see "Replacing a split issue").
+
+**What happens next.** The top of the session page has one sentence, "What happens next", that says who takes the next step (you or the architect) and what it is.
+
+**A worked example.** Sam writes the idea "Admins should be able to export a report" in a new session.
+
+1. The next-step sentence says: ask the architect to look at the code, or write your first story draft. Sam presses **Ask the architect to look at the code**. The brief shows an existing report page.
+2. Sam asks for questions. The architect asks "Which formats?" and "Who may export?". Sam answers the first with CSV and does not know the second, so presses "I don't know yet". The open question is on the map.
+3. Sam writes a draft and presses **Check**. It is not ready: it has an open question. Sam settles it with the team and answers it. After a new check the draft is ready.
+4. The draft also holds three criteria for three formats. Sam presses **Split**, picks the way with one story for CSV and one for each other format, and confirms. There are three drafts; the second and third depend on the first.
+5. Sam presses **Publish**. The three issues are created in order, with the dependencies as issue numbers. The session is *Published*.
+
+### Refinement for admins
+
+- **Definition of Ready per repository.** Press **Definition of Ready** on the repository's row (Administration → All repositories). Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
+- **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
+- **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
+
 ---
 
 ## 13. Self-repair (for admins)

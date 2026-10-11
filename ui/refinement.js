@@ -13,6 +13,7 @@ import { splitLogText } from "./refinement-split.js";
 import { readyLogText } from "./refinement-ready.js";
 import { reviewLogText } from "./refinement-remarks.js";
 import { suggestLogText } from "./refinement-suggest.js";
+import { ASK_BRIEF, nextNode, sessionNext } from "./refinement-next.js";
 import { drafts as talkDrafts, kindOf, talkLogText, talkSection } from "./refinement-talk.js";
 
 /** The states of a refinement session, in words. The first story draft makes it Drafting; Drop and Restore change it too. A session is Ready when every draft is ready. */
@@ -60,7 +61,6 @@ export function logText(entry) {
   return importLogText(entry) || talkLogText(entry) || suggestLogText(entry) || reviewLogText(entry) || impactLogText(entry) || splitLogText(entry) || readyLogText(entry) || `${who}: ${entry.what}`;
 }
 
-const ASK = "Ask the architect to look at the code";
 /** How often the session page asks again while the architect is queued or running, in ms. */
 export const POLL_MS = 5000;
 let poll; // one session page at a time
@@ -113,7 +113,7 @@ export function askLabel(s) {
   const own = kindOf(s.architect) === "brief"; // a round, a question, a suggestion, a review or a view is asked again where it shows
   if (state === "paused") return own ? "Ask again" : "";
   if (state === "failed" && own) return "Try again";
-  return s.brief ? "Refresh" : ASK;
+  return s.brief ? "Refresh" : ASK_BRIEF;
 }
 
 /** The brief as parts: [{ title, body }], one per "## " heading. */
@@ -363,6 +363,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     if (!current()) return () => {};
     const upper = h("div");
     const lower = h("div");
+    const nextBox = h("div"); // the next-step sentence; it also depends on the drafts, so it is drawn on its own
     const note = h("div"); // "Could not refresh" while the poll fails
     const waiting = announcer(); // "The architect is working", said once
     let at = Date.now(); // when the page last had an answer
@@ -379,6 +380,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const textWaits = () => pendingText() || unsaved.size > 0;
     keepPage(() => unsaved.size > 0 || talkText(id)); // a 401 of any call keeps the page while text waits
     let shownUpper = null;
+    let shownNext = null;
     let shownLower = null;
     let shown = "";
     let draws = 0; // counts the pages drawn: a poll that began before one is out of date
@@ -516,6 +518,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
           h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
           h("span", { class: "spacer" }), buttons),
+        nextBox,
         ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
@@ -524,6 +527,11 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         ...briefSection(s, ask),
         ...talkSection(s, { send, errorText, line: ["round", "question"].includes(kindOf(s.architect)) ? statusLine(architectStatus(s.architect)) : null }),
         );
+      }
+      const nextKey = JSON.stringify(sessionNext(s));
+      if (nextKey !== shownNext) {
+        shownNext = nextKey;
+        mount(nextBox, nextNode(s));
       }
       const st = architectStatus(s.architect);
       waiting.say(st.busy ? st.text : "");

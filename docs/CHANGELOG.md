@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement 10 — checked with real situations, and documented (#83). Last part of the Refinement epic (#73).
+  - **Next step.** New `ui/refinement-next.js`: the session page starts with a "What happens next" card, one sentence that says who takes the next step (you, the architect or nobody). It redraws only when the sentence changes. The "Ask the architect to look at the code" text is now one shared constant.
+  - **Tests.** New scenario tests walk whole sessions with the fakes (a small clear idea, a vague idea, a big idea split into three stories published in order, an existing issue refined and updated), and rule tests prove the epic's rules (no unaccepted text published, architect steps cannot write, an implementation plan fails the check, users cannot see or publish another user's session, issue text does not steer the architect). New `tests/helpers/refinement-world.ts`, `tests/refinement-scenarios.test.ts`, `tests/refinement-rules.test.ts` and `tests/ui-refinement-next.test.ts`.
+  - **Docs.** New "Refinement in short" (with a worked example) and "Refinement for admins" (Definition of Ready, the architect's model, where the cost shows) in chapter 12 of `docs/USER_GUIDE.md`. No flow format change, so `docs/FLOW_AUTHORING.md` is unchanged.
 - Refinement 9e-4 — the replaced original is closed as not planned (#406). Last part of #335.
   - **Order.** Creates, then the PATCH and comment per dependant, then one comment on the original saying the parts replace it and that it will be closed, then the original is read again and closed with reason `not_planned`.
   - **Not closed.** The original stays open, with a comment saying so, when the open issues were cut (more than 1,000), when a dependant ended as change by hand or check, or when it is a monitor story (a close would mute the finding). The state read from GitHub wins over `cut`: an original already closed is `closed: "other"`, or `not_planned` with `closedAt` when it was closed as not planned and the Foundry's comment is there.
