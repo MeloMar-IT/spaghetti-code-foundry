@@ -119,7 +119,7 @@ describe("resolve for an admin", () => {
     expect(crumbs("#/credentials")).toEqual([["Administration", "#/operations"], ["Credentials", null]]);
     expect(crumbs("#/maintenance")).toEqual([["Administration", "#/operations"], ["Maintenance", null]]);
     expect(r("#/all-repos")).toMatchObject({ dest: "administration", redirected: false });
-    expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/users"], ["Models", "#/models"], ["ollama", null]]);
+    expect(crumbs("#/models/ollama")).toEqual([["Administration", "#/operations"], ["Models", "#/models"], ["ollama", null]]);
     expect(r("#/models/ollama")).toMatchObject({ back: "#/models", title: "ollama", dest: "administration" });
     expect(r("#/models/ollama").page.id).toBe("model");
     expect(r("#/models/my%2Dproxy")).toMatchObject({ hash: "#/models/my%2Dproxy", arg: "my-proxy" });
