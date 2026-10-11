@@ -197,15 +197,6 @@ ${agentLine}    prompt: |
     expect(readdirSync(repo)).toEqual(["ran.txt"]);
   });
 
-  it("gives a Codex step no block and records no skills", async () => {
-    demo("1.0.0");
-    const s = await runFlow(showFlow("    agent: codex\n"), { ...runOpts(), codexBin });
-    expect(s.status).toBe("succeeded");
-    // the agent note names the tag; only a real block has the count
-    expect(outputOf(s)).not.toContain("<foundry-skills count=");
-    expect(s.history.find((h) => h.id === "impl")!.skills).toBeUndefined();
-  });
-
   describe("a repair that continues the session", () => {
     const repairFlow = (fixLine = "") =>
       parseFlow(`
@@ -301,14 +292,14 @@ ${fixLine}    prompt: |
       expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("skill context: rejected");
     });
 
-    it("a Codex repair gets no block and a later Claude repair still reuses the first session", async () => {
+    it("a Codex repair gets the full block as reloaded, and a later Claude repair still reuses the first session", async () => {
       demo("1.0.0");
       const f = repairFlow("    agent: codex\n");
       f.steps.push({ id: "fix2", type: "claude", resume: "impl", prompt: "SHOWPROMPT" } as never);
       const s = await runFlow(f, { ...runOpts(), codexBin });
       expect(s.status).toBe("succeeded");
-      expect(s.history.find((h) => h.id === "fix")!.skills).toBeUndefined();
-      expect(count(out(s, "fix").prompt)).toBe(0);
+      expect(count(out(s, "fix").prompt)).toBe(1);
+      expect(rec(s, "fix")).toMatchObject({ state: "reloaded", loaded: ["demo@1.0.0"] });
       expect(rec(s, "fix2")).toMatchObject({ state: "reused" });
     });
   });

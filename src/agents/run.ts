@@ -12,7 +12,7 @@ import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
-import { codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
+import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
 
@@ -30,7 +30,7 @@ type Iso = { who: CommitIdentity };
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, catalogue?: RunCatalogue): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
@@ -76,7 +76,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, catalogue });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
@@ -95,8 +95,10 @@ interface WithOptions {
   profile?: string;
   /** The program a boxed step starts (the one the profile opens). */
   bin?: string;
-  /** The skills of the run's lock for a Claude session. */
+  /** The skill block of this session (the run's lock, or review checks), for Claude and Codex. */
   skills?: SkillPayload;
+  /** The block is for a draft plan under review: it does not isolate a Codex session and is not refused on an old CLI. */
+  draft?: boolean;
   /** Not the first session of this step: a retry or a fallback. */
   again?: boolean;
   /** The skill catalogue of a `skills: catalog` step: put before the prompt on both agents. */
@@ -151,12 +153,13 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   }
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
   // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
+  const locked = o.draft ? undefined : o.skills;
   let home: string | undefined;
   let mode: CodexIsolation | undefined;
   if (t.agent === "codex") {
     const seen = (n: string) => (n in env ? env[n] : short ? undefined : process.env[n]);
-    // 1. mode: a boxed step already has the run's folder. A reviewer's skill payload does not isolate a Codex session (until Codex gets coding payloads).
-    if (!boxed) mode = codexIsolationMode({ isolate: claudeIsolated(engine.config.isolate_agents, isolated), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
+    // 1. mode: a boxed step already has the run's folder. A block from the run's lock isolates the session even with isolate_agents off; a draft review block does not.
+    if (!boxed) mode = codexIsolationMode({ isolate: claudeIsolated(engine.config.isolate_agents, isolated, locked), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
     // 2. private folder: never the personal one when it cannot be made
     if (mode === "private") {
       const made = privateCodexHome(engine.summary.runDir);
@@ -177,9 +180,24 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     // 6.
     const line = mode ? codexIsolationLine(mode) : undefined;
     if (line) engine.log(`    ${mode === "unsupported" ? "!" : "·"} ${line}`);
+    // 7. a block from the run's lock never goes into a session that is not isolated at all
+    if (mode === "unsupported" && locked?.text) {
+      engine.log(`    ! skill context: rejected (${CODEX_SKILLS_REFUSED})`);
+      engine.accessFailed = true;
+      return { ok: false, output: CODEX_SKILLS_REFUSED, error: CODEX_SKILLS_REFUSED, final: true };
+    }
   }
+  // Codex never reuses a block: a resumed Codex session gets it again.
+  const attach = o.skills ? attachSkillPayload(o.skills, { continues: t.agent === "claude" && Boolean(resumeId), holds, again: resumeAsked || Boolean(o.again) }) : undefined;
+  const skills = skillsRecord(o.skills, attach);
+  const logSkills = () => {
+    if (!o.skills || !attach) return;
+    const keys = o.skills.loaded.join(", ");
+    if (attach.state === "reused") engine.log(`    · skill context: reused ${keys} from the session of ${step.resume}; nothing added`);
+    else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? (t.agent === "codex" && resumeId ? ": the full block is sent again" : ": new session") : ""}`);
+  };
   const common = {
-    prompt: withSkillPayload(render(step.prompt, ctx), o.catalogue?.text ?? ""),
+    prompt: withSkillPayload(withSkillPayload(render(step.prompt, ctx), attach?.text ?? ""), o.catalogue?.text ?? ""),
     systemPrompt: step.system_prompt ? render(step.system_prompt, ctx) : undefined,
     cwd: engine.summary.workdir!,
     logFile,
@@ -189,12 +207,12 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     onProgress: (m: string) => engine.log(`    · ${m}`),
   };
   engine.log(`    · agent ${t.label}`);
+  if (t.agent === "codex") logSkills();
 
   if (t.agent === "codex") {
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
     const r = await runCodex({
       ...common,
-      prompt: withSkillPayload(common.prompt, o.skills?.role === "reviewer" ? o.skills.text : ""),
       env,
       cleanEnv: short,
       codexBin: bin ?? engine.codexBin,
@@ -211,22 +229,16 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skillsRecord(o.skills?.role === "reviewer" ? o.skills : undefined), ...catalogueRecord(o) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
   const caps = t.free || !engine.config.cost_limits ? [] : [step.max_budget_usd ?? d.max_budget_usd, engine.remainingBudget()].filter((n): n is number => n !== undefined);
   const isolatedSession = claudeIsolated(engine.config.isolate_agents, isolated, o.skills, step.skill_role === "reviewer");
   if (isolatedSession && !engine.config.isolate_agents && !isolated) engine.log("    · skills: this session runs without the personal Claude setup");
-  const attach = o.skills ? attachSkillPayload(o.skills, { continues: Boolean(resumeId), holds, again: resumeAsked || Boolean(o.again) }) : undefined;
-  if (o.skills && attach) {
-    const keys = o.skills.loaded.join(", ");
-    if (attach.state === "reused") engine.log(`    · skill context: reused ${keys} from the session of ${step.resume}; nothing added`);
-    else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? ": new session" : ""}`);
-  }
+  logSkills();
   const r = await runClaude({
     ...common,
-    prompt: withSkillPayload(common.prompt, attach?.text ?? ""),
     env,
     cleanEnv: short,
     sandboxProfile: profile,
@@ -251,7 +263,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     costUsd: local ? 0 : r.costUsd,
     agent: t.label,
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
-    ...skillsRecord(o.skills, attach),
+    ...skills,
     ...catalogueRecord(o),
   };
 }
@@ -299,14 +311,14 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   if (catalogue) engine.log(`    · ${catalogue.log}`);
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
-    const session = skillSession(engine, target.agent, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog");
+    const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog");
     if ("refused" in session) {
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
     tried.add(target.label);
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, catalogue);
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
