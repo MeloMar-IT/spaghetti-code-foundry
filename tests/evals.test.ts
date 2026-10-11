@@ -103,7 +103,7 @@ cases:
     const { report } = await runEval({
       suitePath: join(tmp, "skill-suite.yaml"),
       runsDir: join(tmp, "runs"),
-      config: ConfigSchema.parse({ protected_branches: [], concurrency: 3, skills: { roots: [root] } }),
+      config: ConfigSchema.parse({ protected_branches: [], concurrency: 3, skills: { releases: { allow_unreleased: true }, roots: [root] } }),
       claudeBin,
       log: () => {},
     });
@@ -127,7 +127,7 @@ cases:
     const codex = await runEval({
       suitePath: join(tmp, "skill-suite.yaml"),
       runsDir: join(tmp, "runs-codex"),
-      config: ConfigSchema.parse({ protected_branches: [], concurrency: 3, skills: { roots: [root] } }),
+      config: ConfigSchema.parse({ protected_branches: [], concurrency: 3, skills: { releases: { allow_unreleased: true }, roots: [root] } }),
       modelsOverride: ["codex"],
       claudeBin,
       codexBin: resolve("tests/fixtures/fake-codex.mjs"),

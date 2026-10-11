@@ -63,7 +63,7 @@ const GATE = `  - id: risk_gate
       echo READY
       echo '${REQUEST}'
 `;
-const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ protected_branches: [], skills: { roots: [low] }, ...over });
+const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ protected_branches: [], skills: { releases: { allow_unreleased: true }, roots: [low] }, ...over });
 const run = (steps: string, config = cfg()) =>
   runFlow(parseFlow(`\nname: t\nworkspace: inplace\nsteps:\n${steps}`), { task: "t", repo, runsDir: join(tmp, "runs"), claudeBin, codexBin, config });
 const agentStep = (id: string, extra: string, prompt: string) => `  - {id: ${id}, type: claude, ${extra} prompt: ${JSON.stringify(prompt)}}\n`;
@@ -119,7 +119,7 @@ describe("locked skills in Codex sessions", () => {
 
   it("stops a Codex step before Codex starts when the mandatory skill does not fit", async () => {
     demo("1.0.0");
-    const s = await run(GATE + agentStep("x", "agent: codex,", "WRITE ran.txt yes"), cfg({ skills: { roots: [low], selection: { include: ["demo"], max_tokens: 100 } } }));
+    const s = await run(GATE + agentStep("x", "agent: codex,", "WRITE ran.txt yes"), cfg({ skills: { releases: { allow_unreleased: true }, roots: [low], selection: { include: ["demo"], max_tokens: 100 } } }));
     expect(s.status).toBe("failed");
     expect(s.reason).toMatch(/skill selection is blocked: .*demo@1\.0\.0 does not fit the skill context budget/);
     expect(existsSync(join(repo, "ran.txt"))).toBe(false);

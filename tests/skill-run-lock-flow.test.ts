@@ -25,7 +25,7 @@ beforeEach(() => {
   mkdirSync(repo);
   skills = join(process.env.FACTORY_HOME!, "skills");
   low = join(tmp, "low-skills");
-  config = ConfigSchema.parse({ skills: { roots: [low] } });
+  config = ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low] } });
 });
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
@@ -175,7 +175,7 @@ ${agentLine}    prompt: |
     writeFileSync(join(personal, "skills", "personal", "SKILL.md"), "PERSONAL_SENTINEL");
     process.env.CLAUDE_CONFIG_DIR = personal;
 
-    const s = await runFlow(showFlow(), { ...runOpts(), config: ConfigSchema.parse({ skills: { roots: [low] }, isolate_agents: isolate }) });
+    const s = await runFlow(showFlow(), { ...runOpts(), config: ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low] }, isolate_agents: isolate }) });
     expect(s.status).toBe("succeeded");
     const rec = s.history.find((h) => h.id === "impl")!;
     expect(rec.skills).toMatchObject({ loaded: ["demo@1.1.0"] });
@@ -426,7 +426,7 @@ ${extra}`);
 
   it("off: no plan, no lock, no skill block; the log says so once", async () => {
     demo("1.0.0");
-    const cfg = ConfigSchema.parse({ skills: { roots: [low], selection: { include: ["demo"] } } });
+    const cfg = ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low], selection: { include: ["demo"] } } });
     const s = await runFlow(modeFlow("{mode: off}"), { ...runOpts(), config: cfg });
     expect(s.status).toBe("succeeded");
     const stored = JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")) as Record<string, unknown>;

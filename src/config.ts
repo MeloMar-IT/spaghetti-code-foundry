@@ -7,7 +7,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
-import { REVIEW_DEFAULTS, REVIEW_RANGE, SkillIdSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -386,6 +386,34 @@ export const ConfigSchema = z
           .default([]),
         /** Also read <repo>/.claude-factory/skills. Off: repository skills are never loaded. */
         repository: z.boolean().default(false),
+        /** Catalogue releases this installation accepts. Administrator folders load only as one of them. */
+        releases: z
+          .object({
+            /** Development only: administrator folders that are not an approved release are loaded too. */
+            allow_unreleased: z.boolean().default(false),
+            approved: z
+              .array(
+                z
+                  .object({
+                    catalogue: SkillIdSchema,
+                    version: SkillVersionSchema,
+                    digest: z.string().regex(SKILL_DIGEST_RE, "must be sha256: and 64 hex digits"),
+                  })
+                  .strict(),
+              )
+              .max(50)
+              .default([]),
+          })
+          .strict()
+          .superRefine((r, ctx) => {
+            const seen = new Set<string>();
+            r.approved.forEach((a, i) => {
+              const k = `${a.catalogue}@${a.version}`;
+              if (seen.has(k)) ctx.addIssue({ code: "custom", path: ["approved", i], message: `${k} is listed twice` });
+              seen.add(k);
+            });
+          })
+          .prefault({}),
         /** Limits and pin/exclude lists of the skill catalogue a planner gets. Installation-wide. */
         catalogue: z
           .object({
