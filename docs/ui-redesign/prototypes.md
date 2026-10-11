@@ -84,8 +84,10 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/credentials` | admin | Repositories, Credentials column and settings panel | yes | |
 | `#/maintenance` | admin | Administration, Maintenance (title only) | yes | |
 | `#/watchers` | admin | Administration, Watchers (title only) | yes | |
+| `#/watchers/:id` | admin | Administration, Watchers (title only) | yes | |
 | `#/settings` | admin | Administration, Settings | yes | |
 | `#/problems` | admin | Health band and panel; Administration, Problems (title only) | yes | |
+| `#/problems/:id` | admin | Administration, Problems (title only) | yes | |
 | `#/models` | admin | Administration, Models (title only) | yes | |
 | `#/dashboard` | admin | Administration, Dashboard (title only) | yes | |
 | `#/users` | admin | Administration, Users | yes | |

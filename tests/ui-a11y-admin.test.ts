@@ -11,7 +11,7 @@ const m: Record<string, any> = {};
 beforeAll(async () => {
   restore = installFakeDom();
   for (const [k, f] of Object.entries({
-    dom: "dom", auth: "auth", users: "users", repos: "repos", adminRepos: "admin-repos", admin: "admin", watcherForm: "watcher-form",
+    dom: "dom", auth: "auth", users: "users", repos: "repos", adminRepos: "admin-repos", admin: "admin", watchers: "watchers", watcherForm: "watcher-form",
     models: "models", audit: "audit", monitor: "monitor", problems: "problems",
   })) m[k] = await import(`../ui/${f}.js` as string);
 });
@@ -132,9 +132,29 @@ describe("pages", () => {
     routes = {
       "GET /api/watchers": watchers, "GET /api/flows": [{ name: "issue-gitflow" }], "GET /api/admin/repos": [repo()], "GET /api/monitor": monitorState,
     };
-    await m.admin.renderWatchers(main());
+    await m.watchers.renderWatchers(main());
     noViolations(main());
     tablesOk(main());
+  });
+  it("A watcher", async () => {
+    routes = {
+      "GET /api/watchers": watchers, "GET /api/flows": [{ name: "issue-gitflow" }], "GET /api/admin/repos": [repo()], "GET /api/monitor": monitorState,
+    };
+    await m.watchers.renderWatcherDetail(main(), "w1");
+    noViolations(main());
+  });
+  it("The monitor's page", async () => {
+    routes = {
+      "GET /api/watchers": watchers, "GET /api/flows": [{ name: "issue-gitflow" }], "GET /api/admin/repos": [repo()], "GET /api/monitor": monitorState,
+    };
+    await m.watchers.renderWatcherDetail(main(), "monitor");
+    noViolations(main());
+    tablesOk(main());
+  });
+  it("A problem", async () => {
+    routes = { "GET /api/monitor": monitorState, "GET /api/monitor/findings/f1": { evidence: ["x"], stories: [], runs: [] } };
+    await m.problems.renderProblemDetail(main(), "f1");
+    noViolations(main());
   });
   it("Models", async () => {
     routes = { "GET /api/config": config, "GET /api/providers": providers };

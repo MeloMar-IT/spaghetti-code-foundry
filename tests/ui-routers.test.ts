@@ -131,7 +131,7 @@ describe("user router", () => {
 describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
-      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
+      "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
       "./admin-repos.js", "./admin-credentials.js", "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
@@ -183,6 +183,27 @@ describe("admin router", () => {
     await tick();
     expect(alerts()).toHaveLength(0);
     expect(main().textContent).toContain("problems page");
+  });
+
+  it("routes the watcher and problem pages with an id, and the lists without", async () => {
+    const page = (name: string) => vi.fn(async (box: FakeElement) => { real.dom.mount(box, el(name)); });
+    for (const [hash, fn, expected] of [
+      ["#/watchers/w1", "renderWatcherDetail", ["w1"]], ["#/watchers", "renderWatchers", []],
+      ["#/problems/abc", "renderProblemDetail", ["abc"]], ["#/problems", "renderProblems", []],
+    ] as const) {
+      setup(hash);
+      const mocks = {
+        renderWatchers: page("watchers list"), renderWatcherDetail: page("watcher detail"),
+        renderProblems: page("problems list"), renderProblemDetail: page("problem detail"),
+      };
+      await loadRouter("app.js", stub({
+        "./watchers.js": { renderWatchers: mocks.renderWatchers, renderWatcherDetail: mocks.renderWatcherDetail },
+        "./problems.js": { renderProblems: mocks.renderProblems, renderProblemDetail: mocks.renderProblemDetail },
+      }));
+      await vi.waitFor(() => expect(mocks[fn]).toHaveBeenCalledTimes(1));
+      expect(mocks[fn].mock.calls[0]!.slice(1), hash).toEqual(expected);
+      for (const [name, other] of Object.entries(mocks)) if (name !== fn) expect(other, hash).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the generation check before the error state", () => {

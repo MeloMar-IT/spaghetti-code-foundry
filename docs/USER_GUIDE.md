@@ -920,6 +920,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
+- **One watcher.** The list is compact: the id (a link to `#/watchers/<id>`, crumbs **Administration › Watchers › <id>**), the state mark, what it does, the last successful check and a problem line. The watcher's page has the next steps, notes, error details and recent activity; for the monitor also the bug-story switch and the findings. **Check now**, **Edit** and **Enable** or **Disable** are together; **Delete** is alone in a **Danger** group. List rows have no Delete button.
 - **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`. If only the monitor cannot be loaded, the watchers are still shown and the monitor card says so, with **Retry**.
 - **While it works.** The page shows a grey skeleton while it loads. **Check now** shows "Checking…" next to its own button. **Delete** asks first in a dialog. If a reload fails, the list stays and a line says when it was last updated, with **Retry**. The same holds for Users and Problems.
 - **From config.yaml.** A watcher that is still in `config.yaml` (for example while there is no admin account, or at the connection limit) shows read-only with a note, and **Check now**. A watcher whose repository is gone can only be deleted.
@@ -1210,9 +1211,12 @@ happens to each problem.
   since the server started" until the monitor runs again.
 - **The findings.** Newest and most severe first (gone ones last), at most 100 at first and then
   **Show N more**. Each row has the summary, the severity, since when, how often ("seen in N
-  checks"), the state and the bug story. **Details** opens the evidence, the bug stories (links;
-  "(earlier)" for older ones) and the runs that build them. If the findings file cannot be read,
-  the page says so instead of "No findings."
+  checks"), the state and the bug story. The summary links to the finding's own page
+  (`#/problems/<id>`, crumbs **Administration › Problems › <id>**). It shows the evidence, the bug
+  stories (links; "(earlier)" for older ones) and the runs that build them. Its buttons are in two
+  groups: **Bug story** (**Make a story now**, **Try again**) and **Mute** (mute, **This is not a
+  problem**). The rows have no Mute button. An unknown id shows the server's sentence and a link
+  back. If the findings file cannot be read, the page says so instead of "No findings."
 
 | State | What it says |
 |---|---|

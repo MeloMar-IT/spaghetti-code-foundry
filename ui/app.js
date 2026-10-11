@@ -6,11 +6,12 @@ import { resolve, splitHash } from "./ia.js";
 import { initShell, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
-import { renderSettings, renderWatchers } from "./admin.js";
+import { renderSettings } from "./admin.js";
+import { renderWatchers, renderWatcherDetail } from "./watchers.js";
 import { renderMaintenance } from "./maintenance.js";
 import { refreshModelLists, renderModels } from "./models.js";
 import { renderDashboard } from "./dashboard.js";
-import { renderProblems } from "./problems.js";
+import { renderProblems, renderProblemDetail } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
 import { renderAllRepos } from "./admin-repos.js";
 import { renderCredentials } from "./admin-credentials.js";
@@ -114,8 +115,8 @@ async function route() {
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);
-    else if (section === "watchers") await renderInBox(renderWatchers);
-    else if (section === "problems") await renderInBox(renderProblems);
+    else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg) : renderWatchers);
+    else if (section === "problems") await renderInBox(arg ? (box) => renderProblemDetail(box, arg) : renderProblems);
     else if (section === "settings") await renderInBox(renderSettings);
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await renderModels(main);

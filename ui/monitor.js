@@ -98,31 +98,19 @@ export const mutesTable = (m, reload) => {
       h("td", {}, h("button", { class: "small", onClick: () => end(x) }, "End mute"))))));
 };
 
-const findingsTable = (m, reload, redraw) => {
+// A row has no buttons: each finding's page (#/problems/:id) has its actions.
+const findingsTable = (m, redraw) => {
   const rows = m.findings.slice(0, shown);
-  const mute = async (f) => {
-    if (await muteForm({ finding: f.id }, m.detectors)) await reload();
-  };
-  const retry = async (f) => {
-    try {
-      await api.retryMonitor(f.id);
-      toast(f.story?.state === "not_planned" ? "The count starts anew. No new story while the story is closed as not planned" : "The monitor may try again");
-    } catch (e) {
-      toast(e.message, "error");
-    }
-    await reload();
-  };
   const table = h("table", { class: "table compact", "aria-label": "Findings" },
-    h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
+    h("thead", {}, h("tr", {}, ["Severity", "Detector", "What", "First seen", "Last seen", "Story", "Muted"].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, rows.map((f) => h("tr", {},
       h("td", {}, f.severity),
       h("td", {}, f.detector),
-      h("td", {}, f.summary),
+      h("td", {}, h("a", { href: "#/problems/" + encodeURIComponent(f.id) }, f.summary)),
       h("td", {}, when(f.firstSeen)),
       h("td", {}, when(f.lastSeen)),
       h("td", {}, storyCell(f.story, f.needsYou)),
-      h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : ""),
-      h("td", {}, f.needsYou ? h("button", { class: "small", onClick: () => retry(f) }, "Try again") : null, f.mute ? null : h("button", { class: "small", onClick: () => mute(f) }, "Mute"))))));
+      h("td", {}, f.mute ? `muted ${untilText(f.mute.until)}: ${f.mute.reason}` : "")))));
   const left = m.findings.length - rows.length;
   return h("div", {},
     table,
@@ -138,7 +126,7 @@ export function monitorLists(m, reload) {
       h("div", { class: "row" },
         h("button", { class: "small", onClick: async () => { if (await muteForm({ pick: true }, m.detectors)) await reload(); } }, "Mute a detector")),
       m.mutes.length ? mutesTable(m, reload) : null,
-      m.findings.length ? findingsTable(m, reload, redraw) : h("p", { class: "muted" }, "No findings."));
+      m.findings.length ? findingsTable(m, redraw) : h("p", { class: "muted" }, "No findings."));
   };
   redraw();
   return h("details", { open: isOpen, onToggle: (e) => { isOpen = !!e.target.open; } },

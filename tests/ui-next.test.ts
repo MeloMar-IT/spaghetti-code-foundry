@@ -225,10 +225,11 @@ describe("timing in the UI", () => {
 describe("the changed UI modules", () => {
   it("load", async () => {
     const dashboard = await import("../ui/dashboard.js" as string);
-    const admin = await import("../ui/admin.js" as string);
+    const watchers = await import("../ui/watchers.js" as string);
     const runs = await import("../ui/runs.js" as string);
     expect(typeof dashboard.renderDashboard).toBe("function");
-    expect(typeof admin.renderWatchers).toBe("function");
+    expect(typeof watchers.renderWatchers).toBe("function");
+    expect(typeof watchers.renderWatcherDetail).toBe("function");
     expect(typeof runs.renderRunsList).toBe("function");
     expect(typeof runs.renderRunDetail).toBe("function");
   });

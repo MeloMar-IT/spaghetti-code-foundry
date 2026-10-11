@@ -199,7 +199,7 @@ describe("the dialogs match the code", () => {
   });
 
   it("has no native confirm left in the administration pages that use the shared dialog", () => {
-    for (const f of ["ui/admin.js", "ui/problems.js"]) expect(count(read(f), /\bconfirm\(/g), f).toBe(0);
+    for (const f of ["ui/admin.js", "ui/watchers.js", "ui/problems.js"]) expect(count(read(f), /\bconfirm\(/g), f).toBe(0);
   });
 
   it("has a row for every native confirm or prompt", () => {

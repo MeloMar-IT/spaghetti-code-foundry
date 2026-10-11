@@ -36,6 +36,8 @@ export const PAGES = [
   { id: "library", path: "#/library", title: "Library", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Library" }, roles: A },
   adminPage("problems", "Problems", "operations"),
   adminPage("watchers", "Watchers", "operations"),
+  { id: "problem", path: "#/problems/:id", title: (id) => id, area: "administration", dest: "administration", parent: "problems", nav: "detail", label: {}, roles: A },
+  { id: "watcher", path: "#/watchers/:id", title: (id) => id, area: "administration", dest: "administration", parent: "watchers", nav: "detail", label: {}, roles: A },
   adminPage("models", "Models", "operations"),
   adminPage("dashboard", "Dashboard", "operations"),
   adminPage("users", "Users", "access"),

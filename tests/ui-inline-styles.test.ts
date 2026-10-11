@@ -13,7 +13,7 @@ const STYLE_USE = /\bstyle\s*:|\.style\s*[.[]|setAttribute\(\s*["']style["']/;
 
 /** Every file whose inline styles are gone. A new inline style in one of them fails the test. */
 const CLEAN = [
-  "ui/admin.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
+  "ui/admin.js", "ui/watchers.js", "ui/models.js", "ui/watcher-form.js", "ui/admin-repos.js", "ui/users.js",
   "ui/dashboard.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
   "ui/editor.js", "ui/app.js", "ui/flow-page.js", "ui/flow-shell.js", "ui/flow-state.js","ui/step-types.js", "ui/graph.js", "ui/library.js",
   "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/refinement.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",

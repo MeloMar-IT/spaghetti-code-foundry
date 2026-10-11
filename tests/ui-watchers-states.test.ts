@@ -7,7 +7,7 @@ let restore: () => void;
 let admin: any;
 beforeAll(async () => {
   restore = installFakeDom();
-  admin = await import("../ui/admin.js" as string);
+  admin = await import("../ui/watchers.js" as string);
 });
 afterAll(() => restore());
 
@@ -62,7 +62,8 @@ const gate = () => {
 const toastText = () => document.getElementById("toast")!.textContent as string;
 const button = (el: FakeElement, text: string) => el.all("button").find((b) => b.textContent === text)!;
 const stale = (main: FakeElement) => main.all("p").filter((p) => (p.attrs.class ?? "").includes("stale-note"));
-const card = (main: FakeElement) => main.all("div").find((d) => d.attrs.class === "card")!;
+const row = (main: FakeElement) => main.all("tr").find((r) => r.textContent.startsWith("w"))!;
+const drawDetail = async (main: FakeElement, id = "w") => admin.renderWatcherDetail(main, id);
 const busy = (main: FakeElement) => main.all("div").some((d) => d.attrs["aria-busy"] === "true");
 
 describe("Watchers states", () => {
@@ -77,7 +78,21 @@ describe("Watchers states", () => {
     g.release();
     await done;
     expect(busy(main)).toBe(false);
-    expect(card(main)).toBeDefined();
+    expect(row(main)).toBeDefined();
+  });
+
+  it("the detail draws a skeleton while the GETs are held", async () => {
+    const g = gate();
+    getGate = g.promise;
+    const main = new FakeElement("div");
+    const done = drawDetail(main);
+    await flush();
+    expect(busy(main)).toBe(true);
+    expect(main.textContent).toContain("Loading the watcher…");
+    g.release();
+    await done;
+    expect(busy(main)).toBe(false);
+    expect(button(main, "Check now")).toBeDefined();
   });
 
   it("rejects when /api/watchers fails, so the router draws the error", async () => {
@@ -85,50 +100,60 @@ describe("Watchers states", () => {
     await expect(admin.renderWatchers(new FakeElement("div"))).rejects.toThrow("down");
   });
 
-  it("Check now shows Checking… on the card with the button disabled, and no toast; then reloads", async () => {
+  it("Check now shows Checking… on the page with the button disabled, and no toast; then reloads", async () => {
     const main = new FakeElement("div");
-    await admin.renderWatchers(main);
+    await drawDetail(main);
     const g = gate();
     tickGate = g.promise;
     const before = watcherGets;
-    button(card(main), "Check now").click();
+    button(main, "Check now").click();
     await flush();
-    expect(card(main).textContent).toContain("Checking…");
-    expect(button(card(main), "Check now").disabled).toBe(true);
+    expect(main.textContent).toContain("Checking…");
+    expect(button(main, "Check now").disabled).toBe(true);
     expect(toastText()).toBe("");
     g.release();
     await flush();
     expect(sent).toEqual(["POST /api/watchers/w/tick"]);
     expect(watcherGets).toBe(before + 1);
-    expect(card(main).textContent).not.toContain("Checking…");
-    expect(button(card(main), "Check now").disabled).toBe(false);
+    expect(main.textContent).not.toContain("Checking…");
+    expect(button(main, "Check now").disabled).toBe(false);
   });
 
   it("a failed Check now shows an error toast and the button works again", async () => {
     const main = new FakeElement("div");
-    await admin.renderWatchers(main);
+    await drawDetail(main);
     tickError = "the check failed";
-    button(card(main), "Check now").click();
+    button(main, "Check now").click();
     await flush();
     expect(toastText()).toBe("the check failed");
-    expect(button(card(main), "Check now").disabled).toBe(false);
-    expect(card(main).textContent).not.toContain("Checking…");
+    expect(button(main, "Check now").disabled).toBe(false);
+    expect(main.textContent).not.toContain("Checking…");
   });
 
-  it("a reload that fails keeps the cards and shows a failed stale note; Retry redraws", async () => {
+  it("a reload that fails keeps the page and shows a failed stale note; Retry redraws", async () => {
     const main = new FakeElement("div");
-    await admin.renderWatchers(main);
+    await drawDetail(main);
     getsFail.add("/api/watchers");
-    button(card(main), "Check now").click();
+    button(main, "Check now").click();
     await flush();
-    expect(card(main)).toBeDefined();
+    expect(button(main, "Check now")).toBeDefined();
     expect(stale(main)).toHaveLength(1);
     expect(stale(main)[0]!.attrs.class).toContain("failed");
     getsFail.clear();
     button(stale(main)[0]!, "Retry").click();
     await flush();
     expect(stale(main)).toHaveLength(0);
-    expect(card(main)).toBeDefined();
+    expect(button(main, "Check now")).toBeDefined();
+  });
+
+  it("a list reload that fails keeps the rows and shows a failed stale note", async () => {
+    const main = new FakeElement("div");
+    await admin.renderWatchers(main);
+    getsFail.add("/api/watchers");
+    button(main, "↻").click();
+    await flush();
+    expect(row(main)).toBeDefined();
+    expect(stale(main)[0]!.attrs.class).toContain("failed");
   });
 
   it("only the newest reload draws, even when an older one answers last", async () => {
