@@ -130,6 +130,18 @@ describe("resolve for an admin", () => {
     expect(r("#/runs/r1").title).toBe("Run r1");
     expect(r("#/runs").title).toBe("Runs");
   });
+
+  it("builds the crumbs of a watcher and a problem, and keeps the list address", () => {
+    const crumbs = (h: string) => r(h).crumbs.map((c: any) => [c.label, c.href]);
+    expect(crumbs("#/watchers/w-1")).toEqual([["Administration", "#/users"], ["Watchers", "#/watchers"], ["w-1", null]]);
+    expect(r("#/watchers/w-1").back).toBe("#/watchers");
+    expect(crumbs("#/problems/00000000000000a1")).toEqual([["Administration", "#/users"], ["Problems", "#/problems"], ["00000000000000a1", null]]);
+    expect(r("#/problems/00000000000000a1").back).toBe("#/problems");
+    expect(r("#/problems")).toMatchObject({ hash: "#/problems", redirected: false });
+    expect(r("#/problems").page.id).toBe("problems");
+    expect(r("#/watchers/w-1").page.id).toBe("watcher");
+    expect(r("#/problems/abc").page.id).toBe("problem");
+  });
 });
 
 describe("resolve for a user", () => {
@@ -165,6 +177,13 @@ describe("resolve for a user", () => {
   it("sends admin pages to My runs", () => {
     for (const h of ["#/users", "#/operations", "#/your-turn", "#/board", "#/maintenance", "#/all-repos", "#/credentials", "#/models", "#/models/ollama"]) expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true, reason: "unknown" });
     expect(auth.isUserHash("#/models/ollama")).toBe(false);
+  });
+
+  it("sends the watcher and problem pages, and their lists, to My runs", () => {
+    for (const h of ["#/watchers/w", "#/problems/abc", "#/watchers", "#/problems"]) {
+      expect(r(h), h).toMatchObject({ hash: "#/runs", redirected: true });
+      expect(auth.isUserHash(h), h).toBe(false);
+    }
   });
 
   it("has no link to the admin-only pages in the user HTML", () => {

@@ -4,9 +4,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let admin: any;
+let watchersMod: any;
 beforeAll(async () => {
   restore = installFakeDom();
   admin = await import("../ui/admin.js" as string);
+  watchersMod = await import("../ui/watchers.js" as string);
 });
 afterAll(() => restore());
 
@@ -49,11 +51,12 @@ afterEach(() => {
   delete (globalThis as any).confirm;
 });
 
-const cards = (main: FakeElement) => main.all("div").filter((d) => d.attrs.class === "card");
+// The monitor's page: the findings and mutes are drawn on it (it was a card on the list before).
+const cards = (main: FakeElement) => [main];
 const buttonOf = (c: FakeElement) => c.all("button").find((b) => /Switch bug stories/.test(b.textContent));
-const draw = async () => {
+const draw = async (id = "mon") => {
   const main = new FakeElement("div");
-  await admin.renderWatchers(main);
+  await watchersMod.renderWatcherDetail(main, id);
   return main;
 };
 
@@ -79,14 +82,19 @@ describe("storiesLine", () => {
 });
 
 describe("the monitor's card", () => {
-  it("only the monitor's card has the line and the button", async () => {
-    const main = await draw();
-    const [mon, other] = cards(main);
-    expect(mon!.textContent).toContain("Bug stories: on");
-    expect(buttonOf(mon!)!.textContent).toBe("Switch bug stories off");
-    expect(other!.textContent).not.toContain("Bug stories");
-    expect(buttonOf(other!)).toBeUndefined();
-    expect(mon!.textContent.indexOf("Bug stories: on")).toBeLessThan(mon!.textContent.indexOf("a note"));
+  it("only the monitor's page has the line and the button", async () => {
+    const mon = await draw();
+    const other = await draw("w");
+    expect(mon.textContent).toContain("Bug stories: on");
+    expect(buttonOf(mon)!.textContent).toBe("Switch bug stories off");
+    expect(other.textContent).not.toContain("Bug stories");
+    expect(buttonOf(other)).toBeUndefined();
+    expect(mon.textContent.indexOf("Bug stories: on")).toBeLessThan(mon.textContent.indexOf("a note"));
+  });
+
+  it("the list sends no GET /api/monitor", async () => {
+    await watchersMod.renderWatchers(new FakeElement("div"));
+    expect(sent.some((s) => s.url === "/api/monitor")).toBe(false);
   });
 
   it("a click sends the call and draws the page again", async () => {
@@ -140,12 +148,11 @@ describe("the monitor's card", () => {
   it("a failing GET /api/monitor still draws the page: the monitor card has a note with Retry", async () => {
     stateFails = true;
     const main = await draw();
-    expect(cards(main)).toHaveLength(2);
     expect(main.textContent).not.toContain("Bug stories");
     const errs = main.all("div").filter((d) => /\bstate-error\b/.test(d.attrs.class ?? ""));
     expect(errs).toHaveLength(1);
     expect(errs[0]!.textContent).toContain("Could not load the monitor's state.");
-    expect(cards(main)[1]!.textContent).toContain("issues");
+    expect(main.textContent).toContain("every 1h");
     const retry = errs[0]!.all("button").find((b) => b.textContent === "Retry")!;
     stateFails = false;
     retry.click();
@@ -199,12 +206,22 @@ describe("the findings and mutes of the monitor's card", () => {
     const row = p.all("tr").find((r) => r.textContent.includes("sentence 1"))!;
     expect(row.textContent).toContain("restart-loop");
     expect(row.textContent).toContain("critical");
-    expect(row.all("a")[0]!.attrs.href).toBe("https://github.com/o/a/issues/12");
-    expect(button(row, "Mute")).toBeDefined();
+    expect(row.all("a")[0]!.attrs.href).toBe("#/problems/0000000000000001");
+    expect(row.all("a")[1]!.attrs.href).toBe("https://github.com/o/a/issues/12");
     const muted = p.all("tr").find((r) => r.textContent.includes("sentence 2"))!;
     expect(muted.textContent).toContain("muted");
-    expect(button(muted, "Mute")).toBeUndefined();
     expect(button(p, "End mute")).toBeDefined();
+  });
+
+  it("a finding row links to its page and has no button; the Mutes table keeps End mute", async () => {
+    withLists([finding(1, { needsYou: true }), finding(2)], [{ id: "m1", kind: "detector", detector: "restart-loop", reason: "noise", since: iso(9, 0), by: "u" }]);
+    const p = panel(await draw());
+    const table = p.all("table").find((t) => t.attrs["aria-label"] === "Findings")!;
+    expect(table.all("button")).toHaveLength(0);
+    expect(table.all("a").map((a) => a.attrs.href)).toEqual(["#/problems/0000000000000001", "#/problems/0000000000000002"]);
+    expect(table.all("a")[0]!.textContent).toBe("sentence 1");
+    expect(button(p, "End mute")).toBeDefined();
+    expect(button(p, "Mute a detector")).toBeDefined();
   });
 
   it("an http: or javascript: story address is text, not a link", () => {
@@ -247,37 +264,39 @@ describe("the findings and mutes of the monitor's card", () => {
   });
 
   it("Mute with an empty reason shows the error and sends nothing", async () => {
-    withLists([finding(1)]);
+    withLists([]);
     const p = panel(await draw());
     sent = [];
-    button(p, "Mute")!.click();
+    button(p, "Mute a detector")!.click();
     button(modalRoot(), "Mute")!.click();
     await wait();
     expect(modalRoot().textContent).toContain("Give a reason.");
     expect(sent).toEqual([]);
   });
 
-  it("a finding with a reason and 1 day sends the call; for good sends no hours", async () => {
-    withLists([finding(1)]);
+  it("a detector with a reason and 1 day sends the call; for good sends no hours", async () => {
+    withLists([]);
     const p = panel(await draw());
-    button(p, "Mute")!.click();
+    button(p, "Mute a detector")!.click();
     formReason().value = "  noise  ";
-    modalRoot().all("select")[0]!.value = "24";
+    modalRoot().all("select")[0]!.value = "restart-loop";
+    modalRoot().all("select")[1]!.value = "24";
     sent = [];
     bodies = [];
     button(modalRoot(), "Mute")!.click();
     await wait();
     expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/mutes" });
-    expect(bodies[0]).toEqual({ finding: "0000000000000001", reason: "noise", hours: 24 });
+    expect(bodies[0]).toEqual({ detector: "restart-loop", reason: "noise", hours: 24 });
     expect(sent.some((s) => s.url === "/api/watchers")).toBe(true); // reloaded
 
     const again = panel(await draw());
-    button(again, "Mute")!.click();
+    button(again, "Mute a detector")!.click();
+    modalRoot().all("select")[0]!.value = "restart-loop";
     formReason().value = "good";
     bodies = [];
     button(modalRoot(), "Mute")!.click();
     await wait();
-    expect(bodies[0]).toEqual({ finding: "0000000000000001", reason: "good" });
+    expect(bodies[0]).toEqual({ detector: "restart-loop", reason: "good" });
   });
 
   it("Mute a detector sends the detector", async () => {
@@ -293,11 +312,11 @@ describe("the findings and mutes of the monitor's card", () => {
   });
 
   it("an API error shows in the form", async () => {
-    withLists([finding(1)]);
+    withLists([]);
     const p = panel(await draw());
-    button(p, "Mute")!.click();
+    button(p, "Mute a detector")!.click();
     formReason().value = "r";
-    muteFails = "this finding is already muted; end that mute first";
+    muteFails = "this detector is already muted; end that mute first";
     button(modalRoot(), "Mute")!.click();
     await wait();
     expect(modalRoot().textContent).toContain("already muted");
@@ -313,29 +332,12 @@ describe("the findings and mutes of the monitor's card", () => {
     expect(sent.some((s) => s.url === "/api/watchers")).toBe(true);
   });
 
-  it("a finding that needs a person shows it and a Try again button that sends the POST and reloads", async () => {
-    withLists([finding(1, { needsYou: true, story: { issue: 12, url: "https://github.com/o/a/issues/12", state: "closed" } }), finding(2)]);
+  it("a finding that needs a person says so in its row, with no Try again button (it is on the finding's page)", async () => {
+    withLists([finding(1, { needsYou: true, story: { issue: 12, url: "https://github.com/o/a/issues/12", state: "closed" } })]);
     const p = panel(await draw());
     const row = p.all("tr").find((r) => r.textContent.includes("sentence 1"))!;
     expect(row.textContent).toContain("needs you");
-    expect(button(row, "Try again")).toBeDefined();
-    expect(button(p.all("tr").find((r) => r.textContent.includes("sentence 2"))!, "Try again")).toBeUndefined();
-    sent = [];
-    button(row, "Try again")!.click();
-    await wait();
-    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/retry" });
-    expect(sent.some((s) => s.url === "/api/watchers")).toBe(true);
-  });
-
-  it("an API error of Try again does not break the page", async () => {
-    withLists([finding(1, { needsYou: true })]);
-    const p = panel(await draw());
-    muteFails = "this finding does not wait for a person";
-    sent = [];
-    button(p, "Try again")!.click();
-    await wait();
-    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/retry" });
-    muteFails = "";
+    expect(button(row, "Try again")).toBeUndefined();
   });
 
   it("muteBody and untilText", () => {

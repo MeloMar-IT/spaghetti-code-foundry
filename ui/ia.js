@@ -37,6 +37,8 @@ export const PAGES = [
   adminPage("operations", "Overview", "operations"),
   adminPage("problems", "Problems", "operations"),
   adminPage("watchers", "Watchers", "operations"),
+  { id: "problem", path: "#/problems/:id", title: (id) => id, area: "administration", dest: "administration", parent: "problems", nav: "detail", label: {}, roles: A },
+  { id: "watcher", path: "#/watchers/:id", title: (id) => id, area: "administration", dest: "administration", parent: "watchers", nav: "detail", label: {}, roles: A },
   adminPage("models", "Models", "operations"),
   { id: "model", path: "#/models/:name", title: (name) => name, area: "administration", dest: "administration", parent: "models", nav: "detail", label: {}, roles: A },
   adminPage("dashboard", "Dashboard", "operations"),

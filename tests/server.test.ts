@@ -745,7 +745,7 @@ steps:
       expect(r.status).toBe(200);
       return r.text();
     };
-    const [next, dashboard, admin, runs, api, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/admin.js", "/runs.js", "/api.js", "/health.js", "/", "/app.js"].map(text));
+    const [next, dashboard, admin, runs, api, health, index, app] = await Promise.all(["/next.js", "/dashboard.js", "/watchers.js", "/runs.js", "/api.js", "/health.js", "/", "/app.js"].map(text));
     const css = await fetchUiCss(base);
     expect(next).toContain("What happens next");
     for (const js of [dashboard, admin, runs, health]) expect(js).toContain("./next.js");
@@ -1133,6 +1133,6 @@ steps:
     const { readFileSync } = await import("node:fs");
     const ui = (f: string) => readFileSync(resolve("ui", f), "utf8");
     expect(ui("runs.js")).toContain("whenParts(");
-    for (const f of ["runs.js", "dashboard.js", "admin.js"]) expect(ui(f)).not.toMatch(/usually|longer than usual|Estimate:|Continues/);
+    for (const f of ["runs.js", "dashboard.js", "admin.js", "watchers.js"]) expect(ui(f)).not.toMatch(/usually|longer than usual|Estimate:|Continues/);
   });
 });

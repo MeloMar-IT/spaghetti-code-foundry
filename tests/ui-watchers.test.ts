@@ -5,10 +5,12 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let admin: any;
+let watchersMod: any;
 let form: any;
 beforeAll(async () => {
   restore = installFakeDom();
   admin = await import("../ui/admin.js" as string);
+  watchersMod = await import("../ui/watchers.js" as string);
   form = await import("../ui/watcher-form.js" as string);
 });
 afterAll(() => restore());
@@ -34,6 +36,7 @@ beforeEach(() => {
   sent = [];
   answers = [];
   hold = undefined;
+  (globalThis as any).location = { hash: "" };
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
   (document as any).getElementById("toast").textContent = "";
@@ -53,6 +56,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = realFetch;
   delete (globalThis as any).confirm;
+  delete (globalThis as any).location;
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 5));
@@ -68,10 +72,17 @@ const press = (el: FakeElement | undefined) => {
 };
 const draw = async () => {
   const main = new FakeElement("div");
-  await admin.renderWatchers(main);
+  await watchersMod.renderWatchers(main);
   return main;
 };
-const cardOf = (main: FakeElement, id: string) => walk(main).find((e) => e.attrs.class === "card" && e.textContent.startsWith(id))!;
+const drawDetail = async (id: string) => {
+  const main = new FakeElement("div");
+  await watchersMod.renderWatcherDetail(main, id);
+  return main;
+};
+const group = (main: FakeElement, name: string) => walk(main).find((e) => e.tag === "section" && String(e.attrs.class).includes(name))!;
+/** The help "?" of a state mark is a button too: only the buttons of the Actions and Danger groups count as actions. */
+const actionButtons = (main: FakeElement) => walk(main).filter((e) => e.tag === "section").flatMap((s) => buttons(s));
 const inputs = (el: FakeElement) => walk(el).filter((e) => e.tag === "input");
 const labelled = (el: FakeElement, text: string) => walk(el).find((e) => e.tag === "label" && e.textContent.startsWith(text))!;
 const inputOf = (el: FakeElement, text: string) => walk(labelled(el, text)).find((e) => e.tag === "input" || e.tag === "textarea")!;
@@ -146,95 +157,38 @@ describe("the page", () => {
     expect(text).not.toContain("name@example.com");
   });
 
-  it("a file watcher is read-only, with a note and Check now", async () => {
+  it("each row links to its page, shows the problem line and has no action button", async () => {
+    watchers = [stored({ status: { id: "w", lastOk: new Date().toISOString(), lastActions: [] } }), stored({ id: "v", problem: "the owner of this repository is blocked", state: { name: "error" } })];
+    const main = await draw();
+    const table = walk(main).find((e) => e.tag === "table")!;
+    const links = walk(table).filter((e) => e.tag === "a").map((e) => e.attrs.href);
+    expect(links).toEqual(["#/watchers/w", "#/watchers/v"]);
+    expect(table.textContent).toContain("the owner of this repository is blocked");
+    expect(table.textContent).toContain("none yet");
+    expect(table.textContent).toMatch(/just now|ago|s$|\d/);
+    for (const label of ["Delete", "Mute", "Edit", "Disable", "Check now"]) expect(buttons(table)).not.toContain(label);
+    // the state's "?" help is the only button a row may have
+    for (const e of walk(table).filter((x) => x.tag === "button")) expect(e.attrs["aria-label"] ?? e.textContent).toBeTruthy();
+    expect(buttons(main)).toEqual(expect.arrayContaining(["↻", "+ Add the monitor", "+ Add watcher"]));
+  });
+
+  it("a file watcher shows its note in its section", async () => {
     watchers = [{ id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }];
     const main = await draw();
-    const card = cardOf(main, "f");
-    expect(card.textContent).toContain("it moves to its repository when the server starts");
-    expect(buttons(card)).toEqual(["Check now"]);
-    sent = [];
-    press(button(card, "Check now"));
-    await flush();
-    expect(sent[0]).toMatchObject({ method: "POST", url: "/api/watchers/f/tick" });
+    expect(main.textContent).toContain("From config.yaml");
+    expect(main.textContent).toContain("it moves to its repository when the server starts");
   });
 
-  it("Disable and Enable use the repository API, never PUT /api/config", async () => {
-    watchers = [stored()];
-    let main = await draw();
-    press(button(cardOf(main, "w"), "Disable"));
-    await flush();
-    expect(sent[0]).toEqual({ method: "PUT", url: "/api/admin/repos/r1/watchers/w", body: { enabled: false } });
-    watchers = [stored({ enabled: false })];
-    main = await draw();
-    press(button(cardOf(main, "w"), "Enable"));
-    await flush();
-    expect(sent[1]!.body).toEqual({ enabled: true });
-    expect(sent.some((s) => s.url === "/api/config")).toBe(false);
+  it("a watcher of a repository that is gone is in its own section", async () => {
+    watchers = [stored({ repoId: "gone" })];
+    expect((await draw()).textContent).toContain("Repository not connected any more");
   });
 
-  it("Delete asks first, then sends the DELETE", async () => {
-    watchers = [stored()];
-    const main = await draw();
-    press(button(cardOf(main, "w"), "Delete"));
-    await flush();
-    press(button(root(), "Cancel"));
-    await flush();
-    expect(sent).toEqual([]);
-    press(button(cardOf(main, "w"), "Delete"));
-    await flush();
-    press(button(root(), "Delete watcher"));
-    await flush();
-    expect(sent).toEqual([{ method: "DELETE", url: "/api/admin/repos/r1/watchers/w", body: undefined }]);
-  });
-
-  it("shows the server's sentence as it is when Disable or Delete fails", async () => {
-    watchers = [stored()];
-    const main = await draw();
-    answers = [{ status: 409, error: "the sentence of the server" }];
-    press(button(cardOf(main, "w"), "Disable"));
-    await flush();
-    expect(toastText()).toBe("the sentence of the server");
-    answers = [{ status: 404, error: "no such watcher" }];
-    press(button(cardOf(await draw(), "w"), "Delete"));
-    await flush();
-    press(button(root(), "Delete watcher"));
-    await flush();
-    expect(toastText()).toBe("no such watcher");
-    expect(sent.some((s) => s.url === "/api/config")).toBe(false);
-  });
-
-  it("a watcher with a problem shows it and has no Check now", async () => {
-    watchers = [stored({ problem: "the owner of this repository is blocked", state: { name: "error" } })];
-    const card = cardOf(await draw(), "w");
-    expect(card.textContent).toContain("the owner of this repository is blocked");
-    expect(buttons(card)).not.toContain("Check now");
-    expect(buttons(card)).toContain("Edit");
-  });
-
-  it("a watcher of a repository that is gone can only be deleted", async () => {
-    watchers = [stored({ repoId: "gone", problem: "this watcher's repository is not connected any more; delete the watcher" })];
-    const main = await draw();
-    expect(main.textContent).toContain("Repository not connected any more");
-    const card = cardOf(main, "w");
-    expect(buttons(card)).toEqual(["Delete"]);
-    expect(card.textContent).toContain("not connected any more");
-  });
-
-  it("the monitor stays in config.yaml: Edit then Save sends PUT /api/config", async () => {
+  it("the monitor is in its section and hides + Add the monitor", async () => {
     watchers = [{ id: "mon", source: "monitor", enabled: true, every: "1h", state: { name: "running" }, status: { id: "mon", lastActions: [] } }];
-    const configs: any[] = [];
-    const get = (globalThis as any).fetch;
-    (globalThis as any).fetch = async (url: string, init: any) => (url === "/api/config" && init.method === "GET"
-      ? { ok: true, status: 200, statusText: "x", json: async () => ({ watchers: [{ id: "mon", source: "monitor", every: "1h", enabled: true }] }) }
-      : (init.method === "PUT" && configs.push(JSON.parse(init.body)), get(url, init)));
     const main = await draw();
     expect(main.textContent).toContain("The Foundry itself");
     expect(buttons(main)).not.toContain("+ Add the monitor");
-    press(button(cardOf(main, "mon"), "Edit"));
-    inputOf(root(), "Check every").value = "30m";
-    press(button(root(), "Save watcher"));
-    await flush();
-    expect(configs[0].watchers).toEqual([{ id: "mon", source: "monitor", every: "30m", enabled: true }]);
   });
 
   it("+ Add the monitor shows only when there is none", async () => {
@@ -246,6 +200,150 @@ describe("the page", () => {
     const main = await draw();
     expect(main.textContent).toContain("No watchers yet.");
     expect(buttons(main).filter((b) => b === "+ Add watcher")).toHaveLength(2);
+  });
+});
+
+describe("the watcher page", () => {
+  it("a repository watcher has Actions, and Delete alone in Danger", async () => {
+    watchers = [stored()];
+    const main = await drawDetail("w");
+    expect(actionButtons(main)).toEqual(["Check now", "Edit", "Disable", "Delete"]);
+    expect(buttons(group(main, "danger-group"))).toEqual(["Delete"]);
+    expect(buttons(group(main, "action-group"))).not.toContain("Delete");
+    expect(main.textContent).toContain("every 5m · max 1 per check");
+  });
+
+  it("Disable and Enable use the repository API, never PUT /api/config", async () => {
+    watchers = [stored()];
+    let main = await drawDetail("w");
+    press(button(main, "Disable"));
+    await flush();
+    expect(sent[0]).toEqual({ method: "PUT", url: "/api/admin/repos/r1/watchers/w", body: { enabled: false } });
+    watchers = [stored({ enabled: false })];
+    main = await drawDetail("w");
+    press(button(main, "Enable"));
+    await flush();
+    expect(sent[1]!.body).toEqual({ enabled: true });
+    expect(sent.some((s) => s.url === "/api/config")).toBe(false);
+  });
+
+  it("Delete asks first, then sends the DELETE and goes back to the list", async () => {
+    watchers = [stored()];
+    const main = await drawDetail("w");
+    press(button(main, "Delete"));
+    await flush();
+    press(button(root(), "Cancel"));
+    await flush();
+    expect(sent).toEqual([]);
+    press(button(main, "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
+    await flush();
+    expect(sent).toEqual([{ method: "DELETE", url: "/api/admin/repos/r1/watchers/w", body: undefined }]);
+    expect((globalThis as any).location.hash).toBe("#/watchers");
+  });
+
+  it("shows the server's sentence as it is when Disable or Delete fails, and stays", async () => {
+    watchers = [stored()];
+    (globalThis as any).location.hash = "#/watchers/w";
+    const main = await drawDetail("w");
+    answers = [{ status: 409, error: "the sentence of the server" }];
+    press(button(main, "Disable"));
+    await flush();
+    expect(toastText()).toBe("the sentence of the server");
+    answers = [{ status: 404, error: "no such watcher" }];
+    press(button(main, "Delete"));
+    await flush();
+    press(button(root(), "Delete watcher"));
+    await flush();
+    expect(toastText()).toBe("no such watcher");
+    expect((globalThis as any).location.hash).toBe("#/watchers/w");
+    expect(sent.some((s) => s.url === "/api/config")).toBe(false);
+  });
+
+  it("a watcher with a problem shows it and has no Check now", async () => {
+    watchers = [stored({ problem: "the owner of this repository is blocked", state: { name: "error" } })];
+    const main = await drawDetail("w");
+    expect(main.textContent).toContain("the owner of this repository is blocked");
+    expect(actionButtons(main)).not.toContain("Check now");
+    expect(actionButtons(main)).toContain("Edit");
+  });
+
+  it("a watcher of a repository that is gone can only be deleted", async () => {
+    watchers = [stored({ repoId: "gone", problem: "this watcher's repository is not connected any more; delete the watcher" })];
+    const main = await drawDetail("w");
+    expect(actionButtons(main)).toEqual(["Delete"]);
+    expect(walk(main).some((e) => String(e.attrs.class).includes("action-group") && !String(e.attrs.class).includes("danger"))).toBe(false);
+    expect(main.textContent).toContain("Its repository is not connected any more.");
+  });
+
+  it("a file watcher has only Check now, no Danger group, and the note", async () => {
+    watchers = [{ id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }];
+    const main = await drawDetail("f");
+    expect(main.textContent).toContain("it moves to its repository when the server starts");
+    expect(actionButtons(main)).toEqual(["Check now"]);
+    expect(walk(main).some((e) => String(e.attrs.class).includes("danger-group"))).toBe(false);
+    sent = [];
+    press(button(main, "Check now"));
+    await flush();
+    expect(sent[0]).toMatchObject({ method: "POST", url: "/api/watchers/f/tick" });
+  });
+
+  it("the monitor stays in config.yaml: Edit then Save sends PUT /api/config", async () => {
+    watchers = [{ id: "mon", source: "monitor", enabled: true, every: "1h", state: { name: "running" }, status: { id: "mon", lastActions: [] } }];
+    const configs: any[] = [];
+    const get = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => (url === "/api/config" && init.method === "GET"
+      ? { ok: true, status: 200, statusText: "x", json: async () => ({ watchers: [{ id: "mon", source: "monitor", every: "1h", enabled: true }] }) }
+      : (init.method === "PUT" && configs.push(JSON.parse(init.body)), get(url, init)));
+    const main = await drawDetail("mon");
+    expect(actionButtons(main)).toEqual(["Check now", "Edit", "Delete"]);
+    press(button(main, "Edit"));
+    inputOf(root(), "Check every").value = "30m";
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(configs[0].watchers).toEqual([{ id: "mon", source: "monitor", every: "30m", enabled: true }]);
+  });
+
+  it("shows Error details and Recent activity", async () => {
+    watchers = [stored({ status: { id: "w", lastError: "boom", lastActions: ["did a", "did b"] } })];
+    const main = await drawDetail("w");
+    expect(main.textContent).toContain("Error details");
+    expect(main.textContent).toContain("boom");
+    expect(main.textContent).toContain("Recent activity (2)");
+  });
+
+  it("an unknown id says so, with a link back and no button", async () => {
+    watchers = [stored()];
+    const main = await drawDetail("nope");
+    expect(main.textContent).toContain('There is no watcher "nope".');
+    expect(walk(main).find((e) => e.tag === "a")!.attrs.href).toBe("#/watchers");
+    expect(buttons(main)).toEqual([]);
+  });
+});
+
+describe("watcherKind and watcherSettings", () => {
+  it("tells the four kinds apart", () => {
+    const rs = [repo()];
+    expect(watchersMod.watcherKind({ source: "monitor" }, rs)).toBe("monitor");
+    expect(watchersMod.watcherKind({ source: "issues" }, rs)).toBe("file");
+    expect(watchersMod.watcherKind({ source: "issues", repoId: "nope" }, rs)).toBe("gone");
+    expect(watchersMod.watcherKind({ source: "issues", repoId: "r1" }, rs)).toBe("repo");
+  });
+
+  it("writes the settings line", () => {
+    expect(watchersMod.watcherSettings({ source: "monitor", every: "1h", enabled: false })).toBe("every 1h");
+    expect(watchersMod.watcherSettings({ source: "schedule", every: "1d", at: "07:00", enabled: false })).toBe("checks every 1d");
+    expect(watchersMod.watcherSettings({ source: "schedule", every: "1d", enabled: false })).toBe("max 1 run per 1d");
+    expect(watchersMod.watcherSettings({ source: "issues", every: "5m", max_per_tick: 2, exclude_labels: ["a", "b"], pause_while_pr_open: "fix/", enabled: false }))
+      .toBe("every 5m · max 2 per check · skips a, b · pauses while a fix/* PR is open");
+  });
+
+  it("admin.js still exports the helpers, the same functions", () => {
+    for (const n of ["lastOkText", "watcherNotes", "storiesLine", "storiesRow", "watcherStateMark", "describeWatcher", "watcherGroups", "monitorEntry"]) {
+      expect(typeof admin[n], n).toBe("function");
+      expect(admin[n], n).toBe(watchersMod[n]);
+    }
   });
 });
 

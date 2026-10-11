@@ -18,6 +18,7 @@ let sent: { method: string; url: string }[];
 let bodies: any[];
 let state: any;
 let fails: Record<string, string>;
+let failStatus: Record<string, number>;
 let details: any;
 let config: any;
 
@@ -38,6 +39,7 @@ beforeEach(() => {
   sent = [];
   bodies = [];
   fails = {};
+  failStatus = {};
   state = base();
   details = { evidence: ["Flows: issue-gitflow"], stories: [{ issue: 12, url: "https://github.com/o/a/issues/12", current: true }, { issue: 9, url: "http://x/9", current: false }], runs: [{ id: "run-1", status: "failed", startedAt: iso(9) }] };
   config = { monitor: { restart_loop: { resumes: 5, within_minutes: 10 }, report_to: "o/a" }, other: 1 };
@@ -46,7 +48,7 @@ beforeEach(() => {
     bodies.push(init.body ? JSON.parse(init.body) : undefined);
     const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
     const failed = Object.keys(fails).find((k) => `${init.method} ${url}` === k);
-    if (failed) return reply({ error: fails[failed] }, 409);
+    if (failed) return reply({ error: fails[failed] }, failStatus[failed] ?? 409);
     if (url === "/api/monitor") return reply(state);
     if (url.startsWith("/api/monitor/findings/")) return reply(details);
     if (url === "/api/monitor/story") return reply({ story: { made: true, issue: 31, url: "https://github.com/o/a/issues/31" } });
@@ -63,6 +65,17 @@ const draw = async () => {
   const main = new FakeElement("div");
   await ui.renderProblems(main);
   return main;
+};
+const drawDetail = async (id: string) => {
+  const main = new FakeElement("div");
+  await ui.renderProblemDetail(main, id);
+  return main;
+};
+const id = (n: number) => String(n).padStart(16, "0");
+/** The buttons of one group of the problem page ("Bug story" or "Mute"), or undefined when it is not drawn. */
+const groupLabels = (main: FakeElement, title: string) => {
+  const g = main.all("section").find((s) => s.all("h2")[0]?.textContent === title);
+  return g ? g.all("button").map((b) => b.textContent) : undefined;
 };
 const button = (el: FakeElement, text: string) => el.all("button").find((b) => b.textContent === text);
 const modalRoot = () => (globalThis as any).document.getElementById("modal-root") as FakeElement;
@@ -143,22 +156,32 @@ describe("the page", () => {
     ];
   };
 
-  it("draws the sentence, the rows in server order and the right buttons", async () => {
+  it("draws the sentence and the rows in server order, each linking to its page, without a button", async () => {
     withFindings();
     const main = await draw();
     expect(main.textContent).toContain("The monitor is running; bug stories are on;");
-    const rows = main.all("table")[0]!.all("tr").slice(1);
+    const table = main.all("table")[0]!;
+    const rows = table.all("tr").slice(1);
     expect(rows.map((r) => /sentence (\d)/.exec(r.textContent)![1])).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
-    const l = (n: number) => labels(rowOf(main, `sentence ${n}`));
-    expect(l(1)).toEqual(["Details", "Make a story now", "Mute", "This is not a problem"]);
-    expect(l(2)).toEqual(["Details", "Mute", "This is not a problem"]);
-    expect(l(3)).toEqual(["Details", "Try again", "Mute", "This is not a problem"]);
-    expect(l(4)).toEqual(["Details", "End mute"]);
-    expect(l(5)).toEqual(["Details", "End mute of detector slow-step"]);
-    expect(l(6)).toEqual(["Details"]);
-    expect(l(7)).toEqual(["Details"]);
-    expect(l(8)).toEqual(["Details", "Mute", "This is not a problem"]);
+    expect(table.all("button")).toHaveLength(0);
+    expect(table.all("a").map((a) => a.attrs.href).filter((x) => x.startsWith("#/problems/"))).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => `#/problems/${id(n)}`));
     expect(rowOf(main, "sentence 2").textContent).toContain("seen in 3 checks");
+  });
+
+  it("the page groups the buttons by state: Bug story and Mute", async () => {
+    withFindings();
+    const g = async (n: number) => {
+      const main = await drawDetail(id(n));
+      return [groupLabels(main, "Bug story"), groupLabels(main, "Mute")];
+    };
+    expect(await g(1)).toEqual([["Make a story now"], ["Mute", "This is not a problem"]]);
+    expect(await g(2)).toEqual([undefined, ["Mute", "This is not a problem"]]);
+    expect(await g(3)).toEqual([["Try again"], ["Mute", "This is not a problem"]]);
+    expect(await g(4)).toEqual([undefined, ["End mute"]]);
+    expect(await g(5)).toEqual([undefined, ["End mute of detector slow-step"]]);
+    expect(await g(6)).toEqual([undefined, undefined]);
+    expect(await g(7)).toEqual([undefined, undefined]);
+    expect(await g(8)).toEqual([undefined, ["Mute", "This is not a problem"]]);
   });
 
   it("says when there are no findings", async () => {
@@ -187,70 +210,59 @@ describe("the page", () => {
     expect(sent[0]!.url).toBe("/api/monitor/on");
   });
 
-  it("Details loads the finding once and shows evidence, story links and run links", async () => {
+  it("the page loads the finding once and shows evidence, story links and run links", async () => {
     withFindings();
-    const main = await draw();
-    sent = [];
-    button(rowOf(main, "sentence 2"), "Details")!.click();
-    await wait();
-    expect(sent.filter((s) => s.url.startsWith("/api/monitor/findings/"))).toEqual([{ method: "GET", url: "/api/monitor/findings/0000000000000002" }]);
+    const main = await drawDetail(id(2));
+    expect(sent.filter((s) => s.url.startsWith("/api/monitor/findings/"))).toEqual([{ method: "GET", url: `/api/monitor/findings/${id(2)}` }]);
     const text = main.textContent;
+    expect(main.all("h1")[0]!.textContent).toBe("sentence 2");
+    expect(text).toContain("restart-loop");
+    expect(text).toContain("seen in 3 checks");
     expect(text).toContain("Flows: issue-gitflow");
     expect(main.all("a").some((a) => a.attrs.href === "https://github.com/o/a/issues/12")).toBe(true);
     expect(main.all("a").some((a) => a.attrs.href === "http://x/9")).toBe(false);
     expect(text).toContain("#9 (earlier)");
     expect(main.all("a").some((a) => a.attrs.href === "#/runs/run-1")).toBe(true);
-    button(rowOf(main, "sentence 2"), "Hide")!.click();
-    button(rowOf(main, "sentence 2"), "Details")!.click();
-    await wait();
-    expect(sent.filter((s) => s.url.startsWith("/api/monitor/findings/"))).toHaveLength(1);
   });
 
-  it("Details says what is missing, and shows a failed load", async () => {
+  it("the page says what is missing", async () => {
     withFindings();
     details = { evidence: [], stories: [], runs: [] };
-    let main = await draw();
-    button(rowOf(main, "sentence 1"), "Details")!.click();
-    await wait();
+    const main = await drawDetail(id(1));
     for (const t of ["No evidence was recorded.", "No bug story yet.", "No run yet."]) expect(main.textContent).toContain(t);
-    fails["GET /api/monitor/findings/0000000000000003"] = "unknown finding";
-    main = await draw();
-    button(rowOf(main, "sentence 3"), "Details")!.click();
-    await wait();
-    expect(main.textContent).toContain("unknown finding");
   });
 
-  it("Make a story now posts the finding and reloads; it is disabled when the monitor is off", async () => {
+  it("Make a story now posts the finding and loads both again; it is disabled when the monitor is off", async () => {
     withFindings();
-    const main = await draw();
+    const main = await drawDetail(id(1));
     sent = [];
     bodies = [];
-    button(rowOf(main, "sentence 1"), "Make a story now")!.click();
+    button(main, "Make a story now")!.click();
     await wait();
     expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/story" });
     expect(bodies[0]).toEqual({ finding: "0000000000000001" });
     expect(sent.some((s) => s.url === "/api/monitor")).toBe(true);
+    expect(sent.some((s) => s.url === `/api/monitor/findings/${id(1)}`)).toBe(true);
     state.state = "off";
     state.since = iso(12);
-    const off = await draw();
-    const b = button(rowOf(off, "sentence 1"), "Make a story now (the monitor is off)");
-    expect(disabled(b)).toBe(true);
+    const off = await drawDetail(id(1));
+    expect(disabled(button(off, "Make a story now (the monitor is off)"))).toBe(true);
   });
 
   it("a refused story does not break the page", async () => {
     withFindings();
     fails["POST /api/monitor/story"] = "this finding is muted";
-    const main = await draw();
+    const main = await drawDetail(id(1));
     sent = [];
-    button(rowOf(main, "sentence 1"), "Make a story now")!.click();
+    button(main, "Make a story now")!.click();
     await wait();
     expect(sent.some((s) => s.url === "/api/monitor")).toBe(true);
   });
 
   it("This is not a problem sends the finding and a reason without hours; an empty reason sends nothing", async () => {
     withFindings();
-    const main = await draw();
-    button(rowOf(main, "sentence 1"), "This is not a problem")!.click();
+    const main = await drawDetail(id(1));
+    button(main, "This is not a problem")!.click();
     expect(modalRoot().textContent).toContain("The monitor still records it, but never makes a bug story for it.");
     expect(modalRoot().all("select")).toHaveLength(0);
     sent = [];
@@ -268,21 +280,20 @@ describe("the page", () => {
 
   it("Mute, End mute and Try again send their calls", async () => {
     withFindings();
-    const main = await draw();
     sent = [];
-    button(rowOf(main, "sentence 3"), "Try again")!.click();
+    button(await drawDetail(id(3)), "Try again")!.click();
     await wait();
-    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/retry" });
+    expect(sent.find((s) => s.method === "POST")).toEqual({ method: "POST", url: "/api/monitor/retry" });
     sent = [];
-    button(rowOf(main, "sentence 4"), "End mute")!.click();
+    button(await drawDetail(id(4)), "End mute")!.click();
     await wait();
-    expect(sent[0]).toEqual({ method: "DELETE", url: "/api/monitor/mutes/m1" });
+    expect(sent.find((s) => s.method === "DELETE")).toEqual({ method: "DELETE", url: "/api/monitor/mutes/m1" });
     sent = [];
-    button(rowOf(main, "sentence 2"), "Mute")!.click();
+    button(await drawDetail(id(2)), "Mute")!.click();
     modalRoot().all("input")[0]!.value = "noise";
     button(modalRoot(), "Mute")!.click();
     await wait();
-    expect(sent[0]).toEqual({ method: "POST", url: "/api/monitor/mutes" });
+    expect(sent.find((s) => s.method === "POST")).toEqual({ method: "POST", url: "/api/monitor/mutes" });
   });
 
   it("the detectors table shows description, inputs with values, none and the last found", async () => {
@@ -325,7 +336,6 @@ describe("the page", () => {
   });
 
   it("draws 100 of 150 findings and Show 50 more draws the rest", async () => {
-    // other tests opened the details of findings 1 to 3 (open rows are kept on purpose): use other ids
     state.findings = Array.from({ length: 150 }, (_, i) => finding(i + 1000));
     const main = await draw();
     const rows = () => main.all("table")[0]!.all("tr").length - 1;
@@ -362,7 +372,7 @@ describe("states", () => {
     state.findings = [finding(1), finding(4, { state: "muted", mute: { id: "m1", kind: "finding", reason: "noise" } })];
   };
   const withAll = () => {
-    state.findings = [finding(21)]; // an id no other test opened: the open rows are kept between pages
+    state.findings = [finding(21)];
   };
 
   it("draws a skeleton on the first load", async () => {
@@ -398,7 +408,7 @@ describe("states", () => {
     withMute();
     const main = await draw();
     const inner = down();
-    button(rowOf(main, "sentence 4"), "End mute")!.click();
+    main.all("button").find((b) => b.attrs["aria-label"] === "Reload")!.click();
     await wait();
     expect(rowOf(main, "sentence 4")).toBeDefined();
     expect(stale(main)).toHaveLength(1);
@@ -432,20 +442,79 @@ describe("states", () => {
     expect(main.textContent).not.toContain("sentence 9");
   });
 
-  it("a failed details load shows an error in the row; Retry asks again", async () => {
-    withAll();
-    fails["GET /api/monitor/findings/0000000000000021"] = "unknown finding";
-    const main = await draw();
-    sent = [];
-    button(rowOf(main, "sentence 21"), "Details")!.click();
-    await wait();
-    const err = cls(main, "state-error")[0]!;
-    expect(err.textContent).toContain("The details could not be loaded.");
-    delete fails["GET /api/monitor/findings/0000000000000021"];
-    button(err, "Retry")!.click();
-    await wait();
-    expect(sent.filter((s) => s.url.startsWith("/api/monitor/findings/"))).toHaveLength(2);
-    expect(main.textContent).toContain("Flows: issue-gitflow");
+  describe("the problem page", () => {
+    const ID = "0000000000000021";
+    const FAIL = `GET /api/monitor/findings/${ID}`;
+
+    it("draws a skeleton on the first load", async () => {
+      withAll();
+      const inner = (globalThis as any).fetch;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      (globalThis as any).fetch = async (url: string, init: any) => {
+        if (url.startsWith("/api/monitor")) await gate;
+        return inner(url, init);
+      };
+      const main = new FakeElement("div");
+      const done = ui.renderProblemDetail(main, ID);
+      await wait();
+      expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(true);
+      release();
+      await done;
+      expect(main.all("div").some((d) => d.attrs["aria-busy"] === "true")).toBe(false);
+    });
+
+    it("an unknown id shows the server's sentence and a link back, without Retry", async () => {
+      withAll();
+      fails[FAIL] = "unknown finding";
+      failStatus[FAIL] = 404;
+      const main = await drawDetail(ID);
+      const err = cls(main, "state-error")[0]!;
+      expect(err.textContent).toContain("unknown finding");
+      expect(button(err, "Retry")).toBeUndefined();
+      expect(err.all("a").find((a) => a.attrs.href === "#/problems")!.textContent).toBe("Back to Problems");
+    });
+
+    it("a server error shows Retry and the link, and Retry draws the page", async () => {
+      withAll();
+      fails[FAIL] = "broken";
+      failStatus[FAIL] = 500;
+      const main = await drawDetail(ID);
+      const err = cls(main, "state-error")[0]!;
+      expect(err.textContent).toContain("The problem could not be loaded.");
+      expect(err.all("a").some((a) => a.attrs.href === "#/problems")).toBe(true);
+      delete fails[FAIL];
+      button(err, "Retry")!.click();
+      await wait();
+      expect(cls(main, "state-error")).toHaveLength(0);
+      expect(main.textContent).toContain("Flows: issue-gitflow");
+    });
+
+    it("a failed reload keeps the page and shows a failed stale note; Retry redraws", async () => {
+      withAll();
+      const main = await drawDetail(ID);
+      const inner = down();
+      button(main, "Mute")!.click();
+      modalRoot().all("input")[0]!.value = "noise";
+      button(modalRoot(), "Mute")!.click();
+      await wait();
+      expect(main.textContent).toContain("Flows: issue-gitflow");
+      expect(stale(main)).toHaveLength(1);
+      expect(stale(main)[0]!.attrs.class).toContain("failed");
+      (globalThis as any).fetch = inner;
+      button(stale(main)[0]!, "Retry")!.click();
+      await wait();
+      expect(stale(main)).toHaveLength(0);
+    });
+
+    it("the finding missing from the list shows its evidence, a notice and no buttons", async () => {
+      state.findings = [];
+      const main = await drawDetail(ID);
+      expect(main.textContent).toContain("Flows: issue-gitflow");
+      expect(main.textContent).toContain("is not in the list of the monitor any more");
+      expect(main.all("a").some((a) => a.attrs.href === "#/problems")).toBe(true);
+      expect(main.all("button")).toHaveLength(0);
+    });
   });
 
   it("the unreadable switch goes through the dialog", async () => {

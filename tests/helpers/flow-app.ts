@@ -96,7 +96,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./home-admin.js": never,
     "./work.js": never,
   };
-  for (const n of ["./admin.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
+  for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
     "./refinement.js", "./repos.js", "./users.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
   // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);

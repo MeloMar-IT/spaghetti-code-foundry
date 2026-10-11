@@ -31,10 +31,12 @@ The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4
 | `#/all-repos` | All repositories | `ui/admin-repos.js` | `renderAllRepos` | `api-repos.ts` (`/api/admin/repos`) | admin display only | Manage the repositories of all accounts | Repository settings (per row) | Name differs from "My repositories" by one word; 3 modal call sites |
 | `#/credentials` | Credentials | `ui/admin-credentials.js` | `renderCredentials` | `api-credentials.ts` | admin display only | Read the stored credentials of all accounts | Read the table | Read-only, 40 lines; fits as a column of the repository page (F2) |
 | `#/maintenance` | Maintenance | `ui/maintenance.js` | `renderMaintenance` | `api-admin.ts` | admin display only | Clean old run workspaces | Clean up | The clean action is a native confirm (`maintenance.js:12`) |
-| `#/watchers` | Watchers | `ui/admin.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Add, edit, tick and delete watchers; switch the monitor on | Add a watcher | `admin.js` has 3 native confirms and two pages |
+| `#/watchers` | Watchers | `ui/watchers.js`, `ui/watcher-form.js` | `renderWatchers` | `api-admin.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Scan watchers by repository; add a watcher | Add a watcher | Compact tables, no row buttons |
+| `#/watchers/:id` | — | `ui/watchers.js`, `ui/watcher-form.js` | `renderWatcherDetail` | `api-admin.ts`, `api-monitor.ts`, `api-repos.ts`, `api-flows.ts` | admin display only | Check, edit, enable or disable, delete a watcher; switch the monitor's bug stories | Check now | Delete sits in a Danger group |
 | `#/settings` | Settings | `ui/admin.js` | `renderSettings` | `api-admin.ts` | admin display only | Change server settings | Save | Shares a file with Watchers (F6) |
 | `#/operations` | Overview | `ui/operations.js` | `renderOperations` | `health.ts`, `api-admin.ts`, `api-runs.ts`, `api-repos.ts`, `api-audit.ts` | admin display only | See what needs attention | Cancel run (Health card) | — |
 | `#/problems` | Problems | `ui/problems.js`, `ui/monitor.js` | `renderProblems` | `api-monitor.ts`, `api-admin.ts` (config) | admin display only | See what the monitor found; mute or retry | Retry / Mute | Same monitor confirm text as `admin.js:41` (`problems.js:88`) |
+| `#/problems/:id` | — | `ui/problems.js`, `ui/monitor.js` | `renderProblemDetail` | `api-monitor.ts` | admin display only | See one finding with evidence, bug stories and runs; make a story, retry or mute it | Make a story now | Buttons in a Bug story group and a Mute group |
 | `#/models` | Models | `ui/models.js` | `renderModels` | `api-admin.ts` (config, providers) | admin display only | Choose which model runs which step; test a model | Save | 3 tables, none inside `.table-box` |
 | `#/models/:name` | — | `ui/models.js` | `renderModelDetail` | `api-admin.ts` (config, providers) | admin display only | See, test, change or remove one provider | Save provider, Remove provider | Remove asks first; built-in providers are saved as an override |
 | `#/dashboard` | Dashboard | `ui/dashboard.js` | `renderDashboard` | `api-admin.ts` (stats, evals), `clarity.ts`, `api-runs.ts` | admin display only | See the last 30 days of runs, cost and failing steps | Read (no action) | Run status again (F1); 7 tables, none inside `.table-box` |
@@ -106,10 +108,12 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/all-repos` | "No repositories yet." (`admin-repos.js:222`) | errors box | cleanup returned |
 | `#/credentials` | "No stored credentials yet." (`admin-credentials.js:36`) | errors box | cleanup returned |
 | `#/maintenance` | no empty state | toast | none |
-| `#/watchers` | `div.empty` (`admin.js:211`) | errors box | none found |
+| `#/watchers` | `div.empty` (`watchers.js`) | errors box | none found |
+| `#/watchers/:id` | `errorState` for an unknown id, with a link back | skeleton; errors box on first load | none found |
 | `#/settings` | no empty state | errors box | none |
 | `#/operations` | per card: "Nothing is waiting.", "No entries.", "No account is at a limit." | "Not available" in the cards and tiles that depend on the failed call | none; open it again |
 | `#/problems` | none found | `h1` plus `status bad` line (`problems.js:214`) | none |
+| `#/problems/:id` | `errorState` for an unknown id, with a link back | skeleton, then `errorState` with Retry | none |
 | `#/models` | none found | errors box | none |
 | `#/models/:name` | "This provider is not set up." | `errorState` with Retry | none |
 | `#/dashboard` | per table `list.length ?` | errors box | none |
@@ -145,10 +149,12 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/all-repos` | Table not in `.table-box`: probably overflows | Probably overflows |
 | `#/credentials` | Table not in `.table-box` | Probably overflows |
 | `#/maintenance` | Form | Probably fits |
-| `#/watchers` | Cards | Probably fits |
+| `#/watchers` | Compact tables | Probably fits |
+| `#/watchers/:id` | Single column | Probably fits |
 | `#/settings` | Form | Probably fits |
 | `#/operations` | `.dash-grid` one column (R1); 2 compact tables | Probably overflows |
 | `#/problems` | Compact tables not in `.table-box` | Probably overflows |
+| `#/problems/:id` | Single column | Probably fits |
 | `#/models` | 3 tables not in `.table-box` | Probably overflows |
 | `#/models/:name` | Cards in one column | Same |
 | `#/dashboard` | `.dash-grid` one column (R1); 7 tables | Probably overflows |
