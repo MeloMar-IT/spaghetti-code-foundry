@@ -158,8 +158,9 @@ export class RunRecorder {
   /** The step is given to a model. `target` and `from` are agent targets such as "codex:openai:gpt-5". */
   stepRouted(step: StepIdentity, target: string, effort: string | undefined, from?: string): void {
     this.put(() => {
-      // a target that is not one fails the event
-      const model = targetModel(target, effort) as ModelIdentity;
+      // a target that is not one (an agent the evidence format does not know) gives no event; the step's end is still recorded
+      const model = targetModel(target, effort);
+      if (!model) return undefined;
       const fallbackFrom = targetModel(from);
       return { type: "step.routed", step, model, ...(fallbackFrom ? { fallbackFrom } : {}) };
     });
@@ -176,11 +177,18 @@ export class RunRecorder {
 
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */
   stepEnded(rec: StepRecord): void {
-    const step = identityOfRecord(rec);
-    for (const d of rec.denied ?? []) {
-      // "Bash: mkdir out": only the name of the tool is evidence, never what it was asked to do
-      const tool = ToolIdentitySchema.safeParse({ name: d.split(": ")[0] });
-      if (tool.success) this.put(() => ({ type: "step.denied", step, denial: { kind: "tool", tool: tool.data } }));
+    let step: StepIdentity;
+    try {
+      step = identityOfRecord(rec);
+      for (const d of rec.denied ?? []) {
+        // "Bash: mkdir out": only the name of the tool is evidence, never what it was asked to do
+        const tool = ToolIdentitySchema.safeParse({ name: String(d).split(": ")[0] });
+        if (tool.success) this.put(() => ({ type: "step.denied", step, denial: { kind: "tool", tool: tool.data } }));
+      }
+    } catch (e) {
+      // nothing here may reach the engine: an odd record costs the evidence, never the run
+      this.stream.stop(e);
+      return;
     }
     this.put(() => {
       const model = targetModel(rec.agent, rec.effort);

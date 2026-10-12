@@ -124,8 +124,8 @@ function writeWhole(file: string, text: string): void {
   }
 }
 
-const DIFF_MAX_BYTES = 20_000_000;
-const DIFF_TIMEOUT_MS = 15_000;
+const DIFF_MAX_BYTES = 5_000_000;
+const DIFF_TIMEOUT_MS = 3_000;
 
 /**
  * Makes and stores the diff between two commits of the workspace, with stored secrets hidden, and returns its reference.

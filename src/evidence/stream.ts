@@ -195,7 +195,8 @@ export class EvidenceStream {
    * A stream that is not a chain (a changed line, a line without hashes) is not continued.
    */
   private load(fd: number, size: number): void {
-    const { lines, tail } = splitEvidenceLines(readAll(fd, size).toString("utf8"));
+    const raw = readAll(fd, size);
+    const { lines, tail } = splitEvidenceLines(raw.toString("utf8"));
     this.size = size;
     // first the whole lines: a file that is not a chain is left exactly as it is
     let chain = readEvidenceChain(lines, this.runId);
@@ -207,7 +208,8 @@ export class EvidenceStream {
         lines.push(tail);
         chain = withTail;
       } else {
-        this.size = size - Buffer.byteLength(tail);
+        // in bytes of the file: a character cut in half decodes to a different length
+        this.size = raw.lastIndexOf(0x0a) + 1;
         ftruncateSync(fd, this.size);
         this.say("· evidence: the last line was cut off when the run was interrupted; the piece was removed");
       }
