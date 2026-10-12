@@ -7,6 +7,7 @@ import { PassThrough } from "node:stream";
 import { adminHint, terminalIo, userCommand, type UserIo } from "../src/auth/cli.js";
 import { readSessions } from "../src/auth/sessions.js";
 import { createUserWithLink, listUsers, startSession, verifyPassword } from "../src/auth/users.js";
+import { freePort } from "./helpers/port.js";
 
 const CLI = resolve("dist/cli.js");
 const PW = "test-password-12345";
@@ -577,7 +578,7 @@ describe("accounts and sessions", () => {
 describe("scf serve", () => {
   /** Starts the server, waits for the banner and the line after it, stops it, and returns what it printed. */
   async function banner(): Promise<string> {
-    const port = 20000 + Math.floor(Math.random() * 20000);
+    const port = await freePort();
     const repo = join(tmp, "repo");
     mkdirSync(repo, { recursive: true });
     const child = spawn(process.execPath, [CLI, "serve", "--port", String(port), "--repo", repo], {

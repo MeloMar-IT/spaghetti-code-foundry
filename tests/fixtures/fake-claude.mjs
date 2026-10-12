@@ -5,6 +5,7 @@
 // permission_denials (command for Bash, file_path otherwise); "SHOWPROMPT" answers with the arguments and the whole prompt (as `args=…` and `PROMPT<<…>>`); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // Plans that ask for a skill request: a line "REQUEST_SKILLS <id> [<id>…]" requests those ids; a line "REQUEST_CATALOGUE_SKILLS" requests every id of the
 // <foundry-skill-catalogue> block of the prompt (the empty request without one); FAKE_SKILL_REQUEST wins when set. The lines come from the issue body.
+// A help turn of Ask SCF ("You are Ask SCF, the help assistant") has a canned JSON answer: FAKE_HELP replaces it, FAKE_HELP=ECHO reports args, folder and token state.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
@@ -92,7 +93,13 @@ if (prompt.includes("CLAUDE_LIMIT")) {
 // Canned answers for the built-in blocks, so whole flows can run offline.
 let canned;
 let cost = 0.01;
-if (prompt.includes("Explain why this run of a coding flow failed")) {
+if (prompt.includes("You are Ask SCF, the help assistant")) {
+  // A help turn of Ask SCF. FAKE_HELP replaces the JSON answer; FAKE_HELP=ECHO puts the CLI arguments, the working folder, its content and the token state in the explanation.
+  const h = process.env.FAKE_HELP;
+  const echo = `args=${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} cwd=${process.cwd()} files=${readdirSync(".").join(",")} gh_token=${ghSeen}`;
+  canned = h === "ECHO" ? JSON.stringify({ type: "product-help", summary: "Echo.", explanation: echo, certainty: "confirmed" }) : h ?? JSON.stringify({ type: "product-help", summary: "A run is one start of a flow.", explanation: "It goes through the steps of the flow.", certainty: "confirmed", recommendations: ["Open the run to see its steps."], links: [{ to: "#/runs" }] });
+  cost = 0.003;
+} else if (prompt.includes("Explain why this run of a coding flow failed")) {
   const e = process.env.FAKE_EXPLAIN;
   canned = e === "ARGS" ? `KIND: code\nWHY: args ${args.filter((a, i) => a !== "--append-system-prompt" && args[i - 1] !== "--append-system-prompt").join(" ")} gh=${["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", ...(process.env.FAKE_EXPLAIN_VARS ?? "").split(",")].filter((n) => n && process.env[n]).join(",")}` : e ?? "KIND: code\nWHY: the tests still fail after the fixes";
   cost = 0.002;

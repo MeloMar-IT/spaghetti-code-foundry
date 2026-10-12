@@ -147,7 +147,7 @@ const queued = (word: string) => (d: unknown) => `run ${obj(d).runId} ${word}`;
 const STAMP: Flag = { type: "string", required: true, help: "the stamp that `scf turn show <key>` printed" };
 const DIGEST: Flag = { type: "string", required: true, help: "the digest that `scf turn show <key>` printed" };
 const act = (action: string, apiAction: string, help: string, more: Partial<Cmd> = {}): Cmd =>
-  ({ area: "turn", action, method: "POST", path: "your-turn/act", args: ["key"], fixed: { action: apiAction }, help, show: showTurn, ...more, flags: { stamp: STAMP, digest: DIGEST, ...more.flags } });
+  ({ area: "turn", action, method: "POST", path: "your-turn/act", args: ["key"], fixed: { action: apiAction }, locked: ["action", "key"], help, show: showTurn, ...more, flags: { stamp: STAMP, digest: DIGEST, ...more.flags } });
 
 /** Runs and the day-to-day work around them: your turn, the board, and search. */
 export const WORK: Cmd[] = [

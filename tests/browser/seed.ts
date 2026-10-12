@@ -2,13 +2,14 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { startServer } from "../../src/server/server.js";
+import type { startServer } from "../../src/server/server.js";
 import { addRepo } from "../../src/auth/repos.js";
 import { createUser } from "../../src/auth/users.js";
 import { createSession } from "../../src/refinement/store.js";
 import { addRepoWatcher } from "../../src/repos/watchers.js";
 import { fakeGit, fakeGithub } from "../helpers/fake-github.js";
 import { fakeKeychain } from "../helpers/keychain.js";
+import { startTestServer } from "../helpers/port.js";
 import { signInAs, TEST_PASSWORD } from "../helpers/session.js";
 
 export interface SeedAccount { id: string; name: string; email: string; password: string; role: "admin" | "user" }
@@ -104,7 +105,7 @@ export function seedLarge(runsDir: string, workRoot: string, owner: string, repo
 }
 
 /**
- * Starts the real server on a free port with its own temporary data folder (FACTORY_HOME is set to it and put back on close),
+ * Starts the real server on a free port picked by the system, with its own temporary data folder (FACTORY_HOME is set to it and put back on close),
  * two accounts and seeded data. Do not run two at the same time in one process: they would share process.env.
  */
 export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seeded> {
@@ -162,19 +163,10 @@ export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seede
     const session = createSession(userAcc.id, { repo: "acme/app", idea: "Show the build status on the board" }, { ownerOk: () => true, repoName: (_o, n) => n });
     addRepoWatcher(rec.id, { id: "ui-w" });
 
-    let url = "";
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir, port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {}, refinementSweepMs: 3_600_000 });
-        ctx = started.ctx;
-        stop = started.close;
-        url = `http://127.0.0.1:${port}`;
-        break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {}, refinementSweepMs: 3_600_000 });
+    ctx = started.ctx;
+    stop = started.close;
+    const url = started.base;
 
     const admin = await signInAs(url, { create: false });
     const user = await signInAs(url, { name: "Ann", email: "ann@example.com", role: "user", create: false });

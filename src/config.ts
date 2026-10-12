@@ -322,6 +322,30 @@ export const ConfigSchema = z
       .object({ enabled: z.boolean().default(true), model: z.string().default("haiku") })
       .strict()
       .default({ enabled: true, model: "haiku" }),
+    /**
+     * Ask SCF, the help assistant: off until an admin switches it on. A turn is one question; it runs through the
+     * provider of `model` with no tools, and stops at these limits.
+     */
+    help: z
+      .object({
+        enabled: z.boolean().default(false),
+        /** Model spec for a help turn; without it `default_model`. Only a Claude Code target can answer: it is the one that runs with no tools at all. */
+        model: z.string().optional(),
+        /** A turn that takes longer is stopped. */
+        timeout_seconds: z.number().int().min(5).max(600).default(60),
+        /** Turns answered at the same time, over all accounts. One account has one turn at a time. */
+        max_parallel: z.number().int().min(1).max(8).default(1),
+        /** Turns that may wait for a free place; one more is refused. */
+        max_queued: z.number().int().min(0).max(100).default(10),
+        /** Turns one account may start per day (UTC). */
+        turns_per_user_per_day: z.number().int().min(1).max(10_000).default(30),
+        /** The most one turn may cost (not applied with `cost_limits: false` or a model without a price). */
+        max_cost_usd_per_turn: z.number().positive().max(100).default(0.1),
+        /** The most all help turns of a day may cost together; without it only the limits above apply. */
+        daily_budget_usd: z.number().positive().optional(),
+      })
+      .strict()
+      .prefault({}),
     /** Commit/comment as a bot instead of you. */
     bot: z
       .object({

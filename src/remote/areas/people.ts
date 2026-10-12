@@ -86,9 +86,11 @@ export const PEOPLE: Cmd[] = [
   { area: "users", action: "list", method: "GET", path: "users",
     show: (d) => table(list(d), [...cols("id", "name", "email", "role", "status"), { key: "hasPassword", head: "password" }, { key: "lastSignIn", head: "last sign-in" }, ...cols("runs")], "no accounts") },
   { area: "users", action: "add", method: "POST", path: "users", args: ["name", "email"], fixed: { role: "user" },
+    confirm: "This makes an admin: the account can read and change everything.", confirmIf: (body) => body.role !== "user",
     flags: { role: { type: "string", help: "admin or user (default user)" } },
     help: "add an account without a password; prints its set-password token, which is shown once", show: withToken },
-  { area: "users", action: "set", method: "PUT", path: "users/:id", args: ["id"], help: "change the name or e-mail of an account",
+  // the same call changes the role: that is `users role`, which asks first
+  { area: "users", action: "set", method: "PUT", path: "users/:id", args: ["id"], locked: ["role"], help: "change the name or e-mail of an account",
     flags: { name: { type: "string", help: "the new name" }, email: { type: "string", help: "the new e-mail address" } }, show: user },
   { area: "users", action: "role", method: "PUT", path: "users/:id", args: ["id", "role"], help: "make an account an admin or a user",
     confirm: "This changes what the account may do: an admin can read and change everything.", show: user },
@@ -111,7 +113,8 @@ export const PEOPLE: Cmd[] = [
   { area: "users", action: "app-repos", method: "GET", path: "users/:id/app-repos", args: ["id"], show: appRepos },
   { area: "users", action: "set-app-repos", method: "PUT", path: "users/:id/app-repos", args: ["id"],
     flags: { repos: { type: "string", as: "list", required: true, help: 'all allowed repositories, with commas: owner/name or owner/*; "" allows none' } },
-    help: "set the repositories an account may connect through the GitHub App (replaces the list)", show: appRepos },
+    help: "set the repositories an account may connect through the GitHub App (replaces the list)",
+    confirm: "This replaces the whole list of repositories the account may connect through the GitHub App.", show: appRepos },
 
   // ---- your own account ----
   { area: "account", action: "password", method: "POST", path: "password",

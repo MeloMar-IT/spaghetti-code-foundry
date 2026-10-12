@@ -9,7 +9,7 @@
 // Env: FACTORY_VAR_TEST_SLOTS (how many at once; default 2, 0 = no limit),
 //      FACTORY_TEST_SLOT_WAIT_SEC (longest wait; default 5400), FACTORY_TEST_SLOT_POLL_MS (default 2000).
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [dir, cmd, ...args] = process.argv.slice(2);
@@ -18,13 +18,19 @@ if (!dir || !cmd) {
   process.exit(2);
 }
 const num = (v, d) => (/^\d+$/.test(v ?? "") ? Number(v) : d);
-// <slots-dir>/cap (one number, written by the load governor) lowers the number of slots while it is there; 0 = no limit stays 0
+// <slots-dir>/cap (one number, written by the load governor at every check while it holds) lowers the number of
+// slots; 0 = no limit stays 0. A cap file that was not written for 4 minutes is ignored: its governor has stopped.
 const asked = num(process.env.FACTORY_VAR_TEST_SLOTS, 2);
-let cap = NaN;
-try {
-  cap = Number(readFileSync(join(dir, "cap"), "utf8").trim());
-} catch { /* no cap */ }
-const slots = asked > 0 && Number.isInteger(cap) && cap >= 1 ? Math.min(asked, cap) : asked;
+const CAP_HOLD_MS = 4 * 60_000;
+function slotsNow() {
+  let cap = NaN;
+  try {
+    const file = join(dir, "cap");
+    if (Date.now() - statSync(file).mtimeMs <= CAP_HOLD_MS) cap = Number(readFileSync(file, "utf8").trim());
+  } catch { /* no cap */ }
+  return asked > 0 && Number.isInteger(cap) && cap >= 1 ? Math.min(asked, cap) : asked;
+}
+let slots = slotsNow();
 const waitMs = num(process.env.FACTORY_TEST_SLOT_WAIT_SEC, 5400) * 1000;
 const pollMs = num(process.env.FACTORY_TEST_SLOT_POLL_MS, 2000);
 
@@ -75,6 +81,7 @@ if (slots > 0) {
     if (!said) console.log(`test-slot: ${slots} test run(s) are already working on this machine — waiting for a free slot`);
     said = true;
     await new Promise((r) => setTimeout(r, pollMs));
+    slots = slotsNow(); // the cap may have come, gone or grown old while this run waited
   }
   if (said && slot) console.log(`test-slot: got a slot after ${Math.round((Date.now() - start) / 1000)} s`);
 }

@@ -7,20 +7,6 @@ import { freePort, startTestServer } from "./helpers/port.js";
 import { scanPorts, scanTestPorts } from "./helpers/port-scan.js";
 import { signInAs } from "./helpers/session.js";
 
-// Files that still pick their own port. The last part moves them and deletes this list; it can only shrink.
-const ALLOWED = [
-  "tests/auth.test.ts",
-  "tests/browser/seed.ts",
-  "tests/home-process.test.ts",
-  "tests/password-change.test.ts",
-  "tests/repo-key.test.ts",
-  "tests/repo-watchers-run.test.ts",
-  "tests/search-api.test.ts",
-  "tests/skill-cli.test.ts",
-  "tests/ui-gallery-server.test.ts",
-  "tests/user-cli.test.ts",
-];
-
 // Samples are built from pieces so no line of this file holds both the call and "port" or the sum.
 const RND = ["Math", "random()"].join(".");
 const pick = (base = "20000") => `${base} + Math.floor(${RND} * 20000)`;
@@ -80,29 +66,20 @@ describe("scanTestPorts", () => {
     expect(found[0]!.problems[0]).toContain("use startTestServer() or freePort() from tests/helpers/port.ts");
   });
 
-  it("accepts an allowlisted file with a hit, and flags one without", () => {
+  it("has no exceptions: a clean file gives nothing, and every file with a hit is reported", () => {
     root = mkdtempSync(join(tmpdir(), "scan-ports-"));
-    put("tests/a.test.ts", bad);
     put("tests/b.test.ts", "const x = 1;\n");
-    expect(scanTestPorts(root, ["tests/a.test.ts"])).toEqual([]);
-    const found = scanTestPorts(root, ["tests/a.test.ts", "tests/b.test.ts", "tests/gone.test.ts"]);
-    expect(found.map((f) => f.where)).toEqual(["tests/b.test.ts", "tests/gone.test.ts"]);
-    expect(found[0]!.problems[0]).toContain("remove it from the allowlist");
-    expect(found[1]!.problems[0]).toContain("remove it from the allowlist");
+    expect(scanTestPorts(root)).toEqual([]);
+    put("tests/a.test.ts", bad);
+    put("tests/browser/seed.ts", bad);
+    expect(scanTestPorts(root).map((f) => f.where)).toEqual(["tests/a.test.ts", "tests/browser/seed.ts"]);
   });
 });
 
 describe("the guard", () => {
-  it("finds no test file that picks its own port, apart from the allowlist", () => {
-    const found = scanTestPorts(".", ALLOWED);
+  it("finds no test file that picks its own port", () => {
+    const found = scanTestPorts(".");
     expect(found.map((f) => `${f.where}: ${f.problems.join("; ")}`).join("\n")).toBe("");
-  });
-
-  it("keeps the allowlist clean", () => {
-    expect(new Set(ALLOWED).size).toBe(ALLOWED.length);
-    for (const moved of ["tests/helpers/refinement-world.ts", "tests/refinement-suggest-api.test.ts", "tests/refinement-review-api.test.ts"]) {
-      expect(ALLOWED).not.toContain(moved);
-    }
   });
 });
 

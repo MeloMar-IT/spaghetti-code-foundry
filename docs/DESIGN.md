@@ -201,6 +201,101 @@ stories after it do. Both are extra files in the run folder, so `run.json` stays
   version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
   before this), and never throws.
 
+### Policy contracts
+
+`src/policy/` defines what a policy is, what it is asked and what it answers (#141). Nothing in the
+engine asks a policy yet; the stories after it do. The folder has no side effects: schemas, version
+numbers and pure functions.
+
+- **`PolicyPack`**: one version of one policy. `version` is the version of the format. `policy` is
+  the `id` of the pack and the `version` its author gave the contents: the same pair evidence
+  carries as its policy identity. `mode` is `observe` (decisions are only recorded) or `enforce`.
+  `rules` are read from the first to the last; `defaultOutcome` (`allow` or `deny`) decides when no
+  rule applies.
+- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`.
+  `when` has at most one condition per fact, and all of them must hold: `in` or `notIn` with
+  patterns for a text (`*` stands for any characters, nothing else is special), `in` or `notIn` with
+  fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
+  equal), `true` or `false` for a flag.
+- **`PolicyInput`**: `version`, `boundary`, `runId` and `facts`. The boundaries are `run.start`,
+  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume` and
+  `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
+  workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
+  run and daily cost, and six flags. All are optional and none is free text. A caller gives what it
+  knows and never a guess.
+- **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
+  `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
+  `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
+  SHA-256 of the canonical JSON (keys sorted, no spaces).
+- **Reason codes** are a closed list (`src/policy/reasons.ts`), each with one sentence. A code is
+  never renamed, reused or removed; a new meaning gets a new code. Codes for rules:
+  `branch.protected`, `branch.hotfix-exception`, `secret.detected`, `path.forbidden`,
+  `output.limit-exceeded`, `timeout.exceeded`, `budget.step-exceeded`, `budget.run-exceeded`,
+  `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
+  `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
+  `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
+  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`.
+- **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
+  network, model, clock or randomness; the caller gives the time. A rule that does not name the
+  boundary of the input is passed over. The first rule whose conditions all hold decides. A rule
+  that needs a fact the input does not have cannot be judged: the answer is `deny` with
+  `policy.input-incomplete`. An exception (such as the hotfix merge) is a rule before the rule it
+  is an exception to. Bad data decides nothing: the pack, the input and the time are checked first
+  and a `PolicySchemaError` names the fields that are wrong.
+- **Evidence.** `policyIdentityOf(decision)` is the policy identity of #134, and
+  `policyDenial(decision, tool?)` is the `denial` of a `step.denied` event: only for `deny` in
+  `enforce` mode. Every reason code fits the evidence format.
+- **Versions.** Each contract has its own number in `version.ts`. A record with another version is
+  refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+### Context bundle
+
+`src/context/` defines the format that says what a run was given to read, and where each piece came
+from (#151). Nothing writes it yet: the stories after it select the sources (#152), give them to the
+agents read-only (#153) and show them (#154). It is an extra file in the run folder,
+`runs/<run-id>/context.json`, so `run.json` stays as it is.
+
+- **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
+  a `budget`, `policies`, `sources` and `omitted`.
+- **A source** has an `id`, a `kind`, a `uri`, a `revision`, `content` (file, SHA-256, size in
+  bytes), `owners`, a `classification`, `retrievedAt`, `freshness`, a `selection` reason and
+  `consumers`. Every field is required.
+- **Kinds and addresses** (a closed list, `uri.ts`): `repository-file` (`repo:<path>`), `issue`
+  (`issue:<number>`), `issue-comment` (`issue:<number>/comment/<id>`) and `refinement-notes`
+  (`refinement:<session id>`). An address has no host, no folder of the machine, no query and no
+  fragment, and only one spelling. The `id` is `s-` plus 16 hex characters of the SHA-256 of the
+  address, so the same source has the same id in every run.
+- **Revision.** A repository file has the full commit, and it must be the commit of the bundle.
+  The other kinds have a `version`: the time of their last change, as their origin reports it.
+- **Text is stored apart.** The bundle holds no source text. `content.path` is a file under
+  `context/` in the run folder; `sha256` and `bytes` are of exactly that file.
+- **Policy is named, not carried.** `policies` holds id and version only. No source kind is a
+  policy, so source text is always data and never an instruction.
+- **Owners** are host handles (`@user`, `@organisation/team`), never an e-mail address or a name. An
+  empty list means no owner is known.
+- **Classification**: `public`, `internal`, `confidential`, `restricted`, from least to most private
+  (`classificationAtMost`).
+- **Freshness**: `maxAgeSeconds` after `retrievedAt`, or `null` for a copy that does not go stale
+  (`staleAt`, `isStale`; the caller gives the time).
+- **Selection reason**: a code, not a sentence: `task`, `instructions`, `ownership`, `api-schema`,
+  `discovery` (with the `rule` that found the file) or `refinement`. Each kind takes only its own
+  reasons.
+- **Consumers**: the roles that may be given the source (`planner`, `coder`, `reviewer`, `tester`),
+  at least one (`mayConsume`).
+- **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
+  valid.
+- **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
+  `ambiguous`, `over-budget` or `classification`.
+- **Hash.** `serializeContextBundle` checks the bundle and writes it in one fixed form (lists and
+  fields in a fixed order), so the same bundle always gives the same bytes. `hashContextBundle` is
+  the SHA-256 of that text. `contextBundleRef` gives the evidence `ArtifactRef` for `context.json`
+  (kind `other`, required), which is how evidence names the bundle by its hash; `contextSourceRef`
+  does the same for the text of one source. `hashContextSources` is one hash over the sources only,
+  the same in every run for the same repository state and task.
+- **Versions and old runs.** `parseContextBundle` looks at `version` first, with the same rules as
+  evidence: a higher version is refused with one sentence, a lower one goes through
+  `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
+  made before this), and never throws. Error messages name fields, never values.
+
 ---
 
 ## 5. Agents and models
@@ -483,6 +578,8 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
+| Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
+| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the list of actions is empty |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -500,6 +597,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
@@ -748,6 +846,108 @@ derived from it, so the server needed no change. The table is checked against th
 list of routes (`RULES` in `permissions.ts`) in both directions: a command for an unknown route
 fails a test, and so does a new route without a command or a stated reason (`API_ONLY`). The file
 commands keep their words: `remoteCommand` returns "not mine" for anything it does not know.
+
+### Ask SCF: the contract
+
+Ask SCF is the help assistant inside the product (epic #226). Its contract is code, in
+`src/help/contract.ts`: pure data and pure functions, with no model, no storage and no route. Every
+later part (stored conversations, the turn service, the pages) goes through it, so the text of a
+model can never widen what a reply holds.
+
+- **Questions.** Four types (`QUESTION_TYPES`): product help, status, troubleshooting and guided
+  resolution. `QUESTION_RULES` says which evidence each needs: `doc` (the installed documentation)
+  or `state` (what the asker may see now, with `observedAt`).
+- **Parts of a reply.** Five kinds (`PART_KINDS`, `PART_RULES`): answer, recommendation, navigation,
+  draft and action. Only an action has `changesState` and `needsConfirmation`. `ACTIONS` is the
+  server's list of actions and it is empty: the assistant is read-only, and `ACTION_RULES` names the
+  five conditions (server list, preview, confirmation, a second permission check, read-back) a later
+  story must meet before it adds one.
+- **`checkReply(raw, { role, offered, clean })`** turns what a model answered into the `Reply` the
+  server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered` (the model
+  names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the page's own
+  title, an action must be in `ACTIONS`, texts are cut and cleaned, and `dropped` lists what was
+  left out in fixed words. `displayText(reply)` writes the text a person reads from the checked
+  parts; it is never the model's own text.
+- **Uncertainty.** `certaintyOf` lowers the level to `unverified` when no evidence of the needed
+  kind is left; the model may be less sure, never more. The sentences are `CERTAINTY_WORDS`.
+- **Requests that are not served.** A model answers them with a code only (`LIMIT_CODES`);
+  `limitationFor(code, role)` gives the fixed limitation and the safest next step, and never a page
+  the role does not have. The codes `refinement`, `next-step` and `monitor-finding` are the
+  hand-offs to Refinement (#73), "what happens next" (#31) and the Problems page.
+- **Roles.** `forRole(role, value)` removes every field in `ADMIN_ONLY_KEYS` (model, provider,
+  cost, tokens, server detail) for a user, at any depth, and `hideNames` takes model and provider
+  names out of a text. `contractFor(role)` is the contract as a person of that role may read it.
+
+`tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
+chapter 14 of the user guide holds the same sentences as the code.
+
+### Ask SCF: stored conversations
+
+`src/help/store.ts` keeps the conversations in `help.json` (`{ version: 1, conversations }`), read
+and written like the other account files: `withAuthLock`, a temporary file and a rename. The schema
+is strict, so a file of another version or with unknown fields is refused and left untouched.
+
+- **Records.** A conversation has an id, its owner, a title, a state and its messages. A message
+  is a question (`role: user`, with the bounded page context) or a reply (`role: assistant`,
+  `replyTo` its question). A reply holds `status` (`pending`, `done`, `failed`, `cancelled`), the
+  checked `reply` of the contract (citations are `reply.evidence`, proposals `reply.actions`) and,
+  apart from it, `text`, which `finishTurn` writes with `displayText`. `finishTurn` parses the
+  reply with `ReplySchema` again, so nothing unchecked is stored.
+- **Ownership.** Every call that reads or changes takes the owner from the session. An id of
+  another account is `not-found`, the same as an unknown id. The routes (`src/server/api-help.ts`)
+  use only `user.id`; the role adds nothing, and a call with `?as=` is refused, so the support
+  access of administrators is: none. `deleteUser` removes the conversations of the account under
+  the same lock (`removeHelpLocked`).
+- **Turns and retries.** `addQuestion` stores the question and a `pending` reply. The turn ends
+  through `finishTurn` or `failTurn`, which take a `TurnRef` (`message`, `tries`) and write only
+  while that reply is pending with that try: a result of an earlier try, of a stopped turn or of a
+  deleted conversation is dropped. `retryTurn` sets the same reply to `pending` again and counts
+  `tries`; no message is added. `settleInterrupted` (at server start) marks leftover pending replies
+  as failed with `interrupted`.
+- **States.** `active`, `failed` and `cancelled` follow the last turn; `completed`, `archived`
+  (with `stateBefore`) and `deleted` are set by the owner. Completing and archiving are refused
+  while a reply is pending.
+- **Retention.** `deleteConversation` replaces the record with an empty one (`wiped`): no title, no
+  messages. `current()` applies the policy on every read and write: a conversation unchanged for
+  `KEEP_MS` (90 days) is wiped as `expired`, and a wiped record is dropped after `DELETED_KEEP_MS`
+  (30 days). `helpSweeper` runs it hourly.
+
+Tests: `tests/help-store.test.ts` (ownership, retries, states, retention, older and newer files),
+`tests/help-api.test.ts` (the routes, both roles, the preview, a restart, a broken file) and
+`tests/remote-help.test.ts` (`scf ask`).
+
+### Ask SCF: the turn service
+
+`src/help/turn.ts` runs a help turn. It is a runner of its own, apart from flow runs, the
+refinement flows and `src/server/generate.ts`: no flow, no run folder, no scheduler job.
+
+- **One call, no tools.** `HelpTurns.run` resolves the target from `help.model` (else
+  `default_model`) with `toTarget`, and calls `runClaude` like the failure summary does:
+  `noTools`, `noMcp`, `isolated`, permission mode `dontAsk`, no GitHub token variables, an empty
+  temporary folder as working folder that is removed afterwards with the log of the call. A target
+  that is not Claude Code is a `setup` failure (`helpTarget`): Codex always has a shell tool.
+  The answer is text; `jsonOf` finds the JSON object and `checkReply` decides what is kept, so
+  model output cannot name a tool, a command or an action that runs.
+- **The prompt** (`turnPrompt`) holds the rules of the contract for the asker's role, then one
+  JSON value with everything a person wrote: the question, the page context, the last
+  `HISTORY_TURNS` answered turns (each cut to `HISTORY_CHARS`) and the offered sources. `evidence`
+  in `HelpDeps` is where the context stories plug in; today it offers nothing, so every reply is
+  `unverified`.
+- **Queue and fair use.** `admit` refuses before anything is stored (`TurnRefused`): switched off,
+  a turn of the same account running or waiting, a full queue, or the account's turns of the day
+  used. Admitted turns wait in one first-come queue and `pump` runs `help.max_parallel` at once.
+  Each job holds an `AbortController`: `cancel` (after the store marked the reply) and `drop`
+  (a deleted conversation) abort it, `stopAll` on server close.
+- **Failures** are classified by `classifyFailure` into the store's `FAILURE_CODES`; `RETRY` says
+  which can be tried again at once. The stored text is the fixed sentence of the code. The log
+  gets fixed words only.
+- **Usage.** `help.json` has `usage` rows per day and account (`addUsage`): turns, failed, cost,
+  tokens. A file without `usage` (the first version) reads as none. The per-turn cap and
+  `help.daily_budget_usd` use these rows, not the run budget. `GET /api/help/usage` is the
+  administrators' view; `forRole` and `hideNames` keep model, provider, cost and tokens from users.
+
+Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
+the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
 
 ### Helper processes
 

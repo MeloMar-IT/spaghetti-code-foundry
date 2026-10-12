@@ -87,6 +87,9 @@ describe("scheduler fair use", () => {
       const waiting = s.submit(job(), { source: "b" });
       expect(active()).toEqual(["a"]);
       expect(pending().map((p) => p.runId)).toEqual([waiting]);
+      // the queue says why it waits, so the monitor does not take it for a queue that stands still
+      expect(pending()[0]).toMatchObject({ capped: true });
+      expect(s.queue()).toMatchObject({ concurrency: 3, cap: 1 });
       s.submit({ kind: "resume", runId: "stopped-1" }, { source: "c" });
       // the resume took a slot at once although the cap is full; the new run still waits
       expect(pending().map((p) => p.runId)).toEqual([waiting]);
@@ -100,6 +103,9 @@ describe("scheduler fair use", () => {
     } finally {
       setCap("load", undefined);
     }
+    // without a cap nothing is marked
+    expect(pending().some((p) => "capped" in p)).toBe(false);
+    expect("cap" in s.queue()).toBe(false);
   });
 
   it("shares slots round-robin: a second user's job is the second start", async () => {

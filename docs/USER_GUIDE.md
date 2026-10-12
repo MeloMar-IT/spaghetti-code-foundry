@@ -30,6 +30,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [11. Upgrading from claude-factory](#11-upgrading-from-claude-factory)
 - [12. Refinement](#12-refinement)
 - [13. Self-repair (for admins)](#13-self-repair-for-admins)
+- [14. Ask SCF](#14-ask-scf)
 
 ---
 
@@ -1873,13 +1874,15 @@ scf analyst reset       # put back everything it changed
 
 The report is `analyst/report.md` in the data folder; the same advice as data is in
 `analyst/latest.json`. It looks at the last 14 days and needs 20 visits of a step before it says
-anything. Per step and model it shows how often the step worked, ran into its time limit, was
+anything; visits stopped by a usage limit do not count towards the 20. Per step and model it shows how often the step worked, ran into its time limit, was
 repaired by a `fix_*` step, or was sent back by a review, and its share of all tokens. From that:
 
 - **Try a lower level.** The step works nearly always and its work is rarely repaired. The advice
   is one effort level down when the step runs on high or above, otherwise the next smaller model.
-  For a review: almost none of the reviews led to a change.
-- **Try a higher level.** The step fails or its work is repaired often.
+  For a review: almost none of the reviews led to a change, and the review step itself works at
+  least 97% of the time.
+- **Try a higher level.** The step fails or its work is repaired often. A review step that fails
+  15% of the time or more is treated the same way: it is never advised to go lower.
 - **Time limit, not model.** 5% or more of the visits ran into the time limit. A stronger model is
   usually slower, so look at the limit and the size of the work first.
 - **Look at this.** The step got clearly worse in the last two days.
@@ -1892,14 +1895,33 @@ trial: it takes the advice with the largest token share that says "effort …" o
 model, and sets it for that step. There is one trial per flow at a time, so the effect of a change
 can be told apart. The change is written to `analyst/overrides.json`; the engine reads that file at
 the start of every agent step, so it takes effect at the next step, also in a run that is under way.
-No flow file is changed. A router rule of yours for the step wins over the analyst.
+No flow file is changed.
+
+Some advice stays advice, and the report says why under "Advice not tried by itself":
+
+- **Another model** is only tried when the published figures (see below) hold at least one figure
+  for that model. The analyst makes the name of the next level from the name of the current one, and
+  this is its check that such a model exists. With `--no-web`, or before the first lookup worked, no
+  model is tried. Effort changes need no figure.
+- **A review none of whose reviews led to a change.** A trial of it could not be judged.
+- **A step inside a sub-flow.**
+- **A change back to what the flow itself says.** `scf analyst reset` does that.
+
+What the analyst set never wins over you:
+
+- A router rule of yours for the step wins, for the model and for the effort.
+- The override follows the flow. It stores what the flow said for the step (model and effort) when
+  the analyst set it, and applies only while the flow still says that. When you edit the step's
+  model or effort, your edit counts from the next step on.
+- Only the model is replaced. The step keeps its agent and its provider, so a step on a local model
+  or on a proxy stays there. The model of a step that does not run on Claude Code is never changed.
 
 A trial is judged on the visits since it started, against the numbers of the step before it:
 
 - After 20 visits a **lower** level is kept unless the step does worse: it works more than 5 points
   less often, its work is repaired more than 10 points more often, it times out more than 5 points
   more often, or reviews send its work back more than 15 points more often. For a review step:
-  unless it leads to a change more than 15 points less often.
+  unless it leads to a change less than half as often as before.
 - A **higher** level is kept only when the step works at least 5 points more often or is repaired
   at least 10 points less often. Otherwise it is not worth its tokens and is put back.
 - After 8 visits a trial that works 25 points less often is stopped at once.
@@ -1908,16 +1930,23 @@ A trial is judged on the visits since it started, against the numbers of the ste
 A change that was put back is not tried again for 30 days, and a step is left alone for 3 days
 after any trial. The run log of a step says "set by the analyst" when an override applied. The
 report lists what is set now, what happened at this check, and the last ten trials;
-`analyst/tuning.json` holds the full record. `scf analyst auto off` stops new trials and keeps what
-is set; `scf analyst reset` removes it all.
+`analyst/tuning.json` holds the full record, and it owns the overrides: an entry in
+`overrides.json` that no running or kept trial stands for is removed at the next check, so do not
+add entries by hand. `scf analyst auto off` stops new trials and keeps what is set.
+`scf analyst reset` removes it all and ends the running and the kept trials as "put back", so the
+same changes are not tried again for 30 days.
 
-**Published figures.** Once a week the analyst asks Claude Code (web search only, with the Claude
-sign-in of this machine) for published scores, prices and speeds of the models you use and the
+**Published figures.** Once a week the analyst asks Claude Code (with the Claude sign-in of this
+machine) for published scores, prices and speeds of the models you use and the
 levels next to them, and keeps them in `analyst/reference.json` with the source of each figure.
 Figures a third party measured itself are used as they are. Figures from the makers, and figures
 whose origin is not given, are lowered by a tenth. They are only used to hold back advice for a
-smaller model that scores far lower; your own runs always decide. When the search fails, the
-earlier figures are kept. On Linux, run `scf analyst run` from cron.
+smaller model that scores far lower, and to know that a model exists before it is tried; your own
+runs always decide. Coding scores are only compared when both name the same test. That session has
+the two web tools (search and fetch) and no others, no MCP servers, none of your personal or
+project settings, and runs in an empty temporary folder. When the search fails or finds nothing,
+the earlier figures are kept and it is tried again a day later. On Linux, run `scf analyst run`
+from cron.
 
 #### The command line for a running Foundry
 
@@ -1932,6 +1961,7 @@ scf whoami                # who is signed in, and where
 scf runs list --status failed
 scf turn list             # what waits for you
 scf repos                 # an area without an action lists its commands
+scf flows --help          # flows, blocks and monitor: without an action they are the older file commands
 scf runs list --help      # the options of one command
 scf logout
 ```
@@ -1940,7 +1970,11 @@ scf logout
 without echo, sent to the server and not kept. What is kept is the session, in
 `cli-session.json` in the data folder, readable by your user only. It ends after 7 days, at
 `scf logout`, or when the account's password changes. A script can pipe the password in as one
-line. A server other than `http://localhost:4777` must be reached over HTTPS, as in a browser.
+line; without `--email` it pipes two lines, the e-mail address and then the password. Only a
+Foundry on this machine (`localhost`, `127.0.0.1`, `[::1]`) is reached over plain http. Any other
+address is reached over HTTPS: `--server foundry.example.com` means `https://`, and an `http://`
+address of another machine is refused, so the password never travels in clear text. A redirect is
+not followed; the command says where the server points to and stops.
 
 **The areas.**
 
@@ -1951,6 +1985,7 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
+| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); the usage (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -1962,29 +1997,47 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 
 - `--json` prints the server's answer as it is, for scripts. Without it you get a table or a few lines.
 - `--data '{…}'` or `--data @file.json` adds fields to the call that have no option of their own.
+  It only adds: a field that an option, an argument or the command itself sets is refused, and so
+  is a field that another command asks about first (the role in `scf users set`, the sign-in
+  method in `scf repos add`). A command that only reads takes no `--data`.
+- Text that starts with `-` goes after `--`: `scf flows save my-flow --scope repo -- "$(cat my.yaml)"`.
 - `--server <address>` talks to another Foundry (sign in there first).
 - `--as <account id>` reads as that user would, for an admin who started `scf admin view-as`.
-- Exit code 0 means done; 4 means not signed in or not allowed; 1 is any other refusal by the server.
+- Exit code 0 means done; 4 means not signed in or not allowed (also for `scf whoami`); 1 is any
+  other refusal by the server. Errors are printed on standard error; with `--json` the server's
+  whole refusal is printed there as JSON.
+- A call may take two minutes (a sign-in half a minute); then the command gives up. An answer that
+  is not from a Foundry counts as an error, whatever its status.
 
 **Safety.**
 
 - A command that deletes or replaces something asks you to type `yes`. `--yes` answers for you;
-  without a terminal and without `--yes` it stops.
+  without a terminal and without `--yes` it stops. `scf flows save` and `scf blocks save` ask only
+  when a file with that name is there already; `scf users add` asks only for `--role admin`.
 - A password, token or other secret is never an option or an argument: the command asks for it
-  without echo (or reads one line of standard input), so it is not in your shell history. Given
-  inline in `--data` it is refused; in a file (`--data @file`) it is accepted.
+  without echo (or reads one line of standard input each, in the order it would ask), so it is not
+  in your shell history. Given inline in `--data` it is refused, for every command (the fields
+  `token`, `password`, `secret`, `current`, `key`, `privateKey`); in a file (`--data @file`) it is
+  accepted, unless the field is one the command does not let `--data` set.
+- An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
+  contain `/` or `\`.
 - `scf settings set` replaces the whole settings file, so it insists on `--data`. Start from
   `scf settings show --json`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
-it; `scf api GET runs` (or `POST`, `PUT`, `DELETE`, with `--data`) makes one. One call has no
-command: the live event stream of a run, which never ends.
+it; `scf api GET runs` (or `POST`, `PUT`, `PATCH`, `DELETE`) makes one. A body is sent only with
+`--data`: without it nothing is sent, so add `--data '{}'` for a call that wants an empty one.
+`DELETE`, `PUT` and `PATCH` ask you to type `yes` first (`--yes` answers; without a terminal and
+without `--yes` they stop). One call has no command: the live event stream of a run, which never
+ends; `scf api` refuses it too.
 
 #### Helper processes
 
 Five small processes that run beside the Foundry, each started by macOS by itself once installed.
-They read the data folder; each writes only in its own folder there. None needs the server, and
-the server does not need them. Every one has the same commands:
+They read the data folder and write their results in their own folder there. Two of them also set
+something outside it: the governor and the limits helper each keep their cap on the runs at once in
+a file of their own in `governor/caps/`, and the governor writes `test-slots/cap`. None needs the
+server, and the server does not need them. Every one has the same commands:
 
 ```bash
 scf governor install    # also: flaky, limits, blockage, digest
@@ -1992,6 +2045,9 @@ scf governor run        # one check now
 scf governor report     # the last result
 scf governor status     # uninstall removes it and what it set
 ```
+
+`status` says "installed" only when macOS really runs the helper. "Installed but not loaded" means
+the file is there and nothing runs: run `install` again.
 
 | Helper | Runs | What it does |
 |---|---|---|
@@ -2001,19 +2057,45 @@ scf governor status     # uninstall removes it and what it set
 | `blockage` | every hour | Finds the stories that hold up the most others, and says when run slots are empty. |
 | `digest` | daily at 07:30 | One short report: what was done, what failed, what waits for you. |
 
+**Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
+at once for a while. The lowest cap that still holds counts, never below 1 and never above the
+configured number. A cap holds back new runs only: work that runs is never stopped, and a run that
+already started and is resumed (after a restart, an answer or a pause) is not held back, because it
+may hold the turn to merge that others wait for. A new run that waits only for a cap is marked so in
+the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
+that stands still.
+
 **The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
-per core, or under memory pressure, it allows one run fewer per check, down to half the configured
-number (at least 2). Work that runs is never stopped; only new runs wait. A run that already started and is resumed (after a restart, an answer or a pause) is not held back, because it may hold the turn to merge that others wait for. After five calm checks
-in a row (1.5 per core or less) it allows one more, until the configured number is back. Above 4
-per core, or under critical memory pressure, only one test run works at a time. Every change is a
-line in `governor/changes.log`. The limits end by themselves four minutes after the last check, so
-a governor that stops can never hold the Foundry down. `scf governor reset` takes them away at once.
+per core, or under critical memory pressure, it allows one run fewer per check, down to half the
+configured number (at least 2). Memory pressure "warning" counts only together with a load above 1.5
+per core: macOS reports it for hours on a full but idle machine. After five calm checks in a row
+(1.5 per core or less) it allows one more, until the configured number is back. In between (a load
+between 1.5 and 2.5, or a memory warning without load) nothing moves at first, but after 15 checks
+in a row without overload it allows one more as well, so a cap does not stay for hours on a machine
+that is only a little busy. Above 4 per core, or under critical memory pressure, only one test run
+works at a time. Every change is a line in `governor/changes.log`. Its limits end by themselves
+four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
+remembers — so a governor that stops can never hold the Foundry down, and the first check after the
+machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
+asks for a test slot like every test run, but waits five minutes at most.
 
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
-different stories in the last 7 days: one story can break its own test, several cannot. The report
-names a likely cause when the log shows one (a port in use, a time limit, a full disk). With
-`scf flaky auto on` it makes one bug story per test file through the GitHub sign-in of this
-machine, at most 2 per check and never twice for the same file. Off by default.
+different stories of one repository in the last 7 days: one story can break its own test, several
+cannot. A run without an issue is not a story. Where it can see them:
+
+- A test that failed in a test log (Vitest and Gradle output).
+- A test that failed and passed when the flow ran the tests once more: the flows keep the first log
+  as `tests.first.log` for that.
+- A test that Vitest retried by itself — only when the test command uses `--reporter=verbose`.
+  Vitest's default reporter prints nothing for a test that passed on a retry.
+
+The report names a likely cause when the error of that test shows one (a port in use, a time
+limit, a full disk), and says whether the test was also seen to pass. With `scf flaky auto on` it
+makes one bug story per test file and repository through the GitHub sign-in of this machine, at
+most 2 per check and never twice for the same file. A story is made only when at least one listed
+test of the file was also seen to pass in those 7 days (on a retry, on the second run, or named as
+passed in a verbose log); a test that never passes is broken, not unreliable, and stays in the
+report only. Off by default.
 
 **Usage limits.** The weekly limits are not published, so the forecast needs one reading from you:
 
@@ -2021,20 +2103,29 @@ machine, at most 2 per check and never twice for the same file. Off by default.
 scf limits set claude 34 2026-10-19T23:00     # 34% used now; the week resets then (local time)
 ```
 
-From the tokens used since the reset and that share it works out the size of the week, and from
-the pace of the last 24 hours when the limit is reached. It is an estimate: it holds while the mix
-of work stays about the same, and a reading below 5% is too coarse. With `scf limits auto on` it
-lowers the runs at once so that the limit lasts until the reset. Off by default.
+A reset without a time zone is local time, also a date alone (midnight). A reset more than 7 days
+ahead is refused. From the tokens used since the reset and that share it works out the size of the
+week, and from the pace of the last 24 hours when the limit is reached. It is an estimate: it holds
+while the mix of work stays about the same, and a reading below 5% is too coarse. With
+`scf limits auto on` it lowers the runs at once so that the limit lasts until the reset — down to 1
+if needed, lower than the governor goes. It works from the number of runs that are allowed at that
+moment, lowers its cap as far as needed in one check, and raises it by one per check at most. The
+cap ends by itself two hours after the last check. Off by default.
 
 **What holds work up.** It follows two kinds of waiting: a story that stepped aside for files
-another run holds, and a story that waits for one it depends on. The report lists the stories at
-the root, the number they hold up through the chain, and their state. It says so when run slots
-are empty while stories wait.
+another run holds, and a story that waits for one it depends on (from the service log of the last
+6 hours, until the log shows that the story started or ended). The report lists the stories at
+the root, the number they hold up through the chain, and their state; stories are named with their
+repository. Stories that wait for each other in a circle are listed first, as one entry: that never
+ends by itself. A run that says "running" while its process is gone is shown as interrupted. The
+report says so when run slots are empty while stories wait.
 
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
-stories, failed (with the reason) and in progress; what waits for you is listed however old it is.
-Below that come a few lines from the other helpers and the analyst. It is `digest/report.md`, and
-one file per day; a desktop notification gives the counts.
+stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
+and so are runs that were interrupted (they say "running", but their process is gone). Below that
+come a few lines from the other helpers and the analyst; a result of a helper that is older than
+26 hours is left out. It is `digest/report.md`, and one file per day, named by the local date; a
+desktop notification gives the counts.
 
 #### Self-update
 
@@ -2745,7 +2836,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
-| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions and stored credentials |
+| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
@@ -2803,6 +2894,17 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
+| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on, and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
+| `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
+| `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
+| `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
+| `POST /api/help/conversations` | yes | yes | ask Ask SCF a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask SCF is switched off |
+| `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
+| `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
+| `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -3740,7 +3842,7 @@ learnings, queue, locks and evals. The copy is made next to the new folder and r
 in one step, so you never see a half-done move. Paths that point into the old folder (in run state,
 lock files, `queue.json` and `config.yaml`) are rewritten. If `config.yaml` can't be rewritten
 safely, it is kept as it was and a warning lists the values that still point to the old folder.
-`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
+`users.json`, `sessions.json`, `credentials.json`, `refinements.json` and `help.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
 
 **The backup.** `~/.claude-factory` is never changed or deleted, except for a note file
 `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`. Nothing there is used anymore: your settings now live in
@@ -4328,3 +4430,215 @@ and ends with "fixed" after 24 hours of normal work.
 `tests/self-repair-rules.test.ts` proves the five rules: nothing private in any story, one open
 story per problem, the circuit breaker stops a flood, a feature run cannot reach `main`, and with
 the monitor off nothing is created.
+
+---
+
+## 14. Ask SCF
+
+**Ask SCF** is the help assistant inside the Foundry. You ask a question in your own words; it explains
+how the Foundry works, what your work is doing, and how to solve a problem. It is being built in
+steps. This chapter holds its rules. They are fixed first, and every later part keeps to them.
+
+**It reads and explains. It does not act.** Nothing you ask changes the Foundry, a repository or
+GitHub. Today Ask SCF has no action at all on its list, so it cannot change anything.
+
+### What you can ask
+
+| You ask | What it is |
+|---|---|
+| Product help | How the Foundry works: a page, a word, a setting, a flow. |
+| Status | What your work is doing now, and why it waits. |
+| Troubleshooting | Why something failed or does not move. |
+| Guided resolution | Which steps solve a problem, in order, and where to do them. |
+
+Ask SCF does three kinds of work only by sending you to the place that already does them:
+
+- **Writing and improving stories** is done in [Refinement](#12-refinement), with the architect.
+- **What happens next** with a run or an issue is said by the Foundry itself, on the run page and (for administrators) on Home.
+- **Findings of the monitor** are handled on the Problems page (administrators).
+
+### What a reply can hold
+
+A reply has up to five kinds of parts. They look different, so you always know what is only text
+and what would change something.
+
+| Part | What it is | Changes something |
+|---|---|---|
+| Answer | What is true, as far as Ask SCF can see. Nothing happens. | no |
+| Recommendation | What you could do. You decide and you do it; nothing happens by itself. | no |
+| Navigation | A link to a page of the Foundry that you may open. Opening it is your click. | no |
+| Draft | A text for you to copy or change. It is not sent, saved or posted anywhere. | no |
+| Action | A change to the Foundry or to GitHub. Never done without your explicit approval. | yes, after your approval |
+
+An action runs only when all of this holds:
+
+1. The action is on the server's own list. Text from a model never names a command, a route or a tool.
+2. You see the exact effect before anything happens.
+3. You confirm it yourself, for this one action.
+4. The server checks again that you may do it, as for the same click on its own page.
+5. The server reads the result back and tells you what changed.
+
+### Sources, and how sure it is
+
+An answer about how the Foundry works rests on the documentation installed with your version. An
+answer about your work rests on what the Foundry shows right now, with the time it was read. A reply
+can only name sources that the server itself gave to the assistant; a source it made up is removed.
+
+Every reply ends with one of these sentences. The server chooses it from the sources, not the assistant:
+
+- "This rests on the sources listed below."
+- "This is likely, but the sources below do not fully confirm it."
+- "Ask SCF could not check this against the documentation or the current state. Treat it as a guess."
+
+Until the parts that read the documentation and the current state are built, replies carry the last sentence.
+
+### What it does not do
+
+When you ask for something Ask SCF does not do, it says so in a fixed sentence and tells you the
+safest thing you can do instead. These sentences come from the server, not from the assistant.
+
+| When | What Ask SCF says | What you can do |
+|---|---|---|
+| You ask it to do something | Ask SCF reads and explains. It does not start, stop, change, delete or send anything. | Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask SCF will tell you. |
+| You ask about another account | Ask SCF sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account. | Ask the owner of that work. |
+| You ask about what only administrators see | That belongs to the administrators: models, costs, accounts and the settings of the server. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
+| You ask for a secret, or type one | Ask SCF never shows a password, a token or a key, and it never needs one from you. | Do not type a secret into a question. Sign-ins of repositories are managed under My repositories. |
+| You ask about something else | Ask SCF answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it. | Ask about a page, a run, a repository or a message that you see here. |
+| It cannot see enough | Ask SCF cannot see enough to answer this, so it does not guess. | Open the run, the repository or the session you mean; its own page shows its state. |
+| You ask it to write or improve a story | Writing and improving stories is the work of Refinement, with the architect. Ask SCF does not do it a second time. | Open Refinement and start a session, or go on with one. |
+| You ask what happens next with a run or an issue | What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask SCF does not give a second answer that could differ. | Open the run under My runs: its page says what happens next. |
+| You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
+
+For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
+
+### Conversations
+
+A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
+pages for it come later; the server and the command line (`scf ask`) have it now.
+
+**What is kept.** Each conversation has a title (the first line of your first question), a state,
+and its messages: your questions and the replies. A question keeps the page you asked it on and, at
+most, the kind and id of the one thing selected there (a run, an issue, a repository, a queue item, a
+refinement session or a problem). Nothing else of the page is stored. A reply keeps its checked parts
+(sources, recommendations, links, drafts) and, apart from them, the text you read. Limits: 100
+conversations per account, 100 messages per conversation, 4,000 characters per question.
+
+**States.**
+
+| State | What it means |
+|---|---|
+| active | You can ask the next question. A reply may still be on its way. |
+| failed | The last reply could not be made. **Try again** uses the same question and the same reply: nothing is added twice. You can also ask something new. |
+| cancelled | You stopped the last reply. You can try again or ask something new. |
+| completed | You closed it. It stays readable and takes no new question. |
+| archived | Out of your list, with its content. **Restore** gives it the state it had. |
+| deleted | Its content is gone (see below). |
+
+A reply that was being written when the Foundry restarted is marked as failed with "The Foundry
+restarted before the answer was ready. You can try again."
+
+**Who can read them.** Only you. Another account's conversation answers exactly like one that does
+not exist. An administrator has no more access than a user: no list, no text and no change of
+another account's conversations, and "View as user" shows none of them (the server answers "Ask SCF
+conversations are not shown in a preview"). When an account is deleted, all its conversations are
+removed with it.
+
+**How long they are kept.**
+
+- **Delete** removes the title and every message at once, with the page context, sources and drafts
+  in them. It cannot be undone. An empty record (id, times, "deleted") stays for 30 days so that a
+  late reply or a retry finds nothing to write to; then it is removed too.
+- A conversation that was not changed for **90 days** expires: it is deleted in the same way. Its
+  content is not shown from that moment on, also when the hourly clean-up has not run yet.
+- A reply that arrives after its conversation was deleted, or after you stopped it, is not stored.
+
+**Where it is kept.** In `help.json` in the data folder (mode 0600), written under the lock of the
+data folder. It survives a restart and is copied unchanged when the data folder moves. If the file
+cannot be read (broken, or written by a newer version), the calls answer "Ask SCF is not working;
+see the server log", the file is left as it is, and an account cannot be deleted until it is
+repaired. Calls: `GET /api/help/conversations` and the calls under it in the table of chapter 7.
+
+### Asking, and what happens when no answer comes
+
+**Asking.** A question is one **turn**. The server stores it at once, answers that the reply is on
+its way, and puts the turn in a queue. When the turn ends, the conversation holds the reply. On the
+command line: `scf ask new "How do I connect a repository?"`, then `scf ask show <id>`;
+`scf ask more <id> "…"` asks the next question, `scf ask retry <id>` tries a failed answer again
+and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/conversations`,
+`POST /api/help/conversations/:id/messages`, `…/retry` and `…/cancel`.
+
+A turn sees your question, the page you asked it on, and the last three answered questions of the
+same conversation. It sees nothing of other conversations or other accounts.
+
+**One at a time.** Each account has one turn at a time. Turns of different people wait in one
+line, first come first served, so nobody can fill it alone.
+
+**When no answer comes** the reply says why in one of these sentences. They are the server's own:
+you never read the text of the AI service.
+
+| What happened | What you read | Try again |
+|---|---|---|
+| The answer took longer than the time limit | The answer took too long, so Ask SCF stopped waiting. You can try again. | yes, right away |
+| The AI service failed or could not be reached | The AI service did not answer. You can try again in a moment. | yes, right away |
+| The AI service reached its own limit | The AI service has reached its limit for now. Try again later. | later |
+| The budget for Ask SCF is used up | The limit for Ask SCF is reached for today. Try again tomorrow, or ask an administrator. | later |
+| Ask SCF cannot run here (no model that fits, or the agent is signed out) | Ask SCF is not set up to answer here. Ask an administrator of this Foundry. | later |
+| The answer did not pass the checks of the server | Ask SCF got an answer it could not use, so it shows none. You can try again. | yes, right away |
+| The Foundry restarted during the answer | The Foundry restarted before the answer was ready. You can try again. | yes, right away |
+| You stopped the answer | You stopped this answer. You can ask again. | yes |
+
+**When a question is not taken**, nothing is stored and you read one of these:
+
+| When | What you read |
+|---|---|
+| Ask SCF is switched off | Ask SCF is switched off on this Foundry. An administrator can switch it on. |
+| You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
+| Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
+| You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
+
+### Ask SCF for administrators
+
+**It is off by default.** Switch it on in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+
+```yaml
+help:
+  enabled: true
+  model: haiku                  # a model spec; without it, default_model
+  timeout_seconds: 60           # a turn that takes longer is stopped
+  max_parallel: 1               # turns answered at the same time, over all accounts
+  max_queued: 10                # turns that may wait; one more is refused
+  turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
+  max_cost_usd_per_turn: 0.1
+  daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+```
+
+The two money limits are not applied with `cost_limits: false` or for a model without a price
+(a local model, a subscription login). Help turns are not runs: their cost is counted here, not
+in the daily budget of runs.
+
+**What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
+no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that
+is removed when the turn ends (its log with it). So it has no shell, cannot write to a repository,
+cannot read a credential and cannot fetch anything. Whatever the answer says, the server keeps only
+what the contract allows: text, fixed pages, and no action. For this reason only a **Claude Code**
+model can answer; with a Codex model every turn ends with "Ask SCF is not set up to answer here."
+A model on a local provider that Claude Code can reach (for example `ollama:<model>`) works.
+
+**Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask SCF is on, which
+provider and model answer (or why none can), the limits, how many turns run and wait, and per
+account and day the turns, failures, cost and tokens. It holds no question and no answer. Users
+get 403 for it, and their own conversations never show a model, a provider, a cost or a token
+count; the name of the configured model and provider is also taken out of the text of their
+replies. Usage is kept for 90 days. An administrator still cannot read another account's
+conversations. The server log gets one line in fixed words for a failed turn, for example
+`help: a turn failed (provider)`, never the question or the answer.
+
+### What you never see as a user
+
+- **No model names and no providers.** Which AI answers is a setting of the administrators.
+- **No costs and no token counts.**
+- **Nothing of another account**: no runs, repositories, refinement sessions or conversations but your own. A guessed id tells nothing.
+- **Nothing that is for administrators only**: settings, accounts, the monitor, the server's log.
+
+Links in a reply go only to pages your role has. The text of an issue, a log or a repository is
+read as data: an instruction written there is not followed.

@@ -373,6 +373,10 @@ export class Scheduler {
   }
 
   queue() {
+    const concurrency = this.o.config().concurrency;
+    // A helper's cap (machine load, usage limits) holds back new runs only; see pump().
+    const cap = runLimit(concurrency);
+    const capFull = this.active.size >= cap && this.active.size < concurrency;
     return {
       pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
         const limit = this.limited.get(runId);
@@ -384,6 +388,8 @@ export class Scheduler {
           runId, lockKey, repoLock, source, enqueuedAt, kind: job.kind, waitingFor: blocker?.runId,
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
+          // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
+          ...(capFull && job.kind === "run" && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
@@ -391,7 +397,9 @@ export class Scheduler {
         };
       }),
       active: [...this.active.values()].map((a) => ({ runId: a.queued.runId, lockKey: a.queued.lockKey, repoLock: a.queued.repoLock, source: a.queued.source })),
-      concurrency: this.o.config().concurrency,
+      // the configured number; `cap` is there only while a helper's cap lowers it for new runs
+      concurrency,
+      ...(cap < concurrency ? { cap } : {}),
     };
   }
 

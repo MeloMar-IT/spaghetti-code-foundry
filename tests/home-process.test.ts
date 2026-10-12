@@ -287,10 +287,8 @@ describe("server on a moved folder", () => {
   it("refuses changes with 503 but still answers reads", async () => {
     fakeRun("running", { pid: process.pid });
     expect(prepareDataHome({ log: quiet }).home).toBe(oldHome);
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    const { startServer } = await import("../src/server/server.js");
-    const base = `http://127.0.0.1:${port}`;
-    const { close } = await startServer({ repo: tmp, runsDir: join(oldHome, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs") });
+    const { startTestServer } = await import("./helpers/port.js");
+    const { close, base } = await startTestServer({ repo: tmp, runsDir: join(oldHome, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs") });
     try {
       const pw = "test-password-12345";
       const s = await signInAs(base, { email: "ann@example.com", password: pw });

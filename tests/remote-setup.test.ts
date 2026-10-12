@@ -62,7 +62,7 @@ describe("the table", () => {
     const asks = SETUP.filter((c) => c.confirm).map((c) => `${c.area} ${c.action}`);
     expect(asks).toEqual([
       "repos use-token", "repos use-https-token", "repos use-key", "repos new-key", "repos use-app", "repos use-server-login", "repos remove", "repos remove-github",
-      "settings set", "monitor mute-for-good", "monitor mute-detector-for-good", "flows remove", "blocks remove",
+      "settings set", "monitor mute-for-good", "monitor mute-detector-for-good", "flows save", "flows remove", "blocks save", "blocks remove",
     ]);
   });
 
@@ -144,14 +144,14 @@ describe("repositories", () => {
     // the address may change to another form of the same repository only
     expect((await scf(["repos", "set-url", tokenRepo, "https://github.com/acme/app.git"], { as: ann })).code).toBe(0);
     const other = await scf(["repos", "set-url", tokenRepo, "https://github.com/acme/else"], { as: ann });
-    expect([other.code, other.out]).toEqual([1, "error: that is another repository; the address can only change to another form of the same one"]);
+    expect([other.code, other.err]).toEqual([1, "error: that is another repository; the address can only change to another form of the same one"]);
   });
 
   it("refuses the server's own access for a user, and another account's repository", async () => {
     const r = await scf(["repos", "use-server-login", tokenRepo, "--yes"], { as: ann });
-    expect([r.code, r.out.startsWith("error: only an admin")]).toEqual([4, true]);
+    expect([r.code, r.err.startsWith("error: only an admin")]).toEqual([4, true]);
     // the admin does not own it: unknown, like any other id
-    expect(await scf(["repos", "remove", tokenRepo, "--yes"])).toMatchObject({ code: 1, out: "error: no such repository" });
+    expect(await scf(["repos", "remove", tokenRepo, "--yes"])).toMatchObject({ code: 1, err: "error: no such repository" });
   });
 
   it("removes a repository after a yes, by id or by its GitHub name", async () => {
@@ -184,14 +184,14 @@ describe("settings and providers", () => {
     expect((await scf(["settings", "show", "--json"])).json()).toEqual(next);
     expect((await scf(["monitor", "show", "--json"])).json<{ perDay: number }>().perDay).toBe(next.monitor.report_limits.per_day);
     const bad = await scf(["settings", "set", "--yes", "--data", '{"monitor":"nope"}']);
-    expect([bad.code, bad.out.startsWith("error: invalid config: ")]).toEqual([1, true]);
+    expect([bad.code, bad.err.startsWith("error: invalid config: ")]).toEqual([1, true]);
     expect((await scf(["settings", "show", "--json"])).json()).toEqual(next);
   });
 
   it("is closed to a normal user", async () => {
     for (const words of [["settings", "show"], ["providers", "list"], ["monitor", "show"], ["flows", "show", "issue-plan"], ["blocks", "list"]]) {
       const r = await scf(words, { as: ann });
-      expect([r.code, r.out.startsWith("error: ")], words.join(" ")).toEqual([4, true]);
+      expect([r.code, r.err.startsWith("error: ")], words.join(" ")).toEqual([4, true]);
     }
   });
 
@@ -203,7 +203,7 @@ describe("settings and providers", () => {
     expect(agents).toMatch(/^claude\s+(yes|no)/m);
     expect(providers!.split("\n")[0]).toMatch(/^NAME\s+KIND\s+WORKS\s+AGENTS\s+MODELS\s+DETAIL$/);
     const empty = await scf(["providers", "test", " "]);
-    expect([empty.code, empty.out]).toEqual([1, "error: spec required"]);
+    expect([empty.code, empty.err]).toEqual([1, "error: spec required"]);
   });
 });
 
@@ -227,7 +227,7 @@ describe("the monitor", () => {
     expect((await scf(["monitor", "detectors"])).out).toMatch(/^slow-step\b/m);
     expect((await scf(["monitor", "mutes"])).out).toBe("no mutes");
     expect((await scf(["monitor", "finding", a])).out).toBe(`finding ${a}\n\nno bug stories\n\nno runs`);
-    expect(await scf(["monitor", "finding", "nope"])).toMatchObject({ code: 1, out: "error: unknown finding" });
+    expect(await scf(["monitor", "finding", "nope"])).toMatchObject({ code: 1, err: "error: unknown finding" });
   });
 
   it("mutes for a time without a question and for good only after a yes; unmute ends it", async () => {
@@ -254,9 +254,9 @@ describe("the monitor", () => {
     expect((await scf(["monitor", "start-stories"])).out).toContain("bug stories are switched on");
     expect((await scf(["monitor", "show", "--json"])).json<{ state: string }>().state).not.toBe("off");
     const retry = await scf(["monitor", "retry", a]);
-    expect([retry.code, retry.out]).toEqual([1, "error: this finding does not wait for a person"]);
+    expect([retry.code, retry.err]).toEqual([1, "error: this finding does not wait for a person"]);
     const story = await scf(["monitor", "story", "0123456789abcdef"]);
-    expect([story.code, story.out]).toEqual([1, "error: unknown finding"]);
+    expect([story.code, story.err]).toEqual([1, "error: unknown finding"]);
   });
 });
 
@@ -285,15 +285,18 @@ describe("flows and blocks", () => {
     expect(() => callOf("flows", "save", ["hello-cli", flow("hello-cli")])).toThrow("--scope is needed");
     expect((await scf(["flows", "save", "hello-cli", flow("hello-cli"), "--scope", "repo"])).out).toBe("saved hello-cli (repo)");
     expect((await scf(["flows", "show", "hello-cli"])).out).toBe(flow("hello-cli").trimEnd());
+    // a second save replaces the file: that is asked first; in the other scope nothing is replaced
+    await expect(scf(["flows", "save", "hello-cli", flow("hello-cli"), "--scope", "repo"])).rejects.toThrow("A flow with this name is saved there already: its file is replaced. Add --yes to do it without a question.");
+    expect((await scf(["flows", "save", "hello-cli", flow("hello-cli"), "--scope", "repo", "--yes"])).out).toBe("saved hello-cli (repo)");
     expect((await scf(["flows", "list"])).out).toMatch(/^hello-cli\s+repo\s+no\s+says hello$/m);
     const other = await scf(["flows", "save", "other-name", flow("hello-cli"), "--scope", "repo"]);
-    expect([other.code, other.out]).toEqual([1, 'error: flow name "hello-cli" must match "other-name"']);
+    expect([other.code, other.err]).toEqual([1, 'error: flow name "hello-cli" must match "other-name"']);
 
     await expect(scf(["flows", "remove", "hello-cli"])).rejects.toThrow("The file of this flow is deleted. Add --yes to do it without a question.");
     expect((await scf(["flows", "remove", "hello-cli", "--yes"])).out).toMatch(/^deleted .*hello-cli\.yaml$/);
     expect((await scf(["flows", "show", "hello-cli"])).code).toBe(1);
     const builtin = await scf(["flows", "remove", "issue-plan", "--yes"]);
-    expect([builtin.code, builtin.out]).toEqual([4, "error: built-in flows cannot be deleted"]);
+    expect([builtin.code, builtin.err]).toEqual([4, "error: built-in flows cannot be deleted"]);
   });
 
   it("lists, prints, saves and removes a block", async () => {
@@ -305,6 +308,7 @@ describe("flows and blocks", () => {
     expect((await scf(["blocks", "show", "no-such-block"])).out).toBe("no block with the id no-such-block");
 
     expect((await scf(["blocks", "save", "commit-cli", yaml, "--scope", "repo"])).out).toBe("saved commit-cli (repo)");
+    await expect(scf(["blocks", "save", "commit-cli", yaml, "--scope", "repo"])).rejects.toThrow("A block with this id is saved there already: its file is replaced. Add --yes to do it without a question.");
     expect((await scf(["blocks", "list"])).out).toMatch(/^commit-cli\s+repo\s/m);
     await expect(scf(["blocks", "remove", "commit-cli"])).rejects.toThrow("The file of this block is deleted. Add --yes to do it without a question.");
     expect((await scf(["blocks", "remove", "commit-cli", "--yes"])).out).toMatch(/^deleted .*commit-cli\.yaml$/);

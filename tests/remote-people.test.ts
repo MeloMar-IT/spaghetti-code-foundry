@@ -33,7 +33,7 @@ describe("accounts and administration", () => {
     expect(cmd("secrets", "add").prompts).toEqual([{ field: "secret", label: "Secret", hidden: true }]);
     // every call that blocks, deletes, resets, transfers or changes a role asks first
     const asks = PEOPLE.filter((c) => c.confirm).map((c) => `${c.area} ${c.action}`).sort();
-    expect(asks).toEqual(["admin repo-ready", "admin repo-settings", "admin repo-transfer", "admin watcher-remove", "secrets remove", "users block", "users remove", "users reset", "users role"]);
+    expect(asks).toEqual(["admin repo-ready", "admin repo-settings", "admin repo-transfer", "admin watcher-remove", "secrets remove", "users add", "users block", "users remove", "users reset", "users role", "users set-app-repos"]);
   });
 
   it("adds an account and hands its set-password token over once", async () => {
@@ -42,10 +42,12 @@ describe("accounts and administration", () => {
     expect(r.out).toMatch(/^id: +[0-9a-f-]{36}$/m);
     expect(r.out).toMatch(/^role: +user$/m);
     expect(r.out).toMatch(/^set-password token \(shown once\): \S{20,}$/m);
-    const bob = (await scf(["users", "add", "Bob", "bob@example.com", "--role", "admin", "--json"])).json<{ user: Account; token: string }>();
+    // a new admin is asked about; a new user is not
+    await expect(scf(["users", "add", "Bob", "bob@example.com", "--role", "admin"])).rejects.toThrow("This makes an admin: the account can read and change everything. Add --yes to do it without a question.");
+    const bob = (await scf(["users", "add", "Bob", "bob@example.com", "--role", "admin", "--json", "--yes"])).json<{ user: Account; token: string }>();
     expect([bob.user.role, bob.user.hasPassword, typeof bob.token]).toEqual(["admin", false, "string"]);
     const twice = await scf(["users", "add", "Ann", "ann@example.com"]);
-    expect([twice.code, twice.out]).toEqual([1, "error: an account with that e-mail exists already"]);
+    expect([twice.code, twice.err]).toEqual([1, "error: an account with that e-mail exists already"]);
   });
 
   it("lists the accounts and changes a name or an e-mail", async () => {
@@ -66,7 +68,7 @@ describe("accounts and administration", () => {
     expect((await accounts()).find((u) => u.id === ann)!.role).toBe("user");
     expect((await scf(["users", "role", ann, "admin", "--yes"])).out).toMatch(/^role: +admin$/m);
     expect((await scf(["users", "role", ann, "user", "--yes"])).out).toMatch(/^role: +user$/m);
-    expect((await scf(["users", "role", ann, "boss", "--yes"])).out).toBe("error: the role must be admin or user");
+    expect((await scf(["users", "role", ann, "boss", "--yes"])).err).toBe("error: the role must be admin or user");
 
     await expect(scf(["users", "block", ann])).rejects.toThrow("This ends the sessions of the account and cancels its queued jobs.");
     const blocked = await scf(["users", "block", ann, "--yes"]);
@@ -81,13 +83,13 @@ describe("accounts and administration", () => {
     expect(link.out).toMatch(/^set-password token \(shown once\): \S{20,}$/m);
     const cat = await w.signIn("cat@example.com");
     const catId = await idOf(cat);
-    expect((await scf(["users", "link", catId])).out).toBe("error: this account has a password already");
+    expect((await scf(["users", "link", catId])).err).toBe("error: this account has a password already");
     await expect(scf(["users", "reset", catId])).rejects.toThrow("This takes the password of the account away and ends its sessions.");
     const reset = await scf(["users", "reset", catId, "--yes"]);
     expect(reset.out).toMatch(/^hasPassword: +false$/m);
     expect(reset.out).toMatch(/^set-password token \(shown once\): \S{20,}$/m);
     // the reset ended the session of the account
-    expect((await scf(["whoami"], { as: cat })).code).toBe(1);
+    expect((await scf(["whoami"], { as: cat })).code).toBe(4);
   });
 
   it("shows and sets the limits; null clears one", async () => {
@@ -101,23 +103,24 @@ describe("accounts and administration", () => {
     await scf(["users", "set-limits", ann, "--max-runs-per-day", "null"]);
     await scf(["users", "set-default-limits", "--max-concurrent", "null", "--daily-budget", "null"]);
     expect((await scf(["users", "limits", "--json"])).json()).toEqual({ defaults: {}, users: {} });
-    expect((await scf(["users", "set-limits", ann, "--max-concurrent", "0"])).out).toBe("error: maxConcurrent must be a whole number of 1 or more, or null");
+    expect((await scf(["users", "set-limits", ann, "--max-concurrent", "0"])).err).toBe("error: maxConcurrent must be a whole number of 1 or more, or null");
   });
 
   it("shows and sets the repositories an account may connect through the GitHub App", async () => {
     const ann = await idOf("ann@example.com");
     expect((await scf(["users", "app-repos", ann])).out).toBe("no repositories allowed");
-    expect((await scf(["users", "set-app-repos", ann, "--repos", "acme/app, acme-tools/*"])).out).toBe("acme/app\nacme-tools/*");
+    expect((await scf(["users", "set-app-repos", ann, "--repos", "acme/app, acme-tools/*", "--yes"])).out).toBe("acme/app\nacme-tools/*");
     expect((await scf(["users", "app-repos", ann, "--json"])).json()).toEqual({ repos: ["acme/app", "acme-tools/*"] });
-    expect((await scf(["users", "set-app-repos", ann, "--repos", ""])).out).toBe("no repositories allowed");
+    expect((await scf(["users", "set-app-repos", ann, "--repos", "", "--yes"])).out).toBe("no repositories allowed");
     await expect(scf(["users", "set-app-repos", ann])).rejects.toThrow("--repos is needed");
+    await expect(scf(["users", "set-app-repos", ann, "--repos", "acme/app"])).rejects.toThrow("This replaces the whole list of repositories the account may connect through the GitHub App. Add --yes");
   });
 
   it("refuses a normal user every admin command with exit code 4", async () => {
     const dan = await w.signIn("dan@example.com");
     for (const words of [["users", "list"], ["users", "limits"], ["audit", "list"], ["admin", "repos"], ["admin", "secrets"], ["users", "remove", "x", "--yes"]]) {
       const r = await scf(words, { as: dan });
-      expect([words.join(" "), r.code, r.out.startsWith("error: ")]).toEqual([words.join(" "), 4, true]);
+      expect([words.join(" "), r.code, r.err.startsWith("error: ")]).toEqual([words.join(" "), 4, true]);
     }
   });
 
@@ -129,7 +132,7 @@ describe("accounts and administration", () => {
     await expect(scf(["account", "password"], { as: eve, tty: true, answers: [TEST_PASSWORD, next, `${next}-typo`] })).rejects.toThrow("the two entries differ; nothing was changed");
     const wrong = await scf(["account", "password"], { as: eve, answers: [`${TEST_PASSWORD}-wrong`, next] });
     expect(wrong.code).not.toBe(0);
-    expect(wrong.out).toMatch(/^error: /);
+    expect(wrong.err).toMatch(/^error: /);
     const ok = await scf(["account", "password"], { as: eve, tty: true, answers: [TEST_PASSWORD, next, next] });
     expect([ok.code, ok.out]).toEqual([0, "the password was changed; the other sessions of the account have ended"]);
     expect(ok.out).not.toContain(next);
@@ -158,7 +161,7 @@ describe("accounts and administration", () => {
     const allJson = await scf(["admin", "secrets", "--json"]);
     for (const out of [added.out, listed.out, all.out, allJson.out]) expect(out).not.toContain(value);
     // another account's secret is not there to remove
-    expect((await scf(["secrets", "remove", id, "--yes"])).out).toBe("error: no such credential");
+    expect((await scf(["secrets", "remove", id, "--yes"])).err).toBe("error: no such credential");
     await expect(scf(["secrets", "remove", id], { as: fay })).rejects.toThrow("This removes the stored secret; what uses it stops working.");
     expect((await scf(["secrets", "remove", id, "--yes"], { as: fay })).out).toBe("removed");
     expect((await scf(["secrets", "list"], { as: fay })).out).toBe("no stored secrets");
@@ -176,7 +179,7 @@ describe("accounts and administration", () => {
     const json = (await scf(["audit", "list", "--action", "block", "--json"])).json<{ entries: { action: string }[]; more: boolean }>();
     expect([json.entries.map((e) => e.action), json.more]).toEqual([["block"], false]);
     expect((await scf(["audit", "list", "--from", "2999-01-01T00:00:00Z"])).out).toBe("no audit lines");
-    expect((await scf(["audit", "list", "--action", "nonsense"])).out).toBe('error: "action" is not an audit action');
+    expect((await scf(["audit", "list", "--action", "nonsense"])).err).toBe('error: "action" is not an audit action');
     const csv = (await scf(["audit", "export", "--action", "block"])).out.split("\n");
     expect(csv[0]!.replace(/^\uFEFF/, "").trim()).toBe("time,actor,actor_name,action,target,target_name,result,detail");
     expect(csv).toHaveLength(2);
@@ -214,7 +217,7 @@ describe("accounts and administration", () => {
     expect(parseCmd(cmd("admin", "watcher-enable"), ["r1", "w1"]).call).toEqual({ method: "PUT", path: "admin/repos/r1/watchers/w1", body: { enabled: true } });
     await expect(scf(["admin", "watcher-remove", id, "nightly"])).rejects.toThrow("This deletes the watcher; it starts no more runs.");
     expect((await scf(["admin", "watcher-remove", id, "nightly", "--yes"])).out).toBe("removed");
-    expect((await scf(["admin", "watcher-remove", id, "nightly", "--yes"])).out).toBe("error: no such watcher");
+    expect((await scf(["admin", "watcher-remove", id, "nightly", "--yes"])).err).toBe("error: no such watcher");
 
     await expect(scf(["admin", "repo-transfer", id, "bob@example.com"])).rejects.toThrow("a personal token stored for it is removed.");
     const moved = await scf(["admin", "repo-transfer", id, "bob@example.com", "--yes", "--json"]);
@@ -229,7 +232,7 @@ describe("accounts and administration", () => {
     expect((await scf(["api", "GET", `runs?as=${ann}`])).code).toBe(0);
     expect((await scf(["admin", "view-end"])).out).toBe("the view has ended");
     expect((await scf(["api", "GET", `runs?as=${ann}`])).code).toBe(4);
-    expect((await scf(["admin", "view-as", await idOf("admin@example.com")])).out).toBe("error: you cannot view your own account");
+    expect((await scf(["admin", "view-as", await idOf("admin@example.com")])).err).toBe("error: you cannot view your own account");
   });
 
   it("deletes an account after a question", async () => {
@@ -238,6 +241,6 @@ describe("accounts and administration", () => {
     const gone = await scf(["users", "remove", ann, "--yes", "--json"]);
     expect(gone.json()).toMatchObject({ ok: true });
     expect((await accounts()).some((u) => u.id === ann)).toBe(false);
-    expect((await scf(["users", "remove", ann, "--yes"])).out).toBe("error: no such account");
+    expect((await scf(["users", "remove", ann, "--yes"])).err).toBe("error: no such account");
   });
 });
