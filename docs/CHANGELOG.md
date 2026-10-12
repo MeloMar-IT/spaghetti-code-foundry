@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Fix: the daily release no longer queues for a test slot. Its check step could wait up to 90 minutes for a free slot while the step itself is stopped after 60, so on a busy machine the run failed with "timed out" and no release pull request was opened. `verify` in `release-daily` now starts its tests at once (`FACTORY_VAR_TEST_SLOTS=0`), as the story that holds the merge turn does. Test in `tests/gitflow.test.ts`.
 - The model analyst: `scf analyst run|report|install|uninstall|status`. A process of its own that, every 6 hours, reads the runs of the last 14 days and writes `analyst/report.md` and `analyst/latest.json` in the data folder.
   - **Per step and model:** how often the step worked, timed out, was repaired (`fix_*` came next) or was sent back by a review (`address_*` / `revise_*`), minutes, tokens and its share of all tokens.
   - **Advice:** try a lower level (effort first, then the next smaller model), try a higher level, time limit rather than model, look at this (worse in the last two days), or keep. 20 visits are needed; visits stopped by a usage limit do not count against a model.

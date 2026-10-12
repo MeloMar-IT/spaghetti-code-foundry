@@ -421,6 +421,24 @@ describe("gitflow pipeline", () => {
     expect(comment).not.toMatch(/^SKILL_REQUEST:/m);
   });
 
+  it("the daily release does not queue for a test slot", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    // both slots are held by a live process (this one); a queueing step would wait here
+    for (const n of [1, 2]) {
+      mkdirSync(join(gh.tmp, "test-slots", `slot-${n}`), { recursive: true });
+      writeFileSync(join(gh.tmp, "test-slots", `slot-${n}`, "pid"), String(process.pid));
+    }
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+    expect(r.status).toBe("succeeded");
+    const verify = r.history.find((h) => h.id === "verify")!;
+    expect(verify.output).toContain("CHECKS: yes");
+    expect(verify.output).not.toContain("waiting for a free slot");
+    expect(verify.durationMs).toBeLessThan(20_000);
+  });
+
   it("opens one release pull request develop → main that closes the merged issues", async () => {
     issues(5);
     await watcher().tick();

@@ -1926,6 +1926,8 @@ write("release-daily", {
       type: "shell",
       description: "Full tests and build on develop",
       run: [
+        // once a day and with a time limit of its own: it starts at once instead of queueing for a test slot behind the stories
+        "export FACTORY_VAR_TEST_SLOTS=0",
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
         '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
