@@ -64,6 +64,8 @@ describe("built-in skills", () => {
     expect(reg.problems).toEqual([]);
     expect(findSkill(reg, "small-changes")?.label).toBe("built-in");
     expect(findSkill(reg, "java")?.label).toBe("built-in");
+    expect(findSkill(reg, "spring-boot")?.label).toBe("built-in");
+    expect(findSkill(reg, "spring-boot")?.pkg.dependencies.map((d) => d.id)).toEqual(["java"]);
     expect(findSkill(reg, "typescript")?.label).toBe("built-in");
     expect(existsSync(join(BUILTIN_SKILLS, "typescript", "REVIEW.md"))).toBe(true);
     expect(BUILTIN_SKILLS.endsWith("skills")).toBe(true);
