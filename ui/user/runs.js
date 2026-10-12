@@ -14,8 +14,8 @@ import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveS
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
-import { listRow, myRunsEntries, renderSections, runSections, sectionOf } from "../runs-list.js";
-import { noMatch, runsBar } from "../runs-bar.js";
+import { archivedSections, listRow, myRunsEntries, renderSections, runSections, sectionOf } from "../runs-list.js";
+import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "../runs-bar.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, isActive, isServerActive, jobMatches, serverKey } from "../runs-filter.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
@@ -85,37 +85,90 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     const n = { ...emptyFilter(), ...next, owner: "" };
     if (JSON.stringify(n) === JSON.stringify(filter)) return;
     const reload = serverKey(n) !== serverKey(filter);
+    if ((n.view === "archived") !== (filter.view === "archived")) selected.clear();
     filter = n;
     rev++; // part of the poller's data: an answer to a changed filter is always drawn, even when it equals the old one
     go(filterHash(filter));
     bar.sync(filter);
     if (reload) {
       gen++;
+      render(); // the boxes and the bar follow the cleared selection at once
       live.refresh();
     } else render();
   };
   const clear = () => setFilters(emptyFilter());
+  // The selection: ids of runs ticked in Failed, Completed or Archived. `busy` covers the whole batch, the question included.
+  const selected = new Set();
+  let busy = false;
+  let archivedShown = false;
+  const select = {
+    has: (id) => selected.has(id),
+    toggle: (id, on) => {
+      if (on) selected.add(id);
+      else selected.delete(id);
+      bulk.show(selected.size, archivedShown, busy);
+    },
+  };
+  const bulk = bulkBar({
+    onAct: () => act(),
+    onClear: () => { selected.clear(); render(); },
+    home: () => {
+      const toggle = sections.hidden ? null : [...sections.querySelectorAll("button")].find((b) => b.classList.contains("run-section-toggle"));
+      if (toggle) return toggle;
+      const heading = main.querySelector("h1");
+      heading?.setAttribute("tabindex", "-1");
+      return heading;
+    },
+  });
+  async function act() {
+    if (busy || !selected.size || gone()) return;
+    busy = true;
+    const ids = [...selected]; // the snapshot, before the question
+    const unarchive = archivedShown;
+    bulk.show(selected.size, archivedShown, busy);
+    let result = null;
+    try {
+      result = await bulkArchive(ids, {
+        unarchive, a, gone: () => closed,
+        ask: async (...x) => { asking = true; try { return await ask(...x); } finally { asking = false; } },
+      });
+    } finally {
+      busy = false;
+    }
+    if (closed) return;
+    if (!result) return render(); // the bar leaves its busy state; an answer that came during the question is drawn
+    selected.clear();
+    toast(bulkText(result, unarchive), result.refused.length ? "error" : "info");
+    render();
+    gen++; // an answer asked before the batch still shows the runs
+    await refresh();
+  }
   const render = () => {
     if (gone() || asking || !data) return;
     const { runs, queue } = data;
     // The list describes the data on screen (also after a failed reload); the bar and the address show the current filter.
-    const f = { ...data.filter, needs: filter.needs, view: filter.view };
+    // The view of the data counts for Archived: unarchived data is never drawn as Archived while the reload is out.
+    const same = (data.filter.view === "archived") === (filter.view === "archived");
+    const f = { ...data.filter, needs: filter.needs, view: same ? filter.view : data.filter.view };
+    const arch = f.view === "archived";
+    if (arch !== archivedShown) { selected.clear(); archivedShown = arch; }
     const browserRepo = Boolean(f.repo) && !data.canon.length; // the server does not know this repository: filter here
     const now = Date.now();
     const keep = (e) => {
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (!e.run && !jobMatches(e.job, f, { now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };
     // Saved views store the repository only.
     const vf = f.repo ? { repo: f.repo } : {};
     const vp = views?.parts(vf, { redraw: () => { slots.empty.key = slots.queue.key = null; render(); } }) ?? {};
-    const secs = vp.stale ? [] : runSections(runs, queue.ok ? queue.value?.pending : [], keep);
+    const secs = vp.stale ? [] : arch ? archivedSections(runs, keep) : runSections(runs, queue.ok ? queue.value?.pending : [], keep);
     const found = secs.length > 0;
     const note = Array.isArray(runs) && runs.length >= RUNS_CAP ? (browserRepo ? CAP_NOTE : isServerActive(f) ? MATCH_NOTE : null) : null;
     // The page is drawn once; each part below changes only when its own content does, so the list keeps its nodes and the focus.
-    if (sections.parentNode !== list) mount(list, states.alert, bar.el, slots.filter.el, slots.queue.el, sections, slots.cap.el, slots.empty.el, states.note);
+    if (sections.parentNode !== list) mount(list, states.alert, bar.el, slots.filter.el, slots.queue.el, bulk.el, sections, slots.cap.el, slots.empty.el, states.note);
     const values = (key) => (data.values.ok && Array.isArray(data.values.value?.[key]) ? data.values.value[key] : []);
     bar.setValues({ repos: values("repos"), flows: values("flows") });
     bar.sync(filter);
@@ -127,7 +180,9 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     patch(slots.empty, JSON.stringify([f, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", vf, { onClear: clear, onDelete: vp.onDelete })
       : found ? null : isActive(f) ? noMatch({ onClear: clear, note }) : noRuns()));
     sections.hidden = !found;
-    renderSections(sections, secs, { onRemove: readOnly ? null : remove });
+    const can = new Set(renderSections(sections, secs, { onRemove: readOnly ? null : remove, select: readOnly ? null : select }));
+    for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section
+    bulk.show(readOnly ? 0 : selected.size, archivedShown, busy);
   };
   async function remove(job) {
     alertEl.textContent = "";

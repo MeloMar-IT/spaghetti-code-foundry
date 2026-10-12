@@ -9,7 +9,7 @@ export const NO_MATCH = "No runs match your search and filters.";
 
 const STATUS_LABEL = { running: "Running", waiting: "Waiting", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", stopped: "Stopped" };
 const TIME_OPTIONS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"]];
-const SHOW = [["", "All", "all"], ["needs", "Needs you", "needs"], ["running", "Running", "running"], ["queued", "Queued", "queued"], ["failed", "Failed", "failed"], ["completed", "Completed", "completed"]];
+const SHOW = [["", "All", "all"], ["needs", "Needs you", "needs"], ["running", "Running", "running"], ["queued", "Queued", "queued"], ["failed", "Failed", "failed"], ["completed", "Completed", "completed"], ["archived", "Archived", "archived"]];
 // As ownerLabel in ./runs.js (which this module does not import): the server's "deleted account" is shown as "deleted user".
 const ownerName = (name) => (name === "deleted account" ? "deleted user" : name ?? "");
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -132,4 +132,77 @@ export function noMatch({ onClear, note } = {}) {
     h("p", {}, NO_MATCH),
     note ? h("p", { class: "muted" }, note) : null,
     h("button", { type: "button", "data-focus": "runs-empty-clear", onClick: onClear }, "Clear filters"));
+}
+
+/**
+ * The bar over the list while runs are selected: "N selected", the action and Clear selection. `show(n, archived, busy)`
+ * draws it; while `busy` both buttons ignore clicks (aria-disabled, so the focus stays). `home()` is where the focus goes
+ * when the bar hides with the focus inside it.
+ */
+export function bulkBar({ onAct, onClear, home } = {}) {
+  let busy = false;
+  const count = h("span", { "aria-live": "polite" });
+  const act = h("button", { type: "button", "data-focus": "bulk-act", onClick: () => { if (!busy) onAct?.(); } }, "Archive runs");
+  const clear = h("button", { type: "button", "data-focus": "bulk-clear", onClick: () => { if (!busy) onClear?.(); } }, "Clear selection");
+  const el = h("div", { class: "bulk-bar", role: "group", "aria-label": "Selected runs" }, count, act, clear);
+  el.hidden = true;
+  const put = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+  return {
+    el,
+    show(n, archived, isBusy) {
+      busy = Boolean(isBusy);
+      if (n <= 0) {
+        const had = el.contains(document.activeElement);
+        el.hidden = true;
+        if (had) home?.()?.focus();
+        return;
+      }
+      el.hidden = false;
+      put(count, `${n} selected`);
+      put(act, archived ? "Take out of the archive" : n === 1 ? "Archive 1 run" : `Archive ${n} runs`);
+      for (const b of [act, clear]) {
+        if (busy) b.setAttribute("aria-disabled", "true");
+        else b.removeAttribute("aria-disabled");
+      }
+    },
+  };
+}
+
+/**
+ * Archives (or, with `unarchive`, takes out of the archive) the runs one after the other. Archiving asks once first
+ * (`ask(title, text, yes, no)`). Returns null when nothing was done (no ids, "no", or the page was left: `gone()`),
+ * else `{ done, refused }` with the sentences of the refusals. Never rejects.
+ */
+export async function bulkArchive(ids, { unarchive = false, a, ask, gone = () => false } = {}) {
+  const n = ids.length;
+  if (!n) return null;
+  if (!unarchive) {
+    let yes = false;
+    try {
+      yes = await ask("Archive runs", n === 1 ? "Archive 1 run? It stays available under Archived." : `Archive ${n} runs? They stay available under Archived.`,
+        n === 1 ? "Archive the run" : "Archive the runs", "Keep them");
+    } catch {
+      return null; // a dialog that fails is a "no"
+    }
+    if (!yes) return null;
+  }
+  if (gone()) return null;
+  let done = 0;
+  const refused = [];
+  for (const id of ids) {
+    try {
+      await (unarchive ? a.unarchiveRun(id) : a.archiveRun(id));
+      done++;
+    } catch (e) {
+      refused.push(e instanceof TypeError ? "Could not reach the server." : e?.message || "The server refused.");
+    }
+  }
+  return { done, refused };
+}
+
+/** The toast of a finished batch. */
+export function bulkText({ done, refused }, unarchive) {
+  const head = unarchive ? `Took ${done === 1 ? "1 run" : `${done} runs`} out of the archive.` : `Archived ${done === 1 ? "1 run" : `${done} runs`}.`;
+  const k = refused.length;
+  return k ? `${head} ${k} ${k === 1 ? "was" : "were"} refused: ${[...new Set(refused)].join(" ")}` : head;
 }

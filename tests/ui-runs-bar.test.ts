@@ -34,8 +34,8 @@ describe("the controls", () => {
     const names = { "runs-search": "Search runs", "runs-repo": "Repository", "runs-flow": "Flow", "runs-status": "Status", "runs-time": "Time", "owner-filter": "Owner" };
     for (const [name, label] of Object.entries(names)) expect(focus(bar, name).attrs["aria-label"], name).toBe(label);
     expect(focus(bar, "runs-needs").parent!.textContent).toBe("Only what needs me");
-    const shows = ["all", "needs", "running", "queued", "failed", "completed"].map((id) => focus(bar, `runs-view-${id}`).textContent);
-    expect(shows).toEqual(["All", "Needs you", "Running", "Queued", "Failed", "Completed"]);
+    const shows = ["all", "needs", "running", "queued", "failed", "completed", "archived"].map((id) => focus(bar, `runs-view-${id}`).textContent);
+    expect(shows).toEqual(["All", "Needs you", "Running", "Queued", "Failed", "Completed", "Archived"]);
     expect(focus(bar, "runs-clear").textContent).toBe("Clear filters");
     expect(bar.search.attrs.maxlength).toBe("200");
     expect(bar.search.attrs.placeholder).toBe("Run id, #7 or text");
@@ -128,6 +128,148 @@ describe("sync and setValues", () => {
     const region = bar.el.children.find((c: any) => c instanceof FakeElement && c.attrs.role === "status");
     expect(region.textContent).toBe("2 runs match.");
     expect(region.attrs["aria-live"]).toBe("polite");
+  });
+});
+
+describe("the Archived button", () => {
+  it("asks for view archived", () => {
+    const { bar, onChange } = make();
+    focus(bar, "runs-view-archived").click();
+    expect(onChange).toHaveBeenCalledWith({ ...rf.emptyFilter(), view: "archived" });
+  });
+});
+
+describe("bulkBar", () => {
+  const bulk = (over: any = {}) => {
+    const onAct = vi.fn();
+    const onClear = vi.fn();
+    const bar = b.bulkBar({ onAct, onClear, ...over });
+    return { bar, onAct, onClear };
+  };
+  const text = (bar: any, name: string) => focus(bar, name).textContent;
+
+  it("is hidden for none, then says how many and what the action does", () => {
+    const { bar } = bulk();
+    expect(bar.el.hidden).toBe(true);
+    expect(bar.el.attrs.role).toBe("group");
+    expect(bar.el.attrs["aria-label"]).toBe("Selected runs");
+    bar.show(1, false, false);
+    expect(bar.el.hidden).toBe(false);
+    expect(bar.el.textContent).toContain("1 selected");
+    expect(text(bar, "bulk-act")).toBe("Archive 1 run");
+    bar.show(3, false, false);
+    expect(bar.el.textContent).toContain("3 selected");
+    expect(text(bar, "bulk-act")).toBe("Archive 3 runs");
+    expect(text(bar, "bulk-clear")).toBe("Clear selection");
+    bar.show(2, true, false);
+    expect(text(bar, "bulk-act")).toBe("Take out of the archive");
+    bar.show(0, true, false);
+    expect(bar.el.hidden).toBe(true);
+  });
+
+  it("calls onAct and onClear, but not while busy", () => {
+    const { bar, onAct, onClear } = bulk();
+    bar.show(2, false, false);
+    focus(bar, "bulk-act").click();
+    focus(bar, "bulk-clear").click();
+    expect(onAct).toHaveBeenCalledTimes(1);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    bar.show(2, false, true);
+    expect(focus(bar, "bulk-act").attrs["aria-disabled"]).toBe("true");
+    expect(focus(bar, "bulk-clear").attrs["aria-disabled"]).toBe("true");
+    focus(bar, "bulk-act").click();
+    focus(bar, "bulk-clear").click();
+    expect(onAct).toHaveBeenCalledTimes(1);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    bar.show(2, false, false);
+    expect(focus(bar, "bulk-act").attrs["aria-disabled"]).toBeUndefined();
+  });
+
+  it("gives the focus to home when it hides with the focus inside", () => {
+    const home = new FakeElement("button");
+    const { bar } = bulk({ home: () => home });
+    bar.show(1, false, false);
+    focus(bar, "bulk-clear").focus();
+    bar.show(0, false, false);
+    expect((globalThis as any).document.activeElement).toBe(home);
+    (globalThis as any).document.activeElement = null;
+    bar.show(1, false, false);
+    bar.show(0, false, false);
+    expect((globalThis as any).document.activeElement).toBeNull();
+  });
+});
+
+describe("bulkArchive", () => {
+  const api = (over: any = {}) => ({ archiveRun: vi.fn(async () => ({})), unarchiveRun: vi.fn(async () => ({})), ...over });
+
+  it("asks once with the sentence for one or many, then sends one request per run", async () => {
+    const a = api();
+    const ask = vi.fn(async () => true);
+    expect(await b.bulkArchive(["r1"], { a, ask })).toEqual({ done: 1, refused: [] });
+    expect(ask).toHaveBeenLastCalledWith("Archive runs", "Archive 1 run? It stays available under Archived.", "Archive the run", "Keep them");
+    expect(await b.bulkArchive(["r1", "r2", "r3"], { a, ask })).toEqual({ done: 3, refused: [] });
+    expect(ask).toHaveBeenLastCalledWith("Archive runs", "Archive 3 runs? They stay available under Archived.", "Archive the runs", "Keep them");
+    expect(a.archiveRun.mock.calls.map((c: any[]) => c[0])).toEqual(["r1", "r1", "r2", "r3"]);
+  });
+
+  it("does nothing for no ids, a no, a failing question or a page that was left", async () => {
+    const a = api();
+    expect(await b.bulkArchive([], { a, ask: async () => true })).toBeNull();
+    expect(await b.bulkArchive(["r1"], { a, ask: async () => false })).toBeNull();
+    expect(await b.bulkArchive(["r1"], { a, ask: async () => { throw new Error("x"); } })).toBeNull();
+    expect(await b.bulkArchive(["r1"], { a, ask: async () => true, gone: () => true })).toBeNull();
+    expect(a.archiveRun).not.toHaveBeenCalled();
+  });
+
+  it("takes runs out without asking", async () => {
+    const a = api();
+    const ask = vi.fn(async () => true);
+    expect(await b.bulkArchive(["r1", "r2"], { unarchive: true, a, ask })).toEqual({ done: 2, refused: [] });
+    expect(ask).not.toHaveBeenCalled();
+    expect(a.unarchiveRun).toHaveBeenCalledTimes(2);
+    expect(a.archiveRun).not.toHaveBeenCalled();
+  });
+
+  it("sends the requests one after the other", async () => {
+    const releases: (() => void)[] = [];
+    const a = api({ archiveRun: vi.fn(() => new Promise<void>((r) => releases.push(r))) });
+    const done = b.bulkArchive(["r1", "r2"], { a, ask: async () => true });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(a.archiveRun).toHaveBeenCalledTimes(1);
+    releases[0]!();
+    await vi.waitFor(() => expect(a.archiveRun).toHaveBeenCalledTimes(2));
+    releases[1]!();
+    expect(await done).toEqual({ done: 2, refused: [] });
+  });
+
+  it("collects the sentences of refused runs and keeps going", async () => {
+    const a = api({
+      archiveRun: vi.fn(async (id: string) => {
+        if (id === "r1") throw new Error("Only a finished run can be archived.");
+        if (id === "r2") throw new TypeError("fetch failed");
+        if (id === "r3") throw {};
+        return {};
+      }),
+    });
+    expect(await b.bulkArchive(["r1", "r2", "r3", "r4"], { a, ask: async () => true })).toEqual({
+      done: 1, refused: ["Only a finished run can be archived.", "Could not reach the server.", "The server refused."],
+    });
+  });
+});
+
+describe("bulkText", () => {
+  it("says how many were archived or taken out", () => {
+    expect(b.bulkText({ done: 1, refused: [] }, false)).toBe("Archived 1 run.");
+    expect(b.bulkText({ done: 10, refused: [] }, false)).toBe("Archived 10 runs.");
+    expect(b.bulkText({ done: 1, refused: [] }, true)).toBe("Took 1 run out of the archive.");
+    expect(b.bulkText({ done: 10, refused: [] }, true)).toBe("Took 10 runs out of the archive.");
+  });
+  it("adds how many were refused and why, each sentence once", () => {
+    expect(b.bulkText({ done: 1, refused: ["Busy."] }, false)).toBe("Archived 1 run. 1 was refused: Busy.");
+    expect(b.bulkText({ done: 8, refused: ["Busy.", "Busy."] }, true)).toBe("Took 8 runs out of the archive. 2 were refused: Busy.");
+    expect(b.bulkText({ done: 0, refused: ["A.", "B."] }, false)).toBe("Archived 0 runs. 2 were refused: A. B.");
   });
 });
 

@@ -14,7 +14,11 @@ export const SECTIONS = [
   { id: "failed", title: "Failed", tone: "" },
   { id: "completed", title: "Completed", tone: "quiet" },
 ];
+/** The Archived view: one section of the archived runs the server sent (it is not a section of the normal list). */
+export const ARCHIVED = { id: "archived", title: "Archived", tone: "quiet" };
 export const COMPLETED_SHOWN = 10;
+/** The sections whose runs have a checkbox. */
+const SELECTABLE = ["failed", "completed", "archived"];
 
 const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
 const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
@@ -62,6 +66,12 @@ export function runSections(runs, pending, keep = () => true) {
   return SECTIONS.map((s) => ({ id: s.id, title: s.title, entries: by.get(s.id) })).filter((s) => s.entries.length);
 }
 
+/** The Archived section: the runs (newest first) that `keep` lets through; [] when there are none. */
+export function archivedSections(runs, keep = () => true) {
+  const entries = (Array.isArray(runs) ? [...runs] : []).sort((a, b) => startedMs(b) - startedMs(a)).map((run) => ({ run, job: null })).filter(keep);
+  return entries.length ? [{ id: ARCHIVED.id, title: ARCHIVED.title, entries }] : [];
+}
+
 /** When a run last did something, from the timestamps the list answer has: the newest of them. */
 export function activityAt(run) {
   const times = [run?.updatedAt, run?.finishedAt, run?.startedAt, run?.waiting?.since];
@@ -90,15 +100,22 @@ const workOf = (run, job) => {
 const field = (label, text, cls = "") => h("div", { class: `run-field ${cls}`.trim(), "data-label": label }, text);
 
 /** A row and its time text node. `place` (from runSections) is the position in the queue. */
-function buildRow({ run, job, place }, { admin = false, onRemove = null } = {}) {
+function buildRow({ run, job, place }, { admin = false, onRemove = null, select = null } = {}) {
   const id = run?.runId ?? job.runId;
   const n = run?.next ?? job?.next;
   const task = firstLine(run?.task ?? job?.task);
   const work = workOf(run, job);
   const iso = run ? activityAt(run) : job?.enqueuedAt;
   const timeEl = iso ? h("span", { class: "muted run-when" }, `Updated ${timeAgo(iso)}`) : null;
+  const check = select && run
+    ? h("input", {
+      type: "checkbox", class: "run-select", "data-focus": `select-${id}`, "aria-label": `Select run ${run.flow} ${work || id}`, checked: select.has(id),
+      onChange: (e) => select.toggle(id, e?.target?.checked ?? check.checked),
+    })
+    : null;
   const el = h("li", { class: `run-card${n?.who === "You" ? ` ${whoClass(n)}` : ""}` },
     h("div", { class: "row" },
+      check,
       n ? nextStatus(n, `help-${id}`) : null,
       job?.priority ? h("span", { class: "pill first" }, "goes first") : null,
       h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, run?.flow ?? job?.flow ?? "Queued run")),
@@ -114,7 +131,7 @@ function buildRow({ run, job, place }, { admin = false, onRemove = null } = {}) 
     admin && run ? field("Steps", run.history?.length ?? 0, "mono") : null,
     admin && run ? field("Cost", money(run.totalCostUsd), "mono") : null,
     job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null);
-  return { el, timeEl, iso };
+  return { el, timeEl, iso, check };
 }
 
 /** One row of the list: a link to the run, its status, what happens next, and Remove for a queued run with `onRemove`. */
@@ -132,7 +149,7 @@ const hiddenInside = (el, box) => {
 function stateOf(box) {
   let st = states.get(box);
   if (!st) {
-    st = { rows: new Map(), secs: new Map(), closed: new Set(), showAll: false, last: null };
+    st = { rows: new Map(), secs: new Map(), closed: new Set(), showAll: false, last: null, selectable: [] };
     states.set(box, st);
   }
   return st;
@@ -150,11 +167,24 @@ function sectionView(st, box, def) {
     v.toggle.setAttribute("aria-expanded", String(!v.body.hidden));
   } });
   v.note = h("span", { class: "muted" });
+  v.ids = [];
+  v.allBox = h("input", {
+    type: "checkbox", class: "run-select", "data-focus": `select-all-${def.id}`, "aria-label": `Select all runs in ${def.title}`,
+    onChange: () => {
+      const sel = st.last?.opts?.select;
+      if (!sel) return;
+      const on = !v.ids.every((id) => sel.has(id));
+      for (const id of v.ids) sel.toggle(id, on);
+      syncChecks(st);
+    },
+  });
+  v.all = h("label", { class: "run-select-all muted" }, v.allBox, "Select all");
+  v.all.hidden = true;
   v.ul = h("ul", { class: "run-cards" });
   v.body = h("div", { id: bodyId }, v.ul);
   v.more = h("button", { type: "button", class: "small", "data-focus": "more-completed", onClick: () => showAll(box) }, "Show all");
   v.el = h("section", { class: `run-section${def.tone ? ` ${def.tone}` : ""}` },
-    h("div", { class: "run-section-head" }, h("h2", {}, v.toggle), v.note), v.body);
+    h("div", { class: "run-section-head" }, h("h2", {}, v.toggle), v.note, v.all), v.body);
   st.secs.set(def.id, v);
   return v;
 }
@@ -168,15 +198,34 @@ function showAll(box) {
   first?.[1].el.querySelector("a")?.focus();
 }
 
-/** Draws `sections` (from runSections) into `box`, touching only what changed. */
+// The boxes follow the selection: every shown row, and the Select all of each section.
+function syncChecks(st) {
+  const sel = st.last?.opts?.select;
+  if (!sel) return;
+  for (const [id, row] of st.rows) if (row.check) row.check.checked = sel.has(id);
+  for (const v of st.secs.values()) v.allBox.checked = v.ids.length > 0 && v.ids.every((id) => sel.has(id));
+}
+
+/**
+ * Draws `sections` (from runSections or archivedSections) into `box`, touching only what changed. `select`
+ * ({ has(id), toggle(id, on) }) adds a checkbox to the runs of Failed, Completed and Archived. Returns the ids of every run
+ * in those sections (also the ones the Completed cut does not show), [] without `select`.
+ */
 export function renderSections(box, sections, opts = {}) {
   const st = stateOf(box);
   st.last = { sections, opts };
   update(box, sections, opts);
+  return st.selectable;
 }
 
-function update(box, sections, { admin = false, onRemove = null, notes = {} } = {}) {
+function update(box, sections, { admin = false, onRemove = null, notes = {}, select = null } = {}) {
   const st = stateOf(box);
+  // Cached rows call this, not `select`, so a row never holds a page's old object.
+  const pick = {
+    has: (id) => Boolean(st.last?.opts?.select?.has(id)),
+    toggle: (id, on) => { st.last?.opts?.select?.toggle(id, on); syncChecks(st); },
+  };
+  st.selectable = [];
   const active = document.activeElement;
   const inside = Boolean(active && box.contains(active));
   const focusName = inside ? active.getAttribute?.("data-focus") : null;
@@ -187,7 +236,7 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
   const wanted = new Set();
   const order = [];
   for (const sec of sections) {
-    const v = sectionView(st, box, SECTIONS.find((s) => s.id === sec.id));
+    const v = sectionView(st, box, [...SECTIONS, ARCHIVED].find((s) => s.id === sec.id));
     order.push(v.el);
     const text = `${sec.title} (${sec.entries.length})`;
     if (v.countText !== text) { v.countText = text; v.toggle.textContent = text; }
@@ -198,21 +247,27 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
     const cut = sec.id === "completed" && !st.showAll && sec.entries.length > COMPLETED_SHOWN;
     const shown = cut ? sec.entries.slice(0, COMPLETED_SHOWN) : sec.entries;
     const els = [];
+    const ids = [];
+    for (const e of sec.entries) if (select && e.run && SELECTABLE.includes(sec.id)) st.selectable.push(e.run.runId);
     for (const e of shown) {
       const id = e.run?.runId ?? e.job.runId;
-      const key = JSON.stringify([e.run, e.job, e.place, admin]);
+      const selectable = Boolean(select) && Boolean(e.run) && SELECTABLE.includes(sec.id);
+      const key = JSON.stringify([e.run, e.job, e.place, admin, selectable]);
       let row = st.rows.get(id);
       if (!row || row.key !== key || row.hasRemove !== Boolean(onRemove)) {
-        row = { ...buildRow(e, { admin, onRemove }), key, hasRemove: Boolean(onRemove) };
+        row = { ...buildRow(e, { admin, onRemove, select: selectable ? pick : null }), key, hasRemove: Boolean(onRemove) };
         st.rows.set(id, row);
       } else if (row.timeEl) {
         const t = `Updated ${timeAgo(row.iso)}`;
         if (row.timeEl.textContent !== t) row.timeEl.textContent = t;
       }
+      if (selectable) ids.push(id);
       wanted.add(id);
       where.set(id, sec.id);
       els.push(row.el);
     }
+    v.ids = ids;
+    v.all.hidden = ids.length === 0;
     v.shown = els.length;
     v.rowEls = els;
     v.cut = cut;
@@ -230,6 +285,7 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
     if (v.cut && !v.more.parentNode) v.body.append(v.more);
     else if (!v.cut && v.more.parentNode) v.more.remove();
   }
+  syncChecks(st);
   const present = new Set(order);
   for (const v of st.secs.values()) if (!present.has(v.el) && v.el.parentNode) v.el.remove();
   order.forEach((el, i) => { if (box.children[i] !== el) box.insertBefore(el, box.children[i] ?? null); });
