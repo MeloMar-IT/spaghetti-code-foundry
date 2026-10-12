@@ -47,8 +47,8 @@ describe("scf ask", () => {
     // Ask SCF is off on a new install: the sentence of the server is what the command prints
     const off = await ask(["new", "What is a flow?"]);
     expect(off.code).not.toBe(0);
-    expect(off.out).toContain("Ask SCF is switched off on this Foundry.");
-    expect((await ask(["more", id, "And then?"])).out).toContain("switched off");
+    expect(off.err).toContain("Ask SCF is switched off on this Foundry.");
+    expect((await ask(["more", id, "And then?"])).err).toContain("switched off");
     expect((await ask(["retry", id])).code).not.toBe(0);
     expect((await ask(["stop", id])).out).toContain("no answer is being written");
     const usage = await w.scf(["ask", "usage"]);
