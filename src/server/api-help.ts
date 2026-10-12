@@ -1,4 +1,6 @@
 import { basename, dirname, join } from "node:path";
+import { writeAudit } from "../auth/audit.js";
+import { effectiveLimits } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
@@ -8,10 +10,10 @@ import {
   CONVERSATION_LIMIT,
   DELETED_KEEP_MS,
   HelpError,
-  KEEP_MS,
   MESSAGE_LIMIT,
   QUESTION_MAX,
   type Conversation,
+  type Turn,
   type HelpErrorCode,
   archiveConversation,
   completeConversation,
@@ -21,11 +23,14 @@ import {
   restoreConversation,
   dayOf,
   readUsage,
+  retentionMs,
+  setRetentionDays,
+  usageToday,
   settleInterrupted,
   sweepHelp,
 } from "../help/store.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
-import { snapshotResolver } from "./help-context.js";
+import { currentAccount, snapshotResolver } from "./help-context.js";
 import { liveEvidence } from "./help-evidence.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
@@ -40,7 +45,7 @@ const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-contex
 /** How often the server applies the retention policy to the stored conversations, in ms. */
 export const HELP_SWEEP_MS = 60 * 60 * 1000;
 
-const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full": 429, limit: 429, unsafe: 503 };
+const REFUSED: Record<RefusalCode, number> = { off: 503, "not-allowed": 403, busy: 409, "queue-full": 429, limit: 429, unsafe: 503 };
 
 /**
  * Looks a thing a page context names up again, for the account that asks, with the rules of the API call that
@@ -65,6 +70,33 @@ export function helpDocsOf(ctx: ApiContext): HelpDocs {
   return d;
 }
 
+/**
+ * Whether an account may ask now, by the settings and the account's own limits; a code when not. Read at the time
+ * of the question: the account as it is now (a blocked or removed one may not ask), `help.audience`,
+ * `help.disabled_accounts`, and the account's daily budget (`limits.json`), against what its help turns cost today.
+ */
+export function helpAllowed(ctx: ApiContext, asker: Asker): RefusalCode | undefined {
+  const help = ctx.config().help;
+  const now = currentAccount(asker);
+  if (!now) return "not-allowed";
+  if (help.audience === "admins" && now.role !== "admin") return "not-allowed";
+  if ((help.disabled_accounts ?? []).includes(now.id)) return "not-allowed";
+  const budget = effectiveLimits(now.id, ctx.diagLog).dailyBudgetUsd;
+  if (ctx.config().cost_limits && budget !== undefined && usageToday(now.id).costUsd >= budget) return "limit";
+  return undefined;
+}
+
+/** One audit line of Ask SCF: who, what, which conversation, how it ended, and the id of the turn. Never a text of a question or an answer. */
+function auditHelp(ctx: ApiContext, by: string, action: "help-ask" | "help-delete" | "help-export", result: "ok" | "failed", target: string, detail?: string): void {
+  try {
+    writeAudit(by, { action, result, target, ...(detail !== undefined ? { detail } : {}) }, 0);
+  } catch (e) {
+    ctx.diagLog?.(e instanceof StoreError ? `audit: ${basename(e.file)} ${e.kind} (${action})` : `audit: audit.jsonl not-valid (${action})`);
+  }
+}
+const ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
+const targetOf = (id: string | undefined) => (id !== undefined && ID_SHAPE.test(id) ? `conversation ${id}` : "conversation");
+
 const services = new WeakMap<ApiContext, HelpTurns>();
 /** The help turns of this server: what runs and what waits. */
 export function helpTurnsOf(ctx: ApiContext): HelpTurns {
@@ -72,7 +104,7 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   if (!s) {
     const docs = helpDocsOf(ctx);
     // the evidence of a turn: what the server observes now for this account, then the fitting sections of the installed documentation
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), evidence: (input) => [...liveEvidence(ctx, input, { patterns: ctx.config().help.sensitive_patterns ?? [] }), ...docs.sources(input.question, input.role)] });
+    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), allow: (asker) => helpAllowed(ctx, asker), evidence: (input) => [...liveEvidence(ctx, input, { patterns: ctx.config().help.sensitive_patterns ?? [] }), ...docs.sources(input.question, input.role)] });
     services.set(ctx, s);
   }
   return s;
@@ -98,7 +130,7 @@ export function guardedHelp<T>(ctx: ApiContext, fn: () => T): T {
 }
 
 /** When a conversation that stays untouched is deleted by the retention policy. */
-const expiresOn = (c: Conversation) => new Date(Date.parse(c.updated) + KEEP_MS).toISOString();
+const expiresOn = (c: Conversation) => new Date(Date.parse(c.updated) + retentionMs()).toISOString();
 
 /** A conversation as the list shows it: no messages. */
 function summary(c: Conversation) {
@@ -154,11 +186,12 @@ function usageView(ctx: ApiContext) {
 }
 
 /** The start and the timer: marks turns a stopped server left behind as interrupted (first call only) and applies the retention policy. Never throws; a problem that stays is logged once. */
-export function helpSweeper(log: (msg: string) => void): () => void {
+export function helpSweeper(log: (msg: string) => void, keepDays?: () => number | undefined): () => void {
   let told = false;
   let first = true;
   return () => {
     try {
+      setRetentionDays(keepDays?.());
       if (first) settleInterrupted();
       first = false;
       sweepHelp();
@@ -179,6 +212,7 @@ export function helpSweeper(log: (msg: string) => void): () => void {
 export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "help") return false;
   if (asParam(req) !== undefined) throw new HttpError(403, NOT_IN_PREVIEW);
+  setRetentionDays(ctx.config().help.keep_days);
   if (seg.length === 2 && seg[1] === "usage" && method === "GET") {
     // the permission table lets only an administrator come here
     if (user.role !== "admin") throw new HttpError(403, "not allowed for your role");
@@ -190,6 +224,8 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   // What a page context is worth, before it is sent with a question: nothing is stored and no model is called.
   if (seg.length === 2 && seg[1] === "context" && method === "POST") {
     if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
+    const no = helpAllowed(ctx, asker);
+    if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
     const body = await readJson(req);
     const { context, resolved } = guardedHelp(ctx, () => turns.describe(asker, body));
     send(res, 200, {
@@ -202,17 +238,39 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     });
     return true;
   }
+  // Everything the account has in Ask SCF, to keep: its own conversations only, with the same view as reading them one by one.
+  if (seg.length === 2 && seg[1] === "export" && method === "GET") {
+    const body = guardedHelp(ctx, () => {
+      const all = [...listConversations(user.id), ...listConversations(user.id, { archived: true })].sort((a, b) => a.created.localeCompare(b.created));
+      return { exportedAt: new Date().toISOString(), retention: { keepDays: retentionMs() / 86_400_000, deletedKeepDays: DELETED_KEEP_MS / 86_400_000 }, conversations: all.map((c) => conversationView(c, user)) };
+    });
+    auditHelp(ctx, user.id, "help-export", "ok", "conversations", `${body.conversations.length} conversation(s)`);
+    send(res, 200, body);
+    return true;
+  }
   if (seg[1] !== "conversations") return false;
   const id = seg[2] ?? "";
+  /** Takes a turn and writes its audit line: started (with the id of the turn) or refused (with the code). A question that is not valid writes none. */
+  const audited = (conversation: string | undefined, how: "ask" | "retry", fn: () => Turn): Turn => {
+    try {
+      const turn = guardedHelp(ctx, fn);
+      auditHelp(ctx, user.id, "help-ask", "ok", targetOf(turn.conversation.id), `${how}; turn ${turn.reply.id}; try ${turn.reply.tries ?? 1}`);
+      return turn;
+    } catch (e) {
+      const code = (Object.keys(REFUSAL_WORDS) as RefusalCode[]).find((c) => e instanceof HttpError && e.message === REFUSAL_WORDS[c]);
+      if (code) auditHelp(ctx, user.id, "help-ask", "failed", targetOf(conversation), `${how}; refused: ${code}`);
+      throw e;
+    }
+  };
   // A question: in a new conversation, or as the next one of a conversation. The answer comes later; read the conversation for it.
   if (method === "POST" && (seg.length === 2 || (seg.length === 4 && seg[3] === "messages"))) {
     const body = await readJson(req);
-    const turn = guardedHelp(ctx, () => turns.ask(asker, { ...(seg.length === 4 ? { conversation: id } : {}), question: body.question, context: body.context }));
+    const turn = audited(seg.length === 4 ? id : undefined, "ask", () => turns.ask(asker, { ...(seg.length === 4 ? { conversation: id } : {}), question: body.question, context: body.context }));
     send(res, 202, conversationView(turn.conversation, user));
     return true;
   }
   if (seg.length === 4 && method === "POST" && seg[3] === "retry") {
-    send(res, 202, conversationView(guardedHelp(ctx, () => turns.retry(asker, id)).conversation, user));
+    send(res, 202, conversationView(audited(id, "retry", () => turns.retry(asker, id)).conversation, user));
     return true;
   }
   if (seg.length === 4 && method === "POST" && seg[3] === "cancel") {
@@ -225,7 +283,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, {
       enabled: ctx.config().help.enabled,
       conversations,
-      limits: { conversations: CONVERSATION_LIMIT, messages: MESSAGE_LIMIT, questionChars: QUESTION_MAX, keepDays: KEEP_MS / 86_400_000, deletedKeepDays: DELETED_KEEP_MS / 86_400_000 },
+      limits: { conversations: CONVERSATION_LIMIT, messages: MESSAGE_LIMIT, questionChars: QUESTION_MAX, keepDays: retentionMs() / 86_400_000, deletedKeepDays: DELETED_KEEP_MS / 86_400_000 },
     });
     return true;
   }
@@ -239,6 +297,7 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const { conversation, pending } = guardedHelp(ctx, () => deleteConversation(user.id, id));
     // the turn of a deleted conversation is ended: its answer has nowhere to go
     if (pending !== undefined) turns.drop(pending);
+    auditHelp(ctx, user.id, "help-delete", "ok", targetOf(conversation.id));
     send(res, 200, conversationView(conversation, user));
     return true;
   }

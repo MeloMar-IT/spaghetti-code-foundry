@@ -164,6 +164,7 @@ export const RULES: Rule[] = [
   r("POST", "help/conversations/:id/retry", "yes", "try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today"),
   r("POST", "help/conversations/:id/cancel", "yes", "stop the answer that is being written in one of your Ask SCF conversations"),
   r("POST", "help/context", "yes", "what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off"),
+  r("GET", "help/export", "yes", "all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation"),
   r("GET", "help/usage", "no", "Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer"),
 ];
 

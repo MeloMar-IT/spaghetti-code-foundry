@@ -38,7 +38,7 @@ import {
  * contract decides what of it is kept. Turns wait in a queue, one per account at a time.
  */
 
-export type RefusalCode = "off" | "busy" | "queue-full" | "limit" | "unsafe";
+export type RefusalCode = "off" | "not-allowed" | "busy" | "queue-full" | "limit" | "unsafe";
 
 /** A turn that is not started. Nothing is stored for it. The message is safe to show. */
 export class TurnRefused extends Error {
@@ -53,6 +53,7 @@ export class TurnRefused extends Error {
 
 export const REFUSAL_WORDS: Record<RefusalCode, string> = {
   off: "Ask SCF is switched off on this Foundry. An administrator can switch it on.",
+  "not-allowed": "Ask SCF is not switched on for your account. Ask an administrator of this Foundry.",
   busy: "Ask SCF is still answering another question of yours. Wait for it, or stop it first.",
   "queue-full": "Ask SCF is busy with the questions of other people. Try again in a moment.",
   limit: "You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator.",
@@ -212,6 +213,11 @@ export interface HelpDeps {
   evidence?: (input: TurnInput) => Source[];
   /** One more cleaning of a reply's texts, before the guard's own; tests use it. */
   redact?: (text: string) => string;
+  /**
+   * One more check before a turn is taken, by the server: whether this account may ask now. A code refuses the turn
+   * with the fixed words of that code; nothing is stored and no model is called.
+   */
+  allow?: (asker: Asker) => RefusalCode | undefined;
   /** Looks a thing the page context names up again for the asking account. Without it nothing a page names is found. */
   resolve?: EntityResolver;
   /** The guard's options; without it the stored credentials and `help.sensitive_patterns`. */
@@ -382,6 +388,14 @@ export class HelpTurns {
   private admit(asker: Asker): void {
     const help = this.deps.config().help;
     if (!help.enabled || this.stopped) throw new TurnRefused("off", REFUSAL_WORDS.off);
+    let no: RefusalCode | undefined;
+    try {
+      no = this.deps.allow?.(asker);
+    } catch {
+      // a check that cannot be done refuses
+      no = "not-allowed";
+    }
+    if (no) throw new TurnRefused(no, REFUSAL_WORDS[no]);
     if (this.jobs().some((j) => j.owner === asker.id)) throw new TurnRefused("busy", REFUSAL_WORDS.busy);
     if (this.running.size >= help.max_parallel && this.queue.length >= help.max_queued) throw new TurnRefused("queue-full", REFUSAL_WORDS["queue-full"]);
     if (usageToday(asker.id, this.opts).turns >= help.turns_per_user_per_day) throw new TurnRefused("limit", REFUSAL_WORDS.limit);

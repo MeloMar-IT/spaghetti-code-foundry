@@ -2460,6 +2460,9 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
+| `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
+| `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
+| `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
 | `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
@@ -2969,6 +2972,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
+| `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
@@ -4921,6 +4925,45 @@ conversations. The server log gets one line in fixed words for a failed turn, fo
 `help: a turn failed (provider)`, never the question or the answer. When secrets were removed it
 says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
 value.
+
+### Who may ask, what is kept, and what is logged
+
+**Who may ask.** When Ask SCF is on, these settings of `help` in `config.yaml` decide, and the
+account is read again at every question:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `audience` | not set: everyone | `admins`: only administrators may ask |
+| `disabled_accounts` | none | account ids that may not ask, whatever their role |
+| `turns_per_user_per_day` | 30 | questions one account may start per day |
+| `keep_days` | 90 | days an untouched conversation is kept |
+
+An account that may not ask gets 403 and reads:
+"Ask SCF is not switched on for your account. Ask an administrator of this Foundry." An account that used its questions of the day, or whose
+help turns of today cost as much as its own daily budget (**Users**, limits; not with
+`cost_limits: false`), reads the limit sentence (429). In both cases nothing is stored and no
+AI provider is called. An account that may not ask can still read, export and delete its
+conversations. Each account has one turn at a time, and a page context holds at most 4,000
+characters: these two are fixed.
+
+**Export.** `GET /api/help/export` (`scf ask export --json`) gives all your conversations with
+their messages as one JSON document, also the archived ones, not the deleted ones. It is your
+own only, for an administrator too. Secrets were taken out before anything was stored, so the
+export holds none.
+
+**Deletion and retention.** You delete a conversation yourself (its texts are gone at once). A
+conversation that is not changed for `keep_days` days is deleted the same way; a lower number
+applies to the stored conversations at the next read. When an account is deleted, all its
+conversations and its usage numbers per day are removed with it; nothing of them is left in
+`help.json`. The audit lines stay for as long as the audit log keeps them: ids and results,
+no text. There is no legal hold: nothing keeps a conversation longer than these
+rules, and no administrator can read or export another account's conversations. If you must
+keep one, export it first.
+
+**What the audit log holds.** The lines `help-ask`, `help-delete` and `help-export` (see "The
+audit log") name the account, the conversation id, the result and the id of the turn. That id is
+the id of the reply in the conversation, so a line can be matched to it by its owner. No line
+holds a question, an answer, a title or a page context.
 
 ### What you never see as a user
 

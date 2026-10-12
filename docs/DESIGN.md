@@ -1325,6 +1325,27 @@ next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` a
   explanation, and for saying that the state is uncertain when a source says so.
 - `helpTurnsOf` offers the state sources first, then the documentation sections.
 
+### Ask SCF: authorization, retention, audit and limits
+
+#243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
+the store's retention and the usage ledger.
+
+- **Admission** (`helpAllowed` in `api-help.ts`, passed to `HelpTurns` as `allow`): after the
+  off switch and before anything is stored, the account is read again (`currentAccount`), then
+  `help.audience`, `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
+  against the cost of its help turns today (`usageToday`). The refusal code `not-allowed` is 403;
+  `limit` is 429. A check that throws refuses. `POST /api/help/context` uses the same check.
+- **Retention** (`setRetentionDays`, `retentionMs` in `store.ts`): `help.keep_days` replaces the
+  fixed 90 days; the server sets it before each help call and each sweep. Account deletion
+  removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
+  lines stay.
+- **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
+  `help-delete`, `help-export`. Written with `writeAudit` without waiting for the lock; a line
+  that cannot be written is named in the server log and does not fail the call. The turn id is
+  the correlation id: it is the id of the reply message in the conversation. No text of a
+  conversation is in a line. `ui/audit.js` lists the three names for the filter.
+- **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
+
 ### Ask SCF: the guard
 
 `src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.
