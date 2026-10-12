@@ -1,0 +1,9 @@
+id: something-else
+version: 3.1.0
+category: Project Management
+capabilities: [triage, issues]
+roles: [coder]
+risk: low
+tool_profile:
+  network: true
+connectors: [issue-tracker]

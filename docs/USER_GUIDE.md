@@ -1919,6 +1919,62 @@ whose origin is not given, are lowered by a tenth. They are only used to hold ba
 smaller model that scores far lower; your own runs always decide. When the search fails, the
 earlier figures are kept. On Linux, run `scf analyst run` from cron.
 
+#### Helper processes
+
+Five small processes that run beside the Foundry, each started by macOS by itself once installed.
+They read the data folder; each writes only in its own folder there. None needs the server, and
+the server does not need them. Every one has the same commands:
+
+```bash
+scf governor install    # also: flaky, limits, blockage, digest
+scf governor run        # one check now
+scf governor report     # the last result
+scf governor status     # uninstall removes it and what it set
+```
+
+| Helper | Runs | What it does |
+|---|---|---|
+| `governor` | every minute | Lowers the number of runs at once while the machine is overloaded, and raises it again when it is calm. |
+| `flaky` | every 6 hours | Finds tests that fail in unrelated stories or pass only on a retry. |
+| `limits` | every hour | Says when the weekly Claude and Codex limits are reached at the current pace. |
+| `blockage` | every hour | Finds the stories that hold up the most others, and says when run slots are empty. |
+| `digest` | daily at 07:30 | One short report: what was done, what failed, what waits for you. |
+
+**The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
+per core, or under memory pressure, it allows one run fewer per check, down to half the configured
+number (at least 2). Work that runs is never stopped; only new starts wait. After five calm checks
+in a row (1.5 per core or less) it allows one more, until the configured number is back. Above 4
+per core, or under critical memory pressure, only one test run works at a time. Every change is a
+line in `governor/changes.log`. The limits end by themselves four minutes after the last check, so
+a governor that stops can never hold the Foundry down. `scf governor reset` takes them away at once.
+
+**Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
+different stories in the last 7 days: one story can break its own test, several cannot. The report
+names a likely cause when the log shows one (a port in use, a time limit, a full disk). With
+`scf flaky auto on` it makes one bug story per test file through the GitHub sign-in of this
+machine, at most 2 per check and never twice for the same file. Off by default.
+
+**Usage limits.** The weekly limits are not published, so the forecast needs one reading from you:
+
+```bash
+scf limits set claude 34 2026-10-19T23:00     # 34% used now; the week resets then (local time)
+```
+
+From the tokens used since the reset and that share it works out the size of the week, and from
+the pace of the last 24 hours when the limit is reached. It is an estimate: it holds while the mix
+of work stays about the same, and a reading below 5% is too coarse. With `scf limits auto on` it
+lowers the runs at once so that the limit lasts until the reset. Off by default.
+
+**What holds work up.** It follows two kinds of waiting: a story that stepped aside for files
+another run holds, and a story that waits for one it depends on. The report lists the stories at
+the root, the number they hold up through the chain, and their state. It says so when run slots
+are empty while stories wait.
+
+**The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
+stories, failed (with the reason) and in progress; what waits for you is listed however old it is.
+Below that come a few lines from the other helpers and the analyst. It is `digest/report.md`, and
+one file per day; a desktop notification gives the counts.
+
 #### Self-update
 
 Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in Settings → Safety and name the repository (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.

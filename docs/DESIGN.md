@@ -709,6 +709,18 @@ that puts the old value back when the step does worse (or, for a higher level, n
 effort a step ran with is stored in its step record, so that the visits before and after a change
 can be told apart.
 
+### Helper processes
+
+`src/ops/` holds five helpers built like the analyst: a pure function that turns files of the data
+folder into a result, a thin command, and a login agent of its own (`schedule.ts`). They share
+nothing with the server but files. Two of them steer the Foundry, and both do it through one file:
+`governor/caps.json` holds named, temporary caps on the runs at once, and the scheduler takes the
+lowest that still holds (`caps.ts`). Every cap carries an end time and is ignored after it. That is
+the safety rule of this design: a helper that crashes or is removed can only fail towards the
+configured behaviour, never hold the Foundry down. The load governor also writes `test-slots/cap`,
+which `tools/test-slot` reads. The flaky-test detector and the limit forecaster act only when
+switched on (`auto`), because a wrong bug story or a wrong slow-down costs more than a late one.
+
 ## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`

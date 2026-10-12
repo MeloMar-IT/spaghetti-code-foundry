@@ -1,3 +1,4 @@
+import { runLimit } from "../ops/caps.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
@@ -507,7 +508,8 @@ export class Scheduler {
 
   private pump() {
     if (this.paused) return;
-    const limit = this.o.config().concurrency;
+    // helper processes (load governor, limit forecaster) may lower the number for a while
+    const limit = runLimit(this.o.config().concurrency);
     const states = new Map<string, boolean>();
     const held = (q: QueuedJob) => {
       const id = queuerOf(q);

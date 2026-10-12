@@ -18,7 +18,13 @@ if (!dir || !cmd) {
   process.exit(2);
 }
 const num = (v, d) => (/^\d+$/.test(v ?? "") ? Number(v) : d);
-const slots = num(process.env.FACTORY_VAR_TEST_SLOTS, 2);
+// <slots-dir>/cap (one number, written by the load governor) lowers the number of slots while it is there; 0 = no limit stays 0
+const asked = num(process.env.FACTORY_VAR_TEST_SLOTS, 2);
+let cap = NaN;
+try {
+  cap = Number(readFileSync(join(dir, "cap"), "utf8").trim());
+} catch { /* no cap */ }
+const slots = asked > 0 && Number.isInteger(cap) && cap >= 1 ? Math.min(asked, cap) : asked;
 const waitMs = num(process.env.FACTORY_TEST_SLOT_WAIT_SEC, 5400) * 1000;
 const pollMs = num(process.env.FACTORY_TEST_SLOT_POLL_MS, 2000);
 
