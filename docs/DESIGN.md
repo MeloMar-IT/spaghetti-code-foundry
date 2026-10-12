@@ -749,6 +749,40 @@ list of routes (`RULES` in `permissions.ts`) in both directions: a command for a
 fails a test, and so does a new route without a command or a stated reason (`API_ONLY`). The file
 commands keep their words: `remoteCommand` returns "not mine" for anything it does not know.
 
+### Ask SCF: the contract
+
+Ask SCF is the help assistant inside the product (epic #226). Its contract is code, in
+`src/help/contract.ts`: pure data and pure functions, with no model, no storage and no route. Every
+later part (stored conversations, the turn service, the pages) goes through it, so the text of a
+model can never widen what a reply holds.
+
+- **Questions.** Four types (`QUESTION_TYPES`): product help, status, troubleshooting and guided
+  resolution. `QUESTION_RULES` says which evidence each needs: `doc` (the installed documentation)
+  or `state` (what the asker may see now, with `observedAt`).
+- **Parts of a reply.** Five kinds (`PART_KINDS`, `PART_RULES`): answer, recommendation, navigation,
+  draft and action. Only an action has `changesState` and `needsConfirmation`. `ACTIONS` is the
+  server's list of actions and it is empty: the assistant is read-only, and `ACTION_RULES` names the
+  five conditions (server list, preview, confirmation, a second permission check, read-back) a later
+  story must meet before it adds one.
+- **`checkReply(raw, { role, offered, clean })`** turns what a model answered into the `Reply` the
+  server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered` (the model
+  names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the page's own
+  title, an action must be in `ACTIONS`, texts are cut and cleaned, and `dropped` lists what was
+  left out in fixed words. `displayText(reply)` writes the text a person reads from the checked
+  parts; it is never the model's own text.
+- **Uncertainty.** `certaintyOf` lowers the level to `unverified` when no evidence of the needed
+  kind is left; the model may be less sure, never more. The sentences are `CERTAINTY_WORDS`.
+- **Requests that are not served.** A model answers them with a code only (`LIMIT_CODES`);
+  `limitationFor(code, role)` gives the fixed limitation and the safest next step, and never a page
+  the role does not have. The codes `refinement`, `next-step` and `monitor-finding` are the
+  hand-offs to Refinement (#73), "what happens next" (#31) and the Problems page.
+- **Roles.** `forRole(role, value)` removes every field in `ADMIN_ONLY_KEYS` (model, provider,
+  cost, tokens, server detail) for a user, at any depth, and `hideNames` takes model and provider
+  names out of a text. `contractFor(role)` is the contract as a person of that role may read it.
+
+`tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
+chapter 14 of the user guide holds the same sentences as the code.
+
 ### Helper processes
 
 `src/ops/` holds five helpers built like the analyst: a pure function that turns files of the data
