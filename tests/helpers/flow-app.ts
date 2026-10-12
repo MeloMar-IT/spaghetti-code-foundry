@@ -83,6 +83,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./ia.js": real.ia,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./ask.js": { initAsk: vi.fn(async () => null) },
     "./context.js": { initContext: () => ({ ready: Promise.resolve(), scoped: () => null, keep: (h: string) => h, current: () => ({ active: false, repo: "", own: false }), refresh: async () => {}, stop: vi.fn() }) },
     "./states.js": real.states,
     "./icons.js": { flowNameMark: (f: { name: string }) => f.name },

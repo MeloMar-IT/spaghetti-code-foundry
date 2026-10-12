@@ -4349,6 +4349,29 @@ steps. This chapter holds its rules. They are fixed first, and every later part 
 **It reads and explains. It does not act.** Nothing you ask changes the Foundry, a repository or
 GitHub. Today Ask SCF has no action at all on its list, so it cannot change anything.
 
+### Where you ask: the Ask SCF drawer
+
+When an administrator has switched Ask SCF on, the top bar of every page has an **Ask SCF** button, in
+the admin display and in the user display. While Ask SCF is off (the default), the button is not there.
+
+- **Open it** with the button. A panel opens at the right side, over the page. The page behind it is not
+  drawn again: what you typed there, and what was open, stays as it is.
+- **Close it** with Escape, the ✕ or a click beside the panel. The focus goes back to where it was. A
+  question you had started to type is still there when you open the panel again.
+- **Opening sends nothing.** Nothing goes to the AI model until you press **Send**.
+- **Suggested questions** fit the page you are on. A suggestion only fills the question box, so you can
+  change it before you send it.
+- **What is sent with your question** is written under the question box before you send: the address of
+  the page you are on, and nothing else of the page. Untick **Send the page I am on with my question** to
+  send the question alone.
+- **Send** with the button, or with Ctrl+Enter (Cmd+Enter on a Mac). Enter alone starts a new line.
+- The answer appears under your question. A line in the panel says that Ask SCF is working and then that
+  the answer is there; a screen reader reads it.
+
+The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
+takes the whole width. It opens without any movement. A preview of another person's display
+("View as user") has no Ask SCF button.
+
 ### What you can ask
 
 | You ask | What it is |
@@ -4421,7 +4444,8 @@ For an administrator some of these sentences differ: they point to Home, Problem
 ### Conversations
 
 A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
-pages for it come later; the server and the command line (`scf ask`) have it now.
+Ask SCF drawer shows the conversation you are in. The list of your earlier ones comes to the drawer
+later; the command line (`scf ask`) has it now.
 
 **What is kept.** Each conversation has a title (the first line of your first question), a state,
 and its messages: your questions and the replies. A question keeps the page you asked it on and, at

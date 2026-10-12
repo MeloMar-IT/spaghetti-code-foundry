@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: a drawer on every page of both displays (#234). Part of #226. Only when `help.enabled` is on; off, no button is shown.
+  - **Where.** An **Ask SCF** button in the top bar of the admin and the user display opens a panel at the right side. It is one implementation (`ui/ask.js`, `ui/ask-model.js`, `ui/ask-view.js`); the two shells only mount it. Not in "View as user".
+  - **Your page stays.** The panel lies over the page and draws nothing of it again: typed text, open parts and the address stay. A started question is kept when you close the panel.
+  - **Nothing is sent by opening.** A question goes out with **Send** (or Ctrl+Enter) only. Under the question box you read what goes with it: the address of the page, and nothing else. A checkbox sends the question alone.
+  - **Suggested questions** fit the page. A suggestion fills the question box; you send it yourself.
+  - **Keyboard and screen reader.** The panel is a named dialog. The focus goes in and comes back, Tab stays inside, Escape closes. A status line says that Ask SCF is working and when the answer is there. Full width on a narrow screen; no motion.
+  - Tests in `tests/ui-ask-model.test.ts` and `tests/ui-ask.test.ts`.
 - Ask SCF: help turns run through the configured provider (#229). Part of #226. **Off by default**: an admin sets `help.enabled: true`.
   - **A turn** is one question. `POST /api/help/conversations` (new) or `…/:id/messages` (next question) stores it, answers 202 and queues the turn; `…/retry` tries a failed or stopped answer again in the same messages, `…/cancel` stops one. On the command line: `scf ask new|more|retry|stop`.
   - **No tools.** A turn is one Claude Code call with no tools, no MCP servers, no permissions and no GitHub token, in an empty temporary folder that is removed afterwards. The answer is checked by the contract: no action, only fixed pages, only sources the server offered (none yet, so replies say "could not check"). Only a Claude Code model can answer; a Codex model gives a plain "not set up" answer.
