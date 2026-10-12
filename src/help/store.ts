@@ -33,6 +33,16 @@ export const helpPath = () => join(dataHome(), "help.json");
 
 /** A conversation that was not changed for this long expires: it is deleted like one the owner deleted. */
 export const KEEP_MS = 90 * 24 * 60 * 60 * 1000;
+let keepMs = KEEP_MS;
+/**
+ * Sets how long an untouched conversation is kept, in days (`help.keep_days`); anything that is not a whole number
+ * from 1 to 3650 leaves the default. The server sets it from the settings before it reads or sweeps.
+ */
+export function setRetentionDays(days: unknown): void {
+  keepMs = typeof days === "number" && Number.isInteger(days) && days >= 1 && days <= 3650 ? days * 24 * 60 * 60 * 1000 : KEEP_MS;
+}
+/** How long an untouched conversation is kept now, in ms. */
+export const retentionMs = (): number => keepMs;
 /** A deleted conversation keeps an empty record (id, owner, times) this long, then nothing is left. */
 export const DELETED_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 /** At most this many conversations per account that are not deleted. */
@@ -201,6 +211,7 @@ function wiped(c: Conversation, at: string, by: "owner" | "expired"): Conversati
  */
 function current(list: Conversation[], now: Date): Conversation[] {
   const t = now.getTime();
+  const KEEP_MS = keepMs;
   const out: Conversation[] = [];
   for (const c of list) {
     if (c.state !== "deleted" && t - Date.parse(c.updated) >= KEEP_MS) {

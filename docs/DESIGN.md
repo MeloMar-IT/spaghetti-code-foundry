@@ -1244,8 +1244,25 @@ makes of it.
 - **Lookup** (`resolveContext`, `EntityResolver`): at the time of the model call every named
   thing is looked up for the asking account. `helpResolver` in `src/server/api-help.ts` reads the
   account again (a blocked or removed account finds nothing; a changed role counts as the lower
-  one) and calls `authorize` with the rule of `GET /api/runs/:id`. Not found and not allowed are
-  one answer. Without a resolver nothing is found.
+  one) and asks the help context service. Not found and not allowed are one answer. Without a
+  resolver nothing is found.
+- **The help context service** (`src/server/help-context.ts`, #231): `helpSnapshot(ctx, asker,
+  { kind, id })` gives a typed, bounded snapshot of one thing for one account, or undefined. It
+  has no rules of its own. Each adapter names the API call it follows, asks the permission table
+  for that call (`findRule`, `authorize`) and reads through the reader of that call: `run`
+  (`GET /api/runs/:id`, `checkedRun` with the owner, then `userRun` for both roles), `queue`
+  (`GET /api/queue`: `ownQueue` for a user, `queueWithNext` for an admin), `repository`
+  (`GET /api/repos` with `listRepos(owner)`; `GET /api/admin/repos` for an admin), `refinement`
+  (`GET /api/refinement/:id`, `sessionFor`, the check the route itself uses), `issue`
+  (`GET /api/board`), `problem` (`GET /api/monitor/findings/:id`), and two without an id, `next`
+  (`GET /api/next`) and `health` (`GET /api/health`). The last four are admin-only in the table,
+  so a user finds nothing. A snapshot holds at most 24 fields, 300 characters per text and 2,000
+  characters in all; every text passes `guardExcerpt`. It records its fields as included
+  (`fields`), `omitted` (left out on purpose, or a text that reads like an order), `redacted` (a
+  secret was taken out), `unavailable` (the record has none now) and `stale` (known to be old: a
+  connection check older than a day, a finding that is gone). An unknown kind, a wrong id, a
+  reader that throws: undefined, never an error. Nothing is logged. In this story only the label
+  of a snapshot reaches the model; the fields are for the evidence stories (#233).
 - **In the request**: `prepareTurn` takes the resolved context only. The model gets a `PAGE` part
   (page type and title, found things with the server's label, the count of things not found,
   filters), the marked text as an excerpt with the id `selected-text` (which is not a source and
@@ -1255,6 +1272,79 @@ makes of it.
   storing or asking anything.
 
 Tests: `tests/help-context.test.ts`, `tests/help-context-api.test.ts`.
+
+### Ask SCF: the documentation index
+
+`src/help/docs.ts` (#232) makes the evidence of a product question. No embedding model, no
+network, no dependency.
+
+- **Approved documents** (`HELP_DOCS`): `docs/USER_GUIDE.md` and `docs/FLOW_AUTHORING.md`, read
+  from the install folder (`INSTALL_ROOT` in `api-help.ts`, next to the built-in flows). Both are
+  in `files` of `package.json`. A repository that is worked on is never read: there is no switch
+  for it.
+- **Sections** (`sectionsOf`): a heading of level 2 to 4 starts a section; a heading inside a
+  code fence does not. A section keeps its heading trail, its anchor and its role. In the user
+  guide the role comes from the chapter number (`userChapters`); a chapter that is not listed is
+  for administrators. The id is `doc-` plus 12 hex characters of the hash of path and trail.
+- **Search** (`searchDocs`): the words of the question (three letters or more, no stop words, a
+  plural "s" taken off) against the words of headings and text. A section counts with one heading
+  word or two text words. The score is the sum of `log(1 + N/df)` per word, three times for a
+  heading word; ties keep document order. At most `DOC_SOURCES` (4) sources, each a `Source` with
+  `kind: "doc"`, the title "document: heading trail", the ref `path#anchor (SCF version)` and an
+  excerpt from the best paragraph on, at most 1,200 characters.
+- **In a turn**: `helpTurnsOf` passes `evidence: docs.sources(question, role)`. Nothing else
+  changed: `prepareTurn` guards every source, `checkReply` keeps only cited ids that were
+  offered, and without a fitting source the certainty is "unverified".
+- **Stale index** (`HelpDocs`, `docIndexProblems`): the index holds the version of `package.json`
+  and size, time and SHA-256 of each file. Before each use size, time and version are compared;
+  on a difference the index is built again, and when version, hashes or missing files differ the
+  reasons are logged and kept (`rebuilt`, `rebuiltBecause`). Missing documents are `problems`.
+  `GET /api/help/usage` shows this as `documentation`.
+
+### Ask SCF: live evidence
+
+`src/server/help-evidence.ts` (#233) makes the `state` sources of a turn. It holds no business
+rule: every fact is a field of a snapshot of the help context service (`help-context.ts`), which
+reads through the permission table and the API's readers. The run snapshot now carries the
+next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` and `userRecord`).
+
+- **Which snapshots** (`liveSnapshots`): the things of the page context (looked up again for the
+  account as it is now), a user's two newest waiting or failed runs when the page names none,
+  the queue, and for an admin the health. At most `STATE_SOURCES` (5). The queue entry of each
+  run is read for the comparison only.
+- **As a source** (`sourceOf`): id `state-<kind>-<hash>`, kind `state`, the label as title, the
+  ref `<kind> <id> · <page>`, `observedAt`, and the fields as lines (at most 800 characters),
+  with what is not available and what may be out of date. A snapshot with a stale field gives a
+  source with `uncertain: true`.
+- **Disagreement** (`conflictsOf`, `conflictSource`): three fixed comparisons (finished run in
+  the queue; running run whose next step waits for a person; board status against the run's).
+  A disagreement adds the source `state-conflict`, also `uncertain`.
+- **In the turn**: `Source.uncertain` never leaves the server. `prepareTurn` strips it and lists
+  the ids in `Prepared.uncertain`; after `checkReply`, a "confirmed" reply that cites one of them
+  is stored as "likely". The prompt asks for "Observed:", "So:" and "You could:" in the
+  explanation, and for saying that the state is uncertain when a source says so.
+- `helpTurnsOf` offers the state sources first, then the documentation sections.
+
+### Ask SCF: authorization, retention, audit and limits
+
+#243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
+the store's retention and the usage ledger.
+
+- **Admission** (`helpAllowed` in `api-help.ts`, passed to `HelpTurns` as `allow`): after the
+  off switch and before anything is stored, the account is read again (`currentAccount`), then
+  `help.audience`, `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
+  against the cost of its help turns today (`usageToday`). The refusal code `not-allowed` is 403;
+  `limit` is 429. A check that throws refuses. `POST /api/help/context` uses the same check.
+- **Retention** (`setRetentionDays`, `retentionMs` in `store.ts`): `help.keep_days` replaces the
+  fixed 90 days; the server sets it before each help call and each sweep. Account deletion
+  removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
+  lines stay.
+- **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
+  `help-delete`, `help-export`. Written with `writeAudit` without waiting for the lock; a line
+  that cannot be written is named in the server log and does not fail the call. The turn id is
+  the correlation id: it is the id of the reply message in the conversation. No text of a
+  conversation is in a line. `ui/audit.js` lists the three names for the filter.
+- **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
 
 ### Ask SCF: the guard
 
