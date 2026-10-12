@@ -307,11 +307,11 @@ describe("renderWork", () => {
   });
   it("switches the layout without a request, keeping the filters", async () => {
     const store = mem();
-    store.data["scf.work.u1"] = JSON.stringify({ repo: "acme/app", text: "e", status: ["coding"] });
+    store.data["scf.work.u1"] = JSON.stringify({ text: "e", status: ["coding"] });
     const { m, cleanup } = await open(board(many()), store);
     focus(m, "work-layout-list").listeners.click![0]!();
     expect(calls).toHaveLength(0);
-    expect(JSON.parse(store.data["scf.work.u1"])).toMatchObject({ layout: "list", repo: "acme/app", text: "e", status: ["coding"] });
+    expect(JSON.parse(store.data["scf.work.u1"])).toMatchObject({ layout: "list", text: "e", status: ["coding"] });
     expect(focus(m, "work-layout-list").attrs["aria-pressed"]).toBe("true");
     expect(cardsOf(m)).toHaveLength(0);
     expect(m.all("tr").filter((r: any) => r.attrs["data-focus"]).length).toBe(1);

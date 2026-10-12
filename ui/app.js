@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import { enterDisplay, linkToken } from "./auth.js";
 import { h, mount } from "./dom.js";
 import { createFlowPage } from "./flow-page.js";
-import { parseQuery, resolve, splitHash } from "./ia.js";
+import { resolve, splitHash } from "./ia.js";
 import { initContext } from "./context.js";
 import { initPalette } from "./palette.js";
 import { initShell, namePage, showPage } from "./shell.js";
@@ -159,7 +159,7 @@ async function route() {
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }
-    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me, go, query: { ...to.query, ...(parseQuery(splitHash(hash).query).repo === "all" ? { repo: "all" } : {}) } }) : renderBoard(main, arg, { query: to.query, go });
+    else if (section === "board") S.cleanup = S.info.redesign ? renderWork(main, arg, { user: S.me, query: to.query, go }) : renderBoard(main, arg, { query: to.query, go });
     else if (section === "library") await renderLibrary(main);
     // These four draw into their own box, so a slow answer that comes after a hash change cannot touch the next page.
     else if (section === "dashboard") await renderInBox(renderDashboard);
