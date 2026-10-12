@@ -28,6 +28,10 @@ export interface SeedData {
   watcherId: string;
   /** Only with `startSeeded({ large: true })`: 500 plain runs, a run with a 5,000 line log and a run with a 1,000 line diff. */
   large?: { runs: number; logRun: string; diffRun: string };
+  /** Only with `large`: the published flow that writes the task into note.txt and waits at an approval. */
+  noteFlow?: "note";
+  /** Only with `large`: a failed run with a long reason and repository name, and a run with very long diff lines. */
+  stress?: { statusRun: string; diffRun: string; repo: string };
 }
 
 export interface Seeded extends SeedData {
@@ -55,6 +59,28 @@ const FAIL = `name: fail
 workspace: empty
 steps:
   - {id: check, type: shell, run: "echo broken; exit 1"}
+`;
+
+// Published, and it uses the task: the task arrives only through $FACTORY_TASK, never in the command text. The workspace is
+// "empty" (a user may start no other), so the step makes its own git repository; the origin/main ref is what gives the run a
+// diff base. NOTE_WAITING is also in the approval message, because that is the line that reaches live.log.
+// The double backslash is deliberate: the YAML must hold \n for printf.
+const NOTE = `name: note
+workspace: empty
+publish:
+  enabled: true
+steps:
+  - id: write
+    type: shell
+    run: |
+      set -e
+      export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+      git init -q .
+      git -c user.name=note -c user.email=note@example.com -c commit.gpgsign=false commit -q --allow-empty -m base
+      git update-ref refs/remotes/origin/main HEAD
+      printf '%s\\n' "$FACTORY_TASK" > note.txt
+      echo NOTE_WAITING
+  - {id: gate, type: approval, message: "NOTE_WAITING: keep the note?"}
 `;
 
 const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -102,6 +128,32 @@ export function seedLarge(runsDir: string, workRoot: string, owner: string, repo
   writeFileSync(join(work, "big.txt"), lines("new"));
   writeRunFile(runsDir, repo, diffRun, owner, "succeeded", { task: "Large seeded diff run", workdir: work, baseSha });
   return { runs, logRun, diffRun };
+}
+
+/** A repository name of exactly 100 characters. */
+export const STRESS_REPO = "acme/" + "stress-".repeat(14).slice(0, 94) + "x";
+
+/**
+ * The data for the stress checks: a failed run with a 2,000 character reason and a 100 character repository name, and a run
+ * whose workspace (`stress-work` in `workRoot`) has 20 added lines of 400 characters or more (uncommitted). Synchronous.
+ */
+export function seedStress(runsDir: string, workRoot: string, owner: string, repo: string): { statusRun: string; diffRun: string; repo: string } {
+  const statusRun = "ui-stress-status";
+  const reason = "The step failed and says why at length. ".repeat(60).slice(0, 2000);
+  writeRunFile(runsDir, repo, statusRun, owner, "failed", { task: "Stress seeded status run", reason, vars: { github_repo: STRESS_REPO } });
+
+  const diffRun = "ui-stress-diff";
+  const work = join(workRoot, "stress-work");
+  mkdirSync(work, { recursive: true });
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: work, stdio: "pipe" });
+  git("init", "-q");
+  writeFileSync(join(work, "wide.txt"), "short\n");
+  git("add", "wide.txt");
+  git("commit", "-q", "-m", "base");
+  const baseSha = git("rev-parse", "HEAD").toString().trim();
+  writeFileSync(join(work, "wide.txt"), Array.from({ length: 20 }, (_, i) => `wide line ${i + 1} ` + "y".repeat(400)).join("\n") + "\n");
+  writeRunFile(runsDir, repo, diffRun, owner, "succeeded", { task: "Stress seeded diff run", workdir: work, baseSha });
+  return { statusRun, diffRun, repo: STRESS_REPO };
 }
 
 /**
@@ -180,10 +232,13 @@ export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seede
     writeRun("ui-user-succeeded", user.user.id, "succeeded");
     writeRun("ui-user-failed", user.user.id, "failed", "boom");
     const large = opts.large ? seedLarge(runsDir, tmp, admin.user.id, repo) : undefined;
+    const stress = opts.large ? seedStress(runsDir, tmp, admin.user.id, repo) : undefined;
 
     const send = (method: string, path: string, body: unknown) =>
       fetch(url + path, { method, headers: { "content-type": "application/json", ...admin.headers(method) }, body: JSON.stringify(body) });
-    for (const [name, yaml] of [["gate", GATE], ["hold", HOLD], ["fail", FAIL]] as const) {
+    const flows: (readonly [string, string])[] = [["gate", GATE], ["hold", HOLD], ["fail", FAIL]];
+    if (opts.large) flows.push(["note", NOTE]);
+    for (const [name, yaml] of flows) {
       const r = await send("PUT", `/api/flows/${name}`, { yaml, scope: "repo" });
       if (r.status !== 200) throw new Error(`could not save the flow ${name}: ${r.status} ${await r.text()}`);
     }
@@ -212,7 +267,7 @@ export async function startSeeded(opts: { large?: boolean } = {}): Promise<Seede
       repoId: rec.id,
       sessionId: session.id,
       watcherId: "ui-w",
-      ...(large ? { large } : {}),
+      ...(large ? { large, stress, noteFlow: "note" as const } : {}),
       close,
     };
   } catch (e) {

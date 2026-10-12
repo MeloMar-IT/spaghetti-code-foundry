@@ -1,4 +1,4 @@
-import { expect, request, type APIResponse, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { expect, request, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import type { SeedData } from "./seed.js";
 import type { Density, Theme } from "./visual-matrix.js";
 import { VIEW_HEIGHT } from "./widths.js";
@@ -101,11 +101,14 @@ export async function openAs(browser: Browser, role: Role, width: number, hash =
   }
 }
 
-export interface Api { send(method: string, path: string, body?: unknown): Promise<APIResponse>; close(): Promise<void> }
+/** The part of a response the helpers read (a Playwright APIResponse fits). */
+export interface ApiResponse { status(): number; json(): Promise<unknown> }
 
-/** Calls the server's API as `role`, for set-up and clean-up of a test (the CSRF token goes with every method other than GET and HEAD). */
-export async function apiAs(role: Role): Promise<Api> {
-  const s = seed();
+export interface Api { send(method: string, path: string, body?: unknown): Promise<ApiResponse>; close(): Promise<void> }
+
+/** Calls the server's API as `role` (on the large server with `which: "large"`), for set-up and clean-up of a test (the CSRF token goes with every method other than GET and HEAD). */
+export async function apiAs(role: Role, which: "default" | "large" = "default"): Promise<Api> {
+  const s = seed(which);
   const who = s[role];
   const ctx = await request.newContext({ baseURL: s.url });
   const res = await ctx.post("/api/session", { data: { email: who.email, password: who.password } });
@@ -116,6 +119,65 @@ export async function apiAs(role: Role): Promise<Api> {
       ctx.fetch(path, { method, headers: method === "GET" || method === "HEAD" ? {} : { "x-csrf-token": csrfToken }, ...(body === undefined ? {} : { data: body }) }),
     close: () => ctx.dispose(),
   };
+}
+
+/** Starts a run through the API and waits until it has `status`; returns its id. */
+export async function startRun(api: Api, flow: string, task: string, status: string): Promise<string> {
+  const res = await api.send("POST", "/api/runs", { flow, task });
+  expect(res.status(), `start the ${flow} run`).toBe(201);
+  const { runId } = (await res.json()) as { runId: string };
+  await expect.poll(async () => ((await (await api.send("GET", `/api/runs/${runId}`)).json()) as { status: string }).status, { timeout: 20_000 }).toBe(status);
+  return runId;
+}
+
+/** The `task` of each entry of `rows` that has one, with its id (`key` names the id field). */
+function idsWithTask(rows: unknown, key: string, task: string): string[] {
+  if (!Array.isArray(rows)) return [];
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const id: unknown = Reflect.get(row, key);
+    if (Reflect.get(row, "task") === task && typeof id === "string") ids.push(id);
+  }
+  return ids;
+}
+
+async function readJson(api: Api, path: string): Promise<unknown> {
+  const res = await api.send("GET", path);
+  if (res.status() !== 200) throw new Error(`GET ${path} answered ${res.status()}`);
+  return res.json();
+}
+
+/**
+ * Cancels every running or waiting run and every queued job with this task (a queued job has no run record yet).
+ * The queue is read first, so a job that starts in between is found in the run lists. The run lists are cut to 200 rows, so they are
+ * filtered by the task before the cap (`q`, a substring match; skipped for a task over 200 characters) and read again until no run
+ * with the task is left. Every id is tried, also after a failure or a rejected request; the failures are reported at the end.
+ */
+export async function cancelRuns(api: Api, task: string): Promise<void> {
+  const queue = await readJson(api, "/api/queue");
+  const pending = typeof queue === "object" && queue !== null ? Reflect.get(queue, "pending") : undefined;
+  const failed: string[] = [];
+  const tried = new Set<string>();
+  const cancel = async (id: string): Promise<void> => {
+    tried.add(id);
+    try {
+      const res = await api.send("POST", `/api/runs/${id}/cancel`, {});
+      if (res.status() >= 300) failed.push(`${id} (${res.status()})`);
+    } catch (e) {
+      failed.push(`${id} (${e instanceof Error ? e.message : String(e)})`);
+    }
+  };
+  for (const id of idsWithTask(pending, "runId", task)) await cancel(id);
+  const q = [...task].length <= 200 ? `&q=${encodeURIComponent(task)}` : "";
+  for (const status of ["running", "waiting"]) {
+    for (;;) {
+      const fresh = idsWithTask(await readJson(api, `/api/runs?status=${status}${q}`), "runId", task).filter((id) => !tried.has(id));
+      if (!fresh.length) break;
+      for (const id of fresh) await cancel(id);
+    }
+  }
+  if (failed.length) throw new Error(`could not cancel: ${failed.join(", ")}`);
 }
 
 /** The elements whose right edge is past the viewport (tag, id, classes), deepest first, at most 10. */
