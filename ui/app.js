@@ -19,6 +19,7 @@ import { renderAllRepos } from "./admin-repos.js";
 import { renderCredentials } from "./admin-credentials.js";
 import { renderOperations } from "./operations.js";
 import { renderRefinement } from "./refinement.js";
+import { renderRepo } from "./repo-view.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
 import { renderUserDetail } from "./user-detail.js";
@@ -184,8 +185,18 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg, query: to.query, go });
+    else if (section === "repos" && arg) {
+      // Own box: the list's page check is also true on this address, so a late list answer must not draw over the view.
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderRepo(box, { id: arg, admin: true, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      if (mine === routeGen) S.cleanup = off;
+      else off(); // the person went on to another page meanwhile
+    }
     else if (section === "repos") {
-      const off = await renderRepos(main, { admin: true, query: to.query, go });
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderRepos(box, { admin: true, query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

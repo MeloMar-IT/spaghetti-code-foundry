@@ -548,7 +548,8 @@ describe("roles in the page", () => {
     expect(auth.isUserHash("#/home")).toBe(true);
     expect(auth.otherDisplay({ role: "user" }, "admin", "#/home")).toBe("/user/#/home");
     expect(auth.userHash("#/repos")).toBe("#/repos");
-    expect(auth.userHash("#/repos/x")).toBe("#/runs");
+    expect(auth.userHash("#/repos/x")).toBe("#/repos/x");
+    expect(auth.userHash("#/repos/x/y")).toBe("#/runs");
     expect(auth.userHash("#/reposx")).toBe("#/runs");
     expect(auth.userHash("#/refinement")).toBe("#/refinement");
     expect(auth.userHash("#/refinement/abc-1")).toBe("#/refinement/abc-1");
@@ -567,7 +568,8 @@ describe("roles in the page", () => {
 
   it("isUserHash is true for the pages of the user display", () => {
     for (const h of ["#/start", "#/runs", "#/runs/abc-1", "#/repos", "#/refinement", "#/refinement/s-1"]) expect(auth.isUserHash(h), h).toBe(true);
-    for (const h of ["", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
+    expect(auth.isUserHash("#/repos/0f3c9a1e-5b2d-4c7a-9e11-aa00bb11cc22")).toBe(true);
+    for (const h of ["#/repos/x?repo=a%2Fb", "#/repos/", "", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
   });
 
   it("isUserHash takes a query only on Runs, Refinement and Repositories; userPage drops it from the section", () => {
@@ -604,6 +606,7 @@ describe("roles in the page", () => {
     expect(auth.userPage("#/runs")).toEqual({ hash: "#/runs", section: "runs", id: undefined });
     expect(auth.userPage("#/runs/abc")).toEqual({ hash: "#/runs/abc", section: "runs", id: "abc" });
     expect(auth.userPage("#/repos")).toEqual({ hash: "#/repos", section: "repos", id: undefined });
+    expect(auth.userPage("#/repos/r-1")).toEqual({ hash: "#/repos/r-1", section: "repos", id: "r-1" });
     expect(auth.userPage("#/refinement/s-1")).toEqual({ hash: "#/refinement/s-1", section: "refinement", id: "s-1" });
     expect(auth.userPage("#/flows/x")).toEqual({ hash: "#/runs", section: "runs", id: undefined });
     expect(auth.userPage("")).toEqual({ hash: "#/runs", section: "runs", id: undefined });

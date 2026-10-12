@@ -3,12 +3,13 @@ import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { resolve } from "/ia.js";
 import { renderRefinement } from "/refinement.js";
+import { renderRepo } from "/repo-view.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
 import { renderStart } from "/user/start.js";
 import { initPalette } from "/palette.js";
-import { initShell, showPage } from "/shell.js";
+import { initShell, namePage, showPage } from "/shell.js";
 import { errorState, explainError } from "/states.js";
 import { beginView } from "/view-as.js";
 
@@ -61,6 +62,7 @@ async function route() {
     if (page.section === "home") done = await renderHome(box, { readOnly });
     else if (page.section === "start") done = await renderStart(box, { readOnly });
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });
+    else if (page.section === "repos" && page.id) done = await renderRepo(box, { id: page.id, admin: false, readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query, go });
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
     else done = await renderMyRuns(box, { readOnly, query: to.query, go });
