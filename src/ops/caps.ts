@@ -1,33 +1,72 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
 
 /** A temporary limit on how many runs may work at once, set by a helper process. It ends by itself at `until`. */
 export interface Cap { runs: number; until: string; why: string }
 
-/** Who set it ("load", "limits") → the cap. Kept in <data folder>/governor/caps.json. */
+/** Who set it ("load", "limits") → the cap. */
 export type Caps = Record<string, Cap>;
 
+/**
+ * The caps file of installs before each helper had its own file: <data folder>/governor/caps.json. It is still
+ * read, so an upgrade does not lose a cap that holds. The caps themselves are next to it, one file per helper:
+ * <data folder>/governor/caps/<who>.json — two helpers never write the same file.
+ */
 export const capsPath = (home = process.env.FACTORY_HOME ?? FACTORY_HOME) => join(home, "governor", "caps.json");
-
-export function loadCaps(path = capsPath()): Caps {
-  if (!existsSync(path)) return {};
+const capsDir = (path: string) => join(dirname(path), "caps");
+const usable = (c: Cap | undefined): c is Cap => !!c && Number.isInteger(c.runs) && c.runs >= 1 && typeof c.until === "string";
+const read = <T>(file: string): T | undefined => {
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Caps;
-    return Object.fromEntries(Object.entries(raw).filter(([, c]) => c && Number.isInteger(c.runs) && c.runs >= 1 && typeof c.until === "string"));
+    return JSON.parse(readFileSync(file, "utf8")) as T;
   } catch {
-    return {};
+    return undefined;
   }
+};
+/** Written under a name of this process and moved in place: a reader never sees half a file, two writers never share a temp file. */
+function writeWhole(file: string, text: string) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, file);
 }
 
-/** Set or (with undefined) remove the cap of one helper. */
+export function loadCaps(path = capsPath()): Caps {
+  const old = read<Caps>(path);
+  const caps: Caps = old && typeof old === "object" ? Object.fromEntries(Object.entries(old).filter(([, c]) => usable(c))) : {};
+  let names: string[] = [];
+  try {
+    names = readdirSync(capsDir(path));
+  } catch {
+    // no helper set a cap yet
+  }
+  for (const name of names) {
+    if (!/^[\w-]+\.json$/.test(name)) continue;
+    const c = read<Cap>(join(capsDir(path), name));
+    // a helper's own file is newer than what the old shared file says about it
+    if (usable(c)) caps[name.slice(0, -5)] = c;
+    else delete caps[name.slice(0, -5)];
+  }
+  return caps;
+}
+
+/** Set or (with undefined) remove the cap of one helper. Only that helper's file is written. */
 export function setCap(who: string, cap: Cap | undefined, path = capsPath()) {
-  const caps = loadCaps(path);
-  if (cap) caps[who] = cap;
-  else delete caps[who];
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path + ".tmp", JSON.stringify(caps, null, 2));
-  renameSync(path + ".tmp", path);
+  if (!/^[\w-]+$/.test(who)) throw new Error(`not a helper name: ${who}`);
+  const file = join(capsDir(path), `${who}.json`);
+  if (cap) {
+    mkdirSync(capsDir(path), { recursive: true });
+    writeWhole(file, JSON.stringify(cap, null, 2));
+  } else rmSync(file, { force: true });
+  // The old shared file: take this helper's entry out once, so it cannot come back when the helper lifts its cap.
+  const old = read<Caps>(path);
+  if (!old || typeof old !== "object" || !(who in old)) return;
+  delete old[who];
+  try {
+    if (Object.keys(old).length) writeWhole(path, JSON.stringify(old, null, 2));
+    else rmSync(path, { force: true });
+  } catch {
+    // another helper cleaned it at the same moment
+  }
 }
 
 /**
