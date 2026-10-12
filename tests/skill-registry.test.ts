@@ -68,6 +68,8 @@ describe("built-in skills", () => {
     expect(findSkill(reg, "spring-boot")?.pkg.dependencies.map((d) => d.id)).toEqual(["java"]);
     expect(findSkill(reg, "typescript")?.label).toBe("built-in");
     expect(findSkill(reg, "cassandra")?.label).toBe("built-in");
+    expect(findSkill(reg, "oracle")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "oracle", "SKILL.md"))).toBe(true);
     expect(existsSync(join(BUILTIN_SKILLS, "typescript", "REVIEW.md"))).toBe(true);
     expect(findSkill(reg, "nodejs")?.label).toBe("built-in");
     expect(existsSync(join(BUILTIN_SKILLS, "nodejs", "REVIEW.md"))).toBe(true);
