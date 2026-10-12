@@ -4,108 +4,26 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { SelfUpdater, type UpdaterOptions } from "../src/self-update.js";
-import { confirmStart, loadUpdateState, readVersion, saveUpdateState, startGuard, type UpdateStep } from "../src/self-update-state.js";
+import { SelfUpdater } from "../src/self-update.js";
+import { confirmStart, loadUpdateState, readVersion, saveUpdateState, startGuard } from "../src/self-update-state.js";
 import { buildStamp, RESTART_CODE, supervise, type StartGuard } from "../src/supervise.js";
+import { fixture, git, removeFixtures, sha7, STEPS, updater, V1, type Fx } from "./helpers/self-update.js";
 
 vi.setConfig({ testTimeout: 60_000 });
 
-// Local git repositories only: a bare remote, a seed clone that publishes commits, and the install (the checkout the Foundry runs from).
-const V1: Record<string, string> = {
-  "app.txt": "v1\n",
-  "server.mjs": "process.exit(0);\n",
-  "package-lock.json": "{}\n",
-  ".gitignore": "dist/\nbreak-*\n.break-here\n",
-  "install.sh": "[ -e break-install ] && exit 1\nexit 0\n",
-  "build.sh": '[ -e break-build ] && { echo "build broke"; exit 1; }\nmkdir -p dist && cp app.txt dist/app.js\n',
-  "test.sh": "exit 0\n",
-};
-const STEPS: UpdateStep[] = [
-  { name: "install", cmd: "sh", args: ["install.sh"] },
-  { name: "build", cmd: "sh", args: ["build.sh"] },
-  { name: "test", cmd: "sh", args: ["test.sh"] },
-];
 const IN_PLACE_ONLY = 'case "$PWD" in *self-update-stage*) ;; *) %;; esac\n';
 const NEVER = "setInterval(() => {}, 1000);\n";
 
-const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 async function until(cond: () => boolean, ms = 10_000) {
   const end = Date.now() + ms;
   while (!cond() && Date.now() < end) await sleep(20);
   if (!cond()) throw new Error("timed out");
 }
-const sha7 = (s: string) => s.slice(0, 7);
 
-beforeAll(() => {
-  Object.assign(process.env, { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" });
-});
-
-const roots: string[] = [];
-afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
-
-function fixture() {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), "scf-su-"));
-  roots.push(root);
-  const remote = join(root, "remote.git");
-  const seed = join(root, "seed");
-  const install = join(root, "install");
-  const file = join(root, "data", "self-update.json");
-  mkdirSync(join(root, "data"));
-  git(root, "init", "--bare", "-b", "main", remote);
-  git(root, "init", "-b", "main", seed);
-  git(seed, "remote", "add", "origin", remote);
-  const write = (files: Record<string, string>) => { for (const [k, v] of Object.entries(files)) writeFileSync(join(seed, k), v); };
-  write(V1);
-  git(seed, "add", "-A");
-  git(seed, "commit", "-m", "v1");
-  git(seed, "push", "origin", "main");
-  git(root, "clone", remote, install);
-  execFileSync("sh", ["build.sh"], { cwd: install });
-  const fx = {
-    root, remote, seed, install, file,
-    head: () => git(install, "rev-parse", "HEAD"),
-    dist: () => readFileSync(join(install, "dist", "app.js"), "utf8").trim(),
-    state: () => loadUpdateState(file).state,
-    stage: join(root, "data", "self-update-stage"),
-    publish(files: Record<string, string>, o: { replace?: boolean } = {}) {
-      if (o.replace) git(seed, "reset", "--hard", "HEAD~1");
-      write(files);
-      git(seed, "add", "-A");
-      git(seed, "commit", "-m", "next");
-      git(seed, "push", ...(o.replace ? ["--force"] : []), "origin", "main");
-      return git(seed, "rev-parse", "HEAD");
-    },
-    /** Takes the new commit into the install without the updater (a half-done install). */
-    takeIn(sha: string) {
-      git(install, "fetch", "origin");
-      git(install, "merge", "--ff-only", sha);
-    },
-  };
-  return fx;
-}
-type Fx = ReturnType<typeof fixture>;
-
-function updater(f: Fx, over: Partial<UpdaterOptions> = {}) {
-  const t = {
-    idle: true, drained: 0, exits: [] as number[], logs: [] as string[], before: 0,
-  };
-  const u = new SelfUpdater({
-    config: () => ({ enabled: true, repo: "acme/foundry" }),
-    idle: () => t.idle,
-    drain: () => { t.drained++; },
-    beforeExit: () => { t.before++; },
-    log: (m) => t.logs.push(m),
-    dir: f.install, file: f.file, steps: STEPS,
-    originRepo: () => "acme/foundry",
-    guarded: true,
-    exit: (c) => t.exits.push(c),
-    ...over,
-  });
-  return Object.assign(t, { u });
-}
+afterEach(removeFixtures);
 
 /** Publishes v2, tests it while the queue is busy, then installs it. */
 async function installV2(f: Fx, files: Record<string, string> = { "app.txt": "v2\n" }) {
@@ -244,8 +162,9 @@ describe("self-update: the update path", () => {
       const f = fixture();
       const v1 = f.head();
       const bad = f.publish({ ...files, "app.txt": "v2\n" });
-      const t = updater(f);
-      await t.u.tick(true);
+      const t = updater(f, { retryWaitMs: 0 });
+      const tries = stage === "test" ? 3 : 1;
+      for (let i = 0; i < tries; i++) await t.u.tick(true);
       expect(f.state().failed).toMatchObject({ commit: bad, stage });
       expect(f.state().tested).toBeUndefined();
       expect(f.head()).toBe(v1);
@@ -255,7 +174,7 @@ describe("self-update: the update path", () => {
       expect(existsSync(f.stage)).toBe(false);
       expect(t.u.view().update?.text).toContain("The Foundry waits for a newer commit on main.");
       await t.u.tick(true);
-      expect(t.logs.filter((l) => l.includes("building and testing"))).toHaveLength(1);
+      expect(t.logs.filter((l) => l.includes("building and testing"))).toHaveLength(tries);
 
       const good = f.publish({ "build.sh": V1["build.sh"]!, "test.sh": "exit 0\n", "install.sh": V1["install.sh"]!, "app.txt": "v3\n" });
       await t.u.tick(true);
@@ -268,9 +187,9 @@ describe("self-update: the update path", () => {
   it("says why a failure happened, in the text of its stage", async () => {
     const f = fixture();
     const v2 = f.publish({ "test.sh": "exit 1\n" });
-    const t = updater(f);
-    await t.u.tick(true);
-    expect(t.u.view().update?.text).toBe(`An update is waiting (${sha7(v2)}): its tests failed. The Foundry waits for a newer commit on main.`);
+    const t = updater(f, { retryWaitMs: 0 });
+    for (let i = 0; i < 3; i++) await t.u.tick(true);
+    expect(t.u.view().update?.text).toBe(`An update is waiting (${sha7(v2)}): its tests failed 3 times. The Foundry waits for a newer commit on main.`);
   });
 
   it("stages a newer commit when main moves while it waits for the runs", async () => {

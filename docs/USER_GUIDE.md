@@ -2247,10 +2247,10 @@ Every 5 minutes it checks, in this order, and stops at the first reason that app
 3. The `origin` of the checkout is the repository in the setting.
 4. `main` can be read from GitHub. Nothing new: nothing to do.
 5. The checkout is on `main` and has no local changes (untracked files count). Only then does it fetch.
-6. The same commit did not fail before. It waits for a newer commit.
+6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the Health line.)
 7. The checkout can fast-forward to `main`.
 
-Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). If a step fails, the old version keeps running and the monitor gets a finding. When all pass, no new runs start (queued runs wait and start after the restart) and the server restarts when the active runs are done. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the Health line says which try it is. The log and the Health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart) and the server restarts when the active runs are done. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
 
 If the new server stops or does not answer within 3 minutes, the supervisor puts the previous version back once and reports it (the monitor finding is critical). An install that was cut off is finished or undone at the next start. If you switch the setting off while an update waits, the server restarts on the unchanged version when the runs are done.
 

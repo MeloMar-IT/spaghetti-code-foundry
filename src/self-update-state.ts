@@ -20,8 +20,13 @@ const StateSchema = z.object({
   pending: z.object({ from: Sha, to: Sha, phase: z.enum(["apply", "installed"]), stamp: z.number().optional() }).optional(),
   /** The commit of main that built and passed its tests in the stage folder. */
   tested: z.object({ commit: Sha, at: z.string() }).optional(),
+  /** The test step failed; the same commit is tried again after a wait. */
+  retry: z.object({ commit: Sha, tries: z.number().int().min(1), at: z.string() }).optional(),
   failed: z
-    .object({ commit: Sha, stage: z.enum(STAGES), back: Sha.optional(), backOk: z.boolean().optional(), lines: z.array(z.string().max(300)).max(5).optional(), at: z.string() })
+    .object({
+      commit: Sha, stage: z.enum(STAGES), back: Sha.optional(), backOk: z.boolean().optional(), lines: z.array(z.string().max(300)).max(5).optional(), at: z.string(),
+      tries: z.number().int().optional(), tests: z.array(z.string().max(300)).max(20).optional(),
+    })
     .optional(),
   updated: z.object({ from: Sha, to: Sha, at: z.string() }).optional(),
 });
