@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries foundation 4 — normalize external skills into `SkillPackage` (#200).
+  - **What it does.** `normalizeImport` and `normalizeSkill` in `src/skills/normalize.ts` turn the skills of a prepared import into `SkillPackage` values, plus a provenance record and a `NormalizationReport` (`normalized` and `quarantined`). Pure: no file system, process or clock, so the same input gives the same output on every machine. Nothing calls it yet, so no command, config, run or flow format changes.
+  - **Layouts.** Four upstream layouts are read: `plain` (Agent Skills frontmatter), `metadata` (extra fields under `metadata:`), `extended` (extra frontmatter keys such as `tags`, `depends-on`, `requires`) and `foundry` (a `skill.yaml` next to `SKILL.md`). The layout is recorded in the provenance.
+  - **IDs.** `sourceQualifiedId` builds `<source>-<name>-<hash>`; the hash covers source, repository and name, so unrelated repositories cannot shadow each other. The upstream name is kept in the provenance, never overwritten.
+  - **Normalized fields.** Capabilities, technology versions, required tools (with their effects), dependencies, entry points (instructions, scripts, documents) and context-size estimates. Versions such as `v1.2` become `1.2.0`.
+  - **Provenance.** Unknown upstream metadata is kept as `frontmatter.<key>`, `metadata.<key>` or `manifest.<key>` (canonical JSON, size-bounded) instead of being dropped.
+  - **Quarantine.** A skill with a missing or invalid required field is listed in `quarantined` with its reasons and produces no package.
+  - **Tests.** `tests/skill-normalize.test.ts`, with fixtures for the four layouts in `tests/fixtures/skill-layouts/`. The rules and value helpers are in `normalize-rules.ts` and `normalize-values.ts`.
 - Fix: the daily release no longer queues for a test slot. Its check step could wait up to 90 minutes for a free slot while the step itself is stopped after 60, so on a busy machine the run failed with "timed out" and no release pull request was opened. `verify` in `release-daily` now starts its tests at once (`FACTORY_VAR_TEST_SLOTS=0`), as the story that holds the merge turn does. Test in `tests/gitflow.test.ts`.
 - The model analyst: `scf analyst run|report|install|uninstall|status`. A process of its own that, every 6 hours, reads the runs of the last 14 days and writes `analyst/report.md` and `analyst/latest.json` in the data folder.
   - **Per step and model:** how often the step worked, timed out, was repaired (`fix_*` came next) or was sent back by a review (`address_*` / `revise_*`), minutes, tokens and its share of all tokens.
