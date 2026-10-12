@@ -28,6 +28,14 @@ const TOKEN = [{ field: "token", label: "Access token", hidden: true }];
 const USERNAME: Record<string, Flag> = { username: { type: "string", help: "the user name the token belongs to" } };
 const SIGN_IN_LOST = "The sign-in stored for this repository (its token or key) is replaced and cannot be read back.";
 
+/**
+ * What decides how a repository is signed in to. One call takes all of them, so --data may set none of them: each
+ * command sends its own (and asks before it replaces a sign-in), and a token is asked for.
+ */
+const SIGN_IN_FIELDS = ["method", "token", "username", "newKey"];
+const own = (c: Cmd) => [...Object.keys(c.fixed ?? {}), ...(c.prompts ?? []).map((q) => q.field), ...Object.entries(c.flags ?? {}).map(([n, f]) => f.key ?? n)];
+const signIn = (c: Cmd): Cmd => ({ ...c, locked: SIGN_IN_FIELDS.filter((k) => !own(c).includes(k)) });
+
 const REPOS: Cmd[] = [
   { area: "repos", action: "list", method: "GET", path: "repos", show: (d) => table(rows(d).map(repoRow), REPO_COLS, "no repositories") },
   // the API has no call for one repository: the list is read and the one with this id is shown
@@ -39,19 +47,19 @@ const REPOS: Cmd[] = [
   { area: "repos", action: "methods", method: "GET", path: "repos/methods", help: "the sign-in methods you may choose",
     show: (d) => fields({ methods: rows(d, "methods").join(", "), "github app": pick(d, "githubApp.available") ? "set up" : "not set up", "install link": pick(d, "githubApp.installUrl") }) },
 
-  { area: "repos", action: "add", method: "POST", path: "repos", args: ["url"], help: "add a repository without a sign-in of its own (choose one later with a use-… command)", show: repoLines },
-  { area: "repos", action: "add-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-token" }, prompts: TOKEN, help: "add a GitHub repository with a fine-grained token (asked for, never typed as an argument)", show: repoLines },
-  { area: "repos", action: "add-https-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "https-token" }, prompts: TOKEN, flags: { username: { ...USERNAME.username!, required: true } }, help: "add an https repository on any host with a user name and a token (the token is asked for)", show: repoLines },
-  { area: "repos", action: "add-key", method: "POST", path: "repos", args: ["url"], fixed: { method: "ssh-deploy-key" }, help: "add a repository by its SSH address; the Foundry makes a deploy key and shows its public half", show: repoLines },
-  { area: "repos", action: "add-app", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-app" }, help: "add a GitHub repository that the installed GitHub App signs in to", show: repoLines },
+  signIn({ area: "repos", action: "add", method: "POST", path: "repos", args: ["url"], help: "add a repository without a sign-in of its own (choose one later with a use-… command)", show: repoLines }),
+  signIn({ area: "repos", action: "add-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-token" }, prompts: TOKEN, help: "add a GitHub repository with a fine-grained token (asked for, never typed as an argument)", show: repoLines }),
+  signIn({ area: "repos", action: "add-https-token", method: "POST", path: "repos", args: ["url"], fixed: { method: "https-token" }, prompts: TOKEN, flags: { username: { ...USERNAME.username!, required: true } }, help: "add an https repository on any host with a user name and a token (the token is asked for)", show: repoLines }),
+  signIn({ area: "repos", action: "add-key", method: "POST", path: "repos", args: ["url"], fixed: { method: "ssh-deploy-key" }, help: "add a repository by its SSH address; the Foundry makes a deploy key and shows its public half", show: repoLines }),
+  signIn({ area: "repos", action: "add-app", method: "POST", path: "repos", args: ["url"], fixed: { method: "github-app" }, help: "add a GitHub repository that the installed GitHub App signs in to", show: repoLines }),
 
-  { area: "repos", action: "use-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "github-token" }, prompts: TOKEN, confirm: SIGN_IN_LOST, help: "sign in to the repository with a GitHub fine-grained token (asked for); also replaces the token", show: repoLines },
-  { area: "repos", action: "use-https-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "https-token" }, prompts: TOKEN, flags: USERNAME, confirm: SIGN_IN_LOST, help: "sign in with a user name and a token (asked for); --username is needed when the method changes", show: repoLines },
-  { area: "repos", action: "use-key", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "ssh-deploy-key" }, confirm: SIGN_IN_LOST, help: "sign in with a deploy key the Foundry makes (SSH address only); keeps a key that is there", show: repoLines },
-  { area: "repos", action: "new-key", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { newKey: true }, confirm: "A new deploy key is made; the old one stops working at once.", help: "make a new deploy key for a repository that uses one", show: repoLines },
-  { area: "repos", action: "use-app", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "github-app" }, confirm: SIGN_IN_LOST, help: "let the installed GitHub App sign in to the repository", show: repoLines },
-  { area: "repos", action: "use-server-login", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "none" }, confirm: "The token or key stored for this repository is removed; the server's own access is used.", help: "remove the repository's sign-in and use the server's own access (admin only)", show: repoLines },
-  { area: "repos", action: "set-url", method: "PUT", path: "repos/:id/auth", args: ["id", "url"], help: "change the address to another form of the same repository (https or SSH)", show: repoLines },
+  signIn({ area: "repos", action: "use-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "github-token" }, prompts: TOKEN, confirm: SIGN_IN_LOST, help: "sign in to the repository with a GitHub fine-grained token (asked for); also replaces the token", show: repoLines }),
+  signIn({ area: "repos", action: "use-https-token", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "https-token" }, prompts: TOKEN, flags: USERNAME, confirm: SIGN_IN_LOST, help: "sign in with a user name and a token (asked for); --username is needed when the method changes", show: repoLines }),
+  signIn({ area: "repos", action: "use-key", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "ssh-deploy-key" }, confirm: SIGN_IN_LOST, help: "sign in with a deploy key the Foundry makes (SSH address only); keeps a key that is there", show: repoLines }),
+  signIn({ area: "repos", action: "new-key", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { newKey: true }, confirm: "A new deploy key is made; the old one stops working at once.", help: "make a new deploy key for a repository that uses one", show: repoLines }),
+  signIn({ area: "repos", action: "use-app", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "github-app" }, confirm: SIGN_IN_LOST, help: "let the installed GitHub App sign in to the repository", show: repoLines }),
+  signIn({ area: "repos", action: "use-server-login", method: "PUT", path: "repos/:id/auth", args: ["id"], fixed: { method: "none" }, confirm: "The token or key stored for this repository is removed; the server's own access is used.", help: "remove the repository's sign-in and use the server's own access (admin only)", show: repoLines }),
+  signIn({ area: "repos", action: "set-url", method: "PUT", path: "repos/:id/auth", args: ["id", "url"], help: "change the address to another form of the same repository (https or SSH)", show: repoLines }),
 
   { area: "repos", action: "test", method: "POST", path: "repos/:id/test", args: ["id"], help: "test the connection of a repository; the result is saved as its connection status",
     show: (d) => [`connection: ${pick(d, "ok") ? "ok" : "failed"}`, table(rows(d, "checks").map((c) => ({ ...c, result: c.ok ? "ok" : c.skipped ? "skipped" : "failed" })), [...cols("check", "result", "code"), { key: "message", max: 120 }])].join("\n") },
@@ -115,10 +123,10 @@ const MONITOR: Cmd[] = [
     show: (d) => `${pick(d, "story.made") ? "made" : "found"} bug story #${pick(d, "story.issue")} ${pick(d, "story.url") ?? ""}`.trimEnd() },
   { area: "monitor", action: "stop-stories", method: "POST", path: "monitor/off", show: (d) => `${pick(d, "changed") ? "bug stories are switched off" : "bug stories were off already"}\n${monitorState(d)}` },
   { area: "monitor", action: "start-stories", method: "POST", path: "monitor/on", show: (d) => `${pick(d, "changed") ? "bug stories are switched on" : "nothing changed"}\n${monitorState(d)}` },
-  { area: "monitor", action: "mute", method: "POST", path: "monitor/mutes", args: ["finding"], flags: { ...MUTE_FLAGS, hours: HOURS }, help: "mute one finding for a number of hours, with a reason", show: muted },
-  { area: "monitor", action: "mute-detector", method: "POST", path: "monitor/mutes", args: ["detector"], flags: { ...MUTE_FLAGS, hours: HOURS }, help: "mute a whole detector for a number of hours, with a reason", show: muted },
-  { area: "monitor", action: "mute-for-good", method: "POST", path: "monitor/mutes", args: ["finding"], flags: MUTE_FLAGS, confirm: `This finding ${FOR_GOOD}`, help: "mute one finding with no end, with a reason", show: muted },
-  { area: "monitor", action: "mute-detector-for-good", method: "POST", path: "monitor/mutes", args: ["detector"], flags: MUTE_FLAGS, confirm: `Every finding of this detector ${FOR_GOOD}`, help: "mute a whole detector with no end, with a reason", show: muted },
+  { area: "monitor", action: "mute", method: "POST", path: "monitor/mutes", args: ["finding"], flags: { ...MUTE_FLAGS, hours: HOURS }, locked: ["hours"], help: "mute one finding for a number of hours, with a reason", show: muted },
+  { area: "monitor", action: "mute-detector", method: "POST", path: "monitor/mutes", args: ["detector"], flags: { ...MUTE_FLAGS, hours: HOURS }, locked: ["hours"], help: "mute a whole detector for a number of hours, with a reason", show: muted },
+  { area: "monitor", action: "mute-for-good", method: "POST", path: "monitor/mutes", args: ["finding"], flags: MUTE_FLAGS, locked: ["hours"], confirm: `This finding ${FOR_GOOD}`, help: "mute one finding with no end, with a reason", show: muted },
+  { area: "monitor", action: "mute-detector-for-good", method: "POST", path: "monitor/mutes", args: ["detector"], flags: MUTE_FLAGS, locked: ["hours"], confirm: `Every finding of this detector ${FOR_GOOD}`, help: "mute a whole detector with no end, with a reason", show: muted },
   { area: "monitor", action: "unmute", method: "DELETE", path: "monitor/mutes/:id", args: ["id"], show: (d) => `the mute has ended\n${mutes(d)}` },
   { area: "monitor", action: "retry", method: "POST", path: "monitor/retry", args: ["finding"], help: "let the monitor try again for a finding that waits for a person", show: (d) => `the monitor will try again\n${findings(d)}` },
 ];
@@ -127,7 +135,9 @@ const MONITOR: Cmd[] = [
 // `scf flows` and `scf blocks` without an action are file commands; with one of these actions they are calls.
 
 const SCOPE: Record<string, Flag> = { scope: { type: "string", required: true, help: '"repo" (this server\'s folder) or "global" (every folder)' } };
-const YAML_HINT = 'give the YAML as text, e.g. "$(cat my.yaml)"';
+const YAML_HINT = 'give the YAML as text after --, e.g. -- "$(cat my.yaml)"';
+/** Whether a save replaces a file: the list of the server has one with this name in the scope that is written to. */
+const saved = (list: string, key: string, arg: string): NonNullable<Cmd["confirmIf"]> => async (body, args, get) => rows(await get(list)).some((x) => x[key] === args[arg] && x.scope === body.scope);
 
 const FLOWS: Cmd[] = [
   { area: "flows", action: "list", method: "GET", path: "flows", flags: { published: { type: "boolean", value: "1", help: "only the published flows, as a user sees them" } }, help: "the flows of the server (a user sees the published flows only)",
@@ -139,7 +149,8 @@ const FLOWS: Cmd[] = [
       return table(list.map((f) => ({ ...f, published: f.published ? "yes" : "no" })), [...cols("name", "scope", "published"), { key: "description", max: 60 }, ...(list.some((f) => f.error) ? [{ key: "error", max: 60 }] : [])], "no flows");
     } },
   { area: "flows", action: "show", method: "GET", path: "flows/:name", args: ["name"], help: "print the YAML of a flow", show: (d) => String(pick(d, "yaml") ?? "").trimEnd() },
-  { area: "flows", action: "save", method: "PUT", path: "flows/:name", args: ["name", "yaml"], flags: SCOPE, help: `save a flow; ${YAML_HINT}`,
+  { area: "flows", action: "save", method: "PUT", path: "flows/:name", args: ["name", "yaml"], flags: SCOPE, help: `save a flow (asks before it replaces one); ${YAML_HINT}`,
+    confirm: "A flow with this name is saved there already: its file is replaced.", confirmIf: saved("flows", "name", "name"),
     show: (d) => `saved ${pick(d, "name")} (${pick(d, "scope")})${pick(d, "version") !== undefined ? `, published as version ${pick(d, "version")}` : ""}` },
   { area: "flows", action: "remove", method: "DELETE", path: "flows/:name", args: ["name"], confirm: "The file of this flow is deleted.", show: (d) => `deleted ${pick(d, "deleted")}` },
   { area: "flows", action: "check", method: "POST", path: "validate", args: ["yaml"], help: `check a flow without saving it; ${YAML_HINT}`,
@@ -157,7 +168,8 @@ const BLOCKS: Cmd[] = [
       const b = rows(d).find((x) => x.id === a.id);
       return b ? String(b.yaml ?? "").trimEnd() : `no block with the id ${a.id}`;
     } },
-  { area: "blocks", action: "save", method: "PUT", path: "blocks/:id", args: ["id", "yaml"], flags: SCOPE, help: `save a block; ${YAML_HINT}`, show: (d) => `saved ${pick(d, "id")} (${pick(d, "scope")})` },
+  { area: "blocks", action: "save", method: "PUT", path: "blocks/:id", args: ["id", "yaml"], flags: SCOPE, help: `save a block (asks before it replaces one); ${YAML_HINT}`,
+    confirm: "A block with this id is saved there already: its file is replaced.", confirmIf: saved("blocks", "id", "id"), show: (d) => `saved ${pick(d, "id")} (${pick(d, "scope")})` },
   { area: "blocks", action: "remove", method: "DELETE", path: "blocks/:id", args: ["id"], confirm: "The file of this block is deleted.", show: (d) => `deleted ${pick(d, "deleted")}` },
 ];
 

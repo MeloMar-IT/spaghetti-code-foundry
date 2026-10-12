@@ -1961,6 +1961,7 @@ scf whoami                # who is signed in, and where
 scf runs list --status failed
 scf turn list             # what waits for you
 scf repos                 # an area without an action lists its commands
+scf flows --help          # flows, blocks and monitor: without an action they are the older file commands
 scf runs list --help      # the options of one command
 scf logout
 ```
@@ -1969,7 +1970,11 @@ scf logout
 without echo, sent to the server and not kept. What is kept is the session, in
 `cli-session.json` in the data folder, readable by your user only. It ends after 7 days, at
 `scf logout`, or when the account's password changes. A script can pipe the password in as one
-line. A server other than `http://localhost:4777` must be reached over HTTPS, as in a browser.
+line; without `--email` it pipes two lines, the e-mail address and then the password. Only a
+Foundry on this machine (`localhost`, `127.0.0.1`, `[::1]`) is reached over plain http. Any other
+address is reached over HTTPS: `--server foundry.example.com` means `https://`, and an `http://`
+address of another machine is refused, so the password never travels in clear text. A redirect is
+not followed; the command says where the server points to and stops.
 
 **The areas.**
 
@@ -1992,23 +1997,39 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 
 - `--json` prints the server's answer as it is, for scripts. Without it you get a table or a few lines.
 - `--data '{…}'` or `--data @file.json` adds fields to the call that have no option of their own.
+  It only adds: a field that an option, an argument or the command itself sets is refused, and so
+  is a field that another command asks about first (the role in `scf users set`, the sign-in
+  method in `scf repos add`). A command that only reads takes no `--data`.
+- Text that starts with `-` goes after `--`: `scf flows save my-flow --scope repo -- "$(cat my.yaml)"`.
 - `--server <address>` talks to another Foundry (sign in there first).
 - `--as <account id>` reads as that user would, for an admin who started `scf admin view-as`.
-- Exit code 0 means done; 4 means not signed in or not allowed; 1 is any other refusal by the server.
+- Exit code 0 means done; 4 means not signed in or not allowed (also for `scf whoami`); 1 is any
+  other refusal by the server. Errors are printed on standard error; with `--json` the server's
+  whole refusal is printed there as JSON.
+- A call may take two minutes (a sign-in half a minute); then the command gives up. An answer that
+  is not from a Foundry counts as an error, whatever its status.
 
 **Safety.**
 
 - A command that deletes or replaces something asks you to type `yes`. `--yes` answers for you;
-  without a terminal and without `--yes` it stops.
+  without a terminal and without `--yes` it stops. `scf flows save` and `scf blocks save` ask only
+  when a file with that name is there already; `scf users add` asks only for `--role admin`.
 - A password, token or other secret is never an option or an argument: the command asks for it
-  without echo (or reads one line of standard input), so it is not in your shell history. Given
-  inline in `--data` it is refused; in a file (`--data @file`) it is accepted.
+  without echo (or reads one line of standard input each, in the order it would ask), so it is not
+  in your shell history. Given inline in `--data` it is refused, for every command (the fields
+  `token`, `password`, `secret`, `current`, `key`, `privateKey`); in a file (`--data @file`) it is
+  accepted, unless the field is one the command does not let `--data` set.
+- An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
+  contain `/` or `\`.
 - `scf settings set` replaces the whole settings file, so it insists on `--data`. Start from
   `scf settings show --json`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
-it; `scf api GET runs` (or `POST`, `PUT`, `DELETE`, with `--data`) makes one. One call has no
-command: the live event stream of a run, which never ends.
+it; `scf api GET runs` (or `POST`, `PUT`, `PATCH`, `DELETE`) makes one. A body is sent only with
+`--data`: without it nothing is sent, so add `--data '{}'` for a call that wants an empty one.
+`DELETE`, `PUT` and `PATCH` ask you to type `yes` first (`--yes` answers; without a terminal and
+without `--yes` they stop). One call has no command: the live event stream of a run, which never
+ends; `scf api` refuses it too.
 
 #### Helper processes
 
