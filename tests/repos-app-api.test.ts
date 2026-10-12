@@ -3,15 +3,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { clearTokenCache } from "../src/github-app.js";
-import { startServer } from "../src/server/server.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { type FakeGithubApp, fakeGithubApp } from "./helpers/github-app.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 const realEnv = process.env; // fakeGithub().restore() swaps in a copy; os.tmpdir() reads the real one
 let snapshot: NodeJS.ProcessEnv;
@@ -48,7 +47,7 @@ beforeAll(async () => {
   writeFileSync(wrap, `#!/bin/sh\necho "GH_TOKEN=$GH_TOKEN|CONFIG=$GH_CONFIG_DIR" >> "${ghEnvLog}"\nexec "${resolve("tests/fixtures/fake-gh.sh")}" "$@"\n`);
   chmodSync(wrap, 0o755);
   Object.assign(process.env, { TMPDIR: scratch, SCF_CONNECT_REMOTE: fg.remote, FACTORY_GH_BIN: wrap });
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
+  ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });

@@ -6,8 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { signInAs, type TestSession } from "./helpers/session.js";
 import { fetchUiCss } from "./helpers/ui-css.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let close: () => void;
 let ctx: import("../src/server/server.js").ApiContext;
@@ -16,11 +15,10 @@ let session: TestSession;
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "factory-srv-"));
   process.env.FACTORY_HOME = join(tmp, "home"); // read at import time, so import afterwards
-  const { startServer } = await import("../src/server/server.js");
-  ({ close, ctx } = await startServer({
+  const { startTestServer } = await import("./helpers/port.js");
+  ({ close, ctx, base } = await startTestServer({
     repo: join(tmp),
     runsDir: join(tmp, "runs"),
-    port,
     claudeBin: resolve("tests/fixtures/fake-claude.mjs"),
   }));
   session = await signInAs(base);
@@ -875,9 +873,9 @@ steps:
 });
 
 describe("turn notifier wiring", () => {
-  const start = async (home: string, runsDir: string, p: number) => {
+  const start = async (home: string, runsDir: string) => {
     const { startServer } = await import("../src/server/server.js");
-    return startServer({ repo: home, runsDir, port: p, watchers: false });
+    return startServer({ repo: home, runsDir, port: 0, watchers: false });
   };
 
   it("starts with the server, posts once to the webhook and stops on close", async () => {
@@ -904,7 +902,7 @@ describe("turn notifier wiring", () => {
         runId: "r9", flow: "t", flowDef: { steps: [] }, task: "t", vars: {}, repo: dir, status: "failed", reason: "boom", runDir, startedAt: now, finishedAt: now,
         source: "cli", history: [], state: { next: null, steps: {}, visits: {} }, totalCostUsd: 0,
       }));
-      const server = await start(dir, join(dir, "runs"), 20000 + Math.floor(Math.random() * 20000));
+      const server = await start(dir, join(dir, "runs"));
       try {
         expect(server.notifier?.running).toBe(true);
         await server.notifier!.check();
@@ -929,7 +927,7 @@ describe("turn notifier wiring", () => {
     try {
       process.env.FACTORY_HOME = join(dir, "home");
       process.env.FACTORY_NO_NOTIFY = "1";
-      const server = await start(dir, join(dir, "runs"), 20000 + Math.floor(Math.random() * 20000));
+      const server = await start(dir, join(dir, "runs"));
       server.close();
       expect(server.notifier).toBeUndefined();
     } finally {
