@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
+import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
 import { forRole } from "../help/contract.js";
 import {
   CONVERSATION_LIMIT,
@@ -22,8 +23,10 @@ import {
   settleInterrupted,
   sweepHelp,
 } from "../help/store.js";
-import { HelpTurns, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
+import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
+import { checkedRun } from "./api-runs.js";
 import { HttpError, readJson, send } from "./http.js";
+import { authorize, findRule } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
 
@@ -37,12 +40,38 @@ export const HELP_SWEEP_MS = 60 * 60 * 1000;
 
 const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full": 429, limit: 429, unsafe: 503 };
 
+/**
+ * Looks a thing a page context names up again, for the account that asks, with the rules of the API call that
+ * reads the same thing. A thing that does not exist and one the account may not see give the same answer: nothing.
+ * The account is read now, not taken from the question: a removed or blocked account finds nothing, and a role that
+ * changed since counts as the lower of the two.
+ */
+export function helpResolver(ctx: ApiContext): EntityResolver {
+  return (asker, ref) => {
+    const now = getUser(asker.id);
+    if (!now || now.status !== "active") return undefined;
+    const user: User = asker.role === "admin" && now.role === "admin" ? now : { ...now, role: "user" };
+    if (ref.kind !== "run" || !/^[\w-]{1,100}$/.test(ref.id)) return undefined;
+    // the rule of `GET /api/runs/:id`: every run for an admin, their own for a user
+    const seg = ["runs", ref.id];
+    const rule = findRule("GET", seg);
+    if (!rule) return undefined;
+    try {
+      authorize(ctx, user, rule, seg);
+    } catch {
+      return undefined;
+    }
+    const run = checkedRun(ctx.scheduler, ref.id, user.role === "admin" ? undefined : user.id);
+    return run ? { label: `a run of the flow ${run.flow}` } : undefined;
+  };
+}
+
 const services = new WeakMap<ApiContext, HelpTurns>();
 /** The help turns of this server: what runs and what waits. */
 export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   let s = services.get(ctx);
   if (!s) {
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog });
+    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx) });
     services.set(ctx, s);
   }
   return s;
@@ -153,10 +182,25 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, guardedHelp(ctx, () => usageView(ctx)));
     return true;
   }
-  if (seg[1] !== "conversations") return false;
-  const id = seg[2] ?? "";
   const asker: Asker = { id: user.id, role: user.role === "admin" ? "admin" : "user" };
   const turns = helpTurnsOf(ctx);
+  // What a page context is worth, before it is sent with a question: nothing is stored and no model is called.
+  if (seg.length === 2 && seg[1] === "context" && method === "POST") {
+    if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
+    const body = await readJson(req);
+    const { context, resolved } = guardedHelp(ctx, () => turns.describe(asker, body));
+    send(res, 200, {
+      context,
+      size: context ? contextSize(context) : 0,
+      limits: { size: CONTEXT_MAX, things: ENTITY_LIMIT, filters: FILTER_LIMIT, selectionChars: SELECTION_MAX, keptFirst: [...CONTEXT_PRIORITY] },
+      page: resolved?.page ? { type: resolved.page.id, title: resolved.page.title } : null,
+      things: resolved?.entities ?? [],
+      notFound: resolved?.notFound ?? 0,
+    });
+    return true;
+  }
+  if (seg[1] !== "conversations") return false;
+  const id = seg[2] ?? "";
   // A question: in a new conversation, or as the next one of a conversation. The answer comes later; read the conversation for it.
   if (method === "POST" && (seg.length === 2 || (seg.length === 4 && seg[3] === "messages"))) {
     const body = await readJson(req);

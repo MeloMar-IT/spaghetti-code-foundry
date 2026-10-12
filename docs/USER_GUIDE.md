@@ -1952,7 +1952,7 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); the usage (admin) |
+| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); what a page context is worth (`context`); the usage (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2815,6 +2815,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
@@ -4476,6 +4477,42 @@ and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/
 
 A turn sees your question, the page you asked it on, and the last three answered questions of the
 same conversation. It sees nothing of other conversations or other accounts.
+
+### The page context
+
+So that you can ask "what is happening here?" without copying an id, a question can carry a
+**page context**: a small envelope that says where you are. It names things; it never holds them.
+
+| Part | What it is | Limit |
+|---|---|---|
+| `page` | the address of the page, such as `#/runs/<id>` | always kept |
+| `kind` and `id`, `entities` | the things selected on the page: a `run`, `issue`, `repository`, `queue`, `refinement` or `problem`, each with its id | 5 things |
+| `filters` | the filters the page shows, by name | 8 filters, 100 characters each |
+| `selection` | text you marked on the page, as plain text | 2,000 characters |
+
+The whole envelope is at most 4,000 characters. **What is too much is cut in this order:** the
+page is always kept; then the things, in the order sent; then the filters; the marked text gives
+way first and is cut at the end. The stored envelope names the parts that lost something
+(`truncated`). A page never sends its whole content.
+
+**What is refused** (400, and the question is not taken): anything else in the envelope, such as an
+owner, a role, a permission, a token or a copy of a record; markup (`<…>`) anywhere; a file path
+as an id or a filter value; a filter named after an owner, a role, a permission or a secret; and
+an address that is not `#/…`.
+
+**The server looks everything up again.** The envelope is never taken as true. When the turn
+runs, the server finds out which page the address is for your role, and looks up every named
+thing with the rule of the API call that reads it: a run only when it is yours (or you are an
+administrator). A thing that does not exist and a thing of another account give the same result:
+it is left out, and only counted. An address that is no page of your role (an old link, a page of
+the administrators) counts as no page. The model is told only what was found; the marked text is
+handed over as copied text (see "Secrets and copied text"). In this version only runs are looked
+up; other kinds are counted as not found.
+
+**Look before you send.** `POST /api/help/context` with the envelope as its body
+(`scf ask context '#/runs/<id>' --selection "…"`) answers what would be taken: the envelope as it
+would be kept, its size and the limits, the page, and the things found for your account. Nothing
+is stored and no model is called. Leave the context out of a question to ask without it.
 
 **One at a time.** Each account has one turn at a time. Turns of different people wait in one
 line, first come first served, so nobody can fill it alone.

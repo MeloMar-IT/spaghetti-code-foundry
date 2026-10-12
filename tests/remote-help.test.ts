@@ -58,6 +58,13 @@ describe("scf ask", () => {
     expect((await ask(["usage"])).code).toBe(4);
   });
 
+  it("sends a page context as the body of its own call", async () => {
+    // Ask SCF is off here: the call reaches the server and is answered in its words
+    const off = await ask(["context", "#/runs/r1", "--kind", "run", "--id", "r1", "--selection", "exit 1", "--filters", '{"status":"failed"}']);
+    expect(off.code).not.toBe(0);
+    expect(off.out).toContain("Ask SCF is switched off on this Foundry.");
+  });
+
   it("archives, restores and completes, and deletes only after a yes", async () => {
     expect((await ask(["archive", id, "--json"])).json<{ state: string }>().state).toBe("archived");
     expect((await ask(["list", "--archived"])).out).toContain("What is a run?");

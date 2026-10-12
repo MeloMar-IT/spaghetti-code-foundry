@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: a question can carry a bounded page context that the server checks and looks up again (#230). Part of #226.
+  - **The envelope.** With `page` and one selected thing (as before), a question may now name up to 5 things (`entities`), up to 8 visible filters (`filters`) and up to 2,000 characters of marked text (`selection`). The whole is at most 4,000 characters; what is too much is cut in a fixed order (page, things, filters, marked text) and the stored envelope says what was cut.
+  - **Refused** (400): any other field (owner, role, permissions, a token, a copy of a record), markup, a file path as an id or filter value, and a filter named after ownership, permission or a secret.
+  - **Looked up again.** When the turn runs, the server works out which page the address is for the asker's role and looks up every named thing with the rule of the API call that reads it. A thing of another account and a thing that does not exist are both left out and only counted. The model is told only what was found. In this version runs are looked up; other kinds count as not found.
+  - **New call** `POST /api/help/context` (`scf ask context`): what would be taken from a context, without storing or asking anything.
+  - **Changed for callers.** An id or filter that is a file path or markup is now refused where the first version stored it. The model no longer gets an id the account cannot see; it gets the page type instead.
+  - Code in `src/help/context.ts`; "The page context" in chapter 14 of `docs/USER_GUIDE.md`, "Ask SCF: the page context" in `docs/DESIGN.md`. Tests in `tests/help-context.test.ts` and `tests/help-context-api.test.ts`. The interface does not send the new parts yet.
 - Ask SCF: a defence against orders hidden in copied text, and secrets are taken out (#242). Part of #226.
   - **Secrets.** Before a question is stored, before anything goes to the model and before a reply is stored, the server removes stored credentials (by value), private keys, authorization headers, cookies, sign-ins in addresses, common token shapes, values of names like `DB_PASSWORD=…`, and what matches the new optional setting `help.sensitive_patterns`. In its place stands a mark that names the kind, such as `[removed: a token]`; the message also lists the kinds (`redacted`). The server log names kinds only.
   - **Copied text is data.** A source can now carry a short excerpt (at most 1,200 characters, 8,000 for one turn). Excerpts stand in their own part of the request, apart from the rules and from the question. A source that reads like an order to the model is left out and cannot be cited.

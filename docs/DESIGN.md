@@ -826,6 +826,38 @@ refinement flows and `src/server/generate.ts`: no flow, no run folder, no schedu
 Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
 the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
 
+### Ask SCF: the page context
+
+`src/help/context.ts` holds the envelope a browser may send with a question, and what the server
+makes of it.
+
+- **Shape** (`ContextSchema`, `checkEnvelope`): `page` (an address `#/…`), the selected things
+  (`kind` and `id` of the first version, and `entities`), `filters` and `selection`. Strict: an
+  unknown field (owner, role, permissions, a record, markup) refuses the envelope. Ids and filter
+  values may not be markup or a file path; a filter may not be named after ownership, permission
+  or a secret. The stored schema stays as lenient about `id` as the first version, so older files
+  still read; new input is held to the stricter rule.
+- **Size** (`CONTEXT_MAX`, measured as the JSON text): cut by `CONTEXT_PRIORITY`. A later part
+  never pushes out an earlier one; `truncated` names what lost something and is written by the
+  server only.
+- **Pages** (`HELP_PAGES`, `pageOf`): the server's copy of the pages of `ui/ia.js`, with the same
+  ids, addresses and roles (a test compares them). The address alone identifies the page; an
+  address no page has and a page of the other role both give no page.
+- **Lookup** (`resolveContext`, `EntityResolver`): at the time of the model call every named
+  thing is looked up for the asking account. `helpResolver` in `src/server/api-help.ts` reads the
+  account again (a blocked or removed account finds nothing; a changed role counts as the lower
+  one) and calls `authorize` with the rule of `GET /api/runs/:id`. Not found and not allowed are
+  one answer. Without a resolver nothing is found.
+- **In the request**: `prepareTurn` takes the resolved context only. The model gets a `PAGE` part
+  (page type and title, found things with the server's label, the count of things not found,
+  filters), the marked text as an excerpt with the id `selected-text` (which is not a source and
+  cannot be cited), and in `DATA` the address, or the address pattern (`#/runs/:id`) when its
+  thing was not found. Labels, filters and marked text pass the guard.
+- `POST /api/help/context` (`HelpTurns.describe`) shows the kept envelope and the lookup without
+  storing or asking anything.
+
+Tests: `tests/help-context.test.ts`, `tests/help-context-api.test.ts`.
+
 ### Ask SCF: the guard
 
 `src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.
