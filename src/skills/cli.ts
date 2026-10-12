@@ -11,7 +11,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
-       scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})`;
+       scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
+       scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine`;
 
 const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [] };
 

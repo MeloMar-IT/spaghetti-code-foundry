@@ -5,7 +5,8 @@ import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock, removeTree } from "../home-migrate.js";
 import { byteCmp, prepareImport, SkillImportError, type ImportRecord, type SourceTree } from "./import-plan.js";
-import { shownValue, type SkillLibrarySource } from "./sources.js";
+import { SKILL_ID_RE } from "./schema.js";
+import { approvedRefProblem, shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json and files/).
 // Nothing in the quarantine is run or loaded; the registry never scans it. One lock: <data folder>/skill-quarantine.lock.
@@ -144,17 +145,27 @@ function boundary(e: unknown): SkillImportError {
   return new SkillImportError("cannot-write", `the skill quarantine cannot be written (${code})`);
 }
 
-/**
- * Checks and stages the skills of an approved revision. Reads the tree first (no lock held), then writes under
- * skill-quarantine.lock: temp folder, verify, containment check, one rename. The same import again is "unchanged".
- */
+/** Checks and stages the skills of an approved revision: `prepareImport` (reads, no lock), then `publishImport`. */
 export function stageImport(
   source: SkillLibrarySource,
   tree: SourceTree,
   opts: { home?: string; limits?: { recordBytes?: number } } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
-  const prep = prepareImport(source, tree, { limits: opts.limits });
+  return publishImport(prepareImport(source, tree, { limits: opts.limits }), { home: opts.home });
+}
+
+/**
+ * Writes a prepared import under skill-quarantine.lock: temp folder, verify, containment check, one rename.
+ * The same import again is "unchanged". A record whose source id or commit would make an unsafe path is refused.
+ */
+export function publishImport(
+  prep: { record: ImportRecord; recordText: string; files: Map<string, Uint8Array> },
+  opts: { home?: string } = {},
+): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
   const { record, recordText, files } = prep;
+  if (typeof record.source !== "string" || !SKILL_ID_RE.test(record.source) || approvedRefProblem(record.commit)) {
+    throw new SkillImportError("not-usable", "the import record is not usable: bad source id or commit");
+  }
   const home = opts.home ?? dataHome();
   const lock = join(home, LOCK_NAME);
   let result: { record: ImportRecord; dir: string; state: "staged" | "unchanged" } | undefined;
@@ -176,9 +187,9 @@ export function stageImport(
   const write = (): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } => {
     const realHome = realpathSync(home);
     const q = join(realHome, QUARANTINE_DIR);
-    const sourceDir = join(q, source.id);
+    const sourceDir = join(q, record.source);
     privateDir(q, QUARANTINE_DIR);
-    privateDir(sourceDir, `${QUARANTINE_DIR}/${source.id}`);
+    privateDir(sourceDir, `${QUARANTINE_DIR}/${record.source}`);
     for (const n of readdirSync(sourceDir)) {
       if (TMP_RE.test(n)) {
         try {

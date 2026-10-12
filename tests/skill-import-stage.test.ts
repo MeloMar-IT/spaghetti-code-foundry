@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FACTORY_HOME } from "../src/flow/load.js";
 import { homePaths, migrateDataHome, setFactoryHome } from "../src/home.js";
 import { acquireLock, jsonFiles, lockPath, releaseLock, VERBATIM_DIRS } from "../src/home-migrate.js";
-import { SkillImportError, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
-import { IMPORT_RECORD_FILE, QUARANTINE_DIR, importStoreSettings, quarantineDir, quarantinePath, stageImport } from "../src/skills/import-stage.js";
+import { prepareImport, SkillImportError, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
+import { IMPORT_RECORD_FILE, QUARANTINE_DIR, importStoreSettings, publishImport, quarantineDir, quarantinePath, stageImport } from "../src/skills/import-stage.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const isRoot = process.getuid?.() === 0;
@@ -362,6 +362,28 @@ describe("stageImport: moved data folder", () => {
     expect(readFileSync(moved)).toEqual(bytes);
     expect(statSync(moved).mode & 0o777).toBe(0o600);
     expect(stageImport(source(), tree(files), { home: to }).state).toBe("unchanged");
+  });
+});
+
+describe("publishImport", () => {
+  it("gives the same folder and digest as stageImport", () => {
+    const other = fresh();
+    const a = stageImport(source(), tree(), { home: other });
+    const b = publishImport(prepareImport(source(), tree()), { home });
+    expect(b.state).toBe("staged");
+    expect(b.record.digest).toBe(a.record.digest);
+    expect(b.dir).toBe(dest());
+    expect(readFileSync(join(b.dir, IMPORT_RECORD_FILE))).toEqual(readFileSync(join(a.dir, IMPORT_RECORD_FILE)));
+  });
+
+  it.each([
+    ["source", { source: "../x" }],
+    ["commit", { commit: "main" }],
+  ])("refuses a record with a bad %s and writes nothing", (_n, over) => {
+    const prep = prepareImport(source(), tree());
+    const bad = { ...prep, record: { ...prep.record, ...over } };
+    expect(err(() => publishImport(bad, { home })).code).toBe("not-usable");
+    expect(existsSync(join(home, QUARANTINE_DIR))).toBe(false);
   });
 });
 

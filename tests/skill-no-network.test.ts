@@ -41,6 +41,44 @@ describe("skill code does not reach the network", () => {
     });
   }
 
+  describe("src/skill-import/", () => {
+    const gitText = readFileSync("src/skill-import/git-tree.ts", "utf8");
+    const gitCode = codeLines(gitText);
+
+    it("git-tree.ts names exactly four git commands", () => {
+      const m = gitText.match(/GIT_COMMANDS\s*=\s*\[([^\]]*)\]/);
+      expect([...m![1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1])).toEqual(["init", "fetch", "ls-tree", "cat-file"]);
+    });
+    it("git-tree.ts starts only git init, fetch, ls-tree and cat-file", () => {
+      const starts = gitCode.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
+      expect(starts.length).toBeGreaterThanOrEqual(4);
+      for (const l of starts) expect(l, l).toMatch(/(?:spawn|spawnSync)\("git", argv\("(init|fetch|ls-tree|cat-file)"/);
+      expect(gitCode.filter((l) => /\bexec\s*\(|execSync|execFile|\bfork\s*\(/.test(l))).toEqual([]);
+    });
+    it("git-tree.ts uses no network API and no module but child_process", () => {
+      expect(gitCode.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      const net = modulesOf(gitText).filter((m) => NETWORK_MODULES.test(`"${m}"`));
+      expect(net).toEqual(["node:child_process"]);
+    });
+    it("cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/cli.ts", "utf8");
+      const code = codeLines(text);
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
+    it("only src/cli.ts imports from src/skill-import/", () => {
+      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+      const files = walk("src");
+      expect(files.length).toBeGreaterThan(50);
+      const importers = files.filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /skill-import\//.test(m)));
+      expect(importers.filter((f) => !f.startsWith("src/skill-import/"))).toEqual(["src/cli.ts"]);
+      for (const f of walk("src/skill-import")) {
+        for (const m of modulesOf(readFileSync(f, "utf8"))) if (m.endsWith(".js") && m.startsWith(".")) expect(m, `${f} imports ${m}`).toMatch(/^\.\.?\//);
+        expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /skill-import\//.test(m)), f).toEqual([]);
+      }
+    });
+  });
+
   for (const f of ["src/engine/skill-lock.ts", "src/engine/plan-carry.ts"]) {
     it(`${f} starts only the two named git commands`, () => {
       const text = readFileSync(f, "utf8");

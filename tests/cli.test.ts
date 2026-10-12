@@ -181,6 +181,17 @@ describe("data folder", () => {
     writeFileSync(join(oldDir, "flows", "mine.yaml"), FLOW);
   };
 
+  it("scf skills import checks its syntax before any process starts", () => {
+    const { home } = withHome();
+    const none = scf(["skills", "import"], home);
+    expect(none.status).not.toBe(0);
+    expect(none.stderr).toContain("scf skills import <source-id> [<file>]");
+    const opt = scf(["skills", "import", "x", "--repo", "."], home);
+    expect(opt.status).not.toBe(0);
+    expect(opt.stderr).toContain("unexpected option --repo");
+    expect(scf(["--help"], home).stdout).toContain("scf skills import <source-id> [<file>]");
+  });
+
   it("scf run writes who started the run", () => {
     const { home, oldDir } = withHome();
     seedOld(oldDir);
