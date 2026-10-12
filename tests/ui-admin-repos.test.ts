@@ -124,7 +124,7 @@ describe("the page", () => {
     repos = [rec(), rec({ url: "https://github.com/o/b", method: "none" })];
     await show();
     const text = main().textContent;
-    for (const t of ["https://github.com/o/a", "Ann (ann@example.com)", "GitHub fine-grained personal access token", "Not tested yet", "Needs authentication", "Repositories", "The repositories of all accounts"]) {
+    for (const t of ["https://github.com/o/a", "Ann (ann@example.com)", "GitHub · fine-grained token", "Read not checked, Write not checked, GitHub API not checked", "Not tested yet", "Needs authentication", "Repositories", "The repositories of all accounts"]) {
       expect(text).toContain(t);
     }
     expect(walk(main()).filter((e) => e.tag === "th").map((e) => e.textContent)).toContain("Owner");
@@ -137,11 +137,57 @@ describe("the page", () => {
     for (const t of ["Settings", "Definition of Ready", "Transfer", "+ Add repository", "Change authentication"]) expect(button(main(), t), t).toBeUndefined();
   });
 
-  it("draws the Mine / All switch with All current", async () => {
+  it("draws the Mine / All / Credentials switch with All current", async () => {
     repos = [rec()];
     await show();
     const links = walk(byClass(main(), "scope-switch")[0]!).filter((e) => e.tag === "a");
-    expect(links.map((e) => [e.textContent, e.attrs.href, e.attrs["aria-current"]])).toEqual([["Mine", "#/repos", undefined], ["All", "#/all-repos", "page"]]);
+    expect(links.map((e) => [e.textContent, e.attrs.href, e.attrs["aria-current"]])).toEqual([["Mine", "#/repos", undefined], ["All", "#/all-repos", "page"], ["Credentials", "#/credentials", undefined]]);
+  });
+
+  describe("the method filter", () => {
+    const gone: string[] = [];
+    const go = (h: string) => { gone.push(h); };
+    const urls = () => walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]).map((e) => byClass(e, "mono")[0]!.attrs.title);
+    const chips = () => byClass(main(), "filter-chip").map((e) => e.textContent);
+    beforeEach(() => {
+      gone.length = 0;
+      repos = [rec({ url: "https://github.com/o/app", method: "github-app" }), rec({ url: "https://github.com/o/tok" })];
+    });
+
+    it("lists only the repositories with that method, with a chip", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "github-app" }, go });
+      expect(urls()).toEqual(["https://github.com/o/app"]);
+      expect(chips()).toEqual(["Authentication: GitHub App×"]);
+    });
+
+    it("shows all again with Clear filters", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "github-app" }, go });
+      press(button(main(), "Clear filters"));
+      expect(urls()).toHaveLength(2);
+      expect(gone).toEqual(["#/all-repos"]);
+    });
+
+    it("says so when no repository uses the method", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "ssh-deploy-key" }, go });
+      expect(main().textContent).toContain("No repository uses this authentication.");
+    });
+
+    it("removes only the chip that was pressed", async () => {
+      await ui.renderAllRepos(main(), { query: { repo: "o/app", method: "github-app" }, go });
+      expect(chips()).toHaveLength(2);
+      press(walk(main()).find((e) => e.tag === "button" && (e.attrs["aria-label"] ?? "").startsWith("Remove filter Repository")));
+      expect(gone).toEqual(["#/all-repos?method=github-app"]);
+      expect(chips()).toEqual(["Authentication: GitHub App×"]);
+      press(walk(main()).find((e) => e.tag === "button" && (e.attrs["aria-label"] ?? "").startsWith("Remove filter Authentication")));
+      expect(gone[1]).toBe("#/all-repos");
+      expect(chips()).toEqual([]);
+    });
+  });
+
+  it("shows the app as the identity of an app repository", async () => {
+    repos = [rec({ method: "github-app" })];
+    await show();
+    expect(main().textContent).toContain("GitHub · GitHub AppRead not checked, Write not checked, GitHub API not checked, limited to this repository");
   });
 
   it("sorts by attention, then owner e-mail, then address", async () => {
@@ -183,7 +229,7 @@ describe("the page", () => {
   it("reads none as the server's own access for an admin's repository", async () => {
     repos = [rec({ method: "none", account: { name: "Root", email: "root@example.com", role: "admin", status: "active" } })];
     await show();
-    expect(main().textContent).toContain("The server's own access (legacy)");
+    expect(main().textContent).toContain("GitHub · the server's own access");
     expect(main().textContent).not.toContain("Needs authentication");
   });
 

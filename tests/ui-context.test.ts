@@ -234,6 +234,10 @@ describe("chosenHash", () => {
     expect(ch("#/repos?repo=x%2Fy", "a/b", false)).toBe("#/repos?repo=all");
     expect(c.chosenHash("admin", "#/runs", { active: false, repo: "a/b", own: true })).toBe("#/runs?repo=a%2Fb");
   });
+  it("keeps the method filter of the repositories list", () => {
+    expect(ch("#/all-repos?method=github-app", "a/b", false)).toBe("#/all-repos?repo=a%2Fb&method=github-app");
+    expect(ch("#/all-repos?owner=u1&method=github-app", "", false)).toBe("#/all-repos?repo=all&owner=u1&method=github-app");
+  });
   it("gives null on pages without scope", () => {
     for (const h of ["#/runs/r1", "#/home", "#/users", "#/nope", 5]) expect(ch(h, "a/b"), String(h)).toBeNull();
     expect(ch("#/board", "a/b", true, "user")).toBeNull();
@@ -306,6 +310,9 @@ describe("clearedHash", () => {
       ["admin", "#/runs/r1"], ["admin", "#/refinement/s1"], ["admin", "#/nope"], ["user", "#/board"],
     ]) expect(c.clearedHash(role, hash, ctx), `${role} ${hash}`).toBe(hash);
     expect(c.clearedHash("admin", "#/runs", { ...ctx, active: false })).toBe("#/runs");
+    // a method filter stays when the repository chip is removed, and the result loads again with the method
+    expect(c.clearedHash("admin", "#/all-repos?method=github-app", ctx)).toBe("#/all-repos?repo=all&method=github-app");
+    expect(c.clearedHash("admin", "#/all-repos?owner=u1&method=github-app", ctx)).toBe("#/all-repos?repo=all&owner=u1&method=github-app");
     expect(c.clearedHash("admin", undefined, ctx)).toBeUndefined();
   });
 });

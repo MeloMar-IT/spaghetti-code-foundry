@@ -39,7 +39,7 @@ describe("repoAttention", () => {
   });
   it("2: the GitHub App was removed", () => {
     const r = rec({ method: "github-app" });
-    expect(s.repoAttention(r, { options: APP_OFF })).toEqual({ level: "bad", text: "GitHub App removed", action: "auth" });
+    expect(s.repoAttention(r, { options: APP_OFF })).toEqual({ level: "bad", text: "The administrator removed the GitHub App", action: "auth" });
     expect(s.repoAttention(r, {}).text).toBe("Never tested");
     expect(s.repoAttention(r, { options: { githubApp: { available: true } } }).text).toBe("Never tested");
   });
@@ -64,7 +64,7 @@ describe("repoAttention", () => {
   });
   it("keeps the order of the rules", () => {
     expect(s.repoAttention(rec({ method: "none", connection: failed() }), { admin: false }).text).toBe("Needs authentication");
-    expect(s.repoAttention(rec({ method: "github-app", connection: failed() }), { options: APP_OFF }).text).toBe("GitHub App removed");
+    expect(s.repoAttention(rec({ method: "github-app", connection: failed() }), { options: APP_OFF }).text).toBe("The administrator removed the GitHub App");
   });
 });
 

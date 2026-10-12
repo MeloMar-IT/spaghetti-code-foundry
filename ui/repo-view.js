@@ -3,9 +3,10 @@ import { h, mount, timeAgo } from "./dom.js";
 import { splitHash } from "./filters.js";
 import { card } from "./kit/display.js";
 import { pageHeader, statusSummary } from "./kit/product.js";
+import { integrationBlock, integrationOf } from "./integration.js";
 import { repoAttention, repoName } from "./repo-status.js";
 import {
-  appBlock, connectionLines, connectionStatus, fillRuns, installLink, keyBlock, loadActiveRuns, loadFailed, methodLabel,
+  appBlock, connectionLines, connectionStatus, fillRuns, installLink, keyBlock, loadActiveRuns, loadFailed,
   newKey, readyView, remove, repoDialog, repoWebUrl, test,
 } from "./repos.js";
 import { loadingState, staleNote } from "./states.js";
@@ -70,8 +71,7 @@ function overview(ctx) {
 function connection(ctx) {
   const { repo, admin, readOnly, options } = ctx;
   const c = repo.connection;
-  const items = [{ label: "Method", value: methodLabel(repo, admin) }];
-  if (repo.username) items.push({ label: "User name", value: repo.username });
+  const items = integrationBlock(integrationOf(repo, { admin, options }));
   const appGone = options && options.githubApp?.available !== true;
   return [
     statusSummary({ label: "Connection", items }),

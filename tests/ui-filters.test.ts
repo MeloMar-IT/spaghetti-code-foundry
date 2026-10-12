@@ -50,6 +50,13 @@ describe("parseQuery", () => {
     for (const t of ["repo=All", "repo=ALL"]) expect(f.parseQuery(t), t).toEqual({});
   });
 
+  it("reads the method filter and drops an unknown method", () => {
+    expect(f.parseQuery("method=github-app")).toEqual({ method: "github-app" });
+    expect(f.parseQuery("method=x")).toEqual({});
+    expect(f.formatQuery({ method: "github-app", owner: "u1", repo: "a/b" })).toBe("?repo=a%2Fb&owner=u1&method=github-app");
+    expect(f.formatQuery({ method: "x" })).toBe("");
+  });
+
   it("gives a plain object with only own keys repo and owner", () => {
     const q = f.parseQuery("repo=a%2Fb&owner=u1&x=1");
     expect(Object.keys(q).sort()).toEqual(["owner", "repo"]);

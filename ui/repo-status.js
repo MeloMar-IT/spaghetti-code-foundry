@@ -12,7 +12,7 @@ export const repoName = (repo) => str(repo?.github) || str(repo?.url);
 export function repoAttention(repo, { admin = false, options } = {}) {
   if (repo?.method === "none" && !admin) return { level: "bad", text: "Needs authentication", action: "auth" };
   if (repo?.method === "github-app" && options && options.githubApp?.available !== true) {
-    return { level: "bad", text: "GitHub App removed", action: "auth" };
+    return { level: "bad", text: "The administrator removed the GitHub App", action: "auth" };
   }
   const c = repo?.connection;
   if (c && !c.ok) {

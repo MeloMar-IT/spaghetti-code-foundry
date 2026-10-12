@@ -345,8 +345,8 @@ describe("the page", () => {
     const text = main().textContent;
     expect(text).toContain("https://github.com/o/a");
     expect(text).toContain("https://git.example.com/a/b");
-    expect(text).toContain(ui.METHODS[0].label);
-    expect(text).toContain("ann");
+    expect(text).toContain("GitHub · fine-grained token");
+    expect(text).toContain("git.example.com · token of ann");
     expect(text.split("Not tested yet")).toHaveLength(3);
     const rowButtons = walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent);
     expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Test connection"]);
@@ -769,12 +769,27 @@ describe("the page", () => {
   });
 });
 
+describe("the user display and the stored credentials", () => {
+  it("draws no switch and never asks for the stored credentials", async () => {
+    repos = [rec()];
+    const urls: string[] = [];
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = (url: string, init: any) => (urls.push(url), real(url, init));
+    await ui.renderRepos(main(), {});
+    expect(scopeSwitch()).toBeUndefined();
+    expect(urls.some((u) => u.includes("/api/admin/credentials"))).toBe(false);
+    for (const file of ["user/app.js", "repos.js", "repo-view.js", "integration.js"]) {
+      expect(readFileSync(new URL(`../ui/${file}`, import.meta.url), "utf8"), file).not.toContain("allCredentials");
+    }
+  });
+});
+
 describe("the Mine / All switch", () => {
   it("is drawn with switcher: true, with aria-current on Mine", async () => {
     repos = [rec()];
     await ui.renderRepos(main(), { admin: true, switcher: true });
     const links = walk(scopeSwitch()!).filter((e) => e.tag === "a");
-    expect(links.map((e) => [e.textContent, e.attrs.href, e.attrs["aria-current"]])).toEqual([["Mine", "#/repos", "page"], ["All", "#/all-repos", undefined]]);
+    expect(links.map((e) => [e.textContent, e.attrs.href, e.attrs["aria-current"]])).toEqual([["Mine", "#/repos", "page"], ["All", "#/all-repos", undefined], ["Credentials", "#/credentials", undefined]]);
     expect(main().textContent).toContain("My repositories");
   });
 
@@ -1050,7 +1065,7 @@ describe("the SSH deploy key", () => {
     // the key is on the repository page, not on the row
     expect(main().textContent).not.toContain(repos[0].publicKey);
     expect(main().textContent).not.toContain(ui.DEPLOY_KEY_HINT);
-    expect(main().textContent).toContain("SSH deploy key");
+    expect(main().textContent).toContain("deploy key ssh-ed25519");
     expect(main().textContent).toContain("Open the repository to find its public key");
     await showOne(repos[0].id);
     expect(main().textContent).toContain(repos[0].publicKey);

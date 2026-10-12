@@ -16,15 +16,26 @@ beforeAll(async () => {
 afterAll(() => restore());
 
 let list: any[];
+let repos: any[];
+let reposStatus: number;
+let fetched: string[];
 let heldGets: (() => void)[][];
 const realFetch = globalThis.fetch;
 let nextId = 1;
 
 beforeEach(() => {
   list = [];
+  repos = [];
+  reposStatus = 200;
+  fetched = [];
   heldGets = [];
   delete (globalThis as any).location;
-  (globalThis as any).fetch = async () => {
+  (globalThis as any).fetch = async (url: string) => {
+    fetched.push(url);
+    if (url === "/api/admin/repos") return { ok: reposStatus === 200, status: reposStatus, statusText: "x", json: async () => (reposStatus === 200 ? repos : { error: "broken" }) };
+    if (url === "/api/repos/methods") {
+      return { ok: true, status: 200, statusText: "x", json: async () => ({ methods: ["github-token", "github-app"], githubApp: { available: true, installUrl: "https://github.com/apps/foundry-bot/installations/new" } }) };
+    }
     const snapshot = [...list];
     const wait = heldGets.shift();
     if (wait) await new Promise<void>((r) => wait.push(r));
@@ -62,11 +73,11 @@ describe("the page", () => {
     list = [rec({ ownerName: "Zed", name: "z" }), rec({ lastUsed: "2026-10-02T09:00:00.000Z" })];
     await show();
     expect(walk(main()).find((e) => e.tag === "h1")!.textContent).toBe("Credentials");
-    expect(walk(main()).filter((e) => e.tag === "th").map((e) => e.textContent)).toEqual(["Owner", "Name", "Type", "Fingerprint", "Created", "Last used"]);
+    expect(walk(main()).filter((e) => e.tag === "th").map((e) => e.textContent)).toEqual(["Owner", "Provider", "Identity", "Scope", "Fingerprint", "Created", "Last used"]);
     const created = ui.whenText("2026-10-01T08:00:00.000Z");
     expect(rows()).toEqual([
-      ["Zed", "z", "token", "0123456789abcdef", created, "never"],
-      ["Ann", "gh", "token", "0123456789abcdef", created, ui.whenText("2026-10-02T09:00:00.000Z")],
+      ["Zed", "No repository", "token z", "—", "0123456789abcdef", created, "never"],
+      ["Ann", "No repository", "token gh", "—", "0123456789abcdef", created, ui.whenText("2026-10-02T09:00:00.000Z")],
     ]);
   });
 
@@ -92,8 +103,57 @@ describe("the page", () => {
   it("sets text as text", async () => {
     list = [rec({ name: "<img src=x onerror=1>" })];
     await show();
-    expect(rows()[0]![1]).toBe("<img src=x onerror=1>");
+    expect(rows()[0]![2]).toBe("token <img src=x onerror=1>");
     expect(walk(main()).filter((e) => e.tag === "img")).toEqual([]);
+  });
+});
+
+describe("the integration of a credential", () => {
+  const repo = (over: object = {}) => ({
+    id: "r1", owner: "u1", url: "https://github.com/o/a", method: "github-app", account: { role: "user" },
+    connection: { ok: false, at: "2026-10-01T08:00:00.000Z", checks: [
+      { check: "clone", ok: true, message: "ok" }, { check: "push", ok: false, message: "no" }, { check: "github-api", ok: true, skipped: true, message: "skipped" },
+    ] },
+    ...over,
+  });
+
+  it("shows provider, identity and scope of the repository of repo:<id>", async () => {
+    list = [rec({ name: "repo:r1" })];
+    repos = [repo()];
+    await show();
+    expect(rows()[0]!.slice(0, 4)).toEqual(["Ann", "GitHub", "GitHub App foundry-bot", "Read works, Write failed, GitHub API not checked, limited to this repository"]);
+  });
+
+  it("does not match a repository of another owner", async () => {
+    list = [rec({ name: "repo:r1", owner: "u2" })];
+    repos = [repo()];
+    await show();
+    expect(rows()[0]!.slice(1, 3)).toEqual(["No repository", "token repo:r1"]);
+  });
+
+  it("says the details are unavailable when the repositories cannot be loaded, and keeps the metadata", async () => {
+    list = [rec({ name: "repo:r1" })];
+    repos = [repo()];
+    reposStatus = 500;
+    await show();
+    expect(rows()[0]).toEqual(["Ann", "Unavailable", "Details unavailable (token repo:r1)", "—", "0123456789abcdef", ui.whenText("2026-10-01T08:00:00.000Z"), "never"]);
+  });
+
+  it("has Credentials as the current scope and marks the cells that wrap", async () => {
+    list = [rec()];
+    await show();
+    const links = walk(main()).filter((e) => e.tag === "a");
+    expect(links.map((a) => a.textContent)).toEqual(["Mine", "All", "Credentials"]);
+    expect(links.filter((a) => a.attrs["aria-current"] === "page").map((a) => a.textContent)).toEqual(["Credentials"]);
+    const tds = walk(main()).filter((e) => e.tag === "td");
+    expect(tds[4]!.attrs.class).toBe("mono fingerprint");
+    expect(tds[2]!.attrs.class).toBe("integration");
+    expect(readFileSync(new URL("../ui/css/components.css", import.meta.url), "utf8")).toContain(".table td.integration, .table td.fingerprint { overflow-wrap: anywhere; }");
+  });
+
+  it("asks for the credentials, the repositories and the methods", async () => {
+    await show();
+    expect([...fetched].sort()).toEqual(["/api/admin/credentials", "/api/admin/repos", "/api/repos/methods"]);
   });
 });
 
