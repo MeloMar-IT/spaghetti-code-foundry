@@ -17,6 +17,7 @@ import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMo
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, specOf, toTarget, type Target } from "./targets.js";
 import { stepOverride } from "../analyst/overrides.js";
+import { stepIdentity } from "../evidence/record.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -346,6 +347,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     defaults: scope.flow.defaults,
     sandbox: { step: step.sandbox, flow: scope.flow.sandbox.claude, config: config.sandbox.claude, boxed },
   });
+  const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+  let fallbackFrom: string | undefined;
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -354,6 +357,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
+    if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools });
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
@@ -364,6 +368,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.log(`    ↻ ${target.label}: ${(r.error || r.output).trim().split("\n")[0]!.slice(0, 120)} — trying again in ${Math.round(wait / 1000)}s`);
       engine.summary.totalCostUsd += r.costUsd ?? 0;
       if (!(await pause(wait, engine.signal))) return { ...r, ...tries() };
+      engine.evidence?.stepRetried(identity, "outage");
       continue;
     }
     // Signed out: pause like a usage limit (the run is tried again by itself) instead of failing.
@@ -384,6 +389,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     engine.log(`    ↪ ${target.label} hit a limit — retrying on ${next.label}`);
     engine.summary.totalCostUsd += r.costUsd ?? 0;
     models++;
+    engine.evidence?.stepRetried(identity, "limit");
+    fallbackFrom = target.label;
     target = next;
   }
 }

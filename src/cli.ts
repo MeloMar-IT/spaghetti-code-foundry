@@ -267,6 +267,7 @@ async function main(argv: string[]): Promise<number> {
         runsDir,
         from: cmd === "resume" ? values.from : undefined,
         decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
+        actor: { kind: "cli" },
         log: (m) => process.stdout.write(m + "\n"),
       });
       return report(summary);
@@ -351,7 +352,7 @@ async function main(argv: string[]): Promise<number> {
       let stopping = false;
       process.on("SIGINT", () => {
         if (stopping) {
-          for (const a of scheduler.queue().active) scheduler.cancel(a.runId);
+          for (const a of scheduler.queue().active) scheduler.cancel(a.runId, { kind: "cli" });
           log("cancelling running runs (they resume on the next start)…");
           setTimeout(() => process.exit(130), 3000).unref();
           return;

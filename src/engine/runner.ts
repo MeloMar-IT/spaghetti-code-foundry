@@ -35,6 +35,8 @@ import { render } from "./template.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
+import type { Actor } from "../evidence/identity.js";
+import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -52,6 +54,12 @@ interface CommonOptions {
   config?: Config;
   /** The daily budget of an account; without it only the global budget applies. */
   userDailyBudget?: (owner: string) => number | undefined;
+  /** Evidence only: who asked for this start or resume. Without it a new run is read from `source`; a resume is the Foundry's. */
+  actor?: Actor;
+  /** Evidence only: when the job was put in the queue (absent for a run that was not queued). */
+  queuedAt?: string;
+  /** Evidence only: who cancelled the run, asked when it ends as cancelled. */
+  cancelledBy?: () => Actor | undefined;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -133,6 +141,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     saveRun(summary);
   });
   opts.onUpdate?.(summary);
+  const evidence = runRecorder(summary);
+  evidence.queued(opts.queuedAt);
+  evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
 
   try {
@@ -175,6 +186,9 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
   claimRunStart(opts.runsDir, () => saveRun(summary));
+  const evidence = runRecorder(summary);
+  evidence.queued(opts.queuedAt);
+  evidence.resumed(from, opts.actor ?? SYSTEM_ACTOR);
   summary.state.visits = {}; // fresh loop budget
   return drive(summary, opts, config, { startAt: from, decision });
 }
@@ -259,6 +273,8 @@ async function drive(
     log,
     save,
     decision: resume?.decision,
+    evidence: runRecorder(summary),
+    actor: opts.actor,
     remainingBudget: () => {
       const left = [
         runCap !== undefined ? runCap - summary.totalCostUsd : undefined,
@@ -302,6 +318,7 @@ async function drive(
   const marker = markRunning(summary.runId);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
   let result: LoopResult;
+  if (!resume) engine.evidence?.started(summary);
   try {
     result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir, userLeft);
   } catch (e) {
@@ -313,7 +330,7 @@ async function drive(
 }
 
 /** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting. */
-export function cancelWaitingRun(runsDir: string, runId: string, config: Config = loadConfig()): RunSummary | undefined {
+export function cancelWaitingRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
   const s = loadRun(runsDir, runId);
   if (!s || s.status !== "waiting") return undefined;
   s.status = "cancelled";
@@ -322,6 +339,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   s.finishedAt = new Date().toISOString();
   if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
   saveRun(s);
+  runRecorder(s).ended(s, { cancelledBy: by });
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -361,6 +379,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
   // The real outcome is saved first: a crash during the model call must not lose it.
   saveRun(summary);
   opts.onUpdate?.(summary);
+  runRecorder(summary).ended(summary, { failedStep: r.failedStep, cancelledBy: opts.cancelledBy?.() });
   if (r.outcome === "failed") {
     // One short model call for the cause; its note and cost are saved in a second update.
     const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal, userDailyBudget: opts.userDailyBudget }).catch(() => undefined);
@@ -449,10 +468,13 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       engine.save();
     }
 
+    const identity = stepIdentity(step, scope.prefix, visit);
     if (step.type === "approval") {
       const d = engine.decision;
       if (top && d && d.stepId === step.id) {
         engine.decision = undefined;
+        engine.evidence?.stepStarted(identity);
+        engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
         res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
         if (!d.approved) res.error = "rejected";
       } else {
@@ -465,6 +487,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       }
     } else {
       engine.accessFailed = false;
+      engine.evidence?.stepStarted(identity);
       try {
         res = await executeStep(step, scope, engine, logFile);
       } catch (e) {
@@ -497,7 +520,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
-      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here() };
+      return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
     }
     if (target === "stop") {
       if (top) summary.state.next = resumePoint(step, scope, engine);

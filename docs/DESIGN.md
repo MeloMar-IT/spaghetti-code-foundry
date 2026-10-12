@@ -175,8 +175,8 @@ Design rules:
 
 ### Evidence formats
 
-`src/evidence/` defines two formats for what a run did (#134). Nothing writes them yet; the
-stories after it do. Both are extra files in the run folder, so `run.json` stays as it is.
+`src/evidence/` defines two formats for what a run did (#134). The engine writes the events (#135,
+see "The evidence stream" below). Both are extra files in the run folder, so `run.json` stays as it is.
 
 - **`EvidenceEvent`**: one line of `runs/<run-id>/evidence.jsonl`. Every event has `version`, `id`,
   `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
@@ -200,6 +200,44 @@ stories after it do. Both are extra files in the run folder, so `run.json` stays
   steps in `EVENT_MIGRATIONS` or `MANIFEST_MIGRATIONS` and is then checked. A new field means a new
   version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
   before this), and never throws.
+
+### The evidence stream
+
+Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
+
+- **Where it is written.** `src/evidence/record.ts` (`RunRecorder`) turns what the engine already
+  has into events; `src/evidence/stream.ts` (`EvidenceStream`) writes them. The calls are at the
+  edges of the engine: `runFlow`, `resumeRun`, `finish` and `cancelWaitingRun` for the run; the
+  loop, `recordStep`, the parallel step and the model loop of `runAgentStep` for the steps. The
+  scheduler passes who asked, when the job was queued and who cancelled. No prompt reads or
+  writes evidence.
+- **Order.** `run.queued` comes first when the run came through the queue (a new run has no folder
+  while it waits, so the event is written at the start with the time it was queued), then
+  `run.created` and `run.started`. A resume adds `run.queued` (when queued) and `run.resumed`. Every
+  visit of a step is `step.started`, then what happened in it, then `step.completed` or
+  `step.failed`. A run that waits for approval or pauses ends with `run.stopped`; the approval
+  step itself starts when the decision is there.
+- **One writer, one line.** An event is one `write` of one line to a file opened for append. The
+  writes of a run come one after the other, also when parallel steps end together. `seq` is the
+  place in the file and the id follows from it (`ev-000007`), so both are stable.
+- **Checked before written.** Every event goes through `EvidenceEventSchema`. There is no free
+  text: a refused tool is its name, a model is three labels, a log is a path with its SHA-256 and
+  size (`required: true`). Reasons, notes, outputs and errors are not recorded.
+- **Never in the way.** No call throws. The first problem (the file cannot be written, an event is
+  not valid, the file holds a line that is not an event of this run) is written once to the live
+  log, and the stream stops for this start of the run. It never goes on after a hole, and a
+  stream that stopped has no end event, so such a run cannot count as verified later.
+- **Restart.** The file is read when the first event of a start is written, and again when its
+  size is not what this process left (another process wrote). Whole lines are never changed. A
+  last line without a line end is a write that was cut off: a whole event gets its line end, a
+  piece is removed.
+- **Not followed, not waited for.** The file is opened without following a link and without
+  waiting for a pipe, and only a plain file is used. The OS sandbox of a user's run denies writes
+  to both evidence files.
+- **What is derived.** A shell step whose id has the word `test` or `tests` is a test run. The
+  pull request of a run is known only when the run was started for one (`vars.pr`). A target
+  without a model name is recorded as model `default`. A cancel or resume nobody is named for is
+  the Foundry's (`system`).
 
 ---
 
@@ -495,7 +533,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | File or folder | Content |
 |---|---|
 | `config.yaml` | Settings and watchers |
-| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace |
+| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace, `evidence.jsonl` (the events of the run) |
 | `queue.json` | Queued jobs |
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |

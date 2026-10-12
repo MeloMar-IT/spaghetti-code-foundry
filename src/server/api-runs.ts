@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { actorOf } from "../evidence/record.js";
 import { CANNOT_READ, redactedJson } from "../credentials/redact.js";
 import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
@@ -200,7 +201,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { runId: id, archived }), true;
   }
   if (action === "cancel" && method === "POST") {
-    const cancelled = scheduler.cancel(id);
+    const cancelled = scheduler.cancel(id, actorOf(undefined, user.id));
     if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
     return send(res, 200, { cancelled }), true;
   }

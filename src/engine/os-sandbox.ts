@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkd
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import type { Config } from "../config.js";
+import { EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE } from "../evidence/version.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { TOOLS_DIR as TOOLS } from "./guards.js";
 import { userAccount } from "./isolation.js";
@@ -174,6 +175,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   // what the server alone writes
   out.push(`(deny file-write* (literal ${quote(join(runDir, "run.json"))}) (literal ${quote(join(runDir, "live.log"))}) (subpath ${quote(join(runDir, "logs"))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, "skill-lock.json"))}))`);
+  out.push(`(deny file-write* (literal ${quote(join(runDir, EVIDENCE_EVENTS_FILE))}) (literal ${quote(join(runDir, EVIDENCE_MANIFEST_FILE))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed
   out.push(`(deny file-write* (literal ${quote(runDir)}) (literal ${quote(lockDir)}))`);

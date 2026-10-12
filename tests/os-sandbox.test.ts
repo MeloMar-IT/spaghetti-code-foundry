@@ -63,6 +63,7 @@ describe("sandboxProfile", () => {
 
   it("keeps the skill lock of the run read-only", () => {
     expect(text).toContain('(deny file-write* (literal "/Users/mac/.data/runs/r1/skill-lock.json"))');
+    expect(text).toContain('(deny file-write* (literal "/Users/mac/.data/runs/r1/evidence.jsonl") (literal "/Users/mac/.data/runs/r1/evidence.json"))');
   });
 
   it("is ordered so that the last matching rule gives the right answer", () => {
