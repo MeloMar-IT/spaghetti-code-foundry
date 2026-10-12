@@ -647,3 +647,33 @@ describe("scf skills", () => {
     expect(r.status).toBe(1);
   });
 });
+
+describe("the skill quarantine", () => {
+  it("is never scanned as a root, also through a link", () => {
+    const e = setup();
+    const q = join(e.home, "skill-quarantine", "src", "c");
+    pkg(q, "inside");
+    const direct = run(e, { roots: [q] });
+    expect(kinds(direct)).toEqual(["root-refused"]);
+    expect(direct.problems[0]!.reason).toBe("the skill quarantine is never scanned");
+    expect(direct.skills).toEqual([]);
+    const link = join(tmp(), "link");
+    symlinkSync(join(e.home, "skill-quarantine"), link);
+    const linked = run(e, { roots: [link] });
+    expect(kinds(linked)).toEqual(["root-refused"]);
+    expect(linked.skills).toEqual([]);
+  });
+  it("is never loaded as a package of a root", () => {
+    const e = setup();
+    pkg(e.home, "skill-quarantine");
+    const reg = run(e, { roots: [e.home] });
+    expect(kinds(reg)).toContain("invalid-package");
+    expect(reg.problems.find((p) => p.kind === "invalid-package")!.reason).toBe("the skill quarantine is never scanned");
+    expect(reg.skills).toEqual([]);
+  });
+  it("a normal root still loads", () => {
+    const e = setup();
+    pkg(e.root(0), "fine");
+    expect(keys(run(e, { roots: [e.root(0)] }))).toEqual(["fine@1.0.0@skills.roots[0]"]);
+  });
+});

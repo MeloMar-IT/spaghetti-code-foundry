@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { credentialProblem } from "./credential-scan.js";
+import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
@@ -151,6 +152,7 @@ function packageBytes(p: SkillPackage): number {
 export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions = {}): SkillRegistry {
   const env = opts.env ?? process.env;
   const userHome = opts.userHome ?? homedir();
+  const home = opts.home ?? dataHome();
   const problems: SkillProblem[] = [];
   const notes: SkillNote[] = [];
   const reports: SkillSourceReport[] = [];
@@ -178,6 +180,10 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     if (personalAgentPath(src.root, env, userHome)) {
       fail("root-refused", "refused", "personal agent folders are never scanned");
+      continue;
+    }
+    if (quarantinePath(src.root, home)) {
+      fail("root-refused", "refused", "the skill quarantine is never scanned");
       continue;
     }
     let names: string[];
@@ -254,6 +260,10 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         problems.push({ kind: "too-many", ...base, reason: `the registry limit (${MAX_SKILLS_TOTAL} packages or ${MAX_SKILL_BYTES_TOTAL / 1048576} MiB) is reached; the rest are not read` });
         continue;
       }
+      if (quarantinePath(dir, home)) {
+        bad("the skill quarantine is never scanned");
+        continue;
+      }
       try {
         const pkg = loadSkillPackage(dir);
         bytes += packageBytes(pkg);
@@ -297,7 +307,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     byKey.set(s.key, s);
   }
   // Pins are looked up by key alone: the source does not matter, only the bytes.
-  const lock = readSkillLock(opts.home ?? dataHome());
+  const lock = readSkillLock(home);
   if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });
   for (const s of byKey.values()) {
     if (s.trust === "unapproved") continue;

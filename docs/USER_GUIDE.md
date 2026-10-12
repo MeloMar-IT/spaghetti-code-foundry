@@ -2838,6 +2838,8 @@ sources:
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 
+Imported library content will be kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
@@ -3482,7 +3484,7 @@ learnings, queue, locks and evals. The copy is made next to the new folder and r
 in one step, so you never see a half-done move. Paths that point into the old folder (in run state,
 lock files, `queue.json` and `config.yaml`) are rewritten. If `config.yaml` can't be rewritten
 safely, it is kept as it was and a warning lists the values that still point to the old folder.
-`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode.
+`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
 
 **The backup.** `~/.claude-factory` is never changed or deleted, except for a note file
 `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`. Nothing there is used anymore: your settings now live in
