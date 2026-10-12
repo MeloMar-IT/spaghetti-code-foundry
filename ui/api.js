@@ -79,6 +79,8 @@ export const api = {
   validate: (yaml) => req("POST", "/api/validate", { yaml }),
   generate: (request, current) => req("POST", "/api/generate", { request, current }),
   runs: (owner) => req("GET", owner ? `/api/runs?owner=${enc(owner)}` : "/api/runs"),
+  /** The runs with one status (the server applies the filter before its cap of 200 runs). */
+  runsWithStatus: (status) => req("GET", `/api/runs?status=${enc(status)}`),
   runOwners: () => req("GET", "/api/run-owners"),
   run: (id) => req("GET", `/api/runs/${enc(id)}`),
   startRun: (body) => req("POST", "/api/runs", body),
