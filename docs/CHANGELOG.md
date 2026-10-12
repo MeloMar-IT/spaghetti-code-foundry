@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Evidence 1 — versioned formats for run evidence (#134). Part of #133. New `src/evidence/`: types, zod schemas, version numbers and pure helpers only. Nothing writes evidence yet, and `run.json` is not changed.
+  - **`EvidenceEvent`** (a line of `runs/<id>/evidence.jsonl`): `version`, `id`, `seq`, `runId`, `time`, a `type` (eight run events, seven step events) and the fields of that type; `prevHash` and `hash` together, for the hash chain.
+  - **`RunEvidence`** (`runs/<id>/evidence.json`, for a run that ended): flow and its hash, the event file with count and last hash, base and final commit, models, policies, approvals, test results, files, diff and pull request.
+  - **Identities** for step, model, tool, policy, approval, test, commit, pull request and who acted. No free text and no unknown fields, so no secret has a place: a tool has no arguments, an account is an id, a pull-request address has no sign-in data or query.
+  - **Files** are named by a path inside the run folder, SHA-256, size and `required`; their contents are never copied.
+  - **Versions.** A version above the one this Foundry writes is refused with a clear sentence; a lower one is migrated step by step, then checked. A run without a manifest reads as `absent`.
+  - Tests in `tests/evidence-schema.test.ts`. `docs/DESIGN.md` updated.
 - Fix: a cap set by a helper process (the load governor, the limit forecaster) no longer holds back the resume of a run that already started. After a restart under a cap, the run that held the turn to merge could stay in the queue while the runs waiting for that turn filled every slot, so nothing was merged for hours. The cap now holds back new runs only; resumes are bound by the configured number of runs at once. Test in `tests/scheduler-fair-use.test.ts`.
 - A command line for the running Foundry: every call of the server's API is a command, `scf <area> <action> … [--json]`. 159 commands in 18 areas (`runs`, `turn`, `board`, `find`, `repos`, `refine`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server`).
   - **Sign-in.** `scf login`, `scf logout`, `scf whoami`. The same accounts and sessions as the web interface; no server change. The session is kept in `cli-session.json` in the data folder (mode 600); the password is asked without echo and never stored.

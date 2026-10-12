@@ -173,6 +173,34 @@ Design rules:
 
 ![The flow editor with a built-in flow](images/flows.png)
 
+### Evidence formats
+
+`src/evidence/` defines two formats for what a run did (#134). Nothing writes them yet; the
+stories after it do. Both are extra files in the run folder, so `run.json` stays as it is.
+
+- **`EvidenceEvent`**: one line of `runs/<run-id>/evidence.jsonl`. Every event has `version`, `id`,
+  `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
+  (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
+  `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`). `prevHash` and `hash` come
+  together and are for the hash chain.
+- **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
+  `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
+  and final commit, models, policies, approvals, test results, files, the diff and the pull request.
+  Only `finalizedAt` depends on when it was written.
+- **Identities** (`identity.ts`): step, model, tool, policy, approval, test result, commit, pull
+  request, and who acted (an account id, the command line, a watcher or the Foundry).
+- **No secrets by shape.** There is no free text: only short one-line names, ids and codes. Every
+  object refuses unknown fields. A tool has a name and no arguments; an account has an id and no
+  name; a pull-request address has no sign-in data, query or fragment.
+- **Files are named, not copied.** An `ArtifactRef` is a path inside the run folder (relative, no
+  `..`), its SHA-256, its size, and `required` (false: the file may be removed later).
+- **Versions.** `parseEvidenceEvent` and `parseRunEvidence` look at `version` first. A higher version
+  than this Foundry writes is refused with one sentence that says so; a lower one goes through the
+  steps in `EVENT_MIGRATIONS` or `MANIFEST_MIGRATIONS` and is then checked. A new field means a new
+  version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
+  before this), and never throws.
+
 ---
 
 ## 5. Agents and models
