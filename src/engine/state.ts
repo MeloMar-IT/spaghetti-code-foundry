@@ -23,6 +23,8 @@ export interface StepRecord {
   costUsd?: number;
   /** Agent step target, e.g. "codex:openai:gpt-5". */
   agent?: string;
+  /** The effort the agent step ran with, when one was set (by the flow or by the analyst). Absent on older runs. */
+  effort?: string;
   tokens?: { input: number; output: number };
   /** The agent hit a usage/rate limit and no fallback model could take over. */
   limited?: boolean;

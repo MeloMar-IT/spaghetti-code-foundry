@@ -15,7 +15,8 @@ import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
 import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, specOf, toTarget, type Target } from "./targets.js";
+import { stepOverride } from "../analyst/overrides.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -156,7 +157,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   // profiles may not nest: the outer profile holds a boxed step, so the agent's own sandbox is off
   const sandboxed = boxed ? false : asked;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
-  const effort = step.effort ?? d.effort;
+  const tuned = stepOverride(flow.name, step.id).effort;
+  if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
+  const effort = tuned ?? step.effort ?? d.effort;
   const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
   let resumeId = askedId;
   if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
@@ -247,7 +250,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
@@ -285,6 +288,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     // Claude Code prices unknown local models as if they were Claude — they cost nothing.
     costUsd: local ? 0 : r.costUsd,
     agent: t.label,
+    ...(effort ? { effort } : {}),
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
     ...claudeSkills,
     ...catalogueRecord(o),
@@ -317,7 +321,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const boxed = sb === "on";
   let target: Target;
   try {
-    target = engine.budgetFallback ?? resolveTarget(step, scope.flow, config, scope.visits[step.id] ?? 1);
+    const visit = scope.visits[step.id] ?? 1;
+    // your router rules are your policy and win; below them the analyst may have set another model for this step
+    const tuned = routeModel(config, scope.flow.name, step.id, visit) ? undefined : stepOverride(scope.flow.name, step.id).model;
+    target = engine.budgetFallback ?? (tuned ? toTarget(specOf(tuned, config), config) : resolveTarget(step, scope.flow, config, visit));
+    if (tuned && !engine.budgetFallback) engine.log(`    · model ${tuned}: set by the analyst`);
   } catch (e) {
     return { ok: false, output: "", error: (e as Error).message };
   }

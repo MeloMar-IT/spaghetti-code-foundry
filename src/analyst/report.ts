@@ -17,8 +17,9 @@ const modelName = (agent: string) => (agent.split(":").length >= 3 ? modelOf(age
 const pct = (n: number, of: number) => (of ? `${Math.round((100 * n) / of)}%` : "–");
 
 /** The report as Markdown: advice first, then the numbers behind it, then the published figures and how they were weighed. */
-export function report(c: Collected, advice: Advice[], ref: Reference, note = ""): string {
-  const out = [`# Model performance report`, "", `Runs from ${day(c.from)} to ${day(c.to)}: ${c.runs} runs, ${advice.length} step and model pairs.`, "", "This is advice to try, one step at a time. The analyst changes no flow and no setting.", ""];
+export function report(c: Collected, advice: Advice[], ref: Reference, note = "", tuning: string[] = []): string {
+  const out = [`# Model performance report`, "", `Runs from ${day(c.from)} to ${day(c.to)}: ${c.runs} runs, ${advice.length} step and model pairs.`, "", "The advice rests on what happened in your runs, not on a trial of the other model.", ""];
+  out.push(...tuning);
   for (const verdict of Object.keys(HEAD) as Verdict[]) {
     const rows = advice.filter((a) => a.verdict === verdict);
     if (!rows.length || verdict === "few") continue;

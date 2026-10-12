@@ -1858,14 +1858,17 @@ back if the new one can't start.
 #### The model analyst
 
 A separate process that reads your own runs every 6 hours and says, per step, how the model does
-and whether another level fits the work. It reads run files and writes a report. It changes no flow
-and no setting, and it does not need the server.
+and whether another level fits the work. It reads run files and writes a report, and it does not
+need the server. By default it only advises; with self-tuning on it changes the model or effort of a
+step by itself (see below).
 
 ```bash
 scf analyst install     # run every 6 hours as its own macOS login agent; the first time now
 scf analyst run         # write a report now (--no-web: do not look up published figures)
 scf analyst report      # print the last report
 scf analyst status      # uninstall removes the agent
+scf analyst auto on     # let it change models and efforts by itself; auto off: only advise
+scf analyst reset       # put back everything it changed
 ```
 
 The report is `analyst/report.md` in the data folder; the same advice as data is in
@@ -1881,8 +1884,32 @@ repaired by a `fix_*` step, or was sent back by a review, and its share of all t
   usually slower, so look at the limit and the size of the work first.
 - **Look at this.** The step got clearly worse in the last two days.
 
-Visits stopped by a usage limit are not counted against a model. Change one step at a time and read
-the next reports: the advice rests on what happened, not on a trial of the other model.
+Visits stopped by a usage limit are not counted against a model. The advice rests on what happened,
+not on a trial of the other model. Self-tuning does that trial.
+
+**Self-tuning** (`scf analyst auto on`; off by default). At every check the analyst may start a
+trial: it takes the advice with the largest token share that says "effort …" or names a Claude
+model, and sets it for that step. There is one trial per flow at a time, so the effect of a change
+can be told apart. The change is written to `analyst/overrides.json`; the engine reads that file at
+the start of every agent step, so it takes effect at the next step, also in a run that is under way.
+No flow file is changed. A router rule of yours for the step wins over the analyst.
+
+A trial is judged on the visits since it started, against the numbers of the step before it:
+
+- After 20 visits a **lower** level is kept unless the step does worse: it works more than 5 points
+  less often, its work is repaired more than 10 points more often, it times out more than 5 points
+  more often, or reviews send its work back more than 15 points more often. For a review step:
+  unless it leads to a change more than 15 points less often.
+- A **higher** level is kept only when the step works at least 5 points more often or is repaired
+  at least 10 points less often. Otherwise it is not worth its tokens and is put back.
+- After 8 visits a trial that works 25 points less often is stopped at once.
+- A trial with fewer than 20 visits in 7 days is put back.
+
+A change that was put back is not tried again for 30 days, and a step is left alone for 3 days
+after any trial. The run log of a step says "set by the analyst" when an override applied. The
+report lists what is set now, what happened at this check, and the last ten trials;
+`analyst/tuning.json` holds the full record. `scf analyst auto off` stops new trials and keeps what
+is set; `scf analyst reset` removes it all.
 
 **Published figures.** Once a week the analyst asks Claude Code (web search only, with the Claude
 sign-in of this machine) for published scores, prices and speeds of the models you use and the

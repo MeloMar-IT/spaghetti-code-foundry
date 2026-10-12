@@ -699,8 +699,15 @@ quality of a step is read from what came after it in the same run: a `fix_*` ste
 was broken, an `address_*` or `revise_*` step after a review means it was sent back. Published
 figures (`reference.ts`) are fetched once a week by a headless Claude Code session that may only
 search the web. Each figure carries who measured it; makers' figures are lowered by a tenth and can
-only veto a step down to a much weaker model. The analyst advises and never changes a flow: a
-wrong model choice made by itself would cost more than the tokens it saves.
+only veto a step down to a much weaker model.
+
+With self-tuning on (`tune.ts`), advice becomes a trial: an entry in `analyst/overrides.json` (flow →
+step → model, effort) that `runAgentStep` reads at the start of each agent step, below the user's
+router rules. Flows are never edited, so a change is one small file that can be emptied. A trial is
+a controlled change: one per flow at a time, a stored baseline, a fixed number of visits, and a rule
+that puts the old value back when the step does worse (or, for a higher level, not better). The
+effort a step ran with is stored in its step record, so that the visits before and after a change
+can be told apart.
 
 ## 18. Where it is going
 
