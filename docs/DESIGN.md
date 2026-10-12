@@ -247,6 +247,54 @@ numbers and pure functions.
   `enforce` mode. Every reason code fits the evidence format.
 - **Versions.** Each contract has its own number in `version.ts`. A record with another version is
   refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+### Context bundle
+
+`src/context/` defines the format that says what a run was given to read, and where each piece came
+from (#151). Nothing writes it yet: the stories after it select the sources (#152), give them to the
+agents read-only (#153) and show them (#154). It is an extra file in the run folder,
+`runs/<run-id>/context.json`, so `run.json` stays as it is.
+
+- **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
+  a `budget`, `policies`, `sources` and `omitted`.
+- **A source** has an `id`, a `kind`, a `uri`, a `revision`, `content` (file, SHA-256, size in
+  bytes), `owners`, a `classification`, `retrievedAt`, `freshness`, a `selection` reason and
+  `consumers`. Every field is required.
+- **Kinds and addresses** (a closed list, `uri.ts`): `repository-file` (`repo:<path>`), `issue`
+  (`issue:<number>`), `issue-comment` (`issue:<number>/comment/<id>`) and `refinement-notes`
+  (`refinement:<session id>`). An address has no host, no folder of the machine, no query and no
+  fragment, and only one spelling. The `id` is `s-` plus 16 hex characters of the SHA-256 of the
+  address, so the same source has the same id in every run.
+- **Revision.** A repository file has the full commit, and it must be the commit of the bundle.
+  The other kinds have a `version`: the time of their last change, as their origin reports it.
+- **Text is stored apart.** The bundle holds no source text. `content.path` is a file under
+  `context/` in the run folder; `sha256` and `bytes` are of exactly that file.
+- **Policy is named, not carried.** `policies` holds id and version only. No source kind is a
+  policy, so source text is always data and never an instruction.
+- **Owners** are host handles (`@user`, `@organisation/team`), never an e-mail address or a name. An
+  empty list means no owner is known.
+- **Classification**: `public`, `internal`, `confidential`, `restricted`, from least to most private
+  (`classificationAtMost`).
+- **Freshness**: `maxAgeSeconds` after `retrievedAt`, or `null` for a copy that does not go stale
+  (`staleAt`, `isStale`; the caller gives the time).
+- **Selection reason**: a code, not a sentence: `task`, `instructions`, `ownership`, `api-schema`,
+  `discovery` (with the `rule` that found the file) or `refinement`. Each kind takes only its own
+  reasons.
+- **Consumers**: the roles that may be given the source (`planner`, `coder`, `reviewer`, `tester`),
+  at least one (`mayConsume`).
+- **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
+  valid.
+- **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
+  `ambiguous`, `over-budget` or `classification`.
+- **Hash.** `serializeContextBundle` checks the bundle and writes it in one fixed form (lists and
+  fields in a fixed order), so the same bundle always gives the same bytes. `hashContextBundle` is
+  the SHA-256 of that text. `contextBundleRef` gives the evidence `ArtifactRef` for `context.json`
+  (kind `other`, required), which is how evidence names the bundle by its hash; `contextSourceRef`
+  does the same for the text of one source. `hashContextSources` is one hash over the sources only,
+  the same in every run for the same repository state and task.
+- **Versions and old runs.** `parseContextBundle` looks at `version` first, with the same rules as
+  evidence: a higher version is refused with one sentence, a lower one goes through
+  `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
+  made before this), and never throws. Error messages name fields, never values.
 
 ---
 
