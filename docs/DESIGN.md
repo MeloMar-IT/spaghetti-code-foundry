@@ -201,6 +201,53 @@ stories after it do. Both are extra files in the run folder, so `run.json` stays
   version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
   before this), and never throws.
 
+### Policy contracts
+
+`src/policy/` defines what a policy is, what it is asked and what it answers (#141). Nothing in the
+engine asks a policy yet; the stories after it do. The folder has no side effects: schemas, version
+numbers and pure functions.
+
+- **`PolicyPack`**: one version of one policy. `version` is the version of the format. `policy` is
+  the `id` of the pack and the `version` its author gave the contents: the same pair evidence
+  carries as its policy identity. `mode` is `observe` (decisions are only recorded) or `enforce`.
+  `rules` are read from the first to the last; `defaultOutcome` (`allow` or `deny`) decides when no
+  rule applies.
+- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`.
+  `when` has at most one condition per fact, and all of them must hold: `in` or `notIn` with
+  patterns for a text (`*` stands for any characters, nothing else is special), `in` or `notIn` with
+  fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
+  equal), `true` or `false` for a flag.
+- **`PolicyInput`**: `version`, `boundary`, `runId` and `facts`. The boundaries are `run.start`,
+  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume` and
+  `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
+  workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
+  run and daily cost, and six flags. All are optional and none is free text. A caller gives what it
+  knows and never a guess.
+- **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
+  `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
+  `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
+  SHA-256 of the canonical JSON (keys sorted, no spaces).
+- **Reason codes** are a closed list (`src/policy/reasons.ts`), each with one sentence. A code is
+  never renamed, reused or removed; a new meaning gets a new code. Codes for rules:
+  `branch.protected`, `branch.hotfix-exception`, `secret.detected`, `path.forbidden`,
+  `output.limit-exceeded`, `timeout.exceeded`, `budget.step-exceeded`, `budget.run-exceeded`,
+  `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
+  `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
+  `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
+  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`.
+- **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
+  network, model, clock or randomness; the caller gives the time. A rule that does not name the
+  boundary of the input is passed over. The first rule whose conditions all hold decides. A rule
+  that needs a fact the input does not have cannot be judged: the answer is `deny` with
+  `policy.input-incomplete`. An exception (such as the hotfix merge) is a rule before the rule it
+  is an exception to. Bad data decides nothing: the pack, the input and the time are checked first
+  and a `PolicySchemaError` names the fields that are wrong.
+- **Evidence.** `policyIdentityOf(decision)` is the policy identity of #134, and
+  `policyDenial(decision, tool?)` is the `denial` of a `step.denied` event: only for `deny` in
+  `enforce` mode. Every reason code fits the evidence format.
+- **Versions.** Each contract has its own number in `version.ts`. A record with another version is
+  refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+
 ---
 
 ## 5. Agents and models
