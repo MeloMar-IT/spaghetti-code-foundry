@@ -45,7 +45,7 @@ const consumersMatchTheSkillRoles: Same<ContextConsumer, SkillRole> = true;
 void consumersMatchTheSkillRoles;
 
 /** Why a source that was expected is not in the bundle. Each has its own next action for the reader. */
-export const CONTEXT_OMISSION_REASONS = ["missing", "stale", "ambiguous", "over-budget", "classification"] as const;
+export const CONTEXT_OMISSION_REASONS = ["missing", "stale", "ambiguous", "over-budget", "classification", "generated", "unsupported"] as const;
 export type ContextOmissionReason = (typeof CONTEXT_OMISSION_REASONS)[number];
 
 /** The most entries one list of a bundle can have, whatever its budget says. */
@@ -167,7 +167,9 @@ const omitted = <K extends ContextSourceKind, U extends z.ZodType, S extends z.Z
       /**
        * Why it is not in the bundle: `missing` (it does not exist at this revision), `stale` (the copy was too old),
        * `ambiguous` (more than one source fits and none could be chosen), `over-budget` (it did not fit the budget),
-       * `classification` (it is more private than the run may be given).
+       * `classification` (it is more private than the run may be given), `generated` (the repository marks it as made
+       * by a program: read what it is made from), `unsupported` (it is not a regular text file: a link, a submodule
+       * or a binary file).
        */
       reason: z.enum(CONTEXT_OMISSION_REASONS),
     })

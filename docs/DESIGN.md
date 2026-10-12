@@ -204,8 +204,9 @@ stories after it do. Both are extra files in the run folder, so `run.json` stays
 ### Context bundle
 
 `src/context/` defines the format that says what a run was given to read, and where each piece came
-from (#151). Nothing writes it yet: the stories after it select the sources (#152), give them to the
-agents read-only (#153) and show them (#154). It is an extra file in the run folder,
+from (#151), and the selector that makes one (#152, see "Context selection" below). No run has a
+bundle yet: the stories after it give the sources to the agents read-only (#153) and show them
+(#154). It is an extra file in the run folder,
 `runs/<run-id>/context.json`, so `run.json` stays as it is.
 
 - **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
@@ -238,7 +239,8 @@ agents read-only (#153) and show them (#154). It is an extra file in the run fol
 - **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
   valid.
 - **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
-  `ambiguous`, `over-budget` or `classification`.
+  `ambiguous`, `over-budget`, `classification`, `generated` (the repository marks the file as made
+  by a program) or `unsupported` (not a regular text file: a link, a submodule or a binary file).
 - **Hash.** `serializeContextBundle` checks the bundle and writes it in one fixed form (lists and
   fields in a fixed order), so the same bundle always gives the same bytes. `hashContextBundle` is
   the SHA-256 of that text. `contextBundleRef` gives the evidence `ArtifactRef` for `context.json`
@@ -249,6 +251,63 @@ agents read-only (#153) and show them (#154). It is an extra file in the run fol
   evidence: a higher version is refused with one sentence, a lower one goes through
   `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
   made before this), and never throws. Error messages name fields, never values.
+
+### Context selection
+
+`selectContext` (`src/context/select.ts`) makes a bundle and the text of its sources from one
+repository at one commit and the inputs of a task (#152). It is a function: no model, no network
+and no clock (the caller gives `now`). The same repository state and task give the same sources and
+hashes (`hashContextSources`). **It is not called by the engine yet**: giving a run its context is
+#153.
+
+- **Inputs.** A snapshot of the repository, the task (the issue text, its comments and the accepted
+  refinement notes, all fetched by the caller; and the paths the task is about), a budget, the
+  policy profile (id and version, which goes into `policies` and is never a source), and optionally
+  the rules to run, a classification, the most private classification allowed, the consumers and
+  how long a fetched input stays fresh.
+- **Only the declared commit.** `openRepositoryAt(folder, commit)` (`repository.ts`) reads through
+  git only: `ls-tree` of the full commit id, then `cat-file` by the object id from that list. The
+  working tree is never read, so a changed, new or left-over file cannot get in. The folder must be
+  the repository itself (a repository above it is not used), a branch, a tag or a short id is
+  refused, and git runs without the caller's `GIT_*` variables, without user or system settings and
+  without fetching missing objects. A link is listed as a link and never followed; its text is not
+  read either. A path that is not a safe relative path is never looked at.
+- **Rules**, in this fixed order (`CONTEXT_RULES`; the id is written to `selection.rule`):
+
+  | Rule | Picks | When it is not there |
+  |---|---|---|
+  | `task-issue` | the issue text | nothing |
+  | `refinement-notes` | the accepted refinement notes | nothing |
+  | `root-instructions` | `AGENTS.md` and `CLAUDE.md` in the root | both `missing`, when there is neither |
+  | `nested-instructions` | `AGENTS.md` and `CLAUDE.md` in every folder above a path the task names | nothing |
+  | `ownership-file` | the first of `.github/CODEOWNERS`, `CODEOWNERS`, `docs/CODEOWNERS` | `.github/CODEOWNERS` is `missing` |
+  | `task-comments` | the comments on the issue, oldest first | nothing |
+  | `named-in-task` | files the task names: the paths the caller gives, and paths of the commit spelled out in the task text | a path the caller gave is `missing` |
+  | `api-schema-files` | `openapi`, `swagger` and `asyncapi` files (`.json`, `.yaml`, `.yml`), `schema.graphql(s)`, `*.proto`, `*.graphql(s)`, `*.avsc`, `*.openapi.*`; nearest to the root first; not in `node_modules`, `vendor`, `third_party`, `dist`, `build`, `target`, `out` or a folder that starts with a dot | nothing |
+  | `root-readme` | `README.md` in the root | `missing` |
+
+  An address is decided by the first rule that finds it.
+- **Checks per file**, the cheap ones first: not in the commit (`missing`); a link or a submodule
+  (`unsupported`); too private (`classification`); marked `linguist-generated` in `.gitattributes`
+  (`generated`; the nearest `.gitattributes` that speaks about the path decides); does not fit the
+  budget (`over-budget`, known from the size in the list, so the file is not read); not UTF-8 text
+  (`unsupported`); a comment in its first five lines says "Generated by", "@generated", "DO NOT
+  EDIT", "automatically generated" or "auto-generated" (`generated`, as in `flows/*.yaml`).
+- **Budget.** The order of the rules is the order of importance. Candidates are taken in that
+  order; one that is larger than `maxSourceBytes`, or does not fit what is left of `maxSources` and
+  `maxTotalBytes`, is left out as `over-budget` and the next one is tried. So what a later rule
+  found is left out first, and a small file may still fit after a large one did not.
+- **Owners** come from the ownership file, and only when that file is in the bundle: the last line
+  that matches a path decides, as on the host. Only handles are kept; an e-mail address cannot be
+  written in a bundle and is counted, not kept. Patterns are matched part by part with a table,
+  never as a regular expression, so a hostile pattern cannot stall the selector (`patterns.ts`).
+- **Diagnostics.** What a bundle has no field for is returned next to it as a code and a number:
+  owners that are not handles, unsafe paths in the task, paths of the commit that were never looked
+  at, a `.gitattributes` file that could not be read, and omissions above the 1000 a bundle lists.
+- **Writing** (`store.ts`): `writeContextBundle(folder, bundle, texts)` checks every text against
+  its hash, then writes `context/<source id>` per source and `context.json` last, and returns the
+  evidence `ArtifactRef`. It never replaces a file: a folder that already has `context.json` or
+  `context/` is refused. Nothing calls it yet.
 
 ---
 
