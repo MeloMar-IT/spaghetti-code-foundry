@@ -3,6 +3,7 @@ import { parse as parseYaml } from "yaml";
 import { estimateTokens } from "./catalogue.js";
 import { credentialProblem, riskyFileName } from "./credential-scan.js";
 import { boundReasons, byteCmp, type ImportRecord, type RejectedSkill } from "./import-plan.js";
+import { buildSkillIdentity, type SkillIdentity } from "./identity.js";
 import { canonicalJson, plainProblem } from "./normalize-values.js";
 import {
   FIELD_ALIASES, MCP_TOOL_PREFIX, NORMALIZE_ID_HEADER, NORMALIZE_LIMITS, SKILL_LAYOUTS, STANDARD_KEYS, TOOL_EFFECTS,
@@ -52,13 +53,14 @@ export interface NormalizedSkill {
   package: SkillPackage;
   provenance: SkillProvenance;
   extraFiles: SkillFile[];
+  identity: SkillIdentity;
 }
 export interface NormalizationReport {
   schema: 1;
   source: string;
   repositoryKey: string;
   commit: string;
-  normalized: { root: string; id: string; name: string; version: string; digest: string; layout: string }[];
+  normalized: { root: string; id: string; name: string; version: string; digest: string; fingerprint: string; layout: string }[];
   quarantined: RejectedSkill[];
 }
 export type NormalizeResult = { ok: true; skill: NormalizedSkill } | { ok: false; reasons: string[] };
@@ -534,12 +536,24 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
   if (metadata.length) pkg.metadata = Object.fromEntries(metadata.sort((a, b) => byteCmp(a[0], b[0])));
   if (allowedTools !== undefined) pkg.allowedTools = allowedTools;
 
+  const identity = buildSkillIdentity({
+    id: pkg.id,
+    source: origin.source,
+    repositoryKey: origin.repositoryKey,
+    name,
+    version: pkg.version,
+    versionDeclared: rawVersion !== undefined,
+    digest: pkg.digest,
+    files,
+  });
+
   const layout = mf ? "foundry" : fromExtended ? "extended" : fromMetadata ? "metadata" : "plain";
   return {
     ok: true,
     skill: {
       package: pkg,
       extraFiles,
+      identity,
       provenance: {
         schema: 1,
         source: origin.source,
@@ -608,6 +622,7 @@ export function normalizeImport(prep: { record: ImportRecord; files: ReadonlyMap
     name: s.provenance.name,
     version: s.package.version,
     digest: s.package.digest,
+    fingerprint: s.identity.fingerprint,
     layout: s.provenance.layout,
   }));
   return { skills, report: buildReport(origin, normalized, rejected) };

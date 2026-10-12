@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill deduplication 1 — canonical identity and content fingerprints (#208). Part of #196.
+  - **What it does.** New `src/skills/identity.ts` with `skillFingerprint` (a SHA-256 over the skill's content that ignores provenance, `skill.yaml`, `.DS_Store`, the folder name, line endings and a BOM in `.md`/`.txt` documents, frontmatter layout and the Unicode form of paths), `buildSkillIdentity` (`SkillIdentity`: `id`, `upstream`, `name`, `version`, `fingerprint`, `digest`) and `relateSkills` (`same-artifact`, `same-content`, `version-conflict`, `other-version`, `distinct`). `normalizeSkill` returns the `identity`, and the normalization report lists a `fingerprint` per skill.
+  - **Scripts and assets are exact.** Files under `scripts/` and `assets/`, and files that are not `.md`/`.txt` documents (for example a root `run.sh`), are hashed byte for byte, so a line-ending change there is a different artifact. A `SKILL.md` whose frontmatter does not parse is hashed as text and never equals a valid one.
+  - **Body kept.** The `SKILL.md` body is hashed as written (only line endings change); indentation and trailing blank lines count.
+  - **Unchanged.** `SkillPackage`, `skillDigest`, the registry, pins, run locks, `id@version` and the `digest` field. Nothing reads the fingerprint yet. No command, config, run or flow format change.
+  - **Tests.** `tests/skill-identity.test.ts` (fingerprint, relations and fixtures in `tests/fixtures/skill-identity/`) and additions to `tests/skill-normalize.test.ts`. `docs/USER_GUIDE.md` updated.
 - Skills.sh metadata discovery without automatic trust (#213). Part of #196.
   - **Command.** `scf skills discover [<export-file> [<file>]]` reads a saved Skills.sh export (no scraping, no site calls), resolves each GitHub https repository to its current `HEAD` commit with `git ls-remote`, and stores it as a `proposed` candidate in `<data folder>/skill-source-candidates.json`. It prints `PROPOSED`, `KNOWN` (already in `skill-sources.yaml`, any status), `UNRESOLVED` and `PROBLEM` lines. With no operand it lists the stored candidates.
   - **No trust.** The command never writes the allowlist, the lock, the quarantine or releases. Trust, licence, popularity and safety claims from the export are not copied; credential-like entries are dropped. It is optional: runs never read the list.

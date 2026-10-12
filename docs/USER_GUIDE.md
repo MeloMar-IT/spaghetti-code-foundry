@@ -2951,6 +2951,49 @@ Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef012345
 - **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
 - **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
 
+#### Skill identity and content fingerprint
+
+Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
+
+- **`id`:** the source-qualified id, `<source>-<name>-<hash>`. It changes with the source id.
+- **`upstream`:** `<repository>#<name>`. The same for every source record of one repository.
+- **`name` and `version`:** the name in `SKILL.md` and its version. An undeclared version is `0.0.0-g<commit>`.
+- **`fingerprint`:** a hash of the skill's content (`sha256:…`).
+- **`digest`:** the raw package digest, as pins and locks use it.
+
+**What the fingerprint ignores**
+
+- `skill.yaml` at the top of the skill, and `.DS_Store` files anywhere.
+- The folder name: paths are relative to the skill, so a renamed folder is the same skill.
+- The Unicode form of a path (NFC or NFD).
+- In `.md` and `.txt` files outside `scripts/` and `assets/`: CRLF or LF line endings, and a byte-order mark.
+- In `SKILL.md` frontmatter: key order, quoting and YAML comments. Values are compared after parsing.
+- The source, repository and commit.
+
+**What changes it**
+
+- Any instruction or frontmatter value in `SKILL.md`, including indentation and trailing blank lines in the body.
+- Any change to a file under `scripts/`, `references/`, `assets/` or at the root, including `LICENSE.txt`, `REVIEW.md` and `evals/`. Scripts, assets and other non-document files are compared byte for byte, so line endings there count.
+- Adding, removing, renaming or moving a file.
+- A `SKILL.md` whose frontmatter does not parse.
+
+**New version or new source record?**
+
+- **Same source record, changed content:** give it a new version. The same version with another fingerprint is a reused version and is reported as `version-conflict`.
+- **Same version, same content, new commit:** no new version is needed. The fingerprint does not change.
+- **Another repository** (a mirror, a fork, a moved or renamed repository): it gets its own `id` and `upstream`. It matches the original only by fingerprint.
+- **A changed `name` in `SKILL.md`:** this is a different skill, not a new version.
+- **A changed source `id` in `skill-sources.yaml`:** all of its skills get new ids.
+- **Neither:** a renamed folder, or a changed `paths` entry.
+
+**How two skills relate** (`relateSkills`, symmetric):
+
+- `same-artifact`: same fingerprint, same repository and name, same version.
+- `same-content`: same fingerprint otherwise, such as a mirror or an unchanged fork.
+- `version-conflict`: same repository and name and version, other content.
+- `other-version`: same repository and name, other version and content.
+- `distinct`: anything else. A skill with the same name in another repository is not linked unless the fingerprints match.
+
 #### Discover candidate sources from Skills.sh
 
 `scf skills discover [<export-file> [<file>]]` proposes candidate sources from a saved Skills.sh export. It does not call Skills.sh and does not scrape it. Nothing it finds is approved, fetched or staged. You add a source to `skill-sources.yaml` by hand.
