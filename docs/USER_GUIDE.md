@@ -2835,7 +2835,7 @@ A pin ties one skill version to the exact content you looked at. If the content 
 
 ### Skill library sources
 
-An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run yet, and nothing is fetched from the network.
+An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import` fetches from the network, and never during a run.
 
 ```yaml
 schema: 1
@@ -2861,7 +2861,31 @@ sources:
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 
-Imported library content will be kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
+Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
+
+#### Import a source into quarantine
+
+`scf skills import <source-id> [<file>]` reads `skill-sources.yaml` (or the file you name), fetches the approved commit of an enabled source and stages its skills in quarantine. Nothing is loaded or run.
+
+```
+scf skills import example-skills
+```
+
+```
+REJECTED skills/link: a symbolic link
+OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (staged)
+Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
+```
+
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
+- **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
+- **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.
+- **`(staged)` and `(unchanged)`.** A second import of the same commit prints the same digest and `(unchanged)`. If the folder holds a different import of this commit, the result is `conflict`: remove the folder and import again.
+- **Ctrl-C.** The import stops and nothing is staged. Once writing into the quarantine has started, the import is finished.
+- **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
+- **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
 
 ### Skill catalogue
 

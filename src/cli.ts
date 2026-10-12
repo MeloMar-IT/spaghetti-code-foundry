@@ -46,7 +46,8 @@ Usage:
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
-  scf validate <flow|file.yaml>                  Check a flow definition
+  scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
+  scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
   scf new <name> [--from <flow>] [--global]      Create your own flow (copies a template)
@@ -272,6 +273,7 @@ async function main(argv: string[]): Promise<number> {
     case "skills": {
       const { skillsCommand } = await import("./skills/cli.js");
       const { help: _h, ...given } = values;
+      if (arg === "import") return (await import("./skill-import/cli.js")).skillImportCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
     }
 

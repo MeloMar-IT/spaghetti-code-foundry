@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries foundation 3b — fetch an approved commit into quarantine (#458).
+  - **Command.** `scf skills import <source-id> [<file>]` fetches the approved commit of an enabled source and stages it with the #457 staging step. It prints `REJECTED` lines, `OK … (staged)` or `(unchanged)`, and `Quarantine: <path>`. Exit 0 when all skills are staged, 1 for a rejection or a `PROBLEM`; usage errors exit 1 with the usage text.
+  - **Isolation.** `src/skill-import/git-tree.ts` fetches one commit into a bare temporary repository and reads it only with `ls-tree` and `cat-file`. No checkout. https only, no redirects. Git runs with an empty private `HOME` and none of your git config, credential helper, `~/.netrc` or prompts. Errors carry a fixed code, never git's text.
+  - **Limits.** 120 s, 256 MiB during the fetch, 8 MiB file list. The fetch runs in its own process group and is killed on timeout, size or interrupt. Ctrl-C or SIGTERM before writing stages nothing.
+  - **Code.** The writing part of `stageImport` is now the exported `publishImport`; `stageImport` behaves as before.
+  - **Tests.** Real-git, stub-git and real-signal tests, plus static checks that only four git commands are started and that only `src/cli.ts` imports `skill-import/`. No config, run or flow format change.
 - Guided connect and re-authentication with verification and read-back (#382). Part 3 of 5 of #262.
   - **`ui/repo-connect.js` (new).** Holds `repoDialog` (moved from `ui/repos.js`, which re-exports it, so callers do not change) and the pure helpers `storesToken`, `saveUnknown`, `replaceLines`, `verdict` and `readBack`.
   - **Steps.** **Add repository** runs in steps: 1. Address (with **Next** and **Back**; an empty address is refused on the spot), then 2. Method and 3. Details. The focus moves to the first field of each step.
