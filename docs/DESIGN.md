@@ -709,6 +709,18 @@ that puts the old value back when the step does worse (or, for a higher level, n
 effort a step ran with is stored in its step record, so that the visits before and after a change
 can be told apart.
 
+### The command line for the API
+
+`src/remote/` makes every API call a command without a second implementation of anything. A command
+is data: one entry in a table (`Cmd` in `spec.ts`) that names the route, its arguments and options,
+and how to print the answer. One runner (`cli.ts`) turns the words into the call, sends it with the
+session of `scf login`, and prints. So permissions, audit and locking stay in the server, where
+the web interface already uses them. The session is the browser's: a cookie and the CSRF token
+derived from it, so the server needed no change. The table is checked against the server's own
+list of routes (`RULES` in `permissions.ts`) in both directions: a command for an unknown route
+fails a test, and so does a new route without a command or a stated reason (`API_ONLY`). The file
+commands keep their words: `remoteCommand` returns "not mine" for anything it does not know.
+
 ### Helper processes
 
 `src/ops/` holds five helpers built like the analyst: a pure function that turns files of the data

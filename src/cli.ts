@@ -65,6 +65,11 @@ Usage:
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
+  scf login | logout | whoami                    Sign the command line in to a running Foundry
+  scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
+                                                 board, find, repos, settings, providers, monitor, flows, blocks, users,
+                                                 account, secrets, audit, admin, refine, watchers, server.
+                                                 \`scf <area>\` lists an area's commands; \`scf api routes\` lists every call
   scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
   scf governor|flaky|limits|blockage|digest run|report|install|uninstall|status
                                                  Helper processes: machine load, unreliable tests, usage limits,
@@ -160,6 +165,13 @@ function report(s: RunSummary): number {
 async function main(argv: string[]): Promise<number> {
   dropEmptyHomeVars();
   mirrorEnvPrefixes();
+  // Commands that talk to a running Foundry (scf login, scf runs list, …) take their own options; the rest work on files.
+  {
+    const { remoteCommand } = await import("./remote/cli.js");
+    const { terminalIo } = await import("./auth/cli.js");
+    const code = await remoteCommand(argv, { io: terminalIo() });
+    if (code !== undefined) return code;
+  }
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
