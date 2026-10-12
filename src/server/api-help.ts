@@ -1,8 +1,9 @@
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
 import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
 import { forRole } from "../help/contract.js";
+import { HelpDocs } from "../help/docs.js";
 import {
   CONVERSATION_LIMIT,
   DELETED_KEEP_MS,
@@ -25,6 +26,7 @@ import {
 } from "../help/store.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import { snapshotResolver } from "./help-context.js";
+import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
@@ -49,12 +51,27 @@ export function helpResolver(ctx: ApiContext): EntityResolver {
   return snapshotResolver(ctx, () => ({ patterns: ctx.config().help.sensitive_patterns ?? [] }));
 }
 
+/** The folder the Foundry is installed in: where its own documents are. Never the repository that is worked on. */
+export const INSTALL_ROOT = join(dirname(FLOW_GUIDE_PATH), "..");
+const indexes = new WeakMap<ApiContext, HelpDocs>();
+/** The documentation index of this server. */
+export function helpDocsOf(ctx: ApiContext): HelpDocs {
+  let d = indexes.get(ctx);
+  if (!d) {
+    d = new HelpDocs(INSTALL_ROOT, ctx.diagLog);
+    indexes.set(ctx, d);
+  }
+  return d;
+}
+
 const services = new WeakMap<ApiContext, HelpTurns>();
 /** The help turns of this server: what runs and what waits. */
 export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   let s = services.get(ctx);
   if (!s) {
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx) });
+    const docs = helpDocsOf(ctx);
+    // the documentation of the install is the evidence of a product question: only sections of the asker's role
+    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), evidence: (input) => docs.sources(input.question, input.role) });
     services.set(ctx, s);
   }
   return s;
@@ -128,6 +145,8 @@ function usageView(ctx: ApiContext) {
       costLimits: config.cost_limits,
     },
     now: helpTurnsOf(ctx).status(),
+    // the documentation Ask SCF quotes: the version it is for, what was indexed, and what is wrong with it
+    documentation: helpDocsOf(ctx).status(),
     today: { day: today, ...sum },
     days: rows.map((u) => ({ ...u, ownerName: nameOf(u.owner) })).reverse(),
   };

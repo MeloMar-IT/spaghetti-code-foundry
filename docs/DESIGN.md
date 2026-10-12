@@ -1273,6 +1273,34 @@ makes of it.
 
 Tests: `tests/help-context.test.ts`, `tests/help-context-api.test.ts`.
 
+### Ask SCF: the documentation index
+
+`src/help/docs.ts` (#232) makes the evidence of a product question. No embedding model, no
+network, no dependency.
+
+- **Approved documents** (`HELP_DOCS`): `docs/USER_GUIDE.md` and `docs/FLOW_AUTHORING.md`, read
+  from the install folder (`INSTALL_ROOT` in `api-help.ts`, next to the built-in flows). Both are
+  in `files` of `package.json`. A repository that is worked on is never read: there is no switch
+  for it.
+- **Sections** (`sectionsOf`): a heading of level 2 to 4 starts a section; a heading inside a
+  code fence does not. A section keeps its heading trail, its anchor and its role. In the user
+  guide the role comes from the chapter number (`userChapters`); a chapter that is not listed is
+  for administrators. The id is `doc-` plus 12 hex characters of the hash of path and trail.
+- **Search** (`searchDocs`): the words of the question (three letters or more, no stop words, a
+  plural "s" taken off) against the words of headings and text. A section counts with one heading
+  word or two text words. The score is the sum of `log(1 + N/df)` per word, three times for a
+  heading word; ties keep document order. At most `DOC_SOURCES` (4) sources, each a `Source` with
+  `kind: "doc"`, the title "document: heading trail", the ref `path#anchor (SCF version)` and an
+  excerpt from the best paragraph on, at most 1,200 characters.
+- **In a turn**: `helpTurnsOf` passes `evidence: docs.sources(question, role)`. Nothing else
+  changed: `prepareTurn` guards every source, `checkReply` keeps only cited ids that were
+  offered, and without a fitting source the certainty is "unverified".
+- **Stale index** (`HelpDocs`, `docIndexProblems`): the index holds the version of `package.json`
+  and size, time and SHA-256 of each file. Before each use size, time and version are compared;
+  on a difference the index is built again, and when version, hashes or missing files differ the
+  reasons are logged and kept (`rebuilt`, `rebuiltBecause`). Missing documents are `problems`.
+  `GET /api/help/usage` shows this as `documentation`.
+
 ### Ask SCF: the guard
 
 `src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.

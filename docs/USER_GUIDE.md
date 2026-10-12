@@ -4707,6 +4707,35 @@ and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/
 A turn sees your question, the page you asked it on, and the last three answered questions of the
 same conversation. It sees nothing of other conversations or other accounts.
 
+### Answers from the documentation
+
+For every question the server looks in the documentation that came with this install: this
+guide (`docs/USER_GUIDE.md`) and, for administrators, the flow reference
+(`docs/FLOW_AUTHORING.md`). No other file is read: not a document of a repository you work on,
+and nothing from the internet. No AI model is used to search.
+
+- **How a section is found.** The documents are cut into sections by their headings. A section
+  fits when your question shares a word with its headings, or two words with its text. Rare
+  words weigh more, and a word in a heading weighs three times. The same question gives the same
+  sections. At most 4 sections are handed over, each with an excerpt of at most 1,200 characters.
+- **What you see.** A source of a reply names the document, the heading and the version, for
+  example `docs/USER_GUIDE.md#the-page-context (SCF 0.1.0)`. A reply can name only sections that
+  were handed over for that question.
+- **When the documentation has no answer**, no section is handed over, and the reply says that
+  Ask SCF could not check it (see "Sources, and how sure it is"). It is then a guess.
+- **Your role counts.** A user gets sections of the chapters for users only (1, 2, 3, 10, 12 and
+  14). The chapters about settings, models, costs, watchers and self-repair, and the flow
+  reference, are for administrators.
+- **A section can be held back.** An excerpt passes the same check as all copied text (see
+  "Secrets and copied text"). A section that quotes a sentence which reads like an order to the
+  AI model is not handed over, also when it only describes such a sentence.
+- **The index follows the install.** The index is built when the first question comes and keeps
+  the version of the Foundry and a hash of each document. Before every question it is compared
+  with the files. After an update, or when a document changed, it is built again and the server
+  log says why. A document that is missing is reported under `documentation` in
+  `GET /api/help/usage` (`scf ask usage` shows the version, the number of sections and the
+  problems); the other document still answers.
+
 ### The page context
 
 So that you can ask "what is happening here?" without copying an id, a question can carry a
