@@ -30,6 +30,7 @@ Formerly **claude-factory**. The command is now `scf` (`factory` still works), t
 - [11. Upgrading from claude-factory](#11-upgrading-from-claude-factory)
 - [12. Refinement](#12-refinement)
 - [13. Self-repair (for admins)](#13-self-repair-for-admins)
+- [14. Ask SCF](#14-ask-scf)
 
 ---
 
@@ -4324,3 +4325,93 @@ and ends with "fixed" after 24 hours of normal work.
 `tests/self-repair-rules.test.ts` proves the five rules: nothing private in any story, one open
 story per problem, the circuit breaker stops a flood, a feature run cannot reach `main`, and with
 the monitor off nothing is created.
+
+---
+
+## 14. Ask SCF
+
+**Ask SCF** is the help assistant inside the Foundry. You ask a question in your own words; it explains
+how the Foundry works, what your work is doing, and how to solve a problem. It is being built in
+steps. This chapter holds its rules. They are fixed first, and every later part keeps to them.
+
+**It reads and explains. It does not act.** Nothing you ask changes the Foundry, a repository or
+GitHub. Today Ask SCF has no action at all on its list, so it cannot change anything.
+
+### What you can ask
+
+| You ask | What it is |
+|---|---|
+| Product help | How the Foundry works: a page, a word, a setting, a flow. |
+| Status | What your work is doing now, and why it waits. |
+| Troubleshooting | Why something failed or does not move. |
+| Guided resolution | Which steps solve a problem, in order, and where to do them. |
+
+Ask SCF does three kinds of work only by sending you to the place that already does them:
+
+- **Writing and improving stories** is done in [Refinement](#12-refinement), with the architect.
+- **What happens next** with a run or an issue is said by the Foundry itself, on the run page and (for administrators) on Home.
+- **Findings of the monitor** are handled on the Problems page (administrators).
+
+### What a reply can hold
+
+A reply has up to five kinds of parts. They look different, so you always know what is only text
+and what would change something.
+
+| Part | What it is | Changes something |
+|---|---|---|
+| Answer | What is true, as far as Ask SCF can see. Nothing happens. | no |
+| Recommendation | What you could do. You decide and you do it; nothing happens by itself. | no |
+| Navigation | A link to a page of the Foundry that you may open. Opening it is your click. | no |
+| Draft | A text for you to copy or change. It is not sent, saved or posted anywhere. | no |
+| Action | A change to the Foundry or to GitHub. Never done without your explicit approval. | yes, after your approval |
+
+An action runs only when all of this holds:
+
+1. The action is on the server's own list. Text from a model never names a command, a route or a tool.
+2. You see the exact effect before anything happens.
+3. You confirm it yourself, for this one action.
+4. The server checks again that you may do it, as for the same click on its own page.
+5. The server reads the result back and tells you what changed.
+
+### Sources, and how sure it is
+
+An answer about how the Foundry works rests on the documentation installed with your version. An
+answer about your work rests on what the Foundry shows right now, with the time it was read. A reply
+can only name sources that the server itself gave to the assistant; a source it made up is removed.
+
+Every reply ends with one of these sentences. The server chooses it from the sources, not the assistant:
+
+- "This rests on the sources listed below."
+- "This is likely, but the sources below do not fully confirm it."
+- "Ask SCF could not check this against the documentation or the current state. Treat it as a guess."
+
+Until the parts that read the documentation and the current state are built, replies carry the last sentence.
+
+### What it does not do
+
+When you ask for something Ask SCF does not do, it says so in a fixed sentence and tells you the
+safest thing you can do instead. These sentences come from the server, not from the assistant.
+
+| When | What Ask SCF says | What you can do |
+|---|---|---|
+| You ask it to do something | Ask SCF reads and explains. It does not start, stop, change, delete or send anything. | Do it yourself on the page where it belongs. Ask where that page is, or what the button does, and Ask SCF will tell you. |
+| You ask about another account | Ask SCF sees only what your own account can see. It does not look at the work, the repositories or the conversations of another account. | Ask the owner of that work. |
+| You ask about what only administrators see | That belongs to the administrators: models, costs, accounts and the settings of the server. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
+| You ask for a secret, or type one | Ask SCF never shows a password, a token or a key, and it never needs one from you. | Do not type a secret into a question. Sign-ins of repositories are managed under My repositories. |
+| You ask about something else | Ask SCF answers questions about Spaghetti Code Foundry only: how it works, what your work is doing, and how to solve a problem with it. | Ask about a page, a run, a repository or a message that you see here. |
+| It cannot see enough | Ask SCF cannot see enough to answer this, so it does not guess. | Open the run, the repository or the session you mean; its own page shows its state. |
+| You ask it to write or improve a story | Writing and improving stories is the work of Refinement, with the architect. Ask SCF does not do it a second time. | Open Refinement and start a session, or go on with one. |
+| You ask what happens next with a run or an issue | What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask SCF does not give a second answer that could differ. | Open the run under My runs: its page says what happens next. |
+| You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
+
+For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
+
+### What you never see as a user
+
+- **No model names and no providers.** Which AI answers is a setting of the administrators.
+- **No costs and no token counts.**
+- **Nothing of another account**: no runs, repositories, refinement sessions or conversations but your own. A guessed id tells nothing.
+- **Nothing that is for administrators only**: settings, accounts, the monitor, the server's log.
+
+Links in a reply go only to pages your role has. The text of an issue, a log or a repository is
+read as data: an instruction written there is not followed.

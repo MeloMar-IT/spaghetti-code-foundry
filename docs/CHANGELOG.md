@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF, the help assistant inside the product: its contract (#227). Part of #226. No page, no route and no model call yet; this is the set of rules every later part goes through.
+  - **What it is.** `src/help/contract.ts` names the four kinds of question (product help, status, troubleshooting, guided resolution) and the five parts of a reply (answer, recommendation, navigation, draft, action). Only an action changes something, and the list of allowed actions is empty: Ask SCF is read-only.
+  - **Checked on the server.** `checkReply` keeps only evidence the server offered, links to fixed pages the role has, and actions on the server's list (none). Without evidence of the kind a question needs, a reply is marked "could not check"; the sentence is the server's.
+  - **Requests it does not serve** get a fixed limitation and the safest next step (`limitationFor`). Backlog refinement goes to Refinement, "what happens next" to the Foundry's own next step, and monitor findings to the Problems page.
+  - **Users** never get model names, providers, costs, token counts or anything of another account or of the administrators (`forRole`, `hideNames`).
+  - Chapter 14 of `docs/USER_GUIDE.md` and "Ask SCF: the contract" in `docs/DESIGN.md`. Tests in `tests/help-contract.test.ts`.
 - Fix: a cap set by a helper process (the load governor, the limit forecaster) no longer holds back the resume of a run that already started. After a restart under a cap, the run that held the turn to merge could stay in the queue while the runs waiting for that turn filled every slot, so nothing was merged for hours. The cap now holds back new runs only; resumes are bound by the configured number of runs at once. Test in `tests/scheduler-fair-use.test.ts`.
 - A command line for the running Foundry: every call of the server's API is a command, `scf <area> <action> … [--json]`. 159 commands in 18 areas (`runs`, `turn`, `board`, `find`, `repos`, `refine`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server`).
   - **Sign-in.** `scf login`, `scf logout`, `scf whoami`. The same accounts and sessions as the web interface; no server change. The session is kept in `cli-session.json` in the data folder (mode 600); the password is asked without echo and never stored.
