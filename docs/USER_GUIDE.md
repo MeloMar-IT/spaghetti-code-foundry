@@ -2870,7 +2870,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`. The five built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
+   More fields: `detectors`, `connectors`, `tool_profile`. The six built-in packages in `skills/` (`typescript`, `java`, `nodejs`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -3109,6 +3109,7 @@ skills:
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
 - **TypeScript is not guessed from JavaScript.** The built-in `typescript` skill needs TypeScript sources (plus `tsconfig.json` or a `typescript` dependency as extra evidence). Work that touches only JavaScript files does not get it, unless the issue names TypeScript or `tsconfig`.
+- **Node.js is not guessed from TypeScript or JavaScript.** The built-in `nodejs` skill needs evidence of the Node.js runtime in the module the work touches: `engines.node`, `@types/node` or a server package (such as `express` or `fastify`) in `package.json`, or an import of a Node.js built-in module. A browser-only package does not get it.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
 - **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.
