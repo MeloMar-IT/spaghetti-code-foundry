@@ -15,24 +15,10 @@ const PART_2 = [
   "tests/refinement-backlog-api.test.ts",
   "tests/refinement-draft-api.test.ts",
   "tests/refinement-impact-api.test.ts",
-  "tests/refinement-import-api.test.ts",
   "tests/refinement-judge-api.test.ts",
   "tests/refinement-round.test.ts",
-  "tests/refinement-source-label-api.test.ts",
   "tests/refinement-split-api.test.ts",
   "tests/refinement-talk-api.test.ts",
-];
-// Part 3: refinement publish
-const PART_3 = [
-  "tests/refinement-publish-api.test.ts",
-  "tests/refinement-publish-changed-api.test.ts",
-  "tests/refinement-publish-close-api.test.ts",
-  "tests/refinement-publish-lock-api.test.ts",
-  "tests/refinement-publish-post-api.test.ts",
-  "tests/refinement-publish-replace-api.test.ts",
-  "tests/refinement-publish-replace-plan-api.test.ts",
-  "tests/refinement-publish-replace-retry-api.test.ts",
-  "tests/refinement-publish-update-api.test.ts",
 ];
 // Part 4: repositories, watchers, credentials
 const PART_4 = [
@@ -79,7 +65,7 @@ const PART_6 = [
   "tests/skill-cli.test.ts",
   "tests/ui-gallery-server.test.ts",
 ];
-const ALLOWED = [...PART_2, ...PART_3, ...PART_4, ...PART_5, ...PART_6];
+const ALLOWED = [...PART_2, ...PART_4, ...PART_5, ...PART_6];
 
 // Samples are built from pieces so no line of this file holds both the call and "port" or the sum.
 const RND = ["Math", "random()"].join(".");
