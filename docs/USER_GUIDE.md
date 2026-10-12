@@ -1892,7 +1892,8 @@ flowchart LR
   the tests fail after a resolved conflict, the coding session takes over.
 - Every day at **17:00** (`release-daily`) the Foundry runs the full tests and build on `develop`
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
-  issues — a draft while the checks fail. **You merge it once a day.**
+  issues — a draft while the checks fail. **You merge it once a day.** When the tests pass on a clean
+  checkout, the run also records that pass in the data folder, so that [self-update](#self-update) can skip its own test run on the same code.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
   (Settings), since the Foundry pushes to it; `main` stays protected (the one exception is the
@@ -2251,6 +2252,8 @@ Every 5 minutes it checks, in this order, and stops at the first reason that app
 7. The checkout can fast-forward to `main`.
 
 Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 15-minute limit starts when they start, and a run that hits it counts as a failed try. If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the Health line says which try it is. The log and the Health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart) and the server restarts when the active runs are done. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
+
+**Skipped tests.** When the daily release check (`release-daily`) already passed the same tests on the same code, self-update does not run them again. The log then says `self-update: <sha> is not tested again: the release check passed these tests on this code (run <id>, <time>)`; install and build still run. It skips only when all of these hold: the test command is the updater's own test step (`npm test`, or `npm ci && npm test` when `node_modules` was missing), the release check recorded a green run of that command on the same tree in the data folder (`tested/`), and the record has exactly the form the check writes. Every other case runs the tests as usual: a story's record, another tree or command, no detected command, an unreadable record, or a `test_cmd` pinned in `.claude-factory/config.yaml` of the code, even when a record matches. A release check with its own `test_cmd` records under that command, so it matches only when that command is the updater's own test step. Only the release check's record counts. Anything that can write `tested/` in the data folder can make self-update skip its tests, so keep that folder as private as the rest of the Foundry.
 
 If the new server stops or does not answer within 3 minutes, the supervisor puts the previous version back once and reports it (the monitor finding is critical). An install that was cut off is finished or undone at the next start. If you switch the setting off while an update waits, the server restarts on the unchanged version when the runs are done.
 

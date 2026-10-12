@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
@@ -465,6 +465,9 @@ describe("gitflow pipeline", () => {
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release/);
     expect(log).toContain("Closes #5");
     expect(log).toContain("Spaghetti Code Foundry daily release check");
+    // the green run left the checked record that self-update reads
+    const records = readdirSync(join(gh.tmp, "tested")).map((n) => readFileSync(join(gh.tmp, "tested", n), "utf8"));
+    expect(records.some((c) => new RegExp(`^run ${r.runId}, \\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\dZ, tree [0-9a-f]{40}\\n$`).test(c))).toBe(true);
     const red = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
     expect(red.status).toBe("succeeded");
     expect(red.history.at(-1)!.output).toContain("checks failed — PR #99 is a draft");

@@ -910,7 +910,7 @@ supervisor guards the first start after an install: it reads the journal, finish
 when an install was cut off, and puts the previous commit back once when the server stops or
 does not confirm in time. The new server confirms with `GET /api/ready` (loopback only) after it
 checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
-state (`failed.backOk = false`) that a person must repair. The monitor reads the same file.
+state (`failed.backOk = false`) that a person must repair. The monitor reads the same file. The release check (`release-daily` `verify`) writes `tested/<key>`, with `key` = `printf '%s\n%s\n' <tree> <cmd> | shasum | cut -c1-40`, as the one line `run <id>, <UTC time>, tree <sha>` only for a green run on a clean tree whose `HEAD^{tree}` did not change; self-update skips its test step only when the staged commit's tree and its own test command (alone or after `npm ci && `) match that exact line form, and runs the tests otherwise.
 
 ---
 

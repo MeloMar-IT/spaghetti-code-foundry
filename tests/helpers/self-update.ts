@@ -16,6 +16,7 @@ export const V1: Record<string, string> = {
   "test.sh": "exit 0\n",
   // the updater runs the tests through the running version's test slot tool
   "tools/test-slot": readFileSync(resolve("tools/test-slot"), "utf8"),
+  "tools/detect-commands": readFileSync(resolve("tools/detect-commands"), "utf8"),
 };
 export const STEPS: UpdateStep[] = [
   { name: "install", cmd: "sh", args: ["install.sh"] },
