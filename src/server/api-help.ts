@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { StoreError } from "../auth/store.js";
-import type { User } from "../auth/users.js";
+import { getUser, type User } from "../auth/users.js";
 import { forRole } from "../help/contract.js";
 import {
   CONVERSATION_LIMIT,
@@ -17,10 +17,13 @@ import {
   getConversation,
   listConversations,
   restoreConversation,
+  dayOf,
+  readUsage,
   settleInterrupted,
   sweepHelp,
 } from "../help/store.js";
-import { HttpError, send } from "./http.js";
+import { HelpTurns, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
+import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
 
@@ -32,8 +35,22 @@ const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-contex
 /** How often the server applies the retention policy to the stored conversations, in ms. */
 export const HELP_SWEEP_MS = 60 * 60 * 1000;
 
+const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full": 429, limit: 429 };
+
+const services = new WeakMap<ApiContext, HelpTurns>();
+/** The help turns of this server: what runs and what waits. */
+export function helpTurnsOf(ctx: ApiContext): HelpTurns {
+  let s = services.get(ctx);
+  if (!s) {
+    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog });
+    services.set(ctx, s);
+  }
+  return s;
+}
+
 function mapped(ctx: ApiContext, e: unknown): HttpError {
   if (e instanceof HelpError) return new HttpError(STATUS[e.code], e.message);
+  if (e instanceof TurnRefused) return new HttpError(REFUSED[e.code], e.message);
   if (e instanceof HttpError) return e;
   const log = ctx.diagLog;
   if (e instanceof StoreError) log?.(`help: ${basename(e.file)} ${e.kind}`);
@@ -74,6 +91,36 @@ export function conversationView(c: Conversation, viewer: User) {
   return forRole(viewer.role === "admin" ? "admin" : "user", { ...rest, ...(c.state === "deleted" ? {} : { expiresOn: expiresOn(c) }) });
 }
 
+/** For administrators: whether Ask SCF is on, which provider answers, the limits, and what each account used per day. No question and no answer is in it. */
+function usageView(ctx: ApiContext) {
+  const config = ctx.config();
+  const found = helpTarget(config);
+  const rows = readUsage();
+  const today = dayOf(new Date());
+  const names = new Map<string, string>();
+  const nameOf = (id: string) => {
+    if (!names.has(id)) names.set(id, getUser(id)?.name ?? "a removed account");
+    return names.get(id)!;
+  };
+  const sum = rows.filter((u) => u.day === today).reduce((t, u) => ({ turns: t.turns + u.turns, failed: t.failed + u.failed, costUsd: t.costUsd + u.costUsd, inputTokens: t.inputTokens + u.inputTokens, outputTokens: t.outputTokens + u.outputTokens }), { turns: 0, failed: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 });
+  return {
+    enabled: config.help.enabled,
+    provider: "problem" in found ? { ok: false, problem: found.problem } : { ok: true, target: found.target.label, agent: found.target.agent, provider: found.target.providerName, model: found.target.model ?? null, free: found.target.free },
+    limits: {
+      timeoutSeconds: config.help.timeout_seconds,
+      maxParallel: config.help.max_parallel,
+      maxQueued: config.help.max_queued,
+      turnsPerUserPerDay: config.help.turns_per_user_per_day,
+      maxCostUsdPerTurn: config.help.max_cost_usd_per_turn,
+      dailyBudgetUsd: config.help.daily_budget_usd ?? null,
+      costLimits: config.cost_limits,
+    },
+    now: helpTurnsOf(ctx).status(),
+    today: { day: today, ...sum },
+    days: rows.map((u) => ({ ...u, ownerName: nameOf(u.owner) })).reverse(),
+  };
+}
+
 /** The start and the timer: marks turns a stopped server left behind as interrupted (first call only) and applies the retention policy. Never throws; a problem that stays is logged once. */
 export function helpSweeper(log: (msg: string) => void): () => void {
   let told = false;
@@ -98,13 +145,38 @@ export function helpSweeper(log: (msg: string) => void): () => void {
  * "View as user". An id of another account is answered like an unknown one.
  */
 export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
-  if (seg[0] !== "help" || seg[1] !== "conversations") return false;
+  if (seg[0] !== "help") return false;
   if (asParam(req) !== undefined) throw new HttpError(403, NOT_IN_PREVIEW);
+  if (seg.length === 2 && seg[1] === "usage" && method === "GET") {
+    // the permission table lets only an administrator come here
+    if (user.role !== "admin") throw new HttpError(403, "not allowed for your role");
+    send(res, 200, guardedHelp(ctx, () => usageView(ctx)));
+    return true;
+  }
+  if (seg[1] !== "conversations") return false;
   const id = seg[2] ?? "";
+  const asker: Asker = { id: user.id, role: user.role === "admin" ? "admin" : "user" };
+  const turns = helpTurnsOf(ctx);
+  // A question: in a new conversation, or as the next one of a conversation. The answer comes later; read the conversation for it.
+  if (method === "POST" && (seg.length === 2 || (seg.length === 4 && seg[3] === "messages"))) {
+    const body = await readJson(req);
+    const turn = guardedHelp(ctx, () => turns.ask(asker, { ...(seg.length === 4 ? { conversation: id } : {}), question: body.question, context: body.context }));
+    send(res, 202, conversationView(turn.conversation, user));
+    return true;
+  }
+  if (seg.length === 4 && method === "POST" && seg[3] === "retry") {
+    send(res, 202, conversationView(guardedHelp(ctx, () => turns.retry(asker, id)).conversation, user));
+    return true;
+  }
+  if (seg.length === 4 && method === "POST" && seg[3] === "cancel") {
+    send(res, 200, conversationView(guardedHelp(ctx, () => turns.cancel(asker, id)), user));
+    return true;
+  }
   if (seg.length === 2 && method === "GET") {
     const archived = new URL(req.url ?? "/", "http://x").searchParams.get("archived") === "1";
     const conversations = guardedHelp(ctx, () => listConversations(user.id, { archived })).map(summary);
     send(res, 200, {
+      enabled: ctx.config().help.enabled,
       conversations,
       limits: { conversations: CONVERSATION_LIMIT, messages: MESSAGE_LIMIT, questionChars: QUESTION_MAX, keepDays: KEEP_MS / 86_400_000, deletedKeepDays: DELETED_KEEP_MS / 86_400_000 },
     });
@@ -117,7 +189,9 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return true;
   }
   if (seg.length === 3 && method === "DELETE") {
-    const { conversation } = guardedHelp(ctx, () => deleteConversation(user.id, id));
+    const { conversation, pending } = guardedHelp(ctx, () => deleteConversation(user.id, id));
+    // the turn of a deleted conversation is ended: its answer has nowhere to go
+    if (pending !== undefined) turns.drop(pending);
     send(res, 200, conversationView(conversation, user));
     return true;
   }

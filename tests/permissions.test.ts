@@ -201,6 +201,12 @@ const EXAMPLES: Record<string, Example> = {
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
+  // Ask SCF is off by default: a question is refused before it is looked at
+  "POST help/conversations": { path: "help/conversations", body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/messages": { path: `help/conversations/${UNKNOWN}/messages`, body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/retry": { path: `help/conversations/${UNKNOWN}/retry`, body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/cancel": { path: `help/conversations/${UNKNOWN}/cancel`, body: {}, user: 404, admin: 404 },
+  "GET help/usage": no("help/usage", 200),
   "GET help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
   "POST help/conversations/:id/complete": { path: `help/conversations/${UNKNOWN}/complete`, body: {}, user: 404, admin: 404 },
   "POST help/conversations/:id/archive": { path: `help/conversations/${UNKNOWN}/archive`, body: {}, user: 404, admin: 404 },

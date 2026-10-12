@@ -22,5 +22,11 @@ export const HELP: Cmd[] = [
   { area: "ask", action: "complete", method: "POST", path: "help/conversations/:id/complete", args: ["id"], show: showConversation },
   { area: "ask", action: "archive", method: "POST", path: "help/conversations/:id/archive", args: ["id"], show: showConversation },
   { area: "ask", action: "restore", method: "POST", path: "help/conversations/:id/restore", args: ["id"], show: showConversation },
+  { area: "ask", action: "new", method: "POST", path: "help/conversations", args: ["question"], help: "ask a question in a new conversation; read the answer with `scf ask show <id>`", show: showConversation },
+  { area: "ask", action: "more", method: "POST", path: "help/conversations/:id/messages", args: ["id", "question"], show: showConversation },
+  { area: "ask", action: "retry", method: "POST", path: "help/conversations/:id/retry", args: ["id"], show: showConversation },
+  { area: "ask", action: "stop", method: "POST", path: "help/conversations/:id/cancel", args: ["id"], show: showConversation },
+  { area: "ask", action: "usage", method: "GET", path: "help/usage",
+    show: (d) => [fields({ enabled: pick(d, "enabled"), provider: pick(d, "provider.target") ?? pick(d, "provider.problem"), "turns today": pick(d, "today.turns"), "cost today": pick(d, "today.costUsd"), running: pick(d, "now.running"), queued: pick(d, "now.queued") }), table(rows(d, "days"), [...cols("day"), { key: "ownerName", head: "account" }, ...cols("turns", "failed", "costUsd", "inputTokens", "outputTokens")], "no usage yet")].join("\n\n") },
   { area: "ask", action: "delete", method: "DELETE", path: "help/conversations/:id", args: ["id"], confirm: "This removes the conversation and its messages for good.", show: (d) => fields({ id: pick(d, "id"), state: pick(d, "state") }) },
 ];

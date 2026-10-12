@@ -43,6 +43,21 @@ describe("scf ask", () => {
     expect((await w.scf(["ask", "show", id])).code).not.toBe(0);
   });
 
+  it("asks, retries and stops through the server, and shows the usage to an administrator only", async () => {
+    // Ask SCF is off on a new install: the sentence of the server is what the command prints
+    const off = await ask(["new", "What is a flow?"]);
+    expect(off.code).not.toBe(0);
+    expect(off.out).toContain("Ask SCF is switched off on this Foundry.");
+    expect((await ask(["more", id, "And then?"])).out).toContain("switched off");
+    expect((await ask(["retry", id])).code).not.toBe(0);
+    expect((await ask(["stop", id])).out).toContain("no answer is being written");
+    const usage = await w.scf(["ask", "usage"]);
+    expect(usage.code).toBe(0);
+    expect(usage.out).toContain("enabled");
+    expect(usage.out).toContain("no usage yet");
+    expect((await ask(["usage"])).code).toBe(4);
+  });
+
   it("archives, restores and completes, and deletes only after a yes", async () => {
     expect((await ask(["archive", id, "--json"])).json<{ state: string }>().state).toBe("archived");
     expect((await ask(["list", "--archived"])).out).toContain("What is a run?");

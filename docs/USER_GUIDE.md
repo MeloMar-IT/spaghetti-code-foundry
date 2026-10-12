@@ -1952,7 +1952,7 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Your Ask SCF conversations: list, show, complete, archive, restore, delete |
+| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); the usage (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2805,12 +2805,17 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
-| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on, and the limits; only your own, for an admin too, and not in a view of a user's display |
 | `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
 | `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
 | `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
 | `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
 | `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
+| `POST /api/help/conversations` | yes | yes | ask Ask SCF a question in a new conversation (`question`, and optionally `context`: the page and one selected thing); answers 202 with the conversation, whose reply is `pending` until the turn ends; one turn per account at a time (409), 429 when the queue is full or your turns of today are used, 503 while Ask SCF is switched off |
+| `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
+| `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
+| `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -4459,6 +4464,81 @@ data folder. It survives a restart and is copied unchanged when the data folder 
 cannot be read (broken, or written by a newer version), the calls answer "Ask SCF is not working;
 see the server log", the file is left as it is, and an account cannot be deleted until it is
 repaired. Calls: `GET /api/help/conversations` and the calls under it in the table of chapter 7.
+
+### Asking, and what happens when no answer comes
+
+**Asking.** A question is one **turn**. The server stores it at once, answers that the reply is on
+its way, and puts the turn in a queue. When the turn ends, the conversation holds the reply. On the
+command line: `scf ask new "How do I connect a repository?"`, then `scf ask show <id>`;
+`scf ask more <id> "…"` asks the next question, `scf ask retry <id>` tries a failed answer again
+and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/conversations`,
+`POST /api/help/conversations/:id/messages`, `…/retry` and `…/cancel`.
+
+A turn sees your question, the page you asked it on, and the last three answered questions of the
+same conversation. It sees nothing of other conversations or other accounts.
+
+**One at a time.** Each account has one turn at a time. Turns of different people wait in one
+line, first come first served, so nobody can fill it alone.
+
+**When no answer comes** the reply says why in one of these sentences. They are the server's own:
+you never read the text of the AI service.
+
+| What happened | What you read | Try again |
+|---|---|---|
+| The answer took longer than the time limit | The answer took too long, so Ask SCF stopped waiting. You can try again. | yes, right away |
+| The AI service failed or could not be reached | The AI service did not answer. You can try again in a moment. | yes, right away |
+| The AI service reached its own limit | The AI service has reached its limit for now. Try again later. | later |
+| The budget for Ask SCF is used up | The limit for Ask SCF is reached for today. Try again tomorrow, or ask an administrator. | later |
+| Ask SCF cannot run here (no model that fits, or the agent is signed out) | Ask SCF is not set up to answer here. Ask an administrator of this Foundry. | later |
+| The answer did not pass the checks of the server | Ask SCF got an answer it could not use, so it shows none. You can try again. | yes, right away |
+| The Foundry restarted during the answer | The Foundry restarted before the answer was ready. You can try again. | yes, right away |
+| You stopped the answer | You stopped this answer. You can ask again. | yes |
+
+**When a question is not taken**, nothing is stored and you read one of these:
+
+| When | What you read |
+|---|---|
+| Ask SCF is switched off | Ask SCF is switched off on this Foundry. An administrator can switch it on. |
+| You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
+| Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
+| You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
+
+### Ask SCF for administrators
+
+**It is off by default.** Switch it on in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+
+```yaml
+help:
+  enabled: true
+  model: haiku                  # a model spec; without it, default_model
+  timeout_seconds: 60           # a turn that takes longer is stopped
+  max_parallel: 1               # turns answered at the same time, over all accounts
+  max_queued: 10                # turns that may wait; one more is refused
+  turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
+  max_cost_usd_per_turn: 0.1
+  daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+```
+
+The two money limits are not applied with `cost_limits: false` or for a model without a price
+(a local model, a subscription login). Help turns are not runs: their cost is counted here, not
+in the daily budget of runs.
+
+**What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
+no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that
+is removed when the turn ends (its log with it). So it has no shell, cannot write to a repository,
+cannot read a credential and cannot fetch anything. Whatever the answer says, the server keeps only
+what the contract allows: text, fixed pages, and no action. For this reason only a **Claude Code**
+model can answer; with a Codex model every turn ends with "Ask SCF is not set up to answer here."
+A model on a local provider that Claude Code can reach (for example `ollama:<model>`) works.
+
+**Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask SCF is on, which
+provider and model answer (or why none can), the limits, how many turns run and wait, and per
+account and day the turns, failures, cost and tokens. It holds no question and no answer. Users
+get 403 for it, and their own conversations never show a model, a provider, a cost or a token
+count; the name of the configured model and provider is also taken out of the text of their
+replies. Usage is kept for 90 days. An administrator still cannot read another account's
+conversations. The server log gets one line in fixed words for a failed turn, for example
+`help: a turn failed (provider)`, never the question or the answer.
 
 ### What you never see as a user
 

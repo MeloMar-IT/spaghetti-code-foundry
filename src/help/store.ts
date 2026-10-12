@@ -154,8 +154,25 @@ export type Conversation = z.infer<typeof ConversationSchema>;
 
 /** The version this code writes. A file with another version is refused and left as it is. */
 export const FILE_VERSION = 1;
+/** How many turns an account started on one day (UTC), and what they used. Kept apart from the conversations, so deleting those does not change it. */
+const UsageSchema = z
+  .object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    owner: z.uuid(),
+    turns: z.number().int().min(0),
+    failed: z.number().int().min(0),
+    costUsd: z.number().min(0),
+    inputTokens: z.number().int().min(0),
+    outputTokens: z.number().int().min(0),
+  })
+  .strict();
+export type UsageRow = z.infer<typeof UsageSchema>;
+/** Usage rows are kept this many days. */
+export const USAGE_KEEP_DAYS = 90;
+
 const FileSchema = z
-  .object({ version: z.literal(FILE_VERSION), conversations: z.array(ConversationSchema) })
+  // `usage` came after the first version of the file: a file without it has none
+  .object({ version: z.literal(FILE_VERSION), conversations: z.array(ConversationSchema), usage: z.array(UsageSchema).default([]) })
   .strict()
   .superRefine((f, ctx) => {
     const ids = new Set<string>();
@@ -166,9 +183,10 @@ const FileSchema = z
   });
 type FileData = z.infer<typeof FileSchema>;
 
-const EMPTY: FileData = { version: FILE_VERSION, conversations: [] };
+const EMPTY: FileData = { version: FILE_VERSION, conversations: [], usage: [] };
 const read = (): FileData => readJsonFile(helpPath(), FileSchema, EMPTY);
-const save = (conversations: Conversation[]) => writeJsonFile(helpPath(), { version: FILE_VERSION, conversations });
+/** Writes the file with these conversations; the usage rows of `file` stay as they are unless `usage` is given. */
+const save = (file: FileData, conversations: Conversation[], usage: UsageRow[] = file.usage) => writeJsonFile(helpPath(), { version: FILE_VERSION, conversations, usage });
 const copy = <T>(v: T): T => structuredClone(v);
 
 export interface StoreOptions {
@@ -263,7 +281,8 @@ const DELETED = "this conversation was deleted";
 function change<T>(owner: string | undefined, id: string, opts: StoreOptions, fn: (c: Conversation, at: string) => { next: Conversation; value: T } | undefined): T | undefined {
   return withAuthLock(() => {
     const now = clock(opts);
-    const list = current(read().conversations, now);
+    const file = read();
+    const list = current(file.conversations, now);
     const cur = list.find((c) => c.id === id && (owner === undefined || c.owner === owner));
     if (!cur) {
       if (owner !== undefined) throw new HelpError("not-found", NOT_FOUND);
@@ -275,7 +294,7 @@ function change<T>(owner: string | undefined, id: string, opts: StoreOptions, fn
     }
     const r = fn(cur, now.toISOString());
     if (!r) return undefined;
-    save(list.map((c) => (c === cur ? r.next : c)));
+    save(file, list.map((c) => (c === cur ? r.next : c)));
     return r.value;
   });
 }
@@ -310,13 +329,14 @@ export function addQuestion(owner: string, input: NewQuestion, opts: StoreOption
     return withAuthLock(() => {
       const now = clock(opts);
       const at = now.toISOString();
-      const list = current(read().conversations, now);
+      const file = read();
+      const list = current(file.conversations, now);
       if (list.filter((c) => c.owner === owner && c.state !== "deleted").length >= CONVERSATION_LIMIT) {
         throw new HelpError("limit", `you have ${CONVERSATION_LIMIT} conversations, the most an account can keep; delete one first`);
       }
       const [q, a] = messages(at);
       const c: Conversation = { id: randomUUID(), owner, title: titleOf(text), state: "active", messages: [q, a], created: at, updated: at };
-      save([...list, c]);
+      save(file, [...list, c]);
       return copy({ conversation: c, question: q, reply: a });
     });
   }
@@ -447,7 +467,8 @@ export function settleInterrupted(alive: ReadonlySet<string> = new Set(), opts: 
   return withAuthLock(() => {
     const now = clock(opts);
     const at = now.toISOString();
-    const list = current(read().conversations, now);
+    const file = read();
+    const list = current(file.conversations, now);
     let n = 0;
     const next = list.map((c) => {
       const m = pendingOf(c);
@@ -456,7 +477,7 @@ export function settleInterrupted(alive: ReadonlySet<string> = new Set(), opts: 
       const failed: Message = { ...m, status: "failed", failure: { code: "interrupted", retry: true }, text: FAILURE_WORDS.interrupted, updated: at };
       return { ...c, state: "failed" as const, messages: [...c.messages.slice(0, -1), failed], updated: at };
     });
-    if (n > 0) save(next);
+    if (n > 0) save(file, next);
     return n;
   });
 }
@@ -464,11 +485,14 @@ export function settleInterrupted(alive: ReadonlySet<string> = new Set(), opts: 
 /** Applies the retention policy to the file: wipes expired conversations and removes old deleted records. Returns how many changed. */
 export function sweepHelp(opts: StoreOptions = {}): { expired: number; removed: number } {
   return withAuthLock(() => {
-    const before = read().conversations;
-    const after = current(before, clock(opts));
+    const now = clock(opts);
+    const file = read();
+    const before = file.conversations;
+    const after = current(before, now);
+    const usage = file.usage.filter((u) => u.day >= dayOf(new Date(now.getTime() - USAGE_KEEP_DAYS * 86_400_000)));
     const expired = after.filter((c) => c.state === "deleted" && before.find((b) => b.id === c.id)?.state !== "deleted").length;
     const removed = before.length - after.length;
-    if (expired > 0 || removed > 0) save(after);
+    if (expired > 0 || removed > 0 || usage.length !== file.usage.length) save(file, after, usage);
     return { expired, removed };
   });
 }
@@ -478,7 +502,50 @@ export function removeHelpLocked(owner: string): number {
   if (!authLockHeld()) throw new Error("removeHelpLocked must run inside withAuthLock");
   const file = read();
   const mine = file.conversations.filter((c) => c.owner === owner);
-  if (!mine.length) return 0;
-  save(file.conversations.filter((c) => c.owner !== owner));
+  if (!mine.length && !file.usage.some((u) => u.owner === owner)) return 0;
+  save(file, file.conversations.filter((c) => c.owner !== owner), file.usage.filter((u) => u.owner !== owner));
   return mine.length;
+}
+
+// ---- usage -----------------------------------------------------------------------------------------
+
+/** The day of a time, in UTC: the key of a usage row. */
+export const dayOf = (d: Date): string => d.toISOString().slice(0, 10);
+
+/** The usage rows, oldest day first. For administrators only: the routes decide who gets them. */
+export function readUsage(): UsageRow[] {
+  return read().usage.map(copy).sort((a, b) => a.day.localeCompare(b.day) || a.owner.localeCompare(b.owner));
+}
+
+/** What an account used on the day of `now`. */
+export function usageToday(owner: string, opts: StoreOptions = {}): UsageRow {
+  const day = dayOf(clock(opts));
+  return copy(read().usage.find((u) => u.day === day && u.owner === owner) ?? { day, owner, turns: 0, failed: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 });
+}
+
+/** What all accounts together spent on the day of `now`, in USD. */
+export function spentToday(opts: StoreOptions = {}): number {
+  const day = dayOf(clock(opts));
+  return read().usage.filter((u) => u.day === day).reduce((n, u) => n + u.costUsd, 0);
+}
+
+/** Adds to the usage row of the account for the day of `now`. Numbers that are not finite or below zero count as 0. */
+export function addUsage(owner: string, add: Partial<Omit<UsageRow, "day" | "owner">>, opts: StoreOptions = {}): UsageRow {
+  const n = (v: number | undefined) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+  return withAuthLock(() => {
+    const day = dayOf(clock(opts));
+    const file = read();
+    const old = file.usage.find((u) => u.day === day && u.owner === owner) ?? { day, owner, turns: 0, failed: 0, costUsd: 0, inputTokens: 0, outputTokens: 0 };
+    const next: UsageRow = {
+      day,
+      owner,
+      turns: old.turns + Math.floor(n(add.turns)),
+      failed: old.failed + Math.floor(n(add.failed)),
+      costUsd: old.costUsd + n(add.costUsd),
+      inputTokens: old.inputTokens + Math.floor(n(add.inputTokens)),
+      outputTokens: old.outputTokens + Math.floor(n(add.outputTokens)),
+    };
+    save(file, file.conversations, [...file.usage.filter((u) => u !== old), next]);
+    return copy(next);
+  });
 }

@@ -456,6 +456,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
+| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the list of actions is empty |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -791,6 +792,39 @@ is strict, so a file of another version or with unknown fields is refused and le
 Tests: `tests/help-store.test.ts` (ownership, retries, states, retention, older and newer files),
 `tests/help-api.test.ts` (the routes, both roles, the preview, a restart, a broken file) and
 `tests/remote-help.test.ts` (`scf ask`).
+
+### Ask SCF: the turn service
+
+`src/help/turn.ts` runs a help turn. It is a runner of its own, apart from flow runs, the
+refinement flows and `src/server/generate.ts`: no flow, no run folder, no scheduler job.
+
+- **One call, no tools.** `HelpTurns.run` resolves the target from `help.model` (else
+  `default_model`) with `toTarget`, and calls `runClaude` like the failure summary does:
+  `noTools`, `noMcp`, `isolated`, permission mode `dontAsk`, no GitHub token variables, an empty
+  temporary folder as working folder that is removed afterwards with the log of the call. A target
+  that is not Claude Code is a `setup` failure (`helpTarget`): Codex always has a shell tool.
+  The answer is text; `jsonOf` finds the JSON object and `checkReply` decides what is kept, so
+  model output cannot name a tool, a command or an action that runs.
+- **The prompt** (`turnPrompt`) holds the rules of the contract for the asker's role, then one
+  JSON value with everything a person wrote: the question, the page context, the last
+  `HISTORY_TURNS` answered turns (each cut to `HISTORY_CHARS`) and the offered sources. `evidence`
+  in `HelpDeps` is where the context stories plug in; today it offers nothing, so every reply is
+  `unverified`.
+- **Queue and fair use.** `admit` refuses before anything is stored (`TurnRefused`): switched off,
+  a turn of the same account running or waiting, a full queue, or the account's turns of the day
+  used. Admitted turns wait in one first-come queue and `pump` runs `help.max_parallel` at once.
+  Each job holds an `AbortController`: `cancel` (after the store marked the reply) and `drop`
+  (a deleted conversation) abort it, `stopAll` on server close.
+- **Failures** are classified by `classifyFailure` into the store's `FAILURE_CODES`; `RETRY` says
+  which can be tried again at once. The stored text is the fixed sentence of the code. The log
+  gets fixed words only.
+- **Usage.** `help.json` has `usage` rows per day and account (`addUsage`): turns, failed, cost,
+  tokens. A file without `usage` (the first version) reads as none. The per-turn cap and
+  `help.daily_budget_usd` use these rows, not the run budget. `GET /api/help/usage` is the
+  administrators' view; `forRole` and `hideNames` keep model, provider, cost and tokens from users.
+
+Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
+the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
 
 ### Helper processes
 
