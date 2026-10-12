@@ -5,6 +5,7 @@ import { removeCredentialsLocked } from "../credentials/store.js";
 import { appendAuditLocked, prepareAuditLocked, type AccountAuditEvent, type AuditEvent } from "./audit.js";
 import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
+import { checkHelp, removeHelpLocked } from "../help/store.js";
 import { checkAppReposFile, removeAppReposLocked } from "./app-repos.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
@@ -499,7 +500,7 @@ export interface DeletedUser {
 }
 
 /**
- * Deletes an account. Order: limits override, repositories (with their watchers, one audit line each), sessions, then credentials (with a new key), then users.json, so every partial state is
+ * Deletes an account. Order: limits override, repositories (with their watchers, one audit line each), refinement sessions and Ask SCF conversations, sessions, then credentials (with a new key), then users.json, so every partial state is
  * safe and a second run finishes the job. The last admin that is not blocked cannot be deleted.
  */
 export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
@@ -512,12 +513,14 @@ export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
       // A refinements.json that cannot be read stops the delete before anything changes; then the repository list
       // (a repos.json that cannot be read stops it too), then the refinement sessions.
       checkRefinements();
+      checkHelp(); // a help.json that cannot be read stops the delete too
       removeLimitsLocked(id);
       checkAppReposFile(); // a broken app-repos.json stops the delete before anything changes
       removeReposLocked(id, (repoId, ids) => {
         if (opts.by !== undefined) appendAuditLocked(opts.by, { action: "repo-change", result: "ok", target: repoId, detail: watchersRemovedDetail(ids) });
       });
       removeRefinementsLocked(id);
+      removeHelpLocked(id);
       removeAppReposLocked(id);
       removeSessionsLocked((s) => s.userId === id);
       const wiped = removeCredentialsLocked(id);
