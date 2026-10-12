@@ -1873,13 +1873,15 @@ scf analyst reset       # put back everything it changed
 
 The report is `analyst/report.md` in the data folder; the same advice as data is in
 `analyst/latest.json`. It looks at the last 14 days and needs 20 visits of a step before it says
-anything. Per step and model it shows how often the step worked, ran into its time limit, was
+anything; visits stopped by a usage limit do not count towards the 20. Per step and model it shows how often the step worked, ran into its time limit, was
 repaired by a `fix_*` step, or was sent back by a review, and its share of all tokens. From that:
 
 - **Try a lower level.** The step works nearly always and its work is rarely repaired. The advice
   is one effort level down when the step runs on high or above, otherwise the next smaller model.
-  For a review: almost none of the reviews led to a change.
-- **Try a higher level.** The step fails or its work is repaired often.
+  For a review: almost none of the reviews led to a change, and the review step itself works at
+  least 97% of the time.
+- **Try a higher level.** The step fails or its work is repaired often. A review step that fails
+  15% of the time or more is treated the same way: it is never advised to go lower.
 - **Time limit, not model.** 5% or more of the visits ran into the time limit. A stronger model is
   usually slower, so look at the limit and the size of the work first.
 - **Look at this.** The step got clearly worse in the last two days.
@@ -1892,14 +1894,33 @@ trial: it takes the advice with the largest token share that says "effort …" o
 model, and sets it for that step. There is one trial per flow at a time, so the effect of a change
 can be told apart. The change is written to `analyst/overrides.json`; the engine reads that file at
 the start of every agent step, so it takes effect at the next step, also in a run that is under way.
-No flow file is changed. A router rule of yours for the step wins over the analyst.
+No flow file is changed.
+
+Some advice stays advice, and the report says why under "Advice not tried by itself":
+
+- **Another model** is only tried when the published figures (see below) hold at least one figure
+  for that model. The analyst makes the name of the next level from the name of the current one, and
+  this is its check that such a model exists. With `--no-web`, or before the first lookup worked, no
+  model is tried. Effort changes need no figure.
+- **A review none of whose reviews led to a change.** A trial of it could not be judged.
+- **A step inside a sub-flow.**
+- **A change back to what the flow itself says.** `scf analyst reset` does that.
+
+What the analyst set never wins over you:
+
+- A router rule of yours for the step wins, for the model and for the effort.
+- The override follows the flow. It stores what the flow said for the step (model and effort) when
+  the analyst set it, and applies only while the flow still says that. When you edit the step's
+  model or effort, your edit counts from the next step on.
+- Only the model is replaced. The step keeps its agent and its provider, so a step on a local model
+  or on a proxy stays there. The model of a step that does not run on Claude Code is never changed.
 
 A trial is judged on the visits since it started, against the numbers of the step before it:
 
 - After 20 visits a **lower** level is kept unless the step does worse: it works more than 5 points
   less often, its work is repaired more than 10 points more often, it times out more than 5 points
   more often, or reviews send its work back more than 15 points more often. For a review step:
-  unless it leads to a change more than 15 points less often.
+  unless it leads to a change less than half as often as before.
 - A **higher** level is kept only when the step works at least 5 points more often or is repaired
   at least 10 points less often. Otherwise it is not worth its tokens and is put back.
 - After 8 visits a trial that works 25 points less often is stopped at once.
@@ -1908,16 +1929,23 @@ A trial is judged on the visits since it started, against the numbers of the ste
 A change that was put back is not tried again for 30 days, and a step is left alone for 3 days
 after any trial. The run log of a step says "set by the analyst" when an override applied. The
 report lists what is set now, what happened at this check, and the last ten trials;
-`analyst/tuning.json` holds the full record. `scf analyst auto off` stops new trials and keeps what
-is set; `scf analyst reset` removes it all.
+`analyst/tuning.json` holds the full record, and it owns the overrides: an entry in
+`overrides.json` that no running or kept trial stands for is removed at the next check, so do not
+add entries by hand. `scf analyst auto off` stops new trials and keeps what is set.
+`scf analyst reset` removes it all and ends the running and the kept trials as "put back", so the
+same changes are not tried again for 30 days.
 
-**Published figures.** Once a week the analyst asks Claude Code (web search only, with the Claude
-sign-in of this machine) for published scores, prices and speeds of the models you use and the
+**Published figures.** Once a week the analyst asks Claude Code (with the Claude sign-in of this
+machine) for published scores, prices and speeds of the models you use and the
 levels next to them, and keeps them in `analyst/reference.json` with the source of each figure.
 Figures a third party measured itself are used as they are. Figures from the makers, and figures
 whose origin is not given, are lowered by a tenth. They are only used to hold back advice for a
-smaller model that scores far lower; your own runs always decide. When the search fails, the
-earlier figures are kept. On Linux, run `scf analyst run` from cron.
+smaller model that scores far lower, and to know that a model exists before it is tried; your own
+runs always decide. Coding scores are only compared when both name the same test. That session has
+the two web tools (search and fetch) and no others, no MCP servers, none of your personal or
+project settings, and runs in an empty temporary folder. When the search fails or finds nothing,
+the earlier figures are kept and it is tried again a day later. On Linux, run `scf analyst run`
+from cron.
 
 #### The command line for a running Foundry
 
