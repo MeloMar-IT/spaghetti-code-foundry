@@ -2951,6 +2951,30 @@ Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef012345
 - **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
 - **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
 
+#### Discover candidate sources from Skills.sh
+
+`scf skills discover [<export-file> [<file>]]` proposes candidate sources from a saved Skills.sh export. It does not call Skills.sh and does not scrape it. Nothing it finds is approved, fetched or staged. You add a source to `skill-sources.yaml` by hand.
+
+```
+scf skills discover skills-sh-export.json
+```
+
+```
+PROPOSED github.com/example/skills@0123456789ab (3 listed)
+KNOWN github.com/example/other is in the source list (enabled)
+UNRESOLVED github.com/example/gone: the repository could not be reached
+```
+
+- **Export.** A JSON array, an object with `skills` or `repositories`, or one repository per line. Only https GitHub repositories are kept. Entries that look like a credential are dropped. Trust, licence, popularity and safety claims in the export are not copied.
+- **Revision.** Each repository is resolved to the commit its own `HEAD` points at (`git ls-remote`, 20 s each). A repository git cannot read is `UNRESOLVED` and not stored.
+- **Candidate list.** `<data folder>/skill-source-candidates.json`, with status `proposed`, origin `skills.sh`, repository and revision. It is the only file written. The allowlist, the lock, the quarantine and releases are never touched.
+- **Already known.** A repository already in `skill-sources.yaml`, in any status, is shown as `KNOWN` and not added. A repository already in the candidate list is skipped.
+- **Review.** To use a candidate, review it and add it to `skill-sources.yaml`; then `scf skills import` fetches it. The revision shown is a proposal, not an approved commit.
+- **List.** `scf skills discover` with no operand prints the stored candidates and `OK <n> candidates`.
+- **Optional.** Runs never read the candidate list. A missing list, a failed discovery or a missing export does not affect approved skills.
+- **Ctrl-C.** The run stops and the list is not changed. A broken list is never overwritten.
+- **Exit codes.** 0 on success. 1 for a `PROBLEM` or a usage error. Limits: export 4 MiB, 20,000 entries, 100 repositories per run, 500 candidates in the list.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
