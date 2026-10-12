@@ -4769,6 +4769,38 @@ works while its next step waits for a person; a board status that differs from t
 server adds the source "The sources disagree: the state is uncertain", which names both sides.
 A reply that rests on such a source is never shown as confirmed: at most "likely".
 
+### Why something does not work
+
+When you ask why a run, a repository, the queue or (as an administrator) an issue or the server
+does not work, Ask SCF does not work out a cause by itself. The server looks up what the
+Foundry already says about the thing, the same explanation the run page, the queue and the
+Operations page show, and hands it over as a source named "Diagnosis of …". It has five parts:
+
+| Part | What it holds |
+|---|---|
+| Symptom | What is observed, for example "The step tests failed" or "The run is recorded as waiting: …". |
+| Cause | The Foundry's own explanation: "confirmed by the product's own record", or "a hypothesis, not confirmed", or "not recognised". |
+| Supporting evidence | The recorded facts the cause rests on: the step that failed, who must act, since when it waits. |
+| Missing evidence | What is not known: for example which part of a connection check failed, or a reading of now for an old record. |
+| Safest next check | Where to look next. It only reads; it changes nothing. |
+
+A diagnosis is made for a failed run, a run that waits (for your answer, your approval, another
+story, a limit, its turn in the queue), a queued run, a queue with waiting runs, and a
+repository whose connection check failed, is older than a day or was never done. For an
+administrator also for a board issue, a finding of the monitor and a server that reports a
+problem. At most 2 diagnoses go with one question.
+
+- **Not recognised.** When the error is not one the Foundry can explain, the diagnosis says so
+  and names the safest next step ("Ask the administrator" for a user, "Look at Details on the
+  run page" for an administrator). Ask SCF is told to repeat that and to make up no cause.
+- **A hypothesis.** A cause that a model wrote from the output of a step, a cause from an old
+  record and a cause from records that disagree are marked "a hypothesis, not confirmed".
+- A reply that rests on a diagnosis without a confirmed cause is shown as "likely" at most.
+- A diagnosis is read with your permissions, like the other records: there is none for a run of
+  another account. It never reads a log, a transcript or the output of a step, and holds no
+  cost, model name or folder. A text in it that looks like a secret is taken out; a text that
+  reads like an instruction is left out and named under the missing evidence.
+
 ### The page context
 
 So that you can ask "what is happening here?" without copying an id, a question can carry a

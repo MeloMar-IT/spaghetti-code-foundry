@@ -300,6 +300,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- Say only what you can support. Point at a source only by an id from `sources`; when `sources` is empty, point at none.",
     "- A source of the kind `state` is what the server observed at the time in `observedAt`. In the explanation keep three things apart, in this order and with these words: \"Observed:\" what a source shows, \"So:\" what you conclude from it, \"You could:\" what you suggest.",
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
+    "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",

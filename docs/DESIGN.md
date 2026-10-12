@@ -1325,6 +1325,40 @@ next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` a
   explanation, and for saying that the state is uncertain when a source says so.
 - `helpTurnsOf` offers the state sources first, then the documentation sections.
 
+### Ask SCF: diagnoses
+
+`src/server/help-diagnosis.ts` (#237) adds, to the `state` sources of a turn, what the product
+itself says is wrong. It holds no diagnosis rule. A cause is one of three things: the
+`failure` of the run's next-step record (`failureSummary` in `failure.ts`: `classifyFailure`
+plus the table of `errors.ts`), the `why` of a next-step record (`next-step.ts`,
+`server/next.ts`; for a queued run, a board issue and a health problem it is the field the
+snapshot already holds), or nothing.
+
+- **Reading** (`diagnosisSources`): for the shown snapshots, in order, at most `DIAGNOSES` (2).
+  For a run the next-step record is read through `runWithNext` of `help-context.ts`, the same
+  permission check and reader as the run snapshot (the snapshot adapter now uses it too), for
+  the account as it is now. The run's reason goes through `explainError` for the role. Nothing
+  else is read: no log, no transcript, no step output.
+- **The diagnosis** (`diagnose`, pure): symptom, cause (optional), `confirmed`, supporting and
+  missing evidence, the next check. A failed run whose explanation is `NOT_EXPLAINED` or "no
+  reason was saved" has no cause, and the next check is the `todo` of `explainError`. A
+  failure note of a model (`byModel`), a snapshot with a stale field and a question whose
+  sources disagree give `confirmed: false`. A repository whose check failed and a monitor
+  finding have no cause: the snapshot holds none. Kinds with nothing to explain give none.
+- **As a source** (`diagnosisSource`): id `diagnosis-<kind>-<hash>`, kind `state`, title
+  "Diagnosis of …", ref `diagnosis · <ref of the snapshot>`, the snapshot's `observedAt`, and
+  five labelled lines within `DIAGNOSIS_MAX` (800). Each text is made one line, passes
+  `guardExcerpt` on its own and is cut, so a record's text cannot add a labelled line; a text
+  that reads like an order is dropped and named under the missing evidence. Without a confirmed
+  cause the source is `uncertain`, so the existing rule of the turn makes a "confirmed" reply
+  that cites it "likely".
+- **In the turn**: one more rule in the prompt: build a "why does it not work" answer on the
+  diagnosis, name the five parts, and never make up a cause or a detail no source holds.
+  `liveEvidence` returns the disagreement, the snapshots, then the diagnoses. With the limit
+  of 10 sources per turn, at least 2 documentation sections remain.
+
+Tests: `tests/help-diagnosis.test.ts`.
+
 ### Ask SCF: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,

@@ -4,6 +4,7 @@ import type { GuardOptions } from "../help/guard.js";
 import type { Source, TurnInput } from "../help/turn.js";
 import { runsListFor } from "./api-runs.js";
 import { currentAccount, helpSnapshot, type Snapshot, type SnapshotKind } from "./help-context.js";
+import { diagnosisSources } from "./help-diagnosis.js";
 import type { ApiContext } from "./server.js";
 
 /**
@@ -133,12 +134,15 @@ export function liveSnapshots(ctx: ApiContext, asker: Asker, input: Pick<TurnInp
   return { shown, all: [...shown, ...hidden] };
 }
 
-/** The state sources of a question. Never throws: what cannot be read is not offered. */
+/** The state sources of a question: the snapshots, then the diagnoses of the first of them. Never throws: what cannot be read is not offered. */
 export function liveEvidence(ctx: ApiContext, input: TurnInput, guard: GuardOptions = {}): Source[] {
   try {
     const { shown, all } = liveSnapshots(ctx, { id: input.owner, role: input.role }, input, guard);
     const conflict = conflictSource(conflictsOf(all), new Date().toISOString());
-    return [...(conflict ? [conflict] : []), ...shown.map(sourceOf)];
+    const states = shown.map(sourceOf);
+    // what the product itself says is wrong with these things (#237): after the facts, and uncertain when the facts disagree
+    const diagnoses = diagnosisSources(ctx, { id: input.owner, role: input.role }, shown, (s) => sourceOf(s).ref, guard, !!conflict);
+    return [...(conflict ? [conflict] : []), ...states, ...diagnoses];
   } catch {
     return [];
   }
