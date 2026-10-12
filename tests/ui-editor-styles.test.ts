@@ -34,7 +34,8 @@ describe("editor.css", () => {
     expect(decls(".dirty-dot")).toBeUndefined();
     expect(decls(".dirty-dot.clean")).toBeUndefined();
     expect(decls(".graph-pane")).toBeUndefined();
-    expect(decls(".overview-pane")).toBeDefined();
+    expect(decls(".overview-pane")?.map((d) => d.split(":")[0])).toEqual(["background", "border", "border-radius", "padding"]);
+    expect(decls(".editor-body")).toBeUndefined();
     expect(decls(".flow-state")).toBeDefined();
   });
 

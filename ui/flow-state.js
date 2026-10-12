@@ -4,7 +4,7 @@ const KEY = "scf-overview";
 
 /** The texts of the editor header for `cur` (the flow being edited), drawn from the list `flows`. */
 export function editorState(cur, flows = []) {
-  const objName = typeof cur.obj?.name === "string" && cur.obj.name ? cur.obj.name : null;
+  const objName = typeof cur.obj?.name === "string" && cur.obj.name.trim() ? cur.obj.name : null;
   const title = objName ?? cur.name ?? "flow";
   const scope = cur.name ? (cur.scope ?? flows.find((f) => f.name === cur.name)?.scope ?? null) : null;
   const target = cur.saveScope === "global" ? "global flows" : "this repo";

@@ -104,6 +104,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
   deps["./viewport.js"] = await import("../../ui/viewport.js" as string);
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);
   deps["./flow-shell.js"] = await import("../../ui/flow-shell.js" as string);
+  deps["./templates.js"] = await import("../../ui/templates.js" as string);
   const all = { ...deps, ...depsOver };
   const { createFlowPage } = await loadUiSource("flow-page.js", all, ["createFlowPage"]);
   let page: any;

@@ -114,6 +114,20 @@ describe("the module split", () => {
     expect(flagged.filter((s) => !Object.keys(OWNED_BY_PAGE).some((n) => s.includes(`.${n}`)))).toEqual([]);
   });
 
+  it("keeps the editor grid in templates.css under .page-editor, with the pane as the only sticky thing", () => {
+    const rules = parseCss(file("/css/templates.css"));
+    const sticky = rules.filter((r) => r.declarations.some((d) => d.replace(/\s+/g, "") === "position:sticky"));
+    expect(sticky.length).toBeGreaterThan(0);
+    for (const r of sticky) expect(r.selector.startsWith(".page-editor"), r.selector).toBe(true);
+    expect(rules.find((r) => r.selector === ".page-editor.with-overview > .editor" && r.context === "")?.declarations).toContain("grid-template-columns: minmax(0, 1fr) 340px");
+  });
+
+  it("has no editor grid in layout.css and only the run grid in its 1100px block", () => {
+    const rules = parseCss(file("/css/layout.css"));
+    expect(rules.filter((r) => /(^|[\s,.])\.editor\b/.test(r.selector))).toEqual([]);
+    expect(rules.filter((r) => r.context.includes("1100px")).map((r) => r.selector)).toEqual([".run-grid"]);
+  });
+
   it("has no z-index in templates.css", () => {
     expect(file("/css/templates.css")).not.toContain("z-index");
   });

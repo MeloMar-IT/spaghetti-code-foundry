@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Flow editor and refinement session use the page templates (#449). Part 5c of #341.
+  - **Flow editor.** The page is built with `editorPage`, and the header with the kit `pageHeader`. The class `flow-head` is now `page-head`, and `.editor-body` is gone. `with-overview` is set on the page root (`ui.page`). A flow name of only spaces falls back to the saved name, then to "flow", so the header does not throw while typing.
+  - **Editor grid.** Moved from `layout.css` to `templates.css` under `.page-editor`. The region wrappers use `display: contents`; the Overview pane (`.page-editor .page-side > *`) is sticky and becomes one static column at 1100 px and below.
+  - **Refinement session.** The page is `conversationPage({ head, thread: [note, waiting, workspace] })` and the toolbar is `pageHeader`.
+  - **Retry focus.** When the "Could not refresh" note goes away while focus is inside it (Retry or the automatic poll), the session title takes the focus, also after the title is redrawn. Focus is not moved if the person went elsewhere.
+  - **Not done yet.** The `admin-flow` visual case and its baseline images are not added; they need Playwright on darwin.
+
 - Repository rows show health, sign-in, last check, active work and the next action (#380). Part 1 of 5 of #262.
   - **`ui/repo-status.js` (new).** Pure functions, no DOM: `repoName`, `repoAttention(repo, { admin, options })` → `{ level, text, action }`, `sortByAttention`, `attentionCount`, `attentionSummary`, `activeRuns(runs, repo)` (running and waiting runs matched on `github`), `matchesText` and `readCompact` / `writeCompact`.
   - **My repositories.** Each row shows the short name (full text in `title`), the sign-in method, the connection state, the last check, the active runs and at most one attention state with one next-step button. Order: needs authentication (method `none`, non-admin), GitHub App removed, last test failed (first failed message), never tested, nothing to do. Repositories that need attention come first; a line above the table counts them. The button runs the existing action (Change authentication, Test connection, the install link) and is not repeated in the Actions cell. A read-only preview shows no buttons.

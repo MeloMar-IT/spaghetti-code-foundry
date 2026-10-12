@@ -17,6 +17,7 @@ beforeAll(async () => {
     ia: await import("../ui/ia.js" as string),
     problems: await import("../ui/flow-problems.js" as string),
     states: await import("../ui/states.js" as string),
+    templates: await import("../ui/templates.js" as string),
   };
 });
 // The page validates 300 ms after the last edit; let a pending timer fire while the fake DOM is still installed.
@@ -74,6 +75,8 @@ describe("editorState", () => {
   it("falls back for the title and the scope", () => {
     expect(state.editorState(clean({ obj: { name: 5 } }), []).title).toBe("a");
     expect(state.editorState(clean({ obj: null, name: null }), []).title).toBe("flow");
+    expect(state.editorState(clean({ obj: { name: "  " } }), []).title).toBe("a");
+    expect(state.editorState(clean({ obj: { name: " " }, name: null }), []).title).toBe("flow");
     expect(state.editorState(clean({ scope: undefined }), [{ name: "a", scope: "global" }]).scopeLabel).toBe("global");
   });
 });
@@ -117,6 +120,24 @@ describe("renderHeader", () => {
     expect(details.all("button").map(text)).not.toContain("Visual");
     expect(draw(clean()).root.all("details")[0]!.all("button").map(text)).not.toContain("Delete flow");
     expect(byText(root, "Visual")).toBeDefined();
+  });
+
+  it("is the page header of the kit: one h1 and the flat children in order", () => {
+    const h = handlers();
+    const nodes = shell.renderHeader(state.editorState(clean(), []), { mode: "visual", overviewOpen: false, saveScope: "repo", canDelete: false, ...h });
+    const [head, line] = nodes as FakeElement[];
+    expect((head!.getAttribute("class") ?? "").split(" ")).toEqual(["toolbar", "page-head"]);
+    expect(head!.all("h1")).toHaveLength(1);
+    const kids = head!.children as FakeElement[];
+    expect(kids.map((k) => k.tag)).toEqual(["h1", "span", "span", "span", "button", "button", "button", "details"]);
+    expect(kids.map((k) => k.getAttribute("class"))).toEqual([null, "pill", "seg", "spacer", "overview-toggle", null, "primary", "flow-more"]);
+    expect(text(kids[4]!)).toBe("Overview");
+    expect(line!.getAttribute("class")).toBe("flow-state");
+  });
+
+  it("draws a whitespace name without throwing", () => {
+    expect(() => draw(clean({ obj: { name: "   " } }))).not.toThrow();
+    expect(draw(clean({ obj: { name: "   " } })).root.all("h1").map(text)).toEqual(["a"]);
   });
 
   it("calls the handlers", () => {
@@ -281,6 +302,7 @@ describe("the flow page controller", () => {
       "./flow-shell.js": shell,
       "./flow-problems.js": real.problems,
       "./states.js": real.states,
+      "./templates.js": real.templates,
       "./ia.js": real.ia,
       "./graph.js": { renderGraph: (_o: unknown, opts: unknown) => { graphOpts = opts; drawn++; return real.dom.h("div", {}, "graph"); } },
       "./library.js": library,
@@ -409,6 +431,42 @@ describe("the flow page controller", () => {
     expect(storage.m.get("scf-overview")).toBe("open");
   });
 
+  it("is one editor page: the pane in the side, the body in the main, with-overview on the page root", async () => {
+    await open({ storage: memory() });
+    expect(mainEl.children).toHaveLength(1);
+    const root = mainEl.children[0] as FakeElement;
+    expect(root.classList.contains("page")).toBe(true);
+    expect(root.classList.contains("page-editor")).toBe(true);
+    expect(root.children.map((c) => (c as FakeElement).getAttribute("class"))).toEqual([null, "page-notices", "editor page-body"]);
+    expect((pane().parent as FakeElement).getAttribute("class")).toBe("page-side");
+    expect(root.classList.contains("with-overview")).toBe(false);
+    toggle().click();
+    expect(root.classList.contains("with-overview")).toBe(true);
+    toggle().click();
+    expect(root.classList.contains("with-overview")).toBe(false);
+  });
+
+  it.each(["flow-save", "flow-more"])("keeps the focus on %s when the header is drawn again", async (focus) => {
+    await open({ storage: memory() });
+    const find = () => [...mainEl.all("button"), ...mainEl.all("summary")].find((e) => e.getAttribute("data-focus") === focus)!;
+    const before = find();
+    before.focus();
+    editorOpts.onChange();
+    expect(g.document.activeElement).not.toBe(before);
+    expect(g.document.activeElement.getAttribute("data-focus")).toBe(focus);
+    expect(mainEl.contains(g.document.activeElement)).toBe(true);
+  });
+
+  it("keeps the focus on the Overview button when it is clicked", async () => {
+    await open({ storage: memory() });
+    const before = toggle();
+    before.focus();
+    before.click();
+    expect(g.document.activeElement).not.toBe(before);
+    expect(g.document.activeElement.getAttribute("data-focus")).toBe("flow-overview");
+    expect(mainEl.contains(g.document.activeElement)).toBe(true);
+  });
+
   it("remembers the choice, also on a narrow window, and works when storage throws", async () => {
     const storage = memory();
     await open({ storage });
@@ -534,12 +592,16 @@ describe("the flow page controller", () => {
     await page.openFlow("a");
     await tick();
     expect(pane().hidden).toBe(false);
+    const root = () => mainEl.children[0] as FakeElement;
+    expect(root().classList.contains("with-overview")).toBe(true);
     narrow = true;
     change();
     expect(pane().hidden).toBe(true);
+    expect(root().classList.contains("with-overview")).toBe(false);
     narrow = false;
     change();
     expect(pane().hidden).toBe(false);
+    expect(root().classList.contains("with-overview")).toBe(true);
     // Entering the editor again at the other width reads that width's choice too.
     narrow = true;
     s.cur = null;
@@ -615,6 +677,11 @@ describe("the source", () => {
     const src = readFileSync("ui/flow-page.js", "utf8");
     expect(src).toContain("export function createFlowPage");
     expect(src).toContain("drawHeader");
+  });
+
+  it("the page and the header hold no old grid or head class", () => {
+    expect(readFileSync("ui/flow-page.js", "utf8")).not.toContain("ui.grid");
+    expect(readFileSync("ui/flow-shell.js", "utf8")).not.toContain("flow-head");
   });
 
   it("app.js uses the flow page and no longer holds the editor", () => {
