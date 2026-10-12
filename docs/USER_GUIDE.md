@@ -230,7 +230,7 @@ Home asks again every 30 seconds.
 
 **Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
 
-**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. **Add repository** runs in steps and tests the connection after saving; **Change authentication** asks you to confirm. A read-only preview shows no action buttons. **Rows on My repositories.** Each row shows the short name (`owner/name`, or the address), how the Foundry signs in, whether it is Connected, Failed or Not tested yet, when it was last checked and how many runs are running or waiting for it ("—" if that cannot be read). A row has at most one thing to do, shown as one button: change the authentication (an account that needs a sign-in), install the GitHub App again, or test the connection (after a failed or missing test; a failed test also shows its first message). Repositories that need attention come first, and a line above the table says how many. From 8 repositories a filter box narrows the list by address. **Compact rows** makes the rows smaller; the browser remembers it. Long names are cut, with the full text on hover. No secret is shown. **One repository.** **Open** on a row (or `#/repos/<id>`) opens the page of that repository, in both displays. It has three sections. **Overview**: name, address, the attention state and next action (as on the row), active runs, the date it was added and **Definition of Ready** (read-only). **Connection**: the method, the user name if there is one, the public key with **Copy** and the deploy-key hint (deploy key), or the install link (GitHub App); the last test with every check (Read, Write, GitHub API) and its message; and the buttons **Test connection** and **Change authentication**. **Dangerous actions**, last and set apart: **Generate a new key** (deploy key only) and **Remove**. Each asks first and names the repository and what is deleted. While one action runs, the other buttons are disabled. An unknown repository, or one of another account, shows "No such repository." with a link back. A read-only preview shows the sections without buttons. The breadcrumb names the repository; Back goes to the list. A row no longer shows the public key, so open the repository to copy it after you add a deploy-key repository.
+**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. **Add repository** runs in steps and tests the connection after saving; **Change authentication** asks you to confirm. A read-only preview shows no action buttons. **Rows on My repositories.** Each row shows the short name (`owner/name`, or the address), how the Foundry signs in, whether it is Connected, Failed or Not tested yet, when it was last checked and how many runs are running or waiting for it ("—" if that cannot be read). A row has at most one thing to do, shown as one button: change the authentication (an account that needs a sign-in), install the GitHub App again, or test the connection (after a failed or missing test; a failed test also shows its first message). Repositories that need attention come first, and a line above the table says how many. From 8 repositories a filter box narrows the list by address. **Compact rows** makes the rows smaller; the browser remembers it. Long names are cut, with the full text on hover. No secret is shown. **One repository.** **Open** on a row (or `#/repos/<id>`) opens the page of that repository, in both displays. It has three sections. **Overview**: name, address, the attention state and next action (as on the row), active runs, the date it was added and **Definition of Ready** (read-only). **Connection**: the method, the user name if there is one, the same **Provider**, **Identity** and **Scope** as everywhere (see "Provider, identity and scope" below), the public key with **Copy** and the deploy-key hint (deploy key), or the install link (GitHub App); the last test with every check (Read, Write, GitHub API) and its message; and the buttons **Test connection** and **Change authentication**. **Dangerous actions**, last and set apart: **Generate a new key** (deploy key only) and **Remove**. Each asks first and names the repository and what is deleted. While one action runs, the other buttons are disabled. An unknown repository, or one of another account, shows "No such repository." with a link back. A read-only preview shows the sections without buttons. The breadcrumb names the repository; Back goes to the list. A row no longer shows the public key, so open the repository to copy it after you add a deploy-key repository.
 
 **Refinement pages.** The session list and a session show a grey skeleton while they load. If they cannot load, you see what went wrong and **Retry**; a session that is not found and a missing permission are shown as their own messages. A session refreshes by itself; a refresh that fails keeps what you see and says "Could not refresh. Showing data from …" with **Retry**. A refresh never replaces a field you are typing in or that has unsaved text. While the architect works, the page says so once. Each field shows whether it is saving, saved or failed; a failed save keeps your text and has **Retry**. If a publish creates some issues and fails for the rest, a banner lists both and has **Retry** for the rest; it stays until the rest is published or removed. A draft that was split can no longer be changed: you see a message with a link to each part, and your text is kept. Removing a draft, moving text to the notes, merging, publishing with text that is not saved, removing a reason, replacing a field with a suggestion, removing a map entry and dropping a session ask first in a dialog.
 
@@ -2350,6 +2350,9 @@ token (the method "GitHub App" on My repositories). Set it up once:
    bot identity, **Installation ID (optional)**. With an installation ID, runs commit and comment as the app
    (this works as before). Without one, the app is used only for the repository method.
 3. Without an app ID, a key file and a name, the method is not offered, and the API answers 400.
+4. Under the settings, **Repositories that use the app** opens the list of repositories that use the app
+   (`#/all-repos?method=github-app`). A repository whose app was removed says "The administrator removed the
+   GitHub App" as its attention state; its owner chooses another authentication.
 
 The server finds the installation with the app's own key, so a user needs no rights on GitHub. That is why
 each account has a list of the repositories it may connect through the app. Set it on the Users page with the
@@ -2677,6 +2680,23 @@ environment only, and is never stored, logged or shown). If the app is no longer
 (`app-not-installed`); if the app was removed from the settings, `app-not-set-up`; if its key or ID is wrong,
 `app-broken`. A changed installation ID is kept.
 
+**Provider, identity and scope.** Every external connection is shown the same way: on a repository's
+Connection section, in the Authentication cell of the repository lists (provider, a separator and identity,
+with the scope under them) and on the Credentials page. Three parts:
+
+- **Provider:** GitHub for github.com; otherwise the host name of the address (for example `git.example.com`).
+- **Identity:** who the Foundry acts as: "GitHub App <slug>" (or "GitHub App" when the settings have no name),
+  "token of <user name>" for an HTTPS token, "fine-grained token" for a GitHub token, "deploy key <type and
+  comment of the public key>" (the key itself is not shown here), or "the server's own access" for an
+  administrator's repository with no sign-in. A user with no sign-in sees "Needs authentication".
+- **Scope:** Read, Write and GitHub API, each "works", "failed" or "not checked", from the last connection test.
+  A check that was skipped (the API check of a deploy key) is "not checked". A deploy key or the GitHub App
+  adds "limited to this repository".
+
+On the repository lists, a filter **Authentication** (`?method=<method>` in the address) narrows the list by
+method, with its own chip. With no repository that uses the method the list says "No repository uses this
+authentication." and offers **Clear filters**.
+
 **The My repositories page.** `#/repos` is in the top bar for every account. It lists your repositories
 with the URL, how the Foundry signs in (the authentication method) and the connection status, which is
 "Not tested yet" until it is tested (see below). **Add repository** works in steps. Step 1 asks for the address; press **Next**. Steps 2 and 3 ask for the method and its details; **Back** returns to the address and keeps what you typed. Press **Add repository** to save. The Foundry then tests the connection by itself, and the dialog shows what it stored: the address, the method, the user name, the public key of a deploy key, the result of each check, and "A token is stored. It is never shown again." If the test fails, the repository is kept; press **Test again**, or **Change details** to enter new details. Press **Done** to close. The methods:
@@ -2693,8 +2713,8 @@ administrator has not set up the app (Settings → GitHub App)". The dialog show
 repositories" and pick it), then save; the connection is tested right after you save. When you save, the server looks up the
 installation of the app on the repository and keeps its ID with the repository; if the app is not installed
 there, it says so (409) and nothing is saved. The row keeps the link, to install the app on more repositories or
-change which ones it may use. If the administrator removes the app, the row says so; choose another
-authentication. **Remove** does not uninstall the app on GitHub.
+change which ones it may use. If the administrator removes the app, the row says "The administrator removed the
+GitHub App" under its attention state; choose another authentication. **Remove** does not uninstall the app on GitHub.
 
 With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no
 secret. The Foundry makes a key pair, keeps the private key and shows the **public key** in the
@@ -2709,8 +2729,8 @@ Errors from the server show in the dialog in plain words. A failed removal shows
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
 has no per-repository settings. An admin sets them on the **Repositories** page.
 
-**The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`) and
-**All** (`#/all-repos`); a user never gets **All**. **All** lists the repositories of all accounts with the
+**The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`),
+**All** (`#/all-repos`) and **Credentials** (`#/credentials`, see below); a user never gets **All** or **Credentials**. **All** lists the repositories of all accounts with the
 Owner column (name and e-mail, "blocked" for a blocked owner, "Unknown account" when the account is gone), the
 URL, the authentication method and the connection status ("Not tested yet" until the owner tests it). Rows with
 a problem come first, then by owner and address. Besides the usual states, a row can say "Not on the app list"
@@ -2758,11 +2778,15 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   type the token again.
 - Queued and running runs of the old owner are not stopped.
 
-**The Credentials page (admin).** `#/credentials` is the admin page **Credentials**, after **Repositories**; a
-user never gets it. It is a table of the stored credentials of all accounts, sorted by owner name and then by
-name, with Owner, Name, Type, Fingerprint, Created and Last used ("never" when it was not used yet). The
-owner shows "deleted account" when the account is gone. It is for looking only: there is no add, change or
-remove button, and no secret is ever sent. One call, admin only (a user gets 403): `GET /api/admin/credentials`.
+**The Credentials page (admin).** `#/credentials` is the third scope of the admin's Repositories page (**Credentials**,
+after **Mine** and **All**); a user never gets it. It is a table of the stored credentials of all accounts, sorted by
+owner name and then by name, with Owner, Provider, Identity, Scope, Fingerprint, Created and Last used ("never" when
+it was not used yet). Provider, Identity and Scope are those of the repository the credential belongs to (a credential
+named `repo:<id>` of the same owner); a credential with no repository shows "No repository" and its own type and
+name as identity. If the repository list cannot be loaded, the row says "Unavailable" and "Details unavailable
+(…)", and Owner, Fingerprint, Created and Last used are still shown. Long fingerprints wrap. The owner shows
+"deleted account" when the account is gone. It is for looking only: there is no add, change or remove button,
+and no secret is ever sent. One call, admin only (a user gets 403): `GET /api/admin/credentials`.
 If the store cannot be read, the call answers 500 with the same sentence as `GET /api/credentials`.
 
 **Repositories.** Every account has its own list of GitHub repositories, kept in `repos.json` in

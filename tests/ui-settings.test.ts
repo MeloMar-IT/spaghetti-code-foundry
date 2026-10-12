@@ -155,6 +155,12 @@ describe("Settings → GitHub App", () => {
     expect(card.textContent).toContain("Only for the bot identity: runs then commit and comment as the app.");
   });
 
+  it("links to the repositories that use the app", async () => {
+    const { main } = await render({});
+    const link = appCard(main).all("a").find((a) => a.textContent === "Repositories that use the app")!;
+    expect(link.attrs.href).toBe("#/all-repos?method=github-app");
+  });
+
   it("saves the slug and sends no installation id when it is empty", async () => {
     const { main, puts } = await render({});
     const card = appCard(main);

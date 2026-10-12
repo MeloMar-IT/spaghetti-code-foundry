@@ -134,12 +134,12 @@ export function scopedHash(role, hash, ctx) {
   return withQuery(to.page.path, { repo: name || ALL_REPOS });
 }
 
-/** The address after a choice in the switcher: the repository replaced, `owner` kept. Null on a page without scope. */
+/** The address after a choice in the switcher: the repository replaced, `owner` and `method` kept. Null on a page without scope. */
 export function chosenHash(role, hash, ctx) {
   if (typeof hash !== "string") return null;
   const to = resolve(role, hash);
   if (to.redirected || !to.page.scope) return null;
-  const owner = to.query.owner ? { owner: to.query.owner } : {};
+  const owner = { ...(to.query.owner ? { owner: to.query.owner } : {}), ...(to.query.method ? { method: to.query.method } : {}) };
   const name = nameOf(ctx);
   if (to.page.id === "board" || to.page.id === "board-repo") return name ? withQuery(boardOf(name), owner) : withQuery("#/board", { repo: ALL_REPOS, ...owner });
   if (to.page.id === "repos" && ctx?.own !== true) return withQuery("#/repos", { repo: ALL_REPOS, ...owner });
@@ -158,7 +158,7 @@ export function clearedHash(role, hash, ctx) {
   if (to.redirected || !to.page.scope || to.page.nav === "detail") return hash;
   if (parseQuery(splitHash(hash).query).repo) return hash; // resolve() drops repo=all, so the raw query is read
   if (to.page.id === "runs") return filterHash({ ...parseFilter(hash), repo: "" }, { allRepos: true });
-  return withQuery(to.page.path, { repo: ALL_REPOS, ...(to.query.owner ? { owner: to.query.owner } : {}) });
+  return withQuery(to.page.path, { repo: ALL_REPOS, ...(to.query.owner ? { owner: to.query.owner } : {}), ...(to.query.method ? { method: to.query.method } : {}) });
 }
 
 /**

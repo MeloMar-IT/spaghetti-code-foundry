@@ -1,7 +1,8 @@
 import { api } from "./api.js";
 import { reposChanged } from "./context.js";
-import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
+import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, without, withQuery } from "./filters.js";
 import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
+import { integrationBlock, integrationOf } from "./integration.js";
 import { repoDialog } from "./repo-connect.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
@@ -153,6 +154,11 @@ export function connectionProblem(repo, { error } = {}) {
     failed ? connectionLines(repo).map((l) => h("div", { class: l.ok ? "status ok" : "status bad" }, l.text)) : null,
     error ? h("div", { class: "status bad" }, error) : null);
 }
+
+const integrationCell = (repo, admin, options) => {
+  const items = integrationBlock(integrationOf(repo, { admin, options }));
+  return h("td", { class: "integration" }, h("div", {}, `${items[0].value} · ${items[1].value}`), h("div", { class: "muted text-sm" }, items[2].value));
+};
 
 const connectionCell = (repo, extra = {}) => {
   const c = repo.connection;
@@ -383,6 +389,11 @@ export function focusRepoRow(main, id) {
   row.focus();
 }
 
+/** The Mine / All / Credentials switch of an admin; `current` is "mine", "all" or "credentials". */
+export const scopeSwitch = (current) => h("nav", { class: "seg scope-switch", "aria-label": "Which repositories" },
+  [["mine", "#/repos", "Mine"], ["all", "#/all-repos", "All"], ["credentials", "#/credentials", "Credentials"]]
+    .map(([id, href, label]) => h("a", { href, "aria-current": current === id ? "page" : null }, label)));
+
 /**
  * The repositories page. `scope` says what to list (MINE, or the admin scope of all accounts); `switcher` draws the Mine / All switch.
  * `notice` ({ text }) is a message kept from the last removal. Returns a cleanup.
@@ -391,7 +402,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
   // the filters live in the state, so a reload keeps them and a removed filter stays removed
-  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {},
+  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: { ...(query.repo ? { repo: query.repo } : {}), ...(query.method ? { method: query.method } : {}) },
     runs: undefined, text: "", compact: readCompact(store) }; // runs: undefined while loading, null when they could not be loaded
   const live = () => mine === generation && onPage(scope.page);
   const attention = scope.attention ?? repoAttention;
@@ -440,9 +451,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   };
   const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, scope.title),
     h("span", { class: "muted" }, scope.hint),
-    switcher ? h("nav", { class: "seg scope-switch", "aria-label": "Which repositories" },
-      h("a", { href: "#/repos", "aria-current": scope.id === "mine" ? "page" : null }, "Mine"),
-      h("a", { href: "#/all-repos", "aria-current": scope.id === "all" ? "page" : null }, "All")) : null,
+    switcher ? scopeSwitch(scope.id) : null,
     h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
   const add = async () => {
     const created = await repoDialog({ admin, options: state.options });
@@ -476,7 +485,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     return h("tr", { "data-repo": repo.id },
       h("td", { class: "mono repo-name", title: repo.url }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, name) : name),
       scope.ownerCell ? h("td", {}, scope.ownerCell(repo)) : null,
-      h("td", {}, methodLabel(repo, scope.asAdmin ? scope.asAdmin(repo) : admin)),
+      integrationCell(repo, scope.asAdmin ? scope.asAdmin(repo) : admin, state.options),
       connectionCell(repo, { error: testError }),
       runs,
       h("td", { class: "next-step" },
@@ -494,7 +503,8 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const draw = () => {
     const canAdd = scope.own && !readOnly && !state.methodsFailed;
     const pending = scope.own ? needsDeployKey(state.repos) : [];
-    const inContext = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const byRepo = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const inContext = state.filters.method ? byRepo.filter((r) => r.method === state.filters.method) : byRepo;
     const ctx = { admin, options: state.options };
     const showFilter = state.repos.length >= FILTER_FROM;
     if (!showFilter) state.text = "";
@@ -509,6 +519,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
             { cards: true, caption: scope.caption, class: state.compact ? "compact" : undefined })
           : inContext.length ? h("div", { class: "empty" }, "No repository matches the filter.")
           : state.filters.repo ? filterGone({ onClear: clear })
+          : state.filters.method && state.repos.length ? h("div", { class: "empty" }, h("p", {}, "No repository uses this authentication."), h("button", { type: "button", onClick: clear }, "Clear filters"))
           : h("div", { class: "empty" }, scope.empty, canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
     };
     drawResults();
@@ -518,7 +529,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       : null;
     mount(main,
       head(canAdd),
-      filterBar(state.filters, { onRemove: clear, onClear: clear }),
+      filterBar(state.filters, { labels: { method: METHODS.find((m) => m.id === state.filters.method)?.label }, onRemove: (key) => setFilters(without(state.filters, key)), onClear: clear }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: () => reload(state.notice) }) : null,
       scope.own && state.methodsFailed && !readOnly
         ? banner("warn", "The sign-in methods could not be loaded. You cannot add a repository now.", [{ label: "Retry", onClick: () => reload(state.notice) }])

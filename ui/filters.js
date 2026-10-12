@@ -5,8 +5,8 @@ import { parseQuery, splitHash } from "./ia.js";
 
 export { parseQuery, splitHash };
 
-const KEYS = ["repo", "owner"];
-const NAMES = { repo: "Repository", owner: "Owner" };
+const KEYS = ["repo", "owner", "method"];
+const NAMES = { repo: "Repository", owner: "Owner", method: "Authentication" };
 
 /** "" or "?repo=…&owner=…" (fixed key order; values that are not valid are left out). */
 export function formatQuery(filters) {
