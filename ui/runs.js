@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount, table, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
+import { pageViews } from "./views.js";
 import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
@@ -93,7 +94,7 @@ export function stepRow(s) {
 }
 
 /** Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
-export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo } = {}) {
+export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo, views = pageViews("runs") } = {}) {
   let closed = false;
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let forcing = false;
@@ -169,6 +170,9 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
     const active = Boolean(filters.repo || filters.owner);
     // A queued job that matches is a result too.
     const found = shown.length > 0 || (filters.repo && pending.length > 0);
+    // Saved views: the owner ids come from the owner list the page already loads (unknown when it failed).
+    const vp = views?.parts(filters, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { if (!closed && data) render(); } }) ?? {};
+    const stale = Boolean(vp.stale); // an out-of-date saved view is open: the empty state, even when the server still sent rows
 
     mount(main, collectionPage({
       title: "Runs",
@@ -180,8 +184,8 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
         h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh"),
       ],
       notices: states.alert,
-      filters: filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear }),
-      list: [
+      filters: filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear, row: vp.row, onSave: vp.onSave }),
+      list: stale ? null : [
         admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
         note && found ? h("p", { class: "muted" }, note) : null,
         !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
@@ -195,7 +199,8 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
         yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), runsTable(yours, "needs")) : null,
         shown.length ? runsTable(shown, "run") : null,
       ],
-      empty: shown.length ? null : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear })) : noRuns(),
+      empty: stale ? filterEmpty("runs", filters, { labels, onClear: clear, onDelete: vp.onDelete })
+        : shown.length ? null : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear })) : noRuns(),
     }));
   };
 

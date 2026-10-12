@@ -677,3 +677,73 @@ describe("an unknown repository and the context offer", () => {
     expect(buttonsOf(view({ repos: [], empty: "x" }), "Use as my context")).toHaveLength(0);
   });
 });
+
+describe("boardView with saved views", () => {
+  const withViews = (d: unknown, wanted: string | undefined, views: unknown, extra: Record<string, unknown> = {}) => {
+    const root = new FakeElement("div");
+    root.append(...(ui.boardView(d, wanted, { ...handlers(), ...extra, views }) as unknown[]).filter(Boolean) as FakeElement[]);
+    return root;
+  };
+  const parts = (over: Record<string, unknown> = {}) => ({ row: new FakeElement("nav"), onSave: vi.fn(), onDelete: null, stale: false, ...over });
+  const texts = (root: FakeElement) => root.all("button").map((b) => b.textContent);
+
+  it("draws the row and Save view in the filters region", () => {
+    const p = parts();
+    const root = withViews(board(), "acme/app", p);
+    const region = find(root, "div", "page-filters")[0]!;
+    expect(region.all("nav")).toHaveLength(1);
+    expect(texts(region)).toContain("Save view");
+    root.all("button").find((b) => b.textContent === "Save view")!.click();
+    expect(p.onSave).toHaveBeenCalled();
+  });
+
+  it("an unknown repository and an owner without cards get Delete this view", () => {
+    const del = vi.fn();
+    const gone = withViews(board(), "nope/repo", parts({ onDelete: del, stale: true }));
+    expect(texts(gone)).toContain("Delete this view");
+    gone.all("button").find((b) => b.textContent === "Delete this view")!.click();
+    expect(del).toHaveBeenCalled();
+    const owner = withViews(board(), "acme/app", parts({ onDelete: del }), { owner: "nobody" });
+    expect(texts(owner)).toContain("Delete this view");
+  });
+
+  it("an out-of-date view shows the empty state with both actions, even though cards are returned", () => {
+    const root = withViews(board(), "acme/app", parts({ onDelete: vi.fn(), stale: true }));
+    expect(cardEl(root)).toHaveLength(0);
+    expect(texts(root)).toEqual(expect.arrayContaining(["Clear filters", "Delete this view"]));
+  });
+
+  it("without views nothing changes", () => {
+    expect(texts(view(board(), "acme/app"))).not.toContain("Save view");
+  });
+});
+
+describe("renderBoard with saved views", () => {
+  it("asks parts for the repository and owner, and makes no write request", async () => {
+    const m = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m.isConnected = true;
+    const parts = vi.fn(() => ({ row: null, onSave: vi.fn(), onDelete: null, stale: false }));
+    const cleanup = ui.renderBoard(m, "acme/app", { query: { owner: "u1" }, views: { parts }, loadOwners: async () => [{ id: "u1" }] });
+    await flush();
+    calls[0]!.answer(board([card({ owner: "u1" })]));
+    await flush();
+    await flush();
+    expect(parts).toHaveBeenCalled();
+    expect(parts.mock.calls.at(-1)).toEqual([{ repo: "acme/app", owner: "u1" }, expect.objectContaining({ owners: ["u1"] })]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET /api/board"]);
+    cleanup();
+  });
+
+  it("keeps the owners unknown when the owner list fails", async () => {
+    const m = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m.isConnected = true;
+    const parts = vi.fn(() => ({ row: null, onSave: vi.fn(), onDelete: null, stale: false }));
+    const cleanup = ui.renderBoard(m, undefined, { views: { parts }, loadOwners: async () => { throw new Error("403"); } });
+    await flush();
+    calls[0]!.answer(board());
+    await flush();
+    await flush();
+    expect((parts.mock.calls.at(-1) as any)[1].owners).toBeNull();
+    cleanup();
+  });
+});

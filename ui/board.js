@@ -6,6 +6,7 @@ import { keepScroll, liveStates, poller } from "./live.js";
 import { whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
 import { boardPage } from "./templates.js";
+import { pageViews } from "./views.js";
 
 // The board page: where every story is, from GET /api/board. No wording or rules of its own
 // except labels; the sentence on each card comes from its next-step record.
@@ -75,7 +76,7 @@ export function pickColumn(columns, wanted, owner = "") {
 }
 
 /** The page for one answer of the server: returns nodes. `owner` hides the cards of other accounts (and cards without an owner). */
-export function boardView(data, wanted, { highlight, owner = "", column, onOwner, onColumn, onChain, onClear, onLeave }) {
+export function boardView(data, wanted, { highlight, owner = "", column, onOwner, onColumn, onChain, onClear, onLeave, views }) {
   const picked = pickRepo(data, wanted);
   const repos = data?.repos ?? [];
   const all = picked ? picked.columns.flatMap((c) => c.cards) : [];
@@ -93,11 +94,18 @@ export function boardView(data, wanted, { highlight, owner = "", column, onOwner
   const clearOwner = () => onOwner?.("");
   // Without a wanted repository the Board shows the first one: the offer is for that one, and none when there is none.
   const scope = wanted ? {} : picked ? { shown: picked.repo } : { onContext: null };
-  const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner, ...scope });
-  const none = () => filterEmpty("cards", filters, { labels, onClear: clearOwner });
+  // Saved views: `views` is { row, onSave, onDelete, stale } from pageViews("board").parts, or undefined.
+  const vp = views ?? {};
+  const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner, row: vp.row, onSave: vp.onSave, ...scope });
+  const none = () => filterEmpty("cards", filters, { labels, onClear: clearOwner, onDelete: vp.onDelete });
   if (!picked) {
     const toAll = () => { globalThis.location.hash = withQuery("#/board", { repo: ALL_REPOS, ...(owner ? { owner } : {}) }); };
-    return page(bar, gone ? filterGone({ onClear: toAll }) : owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null);
+    return page(bar, gone ? filterGone({ onClear: toAll, onDelete: vp.onDelete }) : owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null);
+  }
+  if (vp.stale) {
+    // An out-of-date saved view is open: the empty state, even when the server still sent cards.
+    const clearAll = () => { globalThis.location.hash = withQuery("#/board", { repo: ALL_REPOS }); };
+    return page(bar, filterEmpty("cards", { ...(wanted ? { repo: wanted } : {}), ...filters }, { labels, onClear: clearAll, onDelete: vp.onDelete }));
   }
 
   const target = highlight == null ? undefined : all.find((c) => c.issue === highlight);
@@ -137,7 +145,7 @@ export function boardView(data, wanted, { highlight, owner = "", column, onOwner
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
+export function renderBoard(main, wanted, { query = {}, go = defaultGo, views = pageViews("board"), loadOwners = () => api.runOwners() } = {}) {
   let data;
   let highlight;
   let owner = query.owner ?? "";
@@ -156,8 +164,20 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
   mount(body, boardPage({ title: "Board", columns: slot }));
   mount(main, states.alert, body, states.note);
 
+  // The run owners (the list the owner filter of Runs uses), read once, only when there are saved views. Unknown when
+  // it fails: no view is then marked out of date because of its owner.
+  let ownerIds = null;
+  let closed = false;
+  if (views) {
+    Promise.resolve().then(loadOwners).then((list) => {
+      if (closed || !Array.isArray(list)) return;
+      ownerIds = list.map((o) => o?.id).filter((id) => typeof id === "string");
+      if (data) redraw();
+    }, () => {});
+  }
   const redraw = () => keepScroll(body, () => mount(body, boardView(data, wanted, {
     highlight, owner, column,
+    views: views?.parts({ ...(wanted ? { repo: wanted } : {}), ...(owner ? { owner } : {}) }, { owners: ownerIds, redraw }),
     onColumn: (id) => { column = id; redraw(); },
     onOwner: (id) => {
       owner = id;
@@ -193,5 +213,8 @@ export function renderBoard(main, wanted, { query = {}, go = defaultGo } = {}) {
       await api.tickWatcher(id).catch(() => {});
     },
   });
-  return () => live.stop();
+  return () => {
+    closed = true;
+    live.stop();
+  };
 }

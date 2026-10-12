@@ -596,3 +596,148 @@ describe("My runs", () => {
     stop();
   });
 });
+
+describe("saved views in the filter bar and the empty states", () => {
+  afterEach(() => f.setContextOffer(null));
+  const texts = (bar: FakeElement) => bar.all("button").map((b) => b.textContent);
+
+  it("onSave draws a bar with only Save view; without it the bar is still null", () => {
+    expect(f.filterBar({}, {})).toBeNull();
+    const onSave = vi.fn();
+    const bar = f.filterBar({}, { onSave }) as FakeElement;
+    expect(texts(bar)).toEqual(["Save view"]);
+    expect(bar.all("button")[0]!.attrs["data-focus"]).toBe("filter-save");
+    click(bar.all("button")[0]!);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("Save view comes after Clear filters", () => {
+    const bar = f.filterBar({ owner: "u1" }, { onSave: vi.fn() }) as FakeElement;
+    expect(texts(bar)).toEqual(["×", "Clear filters", "Save view"]);
+  });
+
+  it("a row is drawn above the bar in div.filter-area; with a row and nothing else, only the row", () => {
+    const row = new FakeElement("nav");
+    const both = f.filterBar({ owner: "u1" }, { row }) as FakeElement;
+    expect(both.attrs.class).toBe("filter-area");
+    expect(both.children[0]).toBe(row);
+    expect((both.children[1] as FakeElement).attrs.class).toBe("filter-bar");
+    const only = f.filterBar({}, { row }) as FakeElement;
+    expect(only.attrs.class).toBe("filter-area");
+    expect(only.children).toEqual([row]);
+    expect(f.filterBar({}, { row: null })).toBeNull();
+    expect(f.filterBar({}, { row: undefined })).toBeNull();
+  });
+
+  it("using the context offer does not hide a bar that has Save view", () => {
+    f.setContextOffer({ label: "All repositories", onUse: vi.fn() });
+    const bar = f.filterBar({}, { onSave: vi.fn() }) as FakeElement;
+    click(button(bar, "Use as my context"));
+    expect(bar.hidden).toBe(false);
+    expect(button(bar, "Use as my context").hidden).toBe(true);
+  });
+
+  it("filterEmpty and filterGone draw Delete this view only with onDelete, and call it", () => {
+    expect(button(f.filterEmpty("runs", { repo: "a/b" }, {}), "Delete this view")).toBeUndefined();
+    expect(button(f.filterGone({}), "Delete this view")).toBeUndefined();
+    const del = vi.fn();
+    const empty = f.filterEmpty("runs", { repo: "a/b" }, { onDelete: del });
+    expect(button(empty, "Delete this view").attrs["data-focus"]).toBe("filter-empty-delete");
+    click(button(empty, "Delete this view"));
+    const gone = f.filterGone({ onDelete: del });
+    expect(button(gone, "Clear filters")).toBeDefined();
+    click(button(gone, "Delete this view"));
+    expect(del).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("saved views on the admin Runs list and My runs", () => {
+  const realFetch = globalThis.fetch;
+  const asked: string[] = [];
+  const mkRun = (id: string, repo: string) => ({ runId: id, flow: `flow-${id}`, status: "succeeded", startedAt: new Date().toISOString(), history: [], totalCostUsd: 0, task: `task ${id}`, vars: { github_repo: repo } });
+  const fakeViews = (list: any[]) => {
+    const parts = vi.fn((_filters: any, o: any) => ({
+      row: list.length ? new FakeElement("nav") : null,
+      onSave: vi.fn(async () => { list.push({}); o.redraw(); }),
+      onDelete: null,
+      stale: false,
+    }));
+    return { parts };
+  };
+  const connected = () => {
+    const m = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m.isConnected = true;
+    return m;
+  };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    asked.length = 0;
+    const answers: Record<string, unknown> = {
+      "/api/runs": [mkRun("r1", "acme/app")],
+      "/api/queue": { pending: [], active: [], concurrency: 2 },
+      "/api/run-owners": [{ id: "u1", name: "Ann", runs: 1 }],
+    };
+    (globalThis as any).fetch = (url: string) => {
+      asked.push(url);
+      return Promise.resolve({ ok: true, status: 200, statusText: "OK", json: async () => answers[url] ?? {} });
+    };
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    globalThis.fetch = realFetch;
+  });
+
+  it("admin Runs: the row is above the list, Save view is offered without filters, and the owner ids are given", async () => {
+    const list: any[] = [{}];
+    const views = fakeViews(list);
+    const m = connected();
+    const stop = await runs.renderRunsList(m, { admin: true, go: vi.fn(), views });
+    expect(views.parts.mock.calls[0]![1].owners).toEqual(["u1"]);
+    expect(m.all("nav")).toHaveLength(1);
+    expect(button(m, "Save view")).toBeDefined();
+    const before = asked.length;
+    click(button(m, "Save view"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked.length).toBe(before); // saving a view asks the server for nothing
+    stop();
+  });
+
+  it("admin Runs: an out-of-date view shows the empty state with both actions, even though runs are listed", async () => {
+    const del = vi.fn();
+    const views = { parts: () => ({ row: new FakeElement("nav"), onSave: vi.fn(), onDelete: del, stale: true }) };
+    const m = connected();
+    const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "acme/app" }, go: vi.fn(), views });
+    expect(m.all("tr").filter((r) => r.attrs.class === "link")).toHaveLength(0);
+    expect(button(m, "Clear filters")).toBeDefined();
+    click(button(m, "Delete this view"));
+    expect(del).toHaveBeenCalled();
+    stop();
+  });
+
+  it("admin Runs without views: no Save view, nothing changes", async () => {
+    const m = connected();
+    const stop = await runs.renderRunsList(m, { admin: true, go: vi.fn(), views: null });
+    expect(button(m, "Save view")).toBeUndefined();
+    expect(byClass(m, "filter-bar")).toHaveLength(0);
+    stop();
+  });
+
+  it("My runs: the row and Save view show, and an out-of-date view gets the empty state", async () => {
+    const a = { runs: vi.fn(async () => [{ runId: "r1", flow: "f", status: "succeeded", startedAt: new Date().toISOString(), history: [], vars: { github_repo: "o/r" } }]), queue: vi.fn(async () => ({ pending: [], active: [] })), cancelRun: vi.fn() };
+    const main = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    main.isConnected = true;
+    const stop = (await mine.renderMyRuns(main, { a, go: vi.fn(), views: fakeViews([{}]) })) as () => void;
+    expect(main.all("nav")).toHaveLength(1);
+    expect(button(main, "Save view")).toBeDefined();
+    stop();
+    const del = vi.fn();
+    const m2 = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m2.isConnected = true;
+    const stop2 = (await mine.renderMyRuns(m2, { a, query: { repo: "o/r" }, go: vi.fn(), views: { parts: () => ({ row: null, onSave: vi.fn(), onDelete: del, stale: true }) } })) as () => void;
+    expect(m2.all("li")).toHaveLength(0);
+    click(button(m2, "Delete this view"));
+    expect(del).toHaveBeenCalled();
+    stop2();
+  });
+});

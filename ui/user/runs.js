@@ -6,6 +6,7 @@ import { h, modal, mount, timeAgo, toast } from "../dom.js";
 import { nextStatus, whenParts, whoClass } from "../next.js";
 import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
+import { pageViews } from "../views.js";
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
@@ -85,7 +86,7 @@ export async function confirmDialog(title, text, yes = "Yes", no = "No") {
 // ── My runs ──
 
 /** The My runs page; refreshes every 30 seconds through the poller and never rejects. Returns a cleanup. */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo } = {}) {
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo, views = pageViews("runs") } = {}) {
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let data = null;
   let asking = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
@@ -110,13 +111,16 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     const entries = myRunsEntries(runs, queue.ok ? queue.value?.pending : []);
     const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
     const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    // Saved views: a user filters by repository only, so no owner list is known.
+    const vp = views?.parts(filters, { redraw: render }) ?? {};
     mount(list,
       states.alert,
-      filterBar(filters, { onRemove: () => setFilters({}), onClear: clear }),
+      filterBar(filters, { onRemove: () => setFilters({}), onClear: clear, row: vp.row, onSave: vp.onSave }),
       queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." }),
-      shown.length
-        ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
-        : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns(),
+      vp.stale ? filterEmpty("runs", filters, { onClear: clear, onDelete: vp.onDelete })
+        : shown.length
+          ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
+          : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns(),
       states.note);
   };
   async function remove(job) {

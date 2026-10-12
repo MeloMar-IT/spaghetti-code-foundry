@@ -25,9 +25,9 @@ const mem = (opts: { getThrows?: boolean; setThrows?: boolean } = {}) => {
 const EMPTY = { repo: "", favourites: [], recents: [] };
 
 describe("the module", () => {
-  it("imports only api.js, context-view.js, dom.js, filters.js and ia.js", () => {
+  it("imports only api.js, context-view.js, dom.js, filters.js, ia.js and views.js", () => {
     const src = readFileSync("ui/context.js", "utf8");
-    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./api.js", "./context-view.js", "./dom.js", "./filters.js", "./ia.js"]);
+    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./api.js", "./context-view.js", "./dom.js", "./filters.js", "./ia.js", "./views.js"]);
   });
 });
 
@@ -734,5 +734,36 @@ describe("initContext", () => {
     t.ctx.stop();
     expect(doc().listeners.keydown).toHaveLength(0);
     expect(doc().listeners.mousedown).toHaveLength(0);
+  });
+});
+
+describe("the account for saved views", () => {
+  let views: any;
+  beforeAll(async () => {
+    views = await import("../ui/views.js" as string);
+  });
+  const gh = (github: string) => ({ github, owner: "u1", account: null });
+  const make = (extra: Record<string, unknown> = {}) =>
+    c.initContext("user", { id: "u1" }, { a: { repos: async () => [gh("b/b"), gh("a/a")], allRepos: async () => [] }, go: vi.fn(), notify: vi.fn(), store: c.contextStore("u1", mem()), where: () => "#/home", ...extra });
+
+  it("gives the id, readOnly and the sorted repository names once loaded", async () => {
+    const ctx = make();
+    expect(ctx.account()).toEqual({ id: "u1", readOnly: false, repos: null });
+    await ctx.ready;
+    expect(ctx.account()).toEqual({ id: "u1", readOnly: false, repos: ["a/a", "b/b"] });
+    expect(views.pageViews("runs", { storage: mem() })?.store.key).toBe("scf.views.u1");
+    ctx.stop();
+  });
+
+  it("makes saved views null in a preview, and clears the source on stop", async () => {
+    const ctx = make({ readOnly: true });
+    await ctx.ready;
+    expect(ctx.account().readOnly).toBe(true);
+    expect(views.pageViews("runs")).toBeNull();
+    ctx.stop();
+    const live = make();
+    expect(views.pageViews("runs")).not.toBeNull();
+    live.stop();
+    expect(views.pageViews("runs")).toBeNull();
   });
 });

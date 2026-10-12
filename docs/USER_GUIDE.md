@@ -399,6 +399,31 @@ so that you do not filter each page yourself.
   switcher shows All repositories. If the list cannot be loaded, the switcher shows "Repositories
   could not be loaded." with **Retry**; the pages still open.
 
+### Saved views
+
+You can save the filters of a list or board under a name and come back with one click. This works
+on Runs, Board (also the redesigned Work page), Refinement and My runs.
+
+- **Save view** is in the filter bar. Type a name of 1–40 characters (spaces at the ends are
+  removed). A name can be used once per page. You can keep up to 20 views per account. A view with
+  no filters is allowed; its link uses `repo=all`.
+- **The row.** Your views of the current page are shown as links above the list. A view is only an
+  address (the page and its filters). Opening it just goes there and writes nothing; the data is
+  what the server returns for you now. The active view is marked.
+- **Manage views** opens a dialog where you can rename, move up or down, and delete views. Delete
+  asks you to confirm and says that only the saved view is removed, not runs, sessions or
+  repositories.
+- **Where they are kept:** in this browser (`localStorage`), per account. They are never sent to
+  the server, and another account in the same browser does not see them. If the stored data is
+  garbage, it is ignored and replaced when you next save. If the browser storage does not work,
+  the page works without views.
+- **Out of date.** If a view's repository is no longer in your list, or its owner is no longer
+  among the run owners, the view is marked "out of date" in the row and in the dialog. Opening it
+  shows "nothing matches" with **Clear filters** and **Delete this view**. Nothing is deleted
+  automatically. On the Board and Work page the owner check needs the owner list, which only
+  admins can load; for others the owner is never marked out of date.
+- **Preview.** In a "view as user" preview no views are shown and none can be saved.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.

@@ -54,11 +54,12 @@ export const matchesRepo = (record, name) => sameRepo(record?.github || githubOf
 
 export const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
 
-/** What a page shows when the repository of the filter is not in the answer. The text never depends on the filter. */
-export function filterGone({ onClear } = {}) {
+/** What a page shows when the repository of the filter is not in the answer. The text never depends on the filter. `onDelete` (an out-of-date saved view is open) adds "Delete this view". */
+export function filterGone({ onClear, onDelete } = {}) {
   return h("div", { class: "empty" },
     h("p", {}, NOT_IN_LIST),
-    h("button", { type: "button", onClick: () => onClear?.() }, "Clear filters"));
+    h("button", { type: "button", onClick: () => onClear?.() }, "Clear filters"),
+    onDelete ? h("button", { type: "button", "data-focus": "view-delete", onClick: () => onDelete() }, "Delete this view") : null);
 }
 
 const describe = (filters, labels) => KEYS.filter((k) => filters?.[k]).map((k) => `${NAMES[k]}: ${labels?.[k] ?? filters[k]}`);
@@ -99,15 +100,19 @@ export function refreshContextOffer() {
  * The bar above a list: one chip per active filter with a remove button, and Clear filters (only with a chip). With a
  * context offer it also names the scope (when no repository chip does) and has "Use as my context". `onContext` is
  * undefined for the registered offer, null for none, or an offer object; `shown` names the repository the page really
- * shows when the address does not. Null when there is no chip and no offer. `focus` is the prefix of the `data-focus` names of its buttons.
+ * shows when the address does not. Null when there is no chip, no offer and no `onSave`. `focus` is the prefix of the `data-focus` names of its buttons.
+ * `onSave` draws "Save view" (saved views, ui/views.js). `row` is the row of saved views (a node): the result is then
+ * a `div.filter-area` with the row above the bar; any other value leaves the result as it is.
  */
-export function filterBar(filters, { labels = {}, onRemove, onClear, onContext, shown, focus = "filter" } = {}) {
+export function filterBar(filters, { labels = {}, onRemove, onClear, onContext, shown, focus = "filter", onSave, row } = {}) {
   const active = filters ?? {};
   const keys = KEYS.filter((k) => active[k]);
   const own = onContext === undefined;
   const arg = shown === undefined ? undefined : { repo: shown };
   const offer = own ? contextOffer(arg) : onContext;
-  if (!keys.length && !offer) return null;
+  const saving = typeof onSave === "function";
+  const withRow = row instanceof Node;
+  if (!keys.length && !offer && !saving) return withRow ? h("div", { class: "filter-area" }, row) : null;
   const extra = [];
   let bar;
   if (offer) {
@@ -115,7 +120,7 @@ export function filterBar(filters, { labels = {}, onRemove, onClear, onContext, 
     const hide = () => {
       if (scope) scope.hidden = true;
       button.hidden = true;
-      if (!keys.length && bar) bar.hidden = true;
+      if (!keys.length && !saving && bar) bar.hidden = true;
     };
     const button = h("button", { type: "button", class: "small", "data-focus": `${focus}-context`, onClick: () => { offer.onUse(); hide(); } }, "Use as my context");
     if (scope) extra.push(scope);
@@ -129,14 +134,16 @@ export function filterBar(filters, { labels = {}, onRemove, onClear, onContext, 
         h("button", { type: "button", class: "ghost small", "aria-label": `Remove filter ${text}`, "data-focus": `${focus}-remove-${key}`, onClick: () => onRemove?.(key) }, "×"));
     }),
     keys.length ? h("button", { type: "button", class: "small", "data-focus": `${focus}-clear`, onClick: () => onClear?.() }, "Clear filters") : null,
+    saving ? h("button", { type: "button", class: "small", "data-focus": `${focus}-save`, onClick: () => onSave() }, "Save view") : null,
     extra);
-  return bar;
+  return withRow ? h("div", { class: "filter-area" }, row, bar) : bar;
 }
 
-/** What a list shows when the filters match nothing: names them and offers Clear filters. `what` is "runs" or "cards". `focus` is the prefix of the button name. */
-export function filterEmpty(what, filters, { labels = {}, note, onClear, focus = "filter" } = {}) {
+/** What a list shows when the filters match nothing: names them and offers Clear filters (and, with `onDelete`, "Delete this view" for an out-of-date saved view). `what` is "runs" or "cards". `focus` is the prefix of the button name. */
+export function filterEmpty(what, filters, { labels = {}, note, onClear, onDelete, focus = "filter" } = {}) {
   return h("div", { class: "empty" },
     h("p", {}, `No ${what} match ${describe(filters, labels).join(", ")}.`),
     note ? h("p", {}, note) : null,
-    h("button", { type: "button", "data-focus": `${focus}-empty-clear`, onClick: () => onClear?.() }, "Clear filters"));
+    h("button", { type: "button", "data-focus": `${focus}-empty-clear`, onClick: () => onClear?.() }, "Clear filters"),
+    onDelete ? h("button", { type: "button", "data-focus": `${focus}-empty-delete`, onClick: () => onDelete() }, "Delete this view") : null);
 }
