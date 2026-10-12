@@ -47,6 +47,16 @@ export interface Cmd {
   prompts?: { field: string; label: string; hidden?: boolean; twice?: boolean }[];
   /** The call changes or removes something a person may not get back: asks "yes" unless --yes is given. */
   confirm?: string;
+  /**
+   * With `confirm`: ask only when this says so, e.g. only when what is saved replaces something. It gets the body
+   * of the call, the arguments, and a way to read from the server (GET).
+   */
+  confirmIf?: (body: Record<string, unknown>, args: Record<string, string>, get: (path: string) => Promise<unknown>) => boolean | Promise<boolean>;
+  /**
+   * Body fields --data may never set for this command, inline or from a file: a field that decides whether the call
+   * is destructive, on a route where another command asks before it sends that field.
+   */
+  locked?: string[];
 }
 
 export const ruleOf = (c: Pick<Cmd, "method" | "path">): Rule | undefined => RULES.find((r) => r.method === c.method && r.path === c.path);
@@ -80,7 +90,8 @@ const camel = (s: string) => s.replace(/-(\w)/g, (_m, c: string) => c.toUpperCas
 function convert(name: string, f: Flag, v: string | boolean): unknown {
   if (typeof v === "boolean" || !f.as) return v;
   if (f.as === "number") {
-    const n = Number(v);
+    // Number("") is 0: an empty shell variable must not become a number
+    const n = /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : NaN;
     if (!Number.isFinite(n)) throw new Error(`--${name} must be a number`);
     return n;
   }
@@ -96,13 +107,33 @@ function convert(name: string, f: Flag, v: string | boolean): unknown {
 export function dataOf(text: string | undefined, read: (path: string) => string = (p) => readFileSync(p, "utf8")): Record<string, unknown> {
   if (text === undefined) return {};
   let v: unknown;
+  let content = text;
+  if (text.startsWith("@")) {
+    try {
+      content = read(text.slice(1));
+    } catch {
+      throw new Error(`--data: ${text.slice(1)} cannot be read`);
+    }
+  }
   try {
-    v = JSON.parse(text.startsWith("@") ? read(text.slice(1)) : text);
-  } catch (e) {
-    throw new Error(text.startsWith("@") ? `--data: ${text.slice(1)} cannot be read as JSON (${(e as Error).message})` : "--data must be JSON, or @file with JSON in it");
+    v = JSON.parse(content);
+  } catch {
+    // the parser's own message quotes the start of the text, which may be a secret: it is left out
+    throw new Error(text.startsWith("@") ? `--data: ${text.slice(1)} cannot be read as JSON` : "--data must be JSON, or @file with JSON in it");
   }
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("--data must be a JSON object");
   return v as Record<string, unknown>;
+}
+
+/** Names that hold a secret in some call: never taken inline in --data, for any command. */
+export const SECRET_KEYS = ["token", "password", "secret", "current", "key", "privateKey"];
+/** Said when text was read as an option. */
+export const DASH_HINT = 'Text that starts with "-" goes after "--": everything after -- is taken as text, e.g. scf flows check -- "$(cat my.yaml)"';
+
+/** A path argument is one part of the path: it can never name another route. */
+function pathPart(name: string, v: string): string {
+  if (v === "" || v === "." || v === ".." || /[/\\]/.test(v)) throw new Error(`<${name}> cannot be empty, "." or "..", and cannot contain / or \\`);
+  return encodeURIComponent(v);
 }
 
 export interface Parsed { call: Call; args: Record<string, string>; json: boolean; yes: boolean; server?: string; help: boolean }
@@ -114,7 +145,8 @@ export function parseCmd(c: Cmd, argv: string[], read?: (path: string) => string
   try {
     parsed = parseArgs({ args: argv, allowPositionals: true, options: { ...Object.fromEntries(Object.entries(c.flags ?? {}).map(([n, f]) => [n, { type: f.type }])), ...COMMON } });
   } catch (e) {
-    throw bad((e as Error).message.split("\n")[0]!);
+    const unknown = (e as { code?: string }).code === "ERR_PARSE_ARGS_UNKNOWN_OPTION";
+    throw bad(unknown ? `${(e as Error).message.split("\n")[0]!.split(". To specify")[0]!.replace(/\.$/, "")}. ${DASH_HINT}` : (e as Error).message.split("\n")[0]!);
   }
   const values = parsed.values as Record<string, string | boolean | undefined>;
   const base = { json: values.json === true, yes: values.yes === true, help: values.help === true, ...(typeof values.server === "string" ? { server: values.server } : {}) };
@@ -125,7 +157,13 @@ export function parseCmd(c: Cmd, argv: string[], read?: (path: string) => string
   if (parsed.positionals.length > names.length) throw bad(`unexpected "${parsed.positionals[names.length]}"`);
   const args = Object.fromEntries(parsed.positionals.map((v, i) => [names[i]!, v]));
   const inPath = params(c.path);
-  const path = c.path.replace(/:(\w+)/g, (_m, p: string) => args[p]!);
+  let path: string;
+  try {
+    // each argument is encoded here, once: the path of the call is sent as it is
+    path = c.path.replace(/:(\w+)/g, (_m, p: string) => pathPart(p, args[p]!));
+  } catch (e) {
+    throw bad((e as Error).message);
+  }
   const query: Record<string, string> = {};
   const body: Record<string, unknown> = { ...c.fixed };
   const dest = (to?: "query" | "body") => to ?? (c.method === "GET" ? "query" : "body");
@@ -143,10 +181,25 @@ export function parseCmd(c: Cmd, argv: string[], read?: (path: string) => string
   }
   const data = typeof values.data === "string" ? values.data : undefined;
   if (c.needsData && data === undefined) throw bad("--data is needed: this call replaces everything with what you send");
+  if (data !== undefined && c.method === "GET") {
+    const own = Object.keys(c.flags ?? {}).map((n) => `--${n}`);
+    throw bad(`--data does not work with a command that reads: ${own.length ? `use ${own.join(", ")}` : "this command takes no options of its own"}`);
+  }
   const extra = dataOf(data, read);
+  // --data adds fields; it never replaces what the command itself sends, so a command cannot be turned into another one
+  const flagOf = new Map(Object.entries(c.flags ?? {}).filter(([, f]) => dest(f.to) === "body").map(([n, f]) => [f.key ?? camel(n), n]));
+  for (const k of Object.keys(extra)) {
+    if (flagOf.has(k)) throw bad(`--data cannot set "${k}": use --${flagOf.get(k)}`);
+    if (names.includes(k)) throw bad(`--data cannot set "${k}": it is the argument <${k}>`);
+    if (Object.hasOwn(c.fixed ?? {}, k) || (c.locked ?? []).includes(k)) throw bad(`--data cannot set "${k}" for this command: another command of ${c.area} does that (scf ${c.area} --help)`);
+  }
   // a secret typed on the command line stays in the shell history and shows in the process list
-  const typed = data !== undefined && !data.startsWith("@") ? (c.prompts ?? []).find((q) => q.field in extra) : undefined;
-  if (typed) throw bad(`"${typed.field}" is a secret: leave it out to be asked for it, or give it in a file with --data @file`);
+  if (data !== undefined && !data.startsWith("@")) {
+    const asked = (c.prompts ?? []).find((q) => q.field in extra);
+    if (asked) throw bad(`"${asked.field}" is a secret: leave it out to be asked for it, or give it in a file with --data @file`);
+    const secret = SECRET_KEYS.find((k) => Object.hasOwn(extra, k));
+    if (secret) throw bad(`"${secret}" is a secret: give it in a file with --data @file`);
+  }
   Object.assign(body, extra);
   // an admin who is viewing as a user (scf admin view-as) reads with that user's rules
   if (typeof values.as === "string") {

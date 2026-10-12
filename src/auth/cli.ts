@@ -8,9 +8,11 @@ export interface UserIo {
   ask(prompt: string): Promise<string>;
   /** Asks with echo off. */
   askHidden(prompt: string): Promise<string>;
-  /** The first line of stdin; undefined when there is none. */
+  /** The next line of stdin: the first call gives the first line, the next call the second; undefined when there is none left. */
   readStdinLine(): Promise<string | undefined>;
   out(line: string): void;
+  /** A line for standard error; where it is missing, `out` is used. */
+  err?(line: string): void;
 }
 
 export const USER_USAGE = `usage: scf user create [--admin] [--name n] [--email e]   Create an account (the first one: --admin)
@@ -26,6 +28,11 @@ const ALLOWED: Record<string, string[]> = { create: ["admin", "name", "email"], 
 
 export function terminalIo(stdin: NodeJS.ReadStream = process.stdin, stderr: NodeJS.WriteStream = process.stderr): UserIo {
   const cancelled = () => new Error("cancelled");
+  // what was read from a pipe and not handed out yet, and whether the pipe has ended
+  let piped = "";
+  let pipeEnded = false;
+  let pipeWired = false;
+  let pipeWaiting: (() => void) | undefined;
   return {
     isTTY: Boolean(stdin.isTTY),
     ask: (prompt) =>
@@ -72,26 +79,40 @@ export function terminalIo(stdin: NodeJS.ReadStream = process.stdin, stderr: Nod
       }),
     readStdinLine: () =>
       new Promise((resolve) => {
-        let text = "";
         stdin.setEncoding("utf8");
-        const done = () => {
+        // the end can come while no read waits (with the last data): it is listened for once, for all reads
+        if (!pipeWired) {
+          pipeWired = true;
+          stdin.on("end", () => {
+            pipeEnded = true;
+            pipeWaiting?.();
+          });
+        }
+        if (stdin.readableEnded) pipeEnded = true;
+        // one line per call; what was read beyond it is kept for the next call
+        const take = (): boolean => {
+          const nl = piped.indexOf("\n");
+          if (nl < 0 && !pipeEnded && piped.length <= 4096) return false;
+          const none = nl < 0 && piped === "";
+          const line = nl < 0 ? piped : piped.slice(0, nl);
+          piped = nl < 0 ? "" : piped.slice(nl + 1);
           stdin.off("data", onData);
-          stdin.off("end", onEnd);
+          pipeWaiting = undefined;
           stdin.pause();
-          const nl = text.indexOf("\n");
-          const line = (nl < 0 ? text : text.slice(0, nl)).replace(/\r$/, "");
-          resolve(text === "" ? undefined : line);
+          resolve(none ? undefined : line.replace(/\r$/, ""));
+          return true;
         };
         const onData = (c: string) => {
-          text += c;
-          if (text.includes("\n") || text.length > 4096) done();
+          piped += c;
+          take();
         };
-        const onEnd = () => done();
+        if (take()) return;
+        pipeWaiting = () => void take();
         stdin.on("data", onData);
-        stdin.on("end", onEnd);
         stdin.resume();
       }),
     out: (line) => void process.stdout.write(line + "\n"),
+    err: (line) => void stderr.write(line + "\n"),
   };
 }
 

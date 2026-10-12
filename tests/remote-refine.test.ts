@@ -120,7 +120,7 @@ describe("the refine commands", () => {
     expect(renamed.out).toMatch(/\ntitle: +CSV export\n/);
     expect((await json(["show", id])).title).toBe("CSV export");
     const bad = await refine(["start", "acme/app"]);
-    expect([bad.code, bad.out.startsWith("error: ")]).toEqual([1, true]);
+    expect([bad.code, bad.err.startsWith("error: ")]).toEqual([1, true]);
   });
 
   it("refuses what the account may not do with exit code 4, and hides the session of another account", async () => {
@@ -128,10 +128,10 @@ describe("the refine commands", () => {
     // the admin does not own acme/app: GitHub is read with the owner's sign-in only
     for (const words of [["backlog", "acme/app"], ["publish-plan", id]]) {
       const r = await w.scf(["refine", ...words], { cmds: REFINE });
-      expect([r.code, r.out.startsWith("error: ")]).toEqual([4, true]);
+      expect([r.code, r.err.startsWith("error: ")]).toEqual([4, true]);
     }
     const bob = await w.signIn("bob@example.com");
-    expect(await refine(["show", id], { as: bob })).toMatchObject({ code: 1, out: "error: no such refinement session" });
+    expect(await refine(["show", id], { as: bob })).toMatchObject({ code: 1, err: "error: no such refinement session" });
   });
 
   it("asks before it drops a session, and restores it", async () => {
@@ -275,6 +275,6 @@ describe("the refine commands", () => {
     expect(taken.out).toContain("\n\nA suggested title\n\nAs …");
     // a run is refused with the server's sentence while a field has nothing to work from
     const none = await refine(["draft-suggest", id, did, "criteria"]);
-    expect(none).toMatchObject({ code: 1, out: "error: there is no rule and no example in the map yet; ask for a round of questions and accept some entries first" });
+    expect(none).toMatchObject({ code: 1, err: "error: there is no rule and no example in the map yet; ask for a round of questions and accept some entries first" });
   }, 90_000);
 });
