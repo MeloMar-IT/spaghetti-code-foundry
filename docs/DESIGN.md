@@ -355,6 +355,76 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
   evidence `ArtifactRef`. It never replaces a file: a folder that already has `context.json` or
   `context/` is refused. Nothing calls it yet.
 
+### Tool profiles
+
+`src/tool-profile/` defines what an agent session may do with which tools, and what an agent program
+can be made to hold of that (#146). Nothing starts an agent with a profile yet; the stories after it
+do. The folder has no side effects: schemas, version numbers and pure functions.
+
+- **`ToolProfile`**: `version` (of the format), `profile` (`id` and `version` of the contents) and
+  `grants`. It names no agent program. It is closed: a kind, an operation or a target that no grant
+  names is refused, and a profile without grants allows nothing.
+- **Kinds and operations** are closed lists. `files` (the agent's own file tools): `read`, `write`.
+  `shell`: `run`. `git`: `status`, `clone`, `fetch`, `branch`, `commit`, `push`. `github`:
+  `issue.read`, `issue.write`, `pull-request.read`, `pull-request.write`, `pull-request.merge`,
+  `checks.read`. `web` (the agent's own web tools): `fetch`, `search`. `mcp`: `call`. `builtin`
+  (any other tool the agent program brings): `call`. A new kind or operation is a new version.
+- **A grant** names one kind, its `operations` and its `targets`, and declares all of:
+  `dataClassification` (`public`, `internal`, `confidential`, `restricted`: the most sensitive data a
+  call may handle), `credential` (`none`, `repository`, `machine`: the list of the policy contracts),
+  `timeoutMs`, `maxConcurrent` and `outputCapBytes` (for one call; `null` means no limit of its own),
+  and `approval` (`none` or `required`). A `shell` grant also has `sandbox`: `filesystem`
+  (`read-only`, `workspace-write`, `unrestricted`) and `network` (`none`, `unrestricted`) for the
+  commands it starts. Nothing is optional and nothing has a default. One operation of a kind is in
+  one grant only, so two operations can have different targets or conditions.
+- **Targets** are patterns in which `*` stands for any characters and nothing else is special. Each
+  kind has its own form: a path for `files` (relative: in the workspace; starting with `/`: on the
+  machine; `/*` is every file), a command line for `shell`, `owner/name` for `git` and `github`, a
+  host name for `web`, `server/tool` for `mcp`, a tool name for `builtin`. A command line that joins
+  or redirects commands (`;`, `&`, `|`, `<`, `>`, a backquote, `$(`) is only allowed by the target
+  `*`: a pattern is text, not a parser.
+- **`checkToolCall(profile, call)`** answers `allow`, `require_approval` or `deny` for one kind,
+  operation and target. A refusal has the policy reason code `tool.not-allowed`, or
+  `repository.not-allowed` for a repository that is not a target; approval has `approval.required`.
+  `toolCallDenial` gives the `denial` of a `step.denied` evidence event, with the tool name
+  `kind.operation` (such as `git.push`).
+- **Hash and reference.** `normalizeToolProfile` gives the one canonical form (grants, operations
+  and targets in a fixed order). `toolProfileSha256` is the SHA-256 of its canonical JSON, so the
+  order a profile was written in does not count. `toolProfileRef` gives `id`, `version` and `sha256`:
+  what a run keeps of the profile it resolved. Nothing writes it yet.
+- **Least privilege.** `toolProfileExcess(a, b)` lists every point where `a` allows more than `b`;
+  `isAtMostAsPermissive` is true when there is none. `resolveToolProfile(identity, profiles)` gives
+  what all profiles allow under the strictest condition of any: an operation stays only when every
+  profile grants it, a target only when every profile allows all of it, and of each condition the
+  lowest is taken. Targets that overlap in part are dropped, never widened. The result does not
+  depend on the order of the profiles.
+- **`AdapterCapabilities`**: `version`, `agent`, and for every kind how the agent reaches it
+  (`own-tools` or, for `git` and `github`, `shell`) and the controls the adapter can hold:
+  `deny-kind`, `limit-operations`, `limit-targets`, `require-approval`, `timeout`, `concurrency`,
+  `output-cap`; and the sandbox levels it can hold. A control that is not listed is not held.
+  `unenforceable(profile, capabilities)` lists what a profile restricts that the adapter cannot hold,
+  so a later story can refuse the profile or hold the rest another way (the sandbox of a user's run,
+  a broker).
+- **The two adapters today** (`adapters.ts`). Claude Code can deny a kind and limit operations and
+  targets for files, the shell, web, MCP and its other tools, and can hold commands to the
+  workspace. Codex has no list of allowed tools: it can switch off writing files and MCP servers and
+  has three sandbox levels, and nothing else. Neither holds the network of a command, approval or a
+  limit per call. For both, Git and GitHub are commands like any other: while an agent has a shell,
+  a repository operation cannot be held by the adapter.
+- **Flows of today.** `legacyToolProfile(settings)` turns the tool settings of an agent step
+  (permission mode, `allowed_tools`, sandbox, the sandbox of a user's run, no tools, MCP servers,
+  sign-in) into a generated profile with the id `generated.flow-settings`. It follows the same rules
+  as `sessionTools` in `src/skills/tool-policy.ts`, and a test keeps the two equal. A rule it cannot
+  express grants nothing and is returned in `unmapped`. No setting of today grants a Git or GitHub
+  operation, a limit per call or approval, so the generated profile has none.
+- **Skills.** `tool_profile` in a skill's `skill.yaml` stays what it is: what a skill needs, in three
+  words (shell, network, filesystem). A `ToolProfile` is what a session is given.
+  `skillCapabilitiesOf(profile)` puts a profile in those three words and `meetsSkillToolProfile`
+  compares the two. The skill check itself is not changed.
+- **Versions and errors.** Each contract has its own number in `version.ts`. A record with another
+  version is refused with one sentence. A `ToolProfileSchemaError` has a code and the fields that
+  are wrong, and never repeats a value of the record.
+
 ---
 
 ## 5. Agents and models
