@@ -1,13 +1,13 @@
 import { api } from "./api.js";
 import { h, mount, tabStops, toast, trapTarget } from "./dom.js";
-import { contextOffer, defaultGo, watchContextOffer, withQuery } from "./filters.js";
+import { NOT_IN_LIST, contextOffer, defaultGo, sameRepo, watchContextOffer, withQuery } from "./filters.js";
 import { workBoard } from "./work-board.js";
 import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
 import { DEFAULTS, applyFilters, boardPrefs, columnsOf, facets, groupItems, isFiltered, keyOf, workItems } from "./work-model.js";
 import { PANEL_ID, panelView } from "./work-panel.js";
 import { mediaFor } from "./viewport.js";
-import { cleanPrefs, loadPrefs, savePrefs } from "./work-prefs.js";
+import { loadPrefs, savePrefs } from "./work-prefs.js";
 
 // The Work page (redesign): every story as a board or a list, from GET /api/board. Status, column, sentence and
 // blockers come from the server's record; this file only filters, groups, orders and draws.
@@ -19,10 +19,18 @@ const pick = (focus, title, value, choices, onPick) =>
   h("select", { class: "small-select", "data-focus": focus, title, "aria-label": title, onChange: (e) => onPick(e.target.value) },
     choices.map((c) => h("option", { value: c.id, selected: c.id === value }, c.name)));
 
+/** True when the chosen repository is not in the answer. */
+const repoGone = (data, prefs) => !!prefs.repo && !!data && !(data.repos ?? []).some((r) => r.repo === prefs.repo);
+
 /** The count line, the list or an empty state: returns nodes. */
 export function workBody(data, prefs, handlers) {
+  if (repoGone(data, prefs)) {
+    return [h("div", { class: "empty" }, h("p", {}, NOT_IN_LIST),
+      h("button", { type: "button", "data-focus": "work-all", onClick: () => handlers.onChange({ repo: "" }) }, "Show all repositories"))];
+  }
   const items = workItems(data);
-  if (!items.length && data?.empty) return [h("div", { class: "empty" }, data.empty)];
+  // A chosen repository or owner without stories says so (with Clear filters) instead of the server's text.
+  if (!items.length && data?.empty && !isFiltered(prefs)) return [h("div", { class: "empty" }, data.empty)];
   const shown = applyFilters(items, prefs);
   const nodes = [];
   if (shown.length < items.length) nodes.push(h("div", { class: "muted work-count" }, `${shown.length} of ${items.length} stories`));
@@ -40,21 +48,26 @@ export function workBody(data, prefs, handlers) {
 export function workView(data, prefs, handlers) {
   const items = workItems(data);
   const body = h("div", { class: "work-body" }, workBody(data, prefs, handlers));
-  if (!items.length && data?.empty) return [h("div", { class: "toolbar work-bar" }, h("h1", {}, "Work")), body];
+  const offer = contextOffer({ repo: prefs.repo });
+  // An empty board keeps the scope controls when a repository or owner is chosen, or a context is offered.
+  if (!items.length && data?.empty && !isFiltered(prefs) && !offer) return [h("div", { class: "toolbar work-bar" }, h("h1", {}, "Work")), body];
   const f = facets(items, data);
   const withAll = (all, list) => [{ id: "", name: all }, ...list.map((c) => ({ id: c.id, name: `${c.name} (${c.count})` }))];
+  const repos = withAll("All repositories", f.repos);
+  if (repoGone(data, prefs)) repos.push({ id: prefs.repo, name: `${prefs.repo} (not in your list)` });
+  const owners = withAll("All owners", f.owners);
+  if (prefs.owner && !f.owners.some((o) => o.id === prefs.owner)) owners.push({ id: prefs.owner, name: prefs.owner });
   const { onChange } = handlers;
   const status = new Set(prefs.status);
   const toggle = (id) => onChange({ status: columnsOf(data).map((c) => c.id).filter((x) => (x === id ? !status.has(id) : status.has(x))) });
-  const offer = contextOffer({ repo: prefs.repo });
   const useButton = offer
     ? h("button", { type: "button", class: "small", "data-focus": "work-context", title: offer.label, onClick: () => { offer.onUse(); useButton.hidden = true; } }, "Use as my context")
     : null;
   if (useButton) watchContextOffer({ repo: prefs.repo }, () => { useButton.hidden = true; });
   const toolbar = h("div", { class: "toolbar work-bar" },
     h("h1", {}, "Work"),
-    pick("work-repo", "Show one repository", prefs.repo, withAll("All repositories", f.repos), (repo) => onChange({ repo })),
-    pick("work-owner", "Show the stories of one account", prefs.owner, withAll("All owners", f.owners), (owner) => onChange({ owner })),
+    pick("work-repo", "Show one repository", prefs.repo, repos, (repo) => onChange({ repo })),
+    pick("work-owner", "Show the stories of one account", prefs.owner, owners, (owner) => onChange({ owner })),
     useButton,
     pick("work-who", "Show the stories by who has the next move", prefs.who, withAll("Any next move", f.who), (who) => onChange({ who })),
     columnsOf(data).map((c) => h("button", {
@@ -88,39 +101,42 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
   let history = [];
   let opener = null;
   let slot;
-  let prefs = loadPrefs(user, store);
-  // The address wins over the saved choices: a repository, "all" (no repository filter) and an owner.
-  if (wantedRepo) prefs = { ...prefs, repo: wantedRepo };
-  else if (query.repo === "all") prefs = { ...prefs, repo: DEFAULTS.repo };
-  else if (query.repo) prefs = { ...prefs, repo: query.repo };
-  // An owner named by the address stays, even without cards (an empty list, not other people's stories), until the person picks another.
-  let addressOwner = query.owner || "";
-  if (addressOwner) prefs = { ...prefs, owner: addressOwner };
+  // The repository and the owner come from the address only; the saved choices never carry them.
+  // "all" is only a value of ?repo=; a repository called "all" in the path is kept as it is.
+  let repo = wantedRepo || (query.repo === "all" ? "" : query.repo || "");
+  let owner = query.owner || "";
+  let prefs = { ...loadPrefs(user, store), repo: "", owner: "" };
+  const shown = () => ({ ...prefs, repo: data?.repos?.find((r) => sameRepo(r.repo, repo))?.repo ?? repo, owner });
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
 
-  // The address follows the repository and owner filters, so a reload shows the same page (and Clear is not undone by the context).
+  // The address follows the repository and owner. `go` runs the router's context.keep, which adds repo=all when needed.
   const writeAddress = () => {
-    const owner = prefs.owner ? { owner: prefs.owner } : {};
-    go(prefs.repo ? withQuery(`#/board/${encodeURIComponent(prefs.repo)}`, owner) : withQuery("#/board", { repo: "all", ...owner }));
+    go(withQuery(repo ? `#/board/${encodeURIComponent(repo)}` : "#/board", owner ? { owner } : {}));
   };
 
   const handlers = {
     onChange: (patch) => {
-      if (Object.entries(patch).every(([k, v]) => JSON.stringify(prefs[k]) === JSON.stringify(v))) return; // nothing changed: no redraw
-      prefs = { ...prefs, ...patch };
-      if ("owner" in patch) addressOwner = "";
-      savePrefs(user, prefs, store);
+      const current = shown();
+      if (Object.entries(patch).every(([k, v]) => JSON.stringify(current[k]) === JSON.stringify(v))) return; // nothing changed: no redraw
+      const { repo: r, owner: o, ...rest } = patch;
+      if ("repo" in patch) repo = r;
+      if ("owner" in patch) owner = o;
+      if (Object.keys(rest).length) {
+        prefs = { ...prefs, ...rest };
+        savePrefs(user, prefs, store);
+      }
       if ("repo" in patch || "owner" in patch) writeAddress();
       draw();
     },
     onText: (value) => {
       prefs = { ...prefs, text: value };
       savePrefs(user, prefs, store);
-      mount(bodyEl, workBody(data, prefs, handlers));
+      mount(bodyEl, workBody(data, shown(), handlers));
     },
     onClear: () => {
-      addressOwner = "";
-      prefs = { ...prefs, repo: DEFAULTS.repo, owner: DEFAULTS.owner, status: [], who: DEFAULTS.who, text: DEFAULTS.text };
+      repo = "";
+      owner = "";
+      prefs = { ...prefs, status: [], who: DEFAULTS.who, text: DEFAULTS.text };
       savePrefs(user, prefs, store);
       writeAddress();
       draw();
@@ -191,7 +207,7 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
   }
 
   function draw() {
-    const nodes = workView(data, prefs, handlers);
+    const nodes = workView(data, shown(), handlers);
     bodyEl = nodes[nodes.length - 1];
     slot = h("div", { id: PANEL_ID, class: "work-panel-slot" }, panelNodes());
     mount(main, [...nodes.slice(0, -1), h("div", { class: "work-split" }, bodyEl, slot)]);
@@ -212,8 +228,6 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
     if (text === last) return;
     last = text;
     data = next;
-    prefs = cleanPrefs(prefs, data);
-    if (addressOwner) prefs = { ...prefs, owner: addressOwner };
     // The panel follows the data: a story that is gone closes it (and drops out of Back).
     const keys = new Set(workItems(data).map(keyOf));
     history = history.filter((k) => keys.has(k));

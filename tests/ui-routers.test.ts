@@ -380,7 +380,7 @@ describe("admin router", () => {
       "./api.js": { api: { info: async () => ({ repo: "r", redesign: true }), flows: async () => [] } },
     }));
     await vi.waitFor(() => expect(renderWork).toHaveBeenCalledTimes(1));
-    expect(renderWork.mock.calls[0]![2].query).toEqual({ repo: "all", owner: "me" });
+    expect(renderWork.mock.calls[0]![2].query).toEqual({ owner: "me" });
   });
 
   it("does not scope a redirected address, and starts the context for the admin", async () => {

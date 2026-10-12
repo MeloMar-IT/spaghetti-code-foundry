@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Repository context 4 — the Work page follows the address (#446). Part 4 of 4 of #352.
+  - **Address first.** `renderWork(main, arg, { user, query, go })` keeps `repo` and `owner` in local variables set from `#/board/<name>?owner=<id>`. A saved repository or owner is ignored on load, also one that conflicts with the address. The repository matches the poll answer without regard to case; the address is not rewritten.
+  - **Changes.** The repository select writes `#/board/<name>` or `#/board` and keeps `owner`; the owner select writes `?owner=`; **Clear filters** writes `#/board`. All go through `go`, so through `context.keep`. The page no longer adds `repo=all` itself.
+  - **Polling.** A changed poll answer no longer calls `cleanPrefs`, so A → B and A → All keep the new selection and the address.
+  - **Unknown repository or owner.** Both are kept. An unknown repository shows the "not in your list" empty state with **Show all repositories** (`data-focus="work-all"`) and does not widen the scope. An owner without stories shows "No story matches the filters." and **Clear filters**.
+  - **Use as my context.** With a registered context offer the toolbar shows **Use as my context** (`data-focus="work-context"`); it stays on an empty board when a scope is chosen or a context is offered.
+  - **`ui/app.js`** passes `query` and `go` to `renderWork`. `docs/USER_GUIDE.md` updated.
 - Repository context 3 — Clear, "Use as my context" and the Board's unknown repository (#445).
   - **Clear filters.** With an active context, **Clear filters** and removing the repository chip write `?repo=all` (`owner` stays), so the context is not put back. `clearedHash(role, hash, ctx)` leaves addresses that name a repository, `#/board/<name>?owner=…`, pages without `scope`, an inactive context and unknown addresses unchanged.
   - **Use as my context.** The filter bar offers it when the page shows another known repository, or all repositories while a context is set. `setContextOffer` / `contextOffer` in `ui/filters.js` hold the offer; `filterBar(…, { onContext: null })` suppresses it, an explicit `onContext` wins, and `stop()` clears it. With an offer and no chips the bar names the scope.
