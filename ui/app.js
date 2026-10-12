@@ -15,11 +15,12 @@ import { refreshModelLists, renderModelDetail, renderModels } from "./models.js"
 import { renderDashboard } from "./dashboard.js";
 import { renderProblems, renderProblemDetail } from "./problems.js";
 import { renderRunDetail, renderRunsList } from "./runs.js";
-import { renderAllRepos } from "./admin-repos.js";
+import { allAttention, renderAllRepos } from "./admin-repos.js";
+import { adminSections, adminSource } from "./repo-admin-sections.js";
 import { renderCredentials } from "./admin-credentials.js";
 import { renderOperations } from "./operations.js";
 import { renderRefinement } from "./refinement.js";
-import { renderRepo } from "./repo-view.js";
+import { SECTIONS, renderRepo } from "./repo-view.js";
 import { renderRepos } from "./repos.js";
 import { renderUsers } from "./users.js";
 import { renderUserDetail } from "./user-detail.js";
@@ -190,14 +191,14 @@ async function route() {
       // Own box: the list's page check is also true on this address, so a late list answer must not draw over the view.
       const box = h("div", {});
       mount(main, box);
-      const off = await renderRepo(box, { id: arg, admin: true, onName: (n) => { if (mine === routeGen) namePage(n); } });
+      const off = await renderRepo(box, { id: arg, admin: true, sections: adminSections(SECTIONS), source: adminSource(S.me), attention: allAttention, onName: (n) => { if (mine === routeGen) namePage(n); } });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "repos") {
       const box = h("div", {});
       mount(main, box);
-      const off = await renderRepos(box, { admin: true, query: to.query, go });
+      const off = await renderRepos(box, { admin: true, switcher: true, query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

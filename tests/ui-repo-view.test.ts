@@ -126,6 +126,20 @@ const show = async (r: any, opts: object = {}) => {
   return { navs, off };
 };
 
+describe("a source that returns foreign and back", () => {
+  it("hides the owner-only actions and uses the returned back link", async () => {
+    const r = deployRec();
+    repos = [r];
+    const source = { load: async () => ({ repo: r, foreign: true, back: { label: "Repositories", href: "#/all-repos" } }) };
+    await view.renderRepo(main(), { id: r.id, admin: true, nav: () => {}, source });
+    expect(button(main(), "Change authentication")).toBeUndefined();
+    expect(button(main(), "Remove")).toBeUndefined();
+    expect(button(main(), "Generate a new key")).toBeUndefined();
+    expect(section("danger").textContent).toContain("Only the owner can remove this repository or generate a new key.");
+    expect(walk(main()).find((e) => e.tag === "a" && e.textContent === "Repositories")!.attrs.href).toBe("#/all-repos");
+  });
+});
+
 describe("the sections", () => {
   it("draws Overview, Connection and Dangerous actions in that order, the last one as a fail card", async () => {
     await show(rec());

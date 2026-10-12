@@ -3,6 +3,7 @@ import { confirmDialog, h, mount, tableBox, timeAgo, toast } from "./dom.js";
 import { confirmUnreadable, monitorLists } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 import { ownerText, sortRepos } from "./admin-repos.js";
+import { repoHref } from "./repos.js";
 import { watcherSemanticOf } from "./icons.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
 import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
@@ -154,8 +155,8 @@ export async function renderWatchers(main, { data, readOnly = false } = {}) {
         w.problem ? h("div", { class: "status bad" }, w.problem) : null),
       h("td", {}, !w.enabled ? "" : st?.lastOk ? timeAgo(st.lastOk) : "none yet"));
   };
-  const section = (title, list, kind, sub) => (list.length
-    ? h("div", {}, h("h3", {}, title), sub ?? null,
+  const section = (title, list, kind, sub, href) => (list.length
+    ? h("div", {}, h("h3", {}, href ? h("a", { href }, title) : title), sub ?? null,
       tableBox(h("table", { class: "table compact", "aria-label": title },
         h("thead", {}, h("tr", {}, ["Watcher", "State", "What it does", "Last successful check"].map((c) => h("th", { scope: "col" }, c)))),
         h("tbody", {}, list.map((w) => row(w, kind))))))
@@ -172,7 +173,7 @@ export async function renderWatchers(main, { data, readOnly = false } = {}) {
     note,
     watchers.length ? [
       ...groups.map(({ repo, watchers: list }) => section(repo.url, list, "repo",
-        h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null))),
+        h("p", { class: "muted flush mb-6" }, "Owner: ", ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null), repoHref(repo))),
       section("Repository not connected any more", gone, "gone"),
       section("The Foundry itself", monitor, "monitor"),
       section("From config.yaml", file, "file", h("p", { class: "muted flush mb-6" }, FILE_NOTE)),

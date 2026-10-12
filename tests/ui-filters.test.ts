@@ -255,7 +255,7 @@ describe("the routers", () => {
       expect(src, file).toMatch(/location\.hash( \?\? "")?\)?\.split\("\?"\)\[0\]\.split\("\/"\)\[1\]/);
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\("\/"\)/);
     }
-    for (const file of ["refinement", "repos", "admin-repos"]) {
+    for (const file of ["refinement", "repos"]) {
       const src = readFileSync(`ui/${file}.js`, "utf8");
       expect(src, file).toContain("splitHash(location.hash");
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\(/);
@@ -267,7 +267,7 @@ describe("the routers", () => {
     const app = readFileSync("ui/app.js", "utf8");
     expect(app).toContain("renderAllRepos(main, { query: to.query, go })");
     expect(app).toContain("renderRefinement(main, { admin: true, id: arg, query: to.query, go })");
-    expect(app).toContain("renderRepos(box, { admin: true, query: to.query, go })");
+    expect(app).toContain("renderRepos(box, { admin: true, switcher: true, query: to.query, go })");
     const user = readFileSync("ui/user/app.js", "utf8");
     expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go })");
     expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query, go })");

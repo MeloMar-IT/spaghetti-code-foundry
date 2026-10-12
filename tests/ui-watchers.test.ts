@@ -182,6 +182,16 @@ describe("the page", () => {
     expect(buttons(main)).toEqual(expect.arrayContaining(["↻", "+ Add the monitor", "+ Add watcher"]));
   });
 
+  it("a repository group heading links to the repository view; the other sections have no link", async () => {
+    watchers = [stored(), stored({ id: "lost", repoId: "nope" }), { id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }];
+    const main = await draw();
+    const headings = walk(main).filter((e) => e.tag === "h3");
+    const links = headings.map((h) => walk(h).filter((e) => e.tag === "a").map((a) => a.attrs.href));
+    expect(links[0]).toEqual(["#/repos/r1"]);
+    expect(headings[0]!.textContent).toBe("https://github.com/o/a");
+    for (const l of links.slice(1)) expect(l).toEqual([]);
+  });
+
   it("a file watcher shows its note in its section", async () => {
     watchers = [{ id: "f", source: "issues", enabled: true, github_repo: "o/f", flow: "issue-gitflow", label: "go", every: "5m", max_per_tick: 1 }];
     const main = await draw();

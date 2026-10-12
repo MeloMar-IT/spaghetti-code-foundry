@@ -80,6 +80,13 @@ describe("sorting and counting", () => {
     expect(out.map((r: any) => r.id)).toEqual(["bad1", "bad2", "warn", "ok1", "ok2"]);
     expect(input.map((r) => r.id)).toEqual(["ok1", "warn", "bad1", "ok2", "bad2"]);
   });
+  it("uses a given attention function, and the default is unchanged", () => {
+    const custom = (r: any) => ({ level: r.id === "ok1" ? "bad" : "ok", text: "", action: null });
+    expect(s.sortByAttention([ok, warn, bad], {}, custom).map((r: any) => r.id)).toEqual(["ok1", "warn", "bad1"]);
+    expect(s.attentionCount([ok, warn, bad], {}, custom)).toBe(1);
+    expect(s.attentionCount([ok, warn, bad])).toBe(2);
+    expect(s.sortByAttention([ok, warn, bad]).map((r: any) => r.id)).toEqual(["bad1", "warn", "ok1"]);
+  });
   it("handles 50 rows", () => {
     const rows = Array.from({ length: 50 }, (_, i) => rec({ id: `r${i}`, connection: i % 3 === 0 ? good : i % 3 === 1 ? failed() : undefined }));
     const out = s.sortByAttention(rows);
