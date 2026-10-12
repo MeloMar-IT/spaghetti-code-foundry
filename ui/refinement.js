@@ -10,6 +10,8 @@ import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
 import { sourceSection } from "./refinement-import.js";
 import { newSessionDialog } from "./refinement-new.js";
+import { pageHeader } from "./kit/product.js";
+import { conversationPage } from "./templates.js";
 import { publishSection } from "./refinement-publish.js";
 import { nextNode, sessionNext } from "./refinement-next.js";
 import { drafts as talkDrafts, kindOf, talkSection } from "./refinement-talk.js";
@@ -204,6 +206,19 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const waiting = announcer(); // "The architect is working", said once
     let at = Date.now(); // when the page last had an answer
     let noteUp = false;
+    let titleHeld = null; // the title that took the focus from Retry; a redraw hands it to the new title
+    const focusTitle = () => {
+      const t = upper.querySelector("h1");
+      t?.setAttribute("tabindex", "-1");
+      t?.focus();
+      return t;
+    };
+    // The Retry button goes with the note: the title takes the focus, so it never drops to <body>.
+    const clearNote = () => {
+      const had = note.contains(document.activeElement);
+      noteUp = false; mount(note);
+      if (had) titleHeld = focusTitle();
+    };
     let inflight = false; // one poll request at a time, also for Retry
     let held = null; // the newest answer that waits while the person types
     let waitTimer;
@@ -224,15 +239,14 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       draws++;
       held = null;
       at = Date.now();
-      if (noteUp) {
-        noteUp = false;
-        mount(note);
-      }
+      if (noteUp) clearNote();
       const json = JSON.stringify(next);
+      const keep = titleHeld !== null && document.activeElement === titleHeld; titleHeld = null; // focus the person moved is left alone
       if (json !== shown) {
         shown = json;
         draw(next);
       }
+      if (keep) focusTitle();
       stopPoll();
       if (architectStatus(next.architect).busy) poll = setTimeout(tick, POLL_MS);
     };
@@ -271,10 +285,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       inflight = false;
       if (!current() || before !== draws) return;
       at = Date.now();
-      if (noteUp) {
-        noteUp = false;
-        mount(note);
-      }
+      if (noteUp) clearNote();
       // A change is on its way: this answer may show its state before its own answer does. Ask again later.
       if (active) poll = setTimeout(tick, POLL_MS);
       else if (guarding()) {
@@ -351,9 +362,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         shownUpper = upperKey;
         mount(upper,
         h("a", { href: "#/refinement" }, "← All sessions"),
-        h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
-          h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
-          h("span", { class: "spacer" }), buttons),
+        pageHeader({ layout: "toolbar", title: s.title,
+          meta: [h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state), h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null],
+          actions: [h("span", { class: "spacer" }), buttons] }),
         nextBox,
         ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
@@ -387,7 +398,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const nodes = { brief: ideaBox, talk: talkBox, drafts: sections.node, handoff: h("div", {}, publishing.node, handNote), log: lower };
     const ws = workspace({ id, parts: PARTS.map((p) => ({ ...p, node: nodes[p.id] })), initial: chosen.get(id) ?? defaultPart(s) });
     show(s);
-    mount(main, upper, note, waiting.node, ws.node); // after the first draw, so the focus finds its control again
+    mount(main, conversationPage({ head: upper, thread: [note, waiting.node, ws.node] })); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 

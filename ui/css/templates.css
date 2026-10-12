@@ -1,11 +1,19 @@
 /* templates.css — the page templates of ui/templates.js.
-   Belongs here: the .page root, the .page-<name> roots and their regions, and grids scoped under a template root.
+   Belongs here: the .page root, the .page-<name> roots and their regions, and grids scoped under a template root (the dashboard grid, the editor grid).
    Does not belong here: components (components.css); the page frame (layout.css); rules of one page area (pages/*.css). */
 
 .page { min-width: 0; }
 .page-overview, .page-collection, .page-board, .page-master-detail, .page-editor, .page-settings, .page-conversation, .page-detail { max-width: none; }
 .page-overview .dash-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); margin-top: 14px; }
+.page-editor > .editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.page-editor.with-overview > .editor { grid-template-columns: minmax(0, 1fr) 340px; }
+.page-editor .page-main, .page-editor .page-side { display: contents; }
+.page-editor .page-side > * { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
+.page-editor .page-main > * { grid-column: 1; grid-row: 1; min-width: 0; }
 @media (max-width: 1100px) {
   .page-overview .dash-grid { grid-template-columns: 1fr; }
+  .page-editor > .editor, .page-editor.with-overview > .editor { grid-template-columns: 1fr; }
+  .page-editor .page-side > *, .page-editor .page-main > * { grid-column: auto; grid-row: auto; }
+  .page-editor .page-side > * { position: static; max-height: none; }
 }
 .page-board .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }

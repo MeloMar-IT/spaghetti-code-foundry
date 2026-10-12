@@ -7,6 +7,7 @@ import { markProblems, openInVisual, openInYaml, problemsOf, renderFlowProblems 
 import { splitHash } from "./ia.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 import { renderGraph } from "./graph.js";
+import { editorPage } from "./templates.js";
 import { insertBlock, pickBlock, saveStepAsBlock } from "./library.js";
 import { runForm } from "./run-form.js";
 
@@ -56,7 +57,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
   let bucket = null; // the width the choice was read for: true = narrow
   // A window that is resized while the editor is open switches to the choice of its new width.
   watchNarrow?.(() => {
-    if (!state.cur || !ui.grid || !main.contains(ui.grid) || !syncOverview()) return;
+    if (!state.cur || !ui.page || !main.contains(ui.page) || !syncOverview()) return;
     applyOverview();
     drawGraph();
     drawHeader();
@@ -179,12 +180,12 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const head = h("div", {});
     const errors = h("div", { tabindex: "-1", "aria-label": "Problems" });
     const failure = h("div", {});
-    const body = h("div", { class: "editor-body" });
+    const body = h("div", {});
     const graph = h("div", {});
     const pane = h("div", { class: "overview-pane", id: "flow-overview" }, h("h3", { class: "mb-8" }, "Overview"), graph);
-    const grid = h("div", { class: "editor" }, pane, body);
-    ui = { head, errors, failure, body, graph, pane, grid };
-    mount(main, head, errors, failure, grid);
+    const page = editorPage({ head, notices: [errors, failure], main: body, side: pane });
+    ui = { head, errors, failure, body, graph, pane, page };
+    mount(main, page);
     syncOverview();
     applyOverview();
     drawHeader();
@@ -205,7 +206,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
 
   function applyOverview() {
     ui.pane.hidden = !overview;
-    ui.grid.classList.toggle("with-overview", !!overview);
+    ui.page.classList.toggle("with-overview", !!overview);
   }
 
   function toggleOverview() {

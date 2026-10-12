@@ -1,6 +1,7 @@
 import { h } from "./dom.js";
 import { filterFlows } from "./flow-state.js";
 import { flowNameMark } from "./icons.js";
+import { pageHeader } from "./kit/product.js";
 
 const VALIDATION_CLASS = { valid: "ok", problems: "bad", checking: "" };
 
@@ -37,14 +38,13 @@ export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveSco
   const run = h("button", { class: readOnly || st.primary === "run" ? "primary" : null, "data-focus": "flow-run", onClick: () => onRun?.() }, "Test run");
   if (save) save.disabled = !!saving;
   const actions = readOnly ? [run] : st.primary === "save" ? [run, save] : [save, run];
-  const head = h("div", { class: "toolbar flow-head" },
-    h("h1", {}, st.title),
-    h("span", { class: st.scopeLabel === "not saved yet" ? "pill claude" : "pill" }, st.scopeLabel),
-    h("span", { class: "seg" }, seg("visual", "Visual"), seg("yaml", "YAML")),
-    h("span", { class: "spacer" }),
-    h("button", { class: "overview-toggle", "data-focus": "flow-overview", "aria-expanded": overviewOpen ? "true" : "false", "aria-controls": "flow-overview", onClick: () => onOverview?.() }, "Overview"),
-    actions,
-    more);
+  const head = pageHeader({
+    layout: "toolbar", title: st.title,
+    meta: [h("span", { class: st.scopeLabel === "not saved yet" ? "pill claude" : "pill" }, st.scopeLabel), h("span", { class: "seg" }, seg("visual", "Visual"), seg("yaml", "YAML"))],
+    actions: [h("span", { class: "spacer" }),
+      h("button", { class: "overview-toggle", "data-focus": "flow-overview", "aria-expanded": overviewOpen ? "true" : "false", "aria-controls": "flow-overview", onClick: () => onOverview?.() }, "Overview"),
+      actions, more],
+  });
   const state = h("div", { class: "flow-state" },
     h("span", { class: "flow-dirty" }, st.dirtyLabel),
     h("button", { class: `flow-validation status ${VALIDATION_CLASS[st.validation.kind] ?? ""}`.trim(), "data-focus": "flow-validation", onClick: () => onProblems?.() }, st.validation.label),

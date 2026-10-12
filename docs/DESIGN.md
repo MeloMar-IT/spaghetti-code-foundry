@@ -556,8 +556,8 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 |---|---|
 | `tokens.css` | Only a pointer: the custom properties (colours, type, spacing, density, the `--layer-*` scale, `--size-form`) are in `ui/tokens.css`, which is linked before `/style.css`. No selectors. |
 | `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
-| `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
-| `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`). No component rules, no `z-index`. |
+| `layout.css` | The page frame and the run grid: body, `.layout`, `aside`, `main`, `.run-grid`, and how they collapse on narrow screens. |
+| `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
 | `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
@@ -565,7 +565,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 **Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
 - **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
 - **Regions.** Plain `div`s in a fixed order, with no grid and no gap, so margins collapse as before. An empty slot (`null`, `false`, `[]`, `[null, false]`) draws no region. Slots: overview `summary`, `sections`; settings `sections`; collection `filters`, `list`, `empty`; board `filters`, `columns`; master-detail `master`, `detail` in `.page-body`; editor `main`, `side` in `.editor.page-body` (side first); conversation `thread`, `composer`, `side`; detail `meta`, `sections`, `side` (`.page-body` gets `with-side` only when `side` is filled).
-- **Used by** the dashboard (`overviewPage`) and the settings page (`settingsPage`). The other pages move over in later parts of #341.
+- **Used by** the dashboard (`overviewPage`), the settings page (`settingsPage`), the flow editor (`editorPage`) and the refinement session (`conversationPage`). The other pages move over in later parts of #341.
 - **Focus after a redraw.** `mount()` in `ui/dom.js` looks for the fallback heading in the target, then its parent, then the nearest `.page` ancestor, then the target itself.
 
 **Where a new rule goes.**
@@ -605,7 +605,7 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
 
 **Content widths.** `--size-form` (640px, in `ui/tokens.css`) is used by `.start-form` and `.modal`; `.modal:has(.block-grid)` is 900px.
 
-**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--layer-sticky`; static in the user display on narrow screens) and `.graph-pane` in the editor (sticks under the top bar). The sidebar `.side` is sticky below the top bar too.
+**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--layer-sticky`; static in the user display on narrow screens) and `.page-editor .page-side > *` in the editor, the Overview pane (sticks under the top bar). The sidebar `.side` is sticky below the top bar too.
 
 **Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.page-board .board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. On a narrow screen the sidebar is a drawer (`.side` with `body.drawer-open`) at `--layer-menu` plus one; it scrolls itself.
 
