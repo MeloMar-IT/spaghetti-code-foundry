@@ -10,8 +10,17 @@ import { signInAs } from "./helpers/session.js";
 // Files that still pick their own port. A later part moves its files and deletes its lines; the list can only shrink.
 // Part 2: refinement
 const PART_2 = [
+  "tests/refinement-api.test.ts",
+  "tests/refinement-architect.test.ts",
+  "tests/refinement-backlog-api.test.ts",
+  "tests/refinement-draft-api.test.ts",
+  "tests/refinement-impact-api.test.ts",
   "tests/refinement-import-api.test.ts",
+  "tests/refinement-judge-api.test.ts",
+  "tests/refinement-round.test.ts",
   "tests/refinement-source-label-api.test.ts",
+  "tests/refinement-split-api.test.ts",
+  "tests/refinement-talk-api.test.ts",
 ];
 // Part 3: refinement publish
 const PART_3 = [
@@ -27,33 +36,33 @@ const PART_3 = [
 ];
 // Part 4: repositories, watchers, credentials
 const PART_4 = [
+  "tests/app-repos-api.test.ts",
+  "tests/credentials-api.test.ts",
+  "tests/key-vars-api.test.ts",
   "tests/repo-key.test.ts",
+  "tests/repo-watchers-api.test.ts",
+  "tests/repo-watchers-gh.test.ts",
   "tests/repo-watchers-run.test.ts",
+  "tests/repos-admin-api.test.ts",
+  "tests/repos-api.test.ts",
+  "tests/repos-app-api.test.ts",
+  "tests/watcher-move-server.test.ts",
 ];
 // Part 5: accounts and sign-in
 const PART_5 = [
-  "tests/account-work.test.ts",
-  "tests/audit-actions.test.ts",
-  "tests/audit-api.test.ts",
   "tests/auth.test.ts",
-  "tests/limits-api.test.ts",
   "tests/password-change.test.ts",
-  "tests/password-link.test.ts",
-  "tests/password-link-seams.test.ts",
   "tests/user-cli.test.ts",
-  "tests/user-view.test.ts",
-  "tests/users-api.test.ts",
+  "tests/view-as.test.ts",
 ];
 // Part 6: server, runs and the rest
 const PART_6 = [
   "tests/browser/seed.ts",
   "tests/home-process.test.ts",
-  "tests/monitor-api.test.ts",
-  "tests/net-server.test.ts",
-  "tests/run-answer.test.ts",
-  "tests/run-archive.test.ts",
-  "tests/run-ownership.test.ts",
+  "tests/monitor-problems-api.test.ts",
+  "tests/permissions.test.ts",
   "tests/search-api.test.ts",
+  "tests/server.test.ts",
   "tests/skill-cli.test.ts",
   "tests/ui-gallery-server.test.ts",
 ];

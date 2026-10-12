@@ -24,7 +24,7 @@ import {
   usersPath,
   type UserError,
 } from "../src/auth/users.js";
-import { startServer } from "../src/server/server.js";
+import { startTestServer } from "./helpers/port.js";
 
 const PW = "test-password-12345";
 const PW2 = "test-other-password-678";
@@ -357,15 +357,8 @@ async function boot(): Promise<Srv> {
   const logs: string[] = [];
   now = Date.now();
   const opts = { repo: home, runsDir: join(home, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m: string) => void logs.push(m), signInClock: () => now };
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ ...opts, port });
-      return { base: `http://127.0.0.1:${port}`, logs, close: started.close };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+  const started = await startTestServer(opts);
+  return { base: started.base, logs, close: started.close };
 }
 
 /** Every response (headers and body) of the current test, and every secret it created. */
