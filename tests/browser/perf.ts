@@ -2,8 +2,8 @@ import { expect, type Browser, type Page } from "@playwright/test";
 import { overBudget, median, POLL_TICK_MS, RUNS_PER_MEASURE, type Budget } from "./budgets.js";
 import { openAs } from "./helpers.js";
 
-/** When a page counts as ready: an element has the text, or at least this many children. */
-export type Ready = { selector: string; text: string } | { selector: string; children: number };
+/** When a page counts as ready: an element has the text, or at least this many children (optionally: it is drawn, and its last child starts with `last`). */
+export type Ready = { selector: string; text: string } | { selector: string; children: number; visible?: boolean; last?: string };
 /** The node whose removal marks the redraw of a polling tick (the first match whose text starts with `startsWith`). */
 export type Marker = { selector: string; startsWith?: string };
 
@@ -15,7 +15,10 @@ function initPerf(ready: Ready | null): void {
   const check = (r: any): boolean => {
     const el = document.querySelector(r.selector);
     if (!el) return false;
-    return "text" in r ? (el.textContent || "").includes(r.text) : el.children.length >= r.children;
+    if ("text" in r) return (el.textContent || "").includes(r.text);
+    if (el.children.length < r.children) return false;
+    if (r.visible && el.getClientRects().length === 0) return false;
+    return r.last === undefined || (el.lastElementChild?.textContent || "").startsWith(r.last);
   };
   let watching: any = null;
   let resolveReady: () => void = () => {};

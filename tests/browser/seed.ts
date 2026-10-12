@@ -62,7 +62,7 @@ const sleep =(ms: number) => new Promise((r) => setTimeout(r, ms));
 /** True when the launcher is asked for the large data set (UI_TEST_LARGE=1). */
 export const largeFromEnv = (env: NodeJS.ProcessEnv): boolean => env.UI_TEST_LARGE === "1";
 
-/** 600 characters with no space: the first line of the large log and diff must stay inside their own box. */
+/** 600 characters with no space: the first line of the large log and diff, and the last line of the log, must stay inside their own box. */
 const LONG_TAIL = "-" + "x".repeat(599);
 
 /** Writes runs/<id>/run.json for a finished run; `extra` is merged last (reason, workdir, baseSha …). */
@@ -87,7 +87,7 @@ export function seedLarge(runsDir: string, workRoot: string, owner: string, repo
   }
   const logRun = "ui-big-log";
   writeRunFile(runsDir, repo, logRun, owner, "succeeded", { task: "Large seeded log run" });
-  writeFileSync(join(runsDir, logRun, "live.log"), Array.from({ length: 5000 }, (_, i) => `line ${i + 1} of the large log${i === 0 ? LONG_TAIL : ""}`).join("\n") + "\n");
+  writeFileSync(join(runsDir, logRun, "live.log"), Array.from({ length: 5000 }, (_, i) => `line ${i + 1} of the large log${i === 0 || i === 4999 ? LONG_TAIL : ""}`).join("\n") + "\n");
 
   const diffRun = "ui-big-diff";
   const work = join(workRoot, "diff-work");
