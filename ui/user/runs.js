@@ -2,8 +2,7 @@
 // answers and show its sentences when it refuses. Relative imports, so a test can load them.
 import { api } from "../api.js";
 import { errorText } from "../auth.js";
-import { h, modal, mount, timeAgo, toast } from "../dom.js";
-import { nextStatus, whenParts, whoClass } from "../next.js";
+import { h, modal, mount, toast } from "../dom.js";
 import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
 import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
 import { pageViews } from "../views.js";
@@ -14,7 +13,8 @@ import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
-import { CAP_NOTE, RUNS_CAP, aheadText, diffView, refinementMark, statusAnnouncer } from "../runs.js";
+import { CAP_NOTE, RUNS_CAP, diffView, statusAnnouncer } from "../runs.js";
+import { listRow, myRunsEntries, renderSections, runSections } from "../runs-list.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
 export { NO_STEPS } from "../run-tabs.js";
@@ -29,49 +29,10 @@ export { firstLine, workText, runActions };
 // The Approve and Reject dialog lives in ui/run-dialogs.js: the administrator's run page uses it too.
 export { decisionDialog };
 
-const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
-const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
-const isYou = (e) => e.run?.next?.who === "You" || e.job?.next?.who === "You";
+export { myRunsEntries };
 
-/**
- * What the list shows: { run, job } entries, newest first (by start, or by queue time for a job with no run of its own),
- * with the ones that need the user on top. A job whose run is listed is attached to that run.
- */
-export function myRunsEntries(runs, pending) {
-  const jobs = new Map((Array.isArray(pending) ? pending : []).map((p) => [p.runId, p]));
-  const listed = new Set();
-  const byRun = [...(Array.isArray(runs) ? runs : [])].sort((a, b) => startedMs(b) - startedMs(a)).map((run) => {
-    listed.add(run.runId);
-    return { run, job: jobs.get(run.runId) ?? null };
-  });
-  const alone = [...jobs.values()].filter((p) => !listed.has(p.runId)).map((job) => ({ run: null, job }));
-  const all = [...byRun, ...alone].sort((x, y) => when(y) - when(x));
-  return [...all.filter(isYou), ...all.filter((e) => !isYou(e))];
-}
-
-/** One card of the list: a link to the run, its status, what happens next, and Remove for a queued run. */
-export function runCard({ run, job }, onRemove) {
-  const r = run;
-  const n = r?.next ?? job?.next;
-  const id = r?.runId ?? job.runId;
-  const task = firstLine(r?.task ?? job?.task);
-  const work = r ? workText(r.vars?.github_repo, r.vars?.issue) : workText(job?.githubRepo, job?.issue);
-  const when = r ? ["Started", r.startedAt] : ["Queued", job?.enqueuedAt];
-  return h("li", { class: `run-card${n?.who === "You" ? ` ${whoClass(n)}` : ""}` },
-    h("div", { class: "row" },
-      n ? nextStatus(n, `help-${id}`) : null,
-      h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, r?.flow ?? job?.flow ?? "Queued run")),
-      r?.refinement ? refinementMark(r.refinement, `ref-${id}`) : null),
-    task ? h("div", { "data-label": "Task" }, task) : null,
-    work ? h("div", { class: "muted mono", "data-label": "Repository" }, work) : null,
-    n ? h("p", { class: "run-next muted", "data-label": "What happens next" }, n.text) : null,
-    n && whenParts(n).length ? h("div", { class: "next-parts timing" }, whenParts(n)) : null,
-    job && job.ahead > 0 ? h("div", { class: "muted" }, aheadText(job.ahead)) : null,
-    h("div", { class: "row" },
-      when[1] ? h("span", { class: "muted" }, `${when[0]} ${timeAgo(when[1])}`) : null,
-      h("span", { class: "spacer" }),
-      job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null));
-}
+/** One card of the list (the shared row of ui/runs-list.js): a link to the run, its status, what happens next, and Remove for a queued run. */
+export const runCard = (entry, onRemove) => listRow(entry, { onRemove });
 
 /** A yes/no dialog. Resolves true for the yes button, false for the other, Close, Escape or the backdrop. */
 export async function confirmDialog(title, text, yes = "Yes", no = "No") {
@@ -95,6 +56,15 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   let filters = query.repo ? { repo: query.repo } : {};
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
+  const sections = h("div", { class: "run-sections" });
+  const slot = () => ({ el: h("div"), key: null });
+  const slots = { filter: slot(), queue: slot(), cap: slot(), empty: slot() };
+  const patch = (s, key, make) => {
+    if (s.key === key) return;
+    s.key = key;
+    mount(s.el, make());
+  };
+  let closed = false;
   const refresh = () => live.refresh();
   mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
   const states = runsLiveStates({ body: list, label: "Loading your runs", rows: 4, shape: "cards", what: "Could not load your runs.", denied: "You are not allowed to see your runs.", retry: refresh, focus: "my-runs" });
@@ -106,34 +76,38 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   };
   const clear = () => setFilters({});
   const render = () => {
-    if (asking || !data) return;
+    if (closed || asking || !data) return;
     const { runs, queue } = data;
-    const entries = myRunsEntries(runs, queue.ok ? queue.value?.pending : []);
-    const shown = filters.repo ? entries.filter((e) => sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo)) : entries;
-    const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    const keep = (e) => !filters.repo || sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo);
     // Saved views: a user filters by repository only, so no owner list is known.
-    const vp = views?.parts(filters, { redraw: render }) ?? {};
-    mount(list,
-      states.alert,
-      filterBar(filters, { onRemove: () => setFilters({}), onClear: clear, row: vp.row, onSave: vp.onSave }),
-      queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." }),
-      vp.stale ? filterEmpty("runs", filters, { onClear: clear, onDelete: vp.onDelete })
-        : shown.length
-          ? [h("ul", { class: "run-cards" }, shown.map((e) => runCard(e, readOnly ? null : remove))), note ? h("p", { class: "muted" }, note) : null]
-          : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns(),
-      states.note);
+    const vp = views?.parts(filters, { redraw: () => { slots.empty.key = slots.queue.key = null; render(); } }) ?? {};
+    const secs = vp.stale ? [] : runSections(runs, queue.ok ? queue.value?.pending : [], keep);
+    const found = secs.length > 0;
+    const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    // The page is drawn once; each part below changes only when its own content does, so the list keeps its nodes and the focus.
+    if (sections.parentNode !== list) mount(list, states.alert, slots.filter.el, slots.queue.el, sections, slots.cap.el, slots.empty.el, states.note);
+    mount(slots.filter.el, filterBar(filters, { onRemove: () => setFilters({}), onClear: clear, row: vp.row, onSave: vp.onSave }));
+    patch(slots.queue, JSON.stringify(queue.ok ? 1 : queue), () => (queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." })));
+    patch(slots.cap, JSON.stringify([found, note]), () => (found && note ? h("p", { class: "muted" }, note) : null));
+    patch(slots.empty, JSON.stringify([filters, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", filters, { onClear: clear, onDelete: vp.onDelete })
+      : found ? null : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns()));
+    sections.hidden = !found;
+    renderSections(sections, secs, { onRemove: readOnly ? null : remove });
   };
   async function remove(job) {
     alertEl.textContent = "";
     asking = true;
     let yes;
     try { yes = await ask("Remove this run", "Remove this run? It leaves the queue and does not start.", "Remove the run", "Keep it"); } finally { asking = false; }
+    if (closed) return;
     if (!yes) return render(); // an answer that came while the dialog was open is drawn by the poller
     try {
       const r = await a.cancelRun(job.runId);
+      if (closed) return;
       if (r?.cancelled === false) alertEl.textContent = NOT_CANCELLED;
       else toast("Removed");
     } catch (e) {
+      if (closed) return;
       alertEl.textContent = errorText(e);
       return render();
     }
@@ -153,7 +127,10 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     hold: () => asking || dialogOpen(),
   });
   await live.ready;
-  return () => live.stop();
+  return () => {
+    closed = true;
+    live.stop();
+  };
 }
 
 // ── The run page ──

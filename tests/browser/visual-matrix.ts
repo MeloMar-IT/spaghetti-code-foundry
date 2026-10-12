@@ -43,7 +43,7 @@ export const PAGES: VisualPage[] = [
   { id: "admin-board", kind: "display", role: "admin", hash: () => "#/board", ready: ["acme/app"], masks: () => [REPO] },
   {
     id: "admin-runs", kind: "display", role: "admin", hash: () => "#/runs", ready: ["Seeded failed run", "Seeded hold run"],
-    masks: () => [REPO, ...LIVE.map((t) => `#main tr.link:has-text("${t}")`)],
+    masks: () => [REPO, ...LIVE.map((t) => `#main li.run-card:has-text("${t}")`)],
   },
   {
     id: "admin-run-failed", kind: "display", role: "admin", hash: (s) => `#/runs/${s.runs.failed}`,

@@ -1,8 +1,8 @@
 import { api } from "./api.js";
-import { h, mount, table, timeAgo, toast } from "./dom.js";
+import { h, mount, timeAgo, toast } from "./dom.js";
 import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
 import { pageViews } from "./views.js";
-import { needsYou, nextStatus, whenParts, whereLink, whoClass } from "./next.js";
+import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
 // This module and ./run-header.js import each other: neither uses the other at the top level, only inside functions.
 import { createRunHeader } from "./run-header.js";
@@ -14,6 +14,7 @@ import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, ru
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
+import { renderSections, runSections } from "./runs-list.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 export { failedStepIndex, stepEntry } from "./run-timeline.js";
@@ -108,9 +109,25 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   const slot = h("div");
   const states = runsLiveStates({
     body: slot,
-    label: "Loading runs", rows: 6, shape: "table", what: "Could not load the runs.", retry: refresh, focus: "runs",
+    label: "Loading runs", rows: 6, shape: "cards", what: "Could not load the runs.", retry: refresh, focus: "runs",
   });
   mount(main, collectionPage({ title: "Runs", list: slot }));
+  const sections = h("div", { class: "run-sections" });
+  const part1 = () => ({ el: h("div"), key: null });
+  const slots = { owner: part1(), filter: part1(), owners: part1(), cap: part1(), queue: part1(), empty: part1() };
+  const patch = (s, key, make) => {
+    if (s.key === key) return;
+    s.key = key;
+    mount(s.el, make());
+  };
+  const page = collectionPage({
+    title: "Runs",
+    actions: [slots.owner.el, h("span", { class: "spacer" }), states.note, h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")],
+    notices: states.alert,
+    filters: slots.filter.el,
+    list: [slots.owners.el, slots.cap.el, slots.queue.el, sections],
+    empty: slots.empty.el,
+  });
 
   // Asks the server (owner filter included). Undefined when a newer request started meanwhile: that one is the answer.
   const fetchAll = async () => {
@@ -154,54 +171,44 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   const clear = () => setFilters({});
 
   const render = () => {
+    if (closed) return;
     const { runs } = data;
     const queue = data.queue.ok ? data.queue.value : null;
     const owners = data.owners?.ok ? data.owners.value : null;
-    const shown = filters.repo ? runs.filter((r) => sameRepo(r.vars?.github_repo, filters.repo)) : runs;
-    const pending = filters.repo ? (queue?.pending ?? []).filter((p) => sameRepo(p.githubRepo, filters.repo)) : queue?.pending ?? [];
-    const yours = needsYou(shown);
-    const cols = ["Status", "Flow", "Task / what happens next", ...(admin ? ["Owner"] : []), "Steps", ...(admin ? ["Cost"] : []), "Started"];
-    const runsTable = (list, scope) => table(cols, list.map((r) => runRow(r, { owner: admin, cost: admin, scope })), { cards: true, caption: "Runs" });
-    const filter = admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
-      h("option", { value: "" }, "All owners"),
-      owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null;
+    const keep = (e) => !filters.repo || sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo);
     const labels = { owner: ownerLabel(owners?.find((o) => o.id === filters.owner)?.name) || filters.owner };
     const note = filters.repo && runs.length >= RUNS_CAP ? CAP_NOTE : null;
-    const active = Boolean(filters.repo || filters.owner);
-    // A queued job that matches is a result too.
-    const found = shown.length > 0 || (filters.repo && pending.length > 0);
     // Saved views: the owner ids come from the owner list the page already loads (unknown when it failed).
-    const vp = views?.parts(filters, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { if (!closed && data) render(); } }) ?? {};
+    const vp = views?.parts(filters, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { slots.empty.key = null; if (!closed && data) render(); } }) ?? {};
     const stale = Boolean(vp.stale); // an out-of-date saved view is open: the empty state, even when the server still sent rows
+    const secs = stale ? [] : runSections(runs, queue?.pending ?? [], keep);
+    const found = secs.length > 0;
 
-    mount(main, collectionPage({
-      title: "Runs",
-      actions: [
-        admin && queue ? h("span", { class: "muted" }, `${queue.active.length}/${queue.concurrency} running · ${queue.pending.length} queued`) : null,
-        filter,
-        h("span", { class: "spacer" }),
-        states.note,
-        h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh"),
-      ],
-      notices: states.alert,
-      filters: filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear, row: vp.row, onSave: vp.onSave }),
-      list: stale ? null : [
-        admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null,
-        note && found ? h("p", { class: "muted" }, note) : null,
-        !data.queue.ok ? partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })
-          : pending.length ? h("div", { class: "card mb-16" },
-            h("h3", {}, "Queue"),
-            pending.map((p) => queueRow(p, async () => {
-              await api.cancelRun(p.runId);
-              gen++; // an answer asked before the cancel still shows the job
-              refresh();
-            }))) : null,
-        yours.length ? h("div", { class: "mb-16" }, h("h3", { class: "mb-8" }, `Needs you (${yours.length})`), runsTable(yours, "needs")) : null,
-        shown.length ? runsTable(shown, "run") : null,
-      ],
-      empty: stale ? filterEmpty("runs", filters, { labels, onClear: clear, onDelete: vp.onDelete })
-        : shown.length ? null : active ? (found ? null : filterEmpty("runs", filters, { labels, note, onClear: clear })) : noRuns(),
-    }));
+    // The page is built once; each part changes only when its own content does, so the list keeps its nodes and the focus.
+    if (page.parentNode !== main) mount(main, page);
+    patch(slots.owner, JSON.stringify([owners, filters.owner]), () => (admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
+      h("option", { value: "" }, "All owners"),
+      owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null));
+    mount(slots.filter.el, filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear, row: vp.row, onSave: vp.onSave }));
+    patch(slots.owners, JSON.stringify(admin && data.owners && !data.owners.ok ? data.owners : 0), () => (admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null));
+    patch(slots.cap, JSON.stringify([found, note]), () => (note && found ? h("p", { class: "muted" }, note) : null));
+    patch(slots.queue, JSON.stringify(data.queue.ok ? 0 : data.queue), () => (data.queue.ok ? null : partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })));
+    patch(slots.empty, JSON.stringify([filters, labels, stale, found, note]), () => (stale ? filterEmpty("runs", filters, { labels, onClear: clear, onDelete: vp.onDelete })
+      : found ? null : filters.repo || filters.owner ? filterEmpty("runs", filters, { labels, note, onClear: clear }) : noRuns()));
+    sections.hidden = !found;
+    renderSections(sections, secs, { admin, onRemove, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } });
+  };
+
+  // Remove a queued run from its row; nothing is drawn or said after the page was left.
+  const onRemove = async (job) => {
+    try {
+      await api.cancelRun(job.runId);
+    } catch (e) {
+      if (!closed) toast(e?.message || "Could not remove the run.", "error");
+    }
+    if (closed) return;
+    gen++; // an answer asked before the cancel still shows the job
+    refresh();
   };
 
   // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.

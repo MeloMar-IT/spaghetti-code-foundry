@@ -114,7 +114,7 @@ test.describe("budgets", () => {
     return n;
   });
 
-  const bigRuns = (b: Browser) => load("large-runs", b, "#/runs", { selector: "#main .table-box tbody", children: 200 }, { large: true });
+  const bigRuns = (b: Browser) => load("large-runs", b, "#/runs", { selector: "#main .run-sections section:last-child ul.run-cards", children: 10 }, { large: true });
   budgetTest("LARGE_RUNS_MS", BUDGETS.LARGE_RUNS_MS, async (b) => (await bigRuns(b)).renderMs);
   budgetTest("LARGE_RUNS_ROWS", BUDGETS.LARGE_RUNS_ROWS, async (b) => (await bigRuns(b)).rows);
 
