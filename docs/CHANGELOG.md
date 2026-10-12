@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: history, progress, stop, retry and coming back, in the drawer (#235). Part of #226.
+  - **Following a turn.** Question and reply stand under each other. The drawer says that Ask SCF is working, after 20 seconds that it takes longer than usual, and then what came of it: the answer, "you stopped it", or the fixed sentence of the failure.
+  - **Controls with their consequence.** Stop, Try again, Archive, Take back from the archive and Delete. Each says what it does. Delete asks first. None can be pressed twice: while a call is on its way they are not offered, and Send sends nothing while a reply is written.
+  - **Try again** uses the same two messages and names the try ("This is the second try"). It is not offered after a limit, where it cannot help.
+  - **History and New conversation.** The list of your conversations with their state, the archived ones on request, and an empty conversation at any time.
+  - **Late answers are dropped.** An answer for a conversation you left is not drawn over the one you are in.
+  - **After a reload** the drawer shows the conversation you were in and follows a reply that was being written. The tab keeps only its id. Nothing is asked twice.
+  - Tests in `tests/ui-ask-model.test.ts` and `tests/ui-ask.test.ts`.
 - Ask SCF: a drawer on every page of both displays (#234). Part of #226. Only when `help.enabled` is on; off, no button is shown.
   - **Where.** An **Ask SCF** button in the top bar of the admin and the user display opens a panel at the right side. It is one implementation (`ui/ask.js`, `ui/ask-model.js`, `ui/ask-view.js`); the two shells only mount it. Not in "View as user".
   - **Your page stays.** The panel lies over the page and draws nothing of it again: typed text, open parts and the address stay. A started question is kept when you close the panel.

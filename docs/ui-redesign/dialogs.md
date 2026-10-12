@@ -36,6 +36,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/work-panel.js` | Story panel | A card on the board, on a narrow screen (a side panel, not a dialog, on a wide one) | none | Back, Close | own dialog |
 | `ui/palette.js` | Search | Search button, Ctrl/⌘+K, `/` | search text; Single-key shortcuts checkbox | Enter opens the active result | own dialog |
 | `ui/ask-view.js` | Ask SCF | Ask SCF button in the top bar of both displays, only while Ask SCF is switched on | question (1–4000 characters); Send the page I am on with my question (checkbox) | Send (also Ctrl/⌘+Enter) | own dialog (a drawer at the right side, built in `ui/ask-view.js`, run by `ui/ask.js`) |
+| `ui/ask.js` | Delete this conversation? | Delete under a conversation in the Ask SCF drawer | none | Delete | `confirmDialog` |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; category; one card per block with its scope. Then a preview: steps, variables added, renamed ids | **Insert** in the preview (closes with that block); **Back** returns to the list. An invalid block cannot be picked | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |

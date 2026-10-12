@@ -4368,6 +4368,32 @@ the admin display and in the user display. While Ask SCF is off (the default), t
 - The answer appears under your question. A line in the panel says that Ask SCF is working and then that
   the answer is there; a screen reader reads it.
 
+**Following an answer.** Your question and the reply stand under each other. While the reply is
+written, the panel says that Ask SCF is working. After 20 seconds it says once that this takes longer
+than usual. Under the conversation are its controls; each one says what it does when you point at it,
+and a screen reader reads that too.
+
+| Control | When | What it does |
+|---|---|---|
+| **Stop** | while a reply is written | Stops the answer. Your question stays. |
+| **Try again** | after a stop, or after a failure that trying again can solve | Asks the same question again, in the same two messages. The reply then says which try it is. It counts as one of your questions of today. |
+| **Archive** | when no reply is being written | Moves the conversation out of your list. |
+| **Take back from the archive** | in an archived conversation | Puts it back in your list. |
+| **Delete** | always | Asks first. Then the questions and answers are removed at once and cannot be brought back. A reply that is still being written is stopped. |
+
+When a limit is reached (your questions of today, the budget, the limit of the AI service), the panel
+shows the sentence for it and offers no **Try again**: trying again now cannot help. While a reply is
+written, **Send** sends nothing and says why, so one question never becomes two.
+
+**New conversation** (at the top of the panel) starts an empty one; the one you were in stays in your
+list. **History** shows your conversations, last changed first, each with its state (Answering, Open,
+No answer, Stopped, Closed). **Show archived** shows the archived ones. Choose one to open it. An
+archived conversation can be read; a new question starts a new conversation.
+
+**After you load the page again**, open the panel: the conversation you were in is shown again, and a
+reply that was being written is followed again. Nothing is asked a second time. The browser tab keeps
+only the id of that conversation, never a question or an answer.
+
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no Ask SCF button.
@@ -4444,8 +4470,8 @@ For an administrator some of these sentences differ: they point to Home, Problem
 ### Conversations
 
 A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
-Ask SCF drawer shows the conversation you are in. The list of your earlier ones comes to the drawer
-later; the command line (`scf ask`) has it now.
+Ask SCF drawer shows the conversation you are in and, under **History**, your earlier ones. The
+command line (`scf ask`) has them too.
 
 **What is kept.** Each conversation has a title (the first line of your first question), a state,
 and its messages: your questions and the replies. A question keeps the page you asked it on and, at

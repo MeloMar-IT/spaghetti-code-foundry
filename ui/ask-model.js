@@ -92,18 +92,38 @@ export function pollDelay({ open, conversation, polls = 0 } = {}) {
 /** How many reads in a row may fail before the drawer stops asking and says so. */
 export const MAX_READ_FAILURES = 4;
 
-/** What the drawer shows for one message: `kind` is question, waiting, answer, failed or stopped. Text stays text. */
-export function entryOf(message) {
+/** After this long the wait counts as slow, in ms: the drawer says so once and points at Stop. */
+export const SLOW_AFTER_MS = 20_000;
+
+/** What the drawer says while a reply is written, by how long it has waited (ms). */
+export function waitNote(elapsedMs = 0) {
+  const slow = Number(elapsedMs) >= SLOW_AFTER_MS;
+  return { slow, text: slow ? "Ask SCF is still working. This takes longer than usual. You can wait, or stop the answer." : "Ask SCF is working on your answer." };
+}
+
+/** The line under a reply that was started more than once; "" for the first try. The earlier tries stay counted. */
+export function triesNote(message) {
+  const n = Number(message?.tries) || 1;
+  if (message?.role !== "assistant" || n < 2) return "";
+  return n === 2 ? "This is the second try. The first try gave no answer." : `This is try ${n}. The ${n - 1} tries before it gave no answer.`;
+}
+
+/**
+ * What the drawer shows for one message: `kind` is question, waiting, answer, failed, limit or stopped. Text stays
+ * text. `limit`: a failure that trying again now cannot solve (a limit, a budget, the setup).
+ */
+export function entryOf(message, { elapsedMs = 0 } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
-  if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text };
-  if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask SCF", text: "Ask SCF is working on your answer." };
-  if (message?.status === "failed") return { id: message.id, kind: "failed", who: "Ask SCF", text: text || "Ask SCF could not answer." };
-  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer." };
-  return { id: message?.id, kind: "answer", who: "Ask SCF", text };
+  if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
+  const note = triesNote(message);
+  if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask SCF", text: waitNote(elapsedMs).text, note };
+  if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: text || "Ask SCF could not answer.", note };
+  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
+  return { id: message?.id, kind: "answer", who: "Ask SCF", text, note };
 }
 
 /** The messages of a conversation as the drawer shows them, oldest first. */
-export const threadOf = (conversation) => (conversation?.messages ?? []).map(entryOf);
+export const threadOf = (conversation, opts) => (conversation?.messages ?? []).map((m) => entryOf(m, opts));
 
 /**
  * What the status line says after the conversation changed from `before` to `after`; "" for nothing new. A screen
@@ -133,4 +153,71 @@ export function explainAskError(e) {
 /** Where Tab goes in the open drawer is `trapTarget` of ui/dom.js; this says which key closes it and when. */
 export function closesOn(event, { dialogOnTop = false } = {}) {
   return event?.key === "Escape" && !dialogOnTop;
+}
+
+// ---- conversations: what can be done with one, the list, and coming back after a reload ------------
+
+/**
+ * The controls of the open conversation: which are offered now. One call at a time (`busy`), so a second press of
+ * Try again or Stop sends nothing. Try again is offered only where it can help; it uses the same question and the
+ * same reply, so nothing is shown twice.
+ */
+export function controlsFor(conversation, { busy = false } = {}) {
+  const none = { stop: false, retry: false, archive: false, restore: false, remove: false };
+  if (!conversation || conversation.state === "deleted") return none;
+  const last = lastOf(conversation);
+  const waiting = isWaiting(conversation);
+  const archived = conversation.state === "archived";
+  const ended = !archived && !!last && last.role === "assistant" && ((last.status === "failed" && last.failure?.retry !== false) || last.status === "cancelled");
+  return {
+    stop: waiting && !busy,
+    retry: ended && !busy,
+    // the server archives no conversation whose reply is still being written
+    archive: !archived && !waiting && !busy,
+    restore: archived && !busy,
+    remove: !busy,
+  };
+}
+
+/** What each control does, said before it is pressed. */
+export const CONSEQUENCES = {
+  stop: "Stops the answer that is being written. Your question stays.",
+  retry: "Asks the same question again. It counts as one of your questions of today.",
+  archive: "Moves this conversation out of your list. You can take it back from the archived ones.",
+  restore: "Takes this conversation back into your list.",
+  remove: "Removes the questions and answers of this conversation at once. They cannot be brought back.",
+  fresh: "Starts an empty conversation. This one stays in your list.",
+};
+
+const STATE_WORDS = { active: "Open", completed: "Closed", failed: "No answer", cancelled: "Stopped", archived: "Archived" };
+
+/** The state of a conversation in one or two words. `waiting` (from the list) wins: a reply is being written. */
+export function stateWord(row) {
+  if (row?.waiting || isWaiting(row)) return "Answering";
+  return STATE_WORDS[row?.state] ?? "Open";
+}
+
+/** The rows of the list of conversations, as the server sent them (last changed first); anything without an id is left out. */
+export function historyRows(list) {
+  return (Array.isArray(list) ? list : []).filter((c) => typeof c?.id === "string" && c.id && c.state !== "deleted")
+    .map((c) => ({ id: c.id, title: String(c.title ?? "").trim() || "Question", word: stateWord(c), updated: c.updated }));
+}
+
+const ID = /^[0-9a-f-]{8,64}$/i;
+
+/**
+ * The conversation to show after the page was loaded again: the one that was open (`remembered`, an id kept in this
+ * tab) when the list still has it, else the one whose reply is being written, else none. Only an id that the server
+ * listed for this account is ever read.
+ */
+export function restorePick(list, remembered) {
+  const rows = historyRows(list);
+  if (typeof remembered === "string" && ID.test(remembered) && rows.some((r) => r.id === remembered)) return remembered;
+  return (Array.isArray(list) ? list : []).find((c) => c?.waiting === true && typeof c.id === "string")?.id ?? null;
+}
+
+/** A counter that tells a late answer from a current one: `ticket()` is taken before a call, and is true after it only when nothing was switched meanwhile. */
+export function staleGuard() {
+  let gen = 0;
+  return { next: () => ++gen, ticket: () => { const mine = gen; return () => mine === gen; } };
 }

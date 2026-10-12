@@ -1,7 +1,10 @@
 import { api as realApi } from "./api.js";
-import { mount, tabStops, trapTarget } from "./dom.js";
-import { MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, explainAskError, pollDelay, sendPlan, suggestionsFor, threadOf, whereOf } from "./ask-model.js";
-import { askButton, askFrame, entryNode, suggestionNodes } from "./ask-view.js";
+import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
+import {
+  CONSEQUENCES, MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, controlsFor, explainAskError, historyRows, isWaiting, lastOf,
+  pollDelay, restorePick, sendPlan, staleGuard, suggestionsFor, threadOf, waitNote, whereOf,
+} from "./ask-model.js";
+import { actionNodes, askButton, askFrame, entryNode, historyNodes, suggestionNodes } from "./ask-view.js";
 
 // Ask SCF: the help drawer of both displays. One implementation; ui/app.js and ui/user/app.js only call initAsk.
 // The drawer lies over the page and never draws the page again, so what is typed or open there stays as it is.
@@ -9,13 +12,32 @@ import { askButton, askFrame, entryNode, suggestionNodes } from "./ask-view.js";
 
 // What lies behind the open drawer: the header, the skip button and the page.
 const BEHIND = ["top", "skip", "content"];
+/** Where this tab keeps the id of the open conversation, so a reload shows it again. Only the id, never a text. */
+export const REMEMBER_KEY = "scf-ask-open";
+
+/** sessionStorage that never throws; without one, nothing is remembered. */
+function tabStore() {
+  try {
+    const s = globalThis.sessionStorage;
+    if (!s) throw new Error("none");
+    return { get: () => { try { return s.getItem(REMEMBER_KEY); } catch { return null; } }, set: (v) => { try { if (v) s.setItem(REMEMBER_KEY, v); else s.removeItem(REMEMBER_KEY); } catch { /* not remembered */ } } };
+  } catch {
+    return { get: () => null, set: () => {} };
+  }
+}
 
 /**
- * Builds the drawer for a role and puts its button into `slot`. `deps` are for tests: the calls, the address, the timers.
- * Returns { open, close, send, stop, state }.
+ * Builds the drawer for a role and puts its button into `slot`. `deps` are for tests: the calls, the address, the
+ * timers, the clock, the confirmation and the store of this tab. `list`: the conversations the server listed at the
+ * start. Returns { open, close, send, stop, … , state }.
  */
-export function createAsk(role, { slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t) } = {}) {
-  const st = { open: false, conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null };
+export function createAsk(role, {
+  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], store = tabStore(), now = () => Date.now(),
+  confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
+} = {}) {
+  // `restore`: the conversation to read when the drawer opens for the first time after a reload.
+  const st = { open: false, view: "talk", conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null, rows: [], archived: false, restore: restorePick(list, store.get()), waitKey: "", waitSince: 0, saidSlow: false };
+  const guard = staleGuard();
   let opener = null;
   const where = () => whereOf(role, hash());
   const el = (id) => document.getElementById(id);
@@ -27,20 +49,46 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
     attach: (on) => { st.attach = on; drawContext(); },
     // Enter is a new line in the question; Ctrl+Enter or Cmd+Enter sends it.
     key: (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault?.(); void send(); } },
-  }, { questionMax: QUESTION_MAX });
+    fresh: () => fresh(),
+    history: () => (st.view === "history" ? showTalk() : void showHistory()),
+    archived: () => { st.archived = !st.archived; void showHistory(); },
+  }, { questionMax: QUESTION_MAX, hints: CONSEQUENCES });
   const button = askButton(() => (st.open ? close() : open()));
 
+  /** How long the reply that is being written has been waited for, as this tab saw it. */
+  function elapsed() {
+    const last = lastOf(st.conversation);
+    if (!isWaiting(st.conversation)) { st.waitKey = ""; st.saidSlow = false; return 0; }
+    const key = `${st.conversation.id}:${last.id}:${last.tries}`;
+    if (key !== st.waitKey) { st.waitKey = key; st.waitSince = now(); st.saidSlow = false; }
+    return now() - st.waitSince;
+  }
   function drawContext() {
     ui.context.textContent = contextFor(where(), st.attach).text;
   }
   function draw() {
-    ui.thread.replaceChildren(...threadOf(st.conversation).map(entryNode));
+    const history = st.view === "history";
+    ui.talk.hidden = history;
+    ui.history.hidden = !history;
+    ui.historyBtn.setAttribute("aria-expanded", String(history));
+    ui.historyBtn.textContent = history ? "Back to the conversation" : "History";
+    if (history) {
+      ui.archivedBtn.setAttribute("aria-pressed", String(st.archived));
+      mount(ui.list, historyNodes(st.rows, { current: st.conversation?.id, archived: st.archived, onOpen: (id) => void openConversation(id), now: now() }));
+      return;
+    }
+    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed() }).map(entryNode));
     ui.thread.hidden = !st.conversation;
-    mount(ui.suggest, suggestionNodes(suggestionsFor(where()), (text) => {
-      ui.question.value = text;
-      ui.error.textContent = "";
-      ui.question.focus();
-    }));
+    mount(ui.actions, actionNodes(controlsFor(st.conversation, { busy: st.busy }), CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
+    // suggestions are for a start: a conversation that runs has its own questions
+    ui.suggestBox.hidden = !!st.conversation;
+    if (!st.conversation) {
+      mount(ui.suggest, suggestionNodes(suggestionsFor(where()), (text) => {
+        ui.question.value = text;
+        ui.error.textContent = "";
+        ui.question.focus();
+      }));
+    }
     drawContext();
     const plan = sendPlan({ draft: "x", busy: st.busy, conversation: st.conversation });
     if (plan.ok) ui.send.removeAttribute("aria-disabled");
@@ -53,10 +101,26 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
   function take(conversation) {
     const before = st.conversation;
     st.conversation = conversation;
-    say(announce(before, conversation));
+    store.set(conversation?.id ?? "");
+    st.restore = null;
+    const told = announce(before, conversation);
+    say(told);
+    const slow = waitNote(elapsed());
+    if (isWaiting(conversation) && slow.slow && !st.saidSlow && !told) { st.saidSlow = true; say(slow.text); }
     draw();
     // the newest message is what the person waits for
     ui.thread.lastElementChild?.scrollIntoView?.({ block: "nearest" });
+    schedule();
+  }
+  /** Leaves the open conversation: nothing of it is drawn or read any more, and a late answer for it is dropped. */
+  function leave() {
+    guard.next();
+    st.conversation = null;
+    st.restore = null;
+    st.polls = 0;
+    st.failures = 0;
+    store.set("");
+    ui.error.textContent = "";
     schedule();
   }
 
@@ -70,13 +134,14 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
   async function read() {
     const id = st.conversation?.id;
     if (!id || !st.open) return;
+    const current = guard.ticket();
     st.polls++;
     let next;
     try {
       next = await api.helpConversation(id);
     } catch (e) {
       // an answer for a conversation that is no longer the open one is dropped
-      if (st.conversation?.id !== id) return;
+      if (!current()) return;
       if (++st.failures >= MAX_READ_FAILURES || e?.status === 404 || e?.status === 410) {
         st.failures = 0;
         ui.error.textContent = explainAskError(e);
@@ -85,9 +150,31 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
       schedule();
       return;
     }
-    if (st.conversation?.id !== id) return;
+    if (!current()) return;
     st.failures = 0;
     take(next);
+  }
+
+  /** One call that changes something. A second one while it runs does nothing, so no press is counted twice. */
+  async function act(call, after) {
+    if (st.busy) return false;
+    const current = guard.ticket();
+    st.busy = true;
+    ui.error.textContent = "";
+    draw();
+    try {
+      const result = await call();
+      st.busy = false;
+      // the person went on to another conversation meanwhile: the answer is not drawn over it
+      if (current()) after(result);
+      else draw();
+      return true;
+    } catch (e) {
+      st.busy = false;
+      if (current()) ui.error.textContent = explainAskError(e);
+      draw();
+      return false;
+    }
   }
 
   async function send() {
@@ -97,25 +184,99 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
       ui.question.focus();
       return false;
     }
-    st.busy = true;
-    ui.error.textContent = "";
-    draw();
-    const from = st.conversation?.id ?? null;
-    try {
-      const next = await api.askHelp(plan.to, plan.body);
-      st.busy = false;
-      // the person moved to another conversation meanwhile: the answer belongs to the one it was asked in
-      if ((st.conversation?.id ?? null) !== from) { draw(); return true; }
+    return act(() => api.askHelp(plan.to, plan.body), (next) => {
       ui.question.value = "";
       st.polls = 0;
       take(next);
-      return true;
+    });
+  }
+  const mine = () => st.conversation?.id;
+  const backToBox = () => { if (st.open) ui.question.focus(); };
+  function stopAnswer() {
+    if (!controlsFor(st.conversation, { busy: st.busy }).stop) return false;
+    const id = mine();
+    return act(() => api.cancelHelp(id), (next) => { take(next); backToBox(); });
+  }
+  function retry() {
+    if (!controlsFor(st.conversation, { busy: st.busy }).retry) return false;
+    const id = mine();
+    return act(() => api.retryHelp(id), (next) => { st.polls = 0; take(next); backToBox(); });
+  }
+  function archive() {
+    if (!controlsFor(st.conversation, { busy: st.busy }).archive) return false;
+    const id = mine();
+    return act(() => api.archiveHelp(id), () => { leave(); say("The conversation is in the archive. Open History and choose Show archived to take it back."); draw(); backToBox(); });
+  }
+  function restore() {
+    if (!controlsFor(st.conversation, { busy: st.busy }).restore) return false;
+    const id = mine();
+    return act(() => api.restoreHelp(id), (next) => { take(next); say("The conversation is back in your list."); backToBox(); });
+  }
+  async function remove() {
+    if (!controlsFor(st.conversation, { busy: st.busy }).remove) return false;
+    const id = mine();
+    const current = guard.ticket();
+    const yes = await confirmer({ title: "Delete this conversation?", text: `${CONSEQUENCES.remove} An answer that is still being written is stopped.`, confirm: "Delete", danger: true });
+    if (!yes || !current()) return false;
+    return act(() => api.deleteHelp(id), () => { leave(); say("The conversation was deleted."); draw(); backToBox(); });
+  }
+  /** An empty conversation. The one that was open stays in the list; nothing is sent. */
+  function fresh() {
+    leave();
+    st.view = "talk";
+    say("A new conversation. Your earlier ones are under History.");
+    draw();
+    backToBox();
+  }
+  function showTalk() {
+    st.view = "talk";
+    draw();
+    schedule();
+    ui.historyBtn.focus();
+  }
+  async function showHistory() {
+    st.view = "history";
+    const archived = st.archived;
+    st.rows = [];
+    draw();
+    ui.status.textContent = "Loading your conversations.";
+    let info;
+    try {
+      info = await api.helpConversations(archived);
     } catch (e) {
-      st.busy = false;
-      ui.error.textContent = explainAskError(e);
-      draw();
+      if (st.view === "history" && st.archived === archived) { ui.status.textContent = ""; ui.error.textContent = explainAskError(e); showTalk(); }
+      return;
+    }
+    // the person left the list, or asked for the other one, before this answer came
+    if (st.view !== "history" || st.archived !== archived) return;
+    st.rows = historyRows(info?.conversations);
+    ui.status.textContent = archived ? `${st.rows.length} archived conversations.` : `${st.rows.length} conversations.`;
+    draw();
+  }
+  /** Opens a conversation of the list. A later choice wins: the answer of an earlier one is dropped. */
+  async function openConversation(id) {
+    guard.next();
+    const current = guard.ticket();
+    ui.error.textContent = "";
+    let next;
+    try {
+      next = await api.helpConversation(id);
+    } catch (e) {
+      if (!current()) return false;
+      if (st.restore === id) { st.restore = null; store.set(""); }
+      else ui.error.textContent = explainAskError(e);
       return false;
     }
+    if (!current()) return false;
+    st.view = "talk";
+    st.polls = 0;
+    st.failures = 0;
+    // the same conversation before and after: opening one is not announced as a new answer
+    st.conversation = next;
+    take(next);
+    say("The conversation is open.");
+    backToBox();
+    return true;
   }
 
   function behind(on) {
@@ -138,8 +299,10 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
     behind(true);
     draw();
     ui.question.focus();
+    // After a reload: the conversation that was open is read again. A read, never a question.
+    if (st.restore && !st.conversation) void openConversation(st.restore);
     // a reply that was waited for when the drawer was closed is read again; nothing is asked
-    if (pollDelay({ open: true, conversation: st.conversation }) !== null) void read();
+    else if (pollDelay({ open: true, conversation: st.conversation }) !== null) void read();
   }
   function close() {
     if (!st.open) return;
@@ -155,15 +318,17 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
     back.focus?.();
   }
 
+  // a control of the part that is not shown (the list, or the conversation) is no Tab stop
+  const shown = (node) => { for (let p = node; p && p !== ui.drawer; p = p.parentNode) if (p.hidden) return false; return true; };
   const onKey = (e) => {
     if (!st.open) return;
     const top = dialogOnTop();
     if (closesOn(e, { dialogOnTop: top })) { close(); return; }
     if (e.key !== "Tab" || top) return;
-    const to = trapTarget(tabStops(ui.drawer), document.activeElement, !!e.shiftKey);
+    const to = trapTarget(tabStops(ui.drawer).filter(shown), document.activeElement, !!e.shiftKey);
     if (to) { e.preventDefault?.(); to.focus(); }
   };
-  // the page behind changed (the Back key): the suggestions and the context line follow it
+  // the page behind changed (the Back key): the suggestions and the context line follow it; the conversation stays
   const onHash = () => { if (st.open) draw(); };
   document.addEventListener("keydown", onKey);
   win.addEventListener?.("hashchange", onHash);
@@ -176,13 +341,14 @@ export function createAsk(role, { slot, api = realApi, host = document.body, has
 
   function stop() {
     close();
+    guard.next();
     document.removeEventListener("keydown", onKey);
     win.removeEventListener?.("hashchange", onHash);
     ui.scrim.remove?.();
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, stop, state: st, ui, button };
+  return { open, close, send, stop, stopAnswer, retry, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**
@@ -198,5 +364,5 @@ export async function initAsk(role, deps = {}) {
     return null;
   }
   if (info?.enabled !== true) return null;
-  return createAsk(role, { slot: document.getElementById("ask-scf"), ...deps, api });
+  return createAsk(role, { slot: document.getElementById("ask-scf"), list: info.conversations, ...deps, api });
 }
