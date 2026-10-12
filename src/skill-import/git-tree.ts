@@ -37,7 +37,7 @@ export interface GitTreeOptions {
 }
 
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const OPTIONS = ["-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1", "-c", "pack.threads=1", "-c", "core.hooksPath=/dev/null"];
+export const OPTIONS = ["-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "fetch.fsckObjects=true", "-c", "fetch.unpackLimit=1", "-c", "pack.threads=1", "-c", "core.hooksPath=/dev/null"];
 const argv = (cmd: (typeof GIT_COMMANDS)[number], ...rest: string[]): string[] => [...OPTIONS, cmd, ...rest];
 const DROPPED = new Set(["SSH_ASKPASS", "NETRC", "XDG_CONFIG_HOME"]);
 const enoent = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";

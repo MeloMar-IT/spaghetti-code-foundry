@@ -192,6 +192,14 @@ describe("data folder", () => {
     expect(scf(["--help"], home).stdout).toContain("scf skills import <source-id> [<file>]");
   });
 
+  it("scf skills discover is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills discover [<export-file> [<file>]]");
+    const r = scf(["skills", "discover", "a", "b", "c"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("usage: scf skills discover [<export-file> [<file>]]");
+  });
+
   it("scf run writes who started the run", () => {
     const { home, oldDir } = withHome();
     seedOld(oldDir);

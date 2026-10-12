@@ -66,6 +66,37 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
+      const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
+      const code = codeLines(text);
+      const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toContain('spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, "HEAD"], {');
+      expect(starts[0]).toContain("detached: true");
+      expect(code.filter((l) => /\bspawnSync\b|(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(/.test(l))).toEqual([]);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual(["node:child_process"]);
+    });
+    it("discover-cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/discover-cli.ts", "utf8");
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
+    it("discovery code imports nothing that approves, pins, stages or releases", () => {
+      for (const f of ["src/skills/discovery.ts", "src/skill-import/discover-cli.ts", "src/skill-import/ls-remote.ts"]) {
+        const mods = modulesOf(readFileSync(f, "utf8"));
+        expect(mods.filter((m) => /(?:registry|lock|import-plan|import-stage|release)\.js$/.test(m)), f).toEqual([]);
+      }
+    });
+    it("only the discovery modules know the candidate list", () => {
+      const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+      const own = new Set(["src/skills/discovery.ts", "src/skill-import/discover-cli.ts", "src/skill-import/ls-remote.ts"]);
+      const users = walk("src").filter((f) => {
+        const text = readFileSync(f, "utf8");
+        return text.includes("skill-source-candidates") || modulesOf(text).some((m) => /(?:^|\/)discovery\.js$/.test(m));
+      });
+      expect(users.filter((f) => !own.has(f))).toEqual([]);
+    });
     it("only src/cli.ts imports from src/skill-import/", () => {
       const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
       const files = walk("src");

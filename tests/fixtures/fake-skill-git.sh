@@ -4,6 +4,8 @@
 #             equals $STUB_ON (ls-tree, or cat-file with --batch) it first sends $STUB_SIGNAL to its parent.
 #   hang      init makes the folder; fetch starts a background sleep, writes "<pid> <sleep pid> <GIT_DIR>" to
 #             $STUB_PIDS, optionally fills $GIT_DIR with $STUB_FILL KiB, and waits.
+#   ls-remote: fake prints a commit and HEAD, or by $STUB_HEAD: junk, two, flood, fail. hang starts a background sleep that
+#             holds stdout open and writes "<pid> <sleep pid> <cwd>" to $STUB_PIDS.
 #   fake      answers every call itself (see $STUB_INIT, $STUB_TYPE, $STUB_LIST, $STUB_READ).
 # No sleep is longer than 20 s. Every call appends its pid to "$STUB_PIDS.all".
 # The variables do not start with GIT_: the import strips those from the environment.
@@ -38,6 +40,13 @@ case "$STUB_MODE" in
     ;;
   hang)
     case "$sub" in
+      ls-remote)
+        # keeps stdout (the pipe of the caller) open, as a stalled https helper would
+        sleep 20 </dev/null 2>/dev/null &
+        echo "$$ $! $PWD" > "$STUB_PIDS"
+        wait
+        exit 1
+        ;;
       init) /bin/mkdir -p "$GIT_DIR"; exit 0 ;;
       fetch)
         sleep 20 </dev/null >/dev/null 2>&1 &
@@ -51,6 +60,18 @@ case "$STUB_MODE" in
     ;;
   fake)
     case "$sub" in
+      ls-remote)
+        [ -n "$STUB_ARGS" ] && echo "$*" > "$STUB_ARGS"
+        [ -n "$STUB_ENV" ] && env > "$STUB_ENV"
+        case "$STUB_HEAD" in
+          junk) echo garbage ;;
+          two) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tHEAD\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\tHEAD\n' ;;
+          flood) head -c 65536 /dev/zero ;;
+          fail) exit 128 ;;
+          *) printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tHEAD\n' ;;
+        esac
+        exit 0
+        ;;
       init)
         /bin/mkdir -p "$GIT_DIR"
         [ -n "$STUB_ARGS" ] && echo "$*" > "$STUB_ARGS"

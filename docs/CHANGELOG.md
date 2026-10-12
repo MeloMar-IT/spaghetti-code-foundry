@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skills.sh metadata discovery without automatic trust (#213). Part of #196.
+  - **Command.** `scf skills discover [<export-file> [<file>]]` reads a saved Skills.sh export (no scraping, no site calls), resolves each GitHub https repository to its current `HEAD` commit with `git ls-remote`, and stores it as a `proposed` candidate in `<data folder>/skill-source-candidates.json`. It prints `PROPOSED`, `KNOWN` (already in `skill-sources.yaml`, any status), `UNRESOLVED` and `PROBLEM` lines. With no operand it lists the stored candidates.
+  - **No trust.** The command never writes the allowlist, the lock, the quarantine or releases. Trust, licence, popularity and safety claims from the export are not copied; credential-like entries are dropped. It is optional: runs never read the list.
+  - **Safety.** One detached `git ls-remote` per repository, in its own process group, killed on timeout (20 s), too much output or Ctrl-C. Git's text is never shown. Ctrl-C leaves the list unchanged; a broken list is never overwritten.
+  - **Code.** New `src/skills/discovery.ts`, `src/skill-import/ls-remote.ts`, `src/skill-import/discover-cli.ts`; `OPTIONS` is exported from `git-tree.ts`. Tests: `skill-discovery`, `skill-discover-cli`, `skill-ls-remote`, and cases in `skill-no-network` and `cli`. No config, run or flow format change. `docs/USER_GUIDE.md` updated.
 - Fix: the daily release no longer queues for a test slot. Its check step could wait up to 90 minutes for a free slot while the step itself is stopped after 60, so on a busy machine the run failed with "timed out" and no release pull request was opened. `verify` in `release-daily` now starts its tests at once (`FACTORY_VAR_TEST_SLOTS=0`), as the story that holds the merge turn does. Test in `tests/gitflow.test.ts`.
 - The model analyst: `scf analyst run|report|install|uninstall|status`. A process of its own that, every 6 hours, reads the runs of the last 14 days and writes `analyst/report.md` and `analyst/latest.json` in the data folder.
   - **Per step and model:** how often the step worked, timed out, was repaired (`fix_*` came next) or was sent back by a review (`address_*` / `revise_*`), minutes, tokens and its share of all tokens.
