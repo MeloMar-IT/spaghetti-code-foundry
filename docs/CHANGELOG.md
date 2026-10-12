@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: answers show their sources, how sure they are, links and suggestions (#236). Part of #226.
+  - **In parts.** The short answer first, then how sure it is, what it rests on, the proposals as cards, and the sources and assumptions to unfold.
+  - **Five states that look different**: checked, not fully confirmed, not checked (no source of the kind the question needs), the sources do not agree, and not answered. A statement about your work is shown with the lines of the current state it was read from and their times.
+  - **Text stays text.** HTML and addresses in an answer are never run or linked. A link appears only for a page of the Foundry that your account has; it is checked in the browser again, after the server.
+  - **Cards say what they do**: Read-only or Changes state. A suggested change is shown as a suggestion; Ask SCF does not do it and there is no button for it.
+  - Tests in `tests/ui-ask-model.test.ts` and `tests/ui-ask.test.ts`.
 - Ask SCF: history, progress, stop, retry and coming back, in the drawer (#235). Part of #226.
   - **Following a turn.** Question and reply stand under each other. The drawer says that Ask SCF is working, after 20 seconds that it takes longer than usual, and then what came of it: the answer, "you stopped it", or the fixed sentence of the failure.
   - **Controls with their consequence.** Stop, Try again, Archive, Take back from the archive and Delete. Each says what it does. Delete asks first. None can be pressed twice: while a call is on its way they are not offered, and Send sends nothing while a reply is written.

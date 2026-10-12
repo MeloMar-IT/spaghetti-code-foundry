@@ -763,6 +763,130 @@ describe("after a reload", () => {
   });
 });
 
+// ---- #236: evidence, uncertainty, links and suggested actions ----------------------------------------
+
+describe("a reply by its parts", () => {
+  const SEEN = "2026-10-12T10:00:00.000Z";
+  const state = (over: any = {}) => ({ id: "s1", kind: "state", title: "Run r-1 waits for your answer", ref: "#/runs/r-1", observedAt: SEEN, ...over });
+  const reply = (over: any = {}) => ({ type: "status", summary: "Your run waits.", explanation: "It asked a question.", certainty: "confirmed", evidence: [state()], recommendations: [], links: [], drafts: [], actions: [], ...over });
+  async function shown(r: any, over: any = {}) {
+    const made = make({ ...over, deps: { now: () => Date.parse(SEEN) + 5 * 60_000, ...over.deps }, api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { text: "plain text of the server", reply: r })])) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    const answer = walk(made.d.ui.thread).find((e) => e.classList.contains("ask-answer"))!;
+    return { ...made, answer, all: walk(answer) };
+  }
+  const byClass = (all: FakeElement[], cls: string) => all.filter((e) => e.classList.contains(cls));
+
+  it("shows the short answer first, then how sure it is, then what it rests on", async () => {
+    const { all, answer } = await shown(reply());
+    const order = all.filter((e) => e.parent === answer).map((e) => e.attrs.class);
+    expect(order).toEqual(["ask-who", "ask-summary", "ask-explain", "ask-trust ask-trust-confirmed", "ask-basis", "ask-sources"]);
+    expect(byClass(all, "ask-summary")[0]!.textContent).toBe("Your run waits.");
+    expect(byClass(all, "ask-trust")[0]!.textContent).toBe("✓ Checked against its sources. This rests on the sources listed below.");
+    // the sign is for the eye; the words say the same
+    expect(walk(byClass(all, "ask-trust")[0]!)[0]!.attrs["aria-hidden"]).toBe("true");
+    const basis = byClass(all, "ask-basis")[0]!;
+    expect(basis.attrs["aria-label"]).toBe("The current state this answer rests on");
+    expect(basis.textContent).toBe("Current state: Run r-1 waits for your answer (#/runs/r-1) seen 5m ago");
+    expect(answer.textContent).not.toContain("plain text of the server");
+  });
+
+  it("gives each state of trust its own class and words", async () => {
+    const cases: [any, string, string][] = [
+      [reply(), "ask-trust-confirmed", "Checked against its sources"],
+      [reply({ certainty: "likely" }), "ask-trust-low", "Not fully confirmed"],
+      [reply({ evidence: [], certainty: "unverified" }), "ask-trust-missing", "Not checked: no source"],
+      [reply({ evidence: [state(), state({ id: "s2", title: "Run r-1 is done" })] }), "ask-trust-conflict", "The sources do not agree"],
+    ];
+    const seen = new Set<string>();
+    for (const [r, cls, label] of cases) {
+      const { all } = await shown(r);
+      const trust = byClass(all, "ask-trust")[0]!;
+      expect(trust.classList.contains(cls), cls).toBe(true);
+      expect(walk(trust).find((e) => e.tag === "strong")!.textContent).toBe(label);
+      seen.add(walk(trust)[0]!.textContent);
+    }
+    expect(seen.size).toBe(4);
+    const css = readFileSync("ui/css/pages/ask.css", "utf8");
+    const styles = ["confirmed", "low", "missing", "conflict", "limit"].map((s) => new RegExp(`\\.ask-trust-${s} \\{([^}]*)\\}`).exec(css)?.[1]);
+    expect(new Set(styles).size).toBe(5);
+    for (const s of styles) expect(s).toBeTruthy();
+  });
+
+  it("puts sources and assumptions in a part that unfolds, with the sources as links only where they are pages", async () => {
+    const { all } = await shown(reply({ evidence: [state(), { id: "d1", kind: "doc", title: "User guide: Runs", ref: "https://evil.example/guide" }] }));
+    const details = all.find((e) => e.tag === "details")!;
+    expect(walk(details).find((e) => e.tag === "summary")!.textContent).toBe("Sources and assumptions (2 sources)");
+    expect(walk(details).filter((e) => e.tag === "h4").map((e) => e.textContent)).toEqual(["Sources", "Assumptions"]);
+    const links = walk(details).filter((e) => e.tag === "a");
+    expect(links.map((l) => [l.attrs.href, l.textContent])).toEqual([["#/runs/r-1", "#/runs/r-1"]]);
+    expect(details.textContent).toContain("Documentation: User guide: Runs (https://evil.example/guide)");
+    expect(details.textContent).toContain("The current state was read at the times shown. It can have changed since.");
+    const none = await shown(reply({ evidence: [] }));
+    expect(none.all.find((e) => e.tag === "details")!.textContent).toContain("This answer names no source.");
+    expect(byClass(none.all, "ask-basis")).toEqual([]);
+  });
+
+  it("keeps HTML and addresses in the text of a reply as text", async () => {
+    const evil = '<img src=x onerror=alert(1)> <a href="https://evil.example">click</a> https://evil.example javascript:alert(1) #/settings';
+    const { all, answer } = await shown(reply({ summary: evil, explanation: evil, recommendations: [evil], drafts: [{ title: evil, text: evil }], evidence: [state({ title: evil, ref: evil })] }));
+    expect(all.filter((e) => ["img", "script", "iframe", "a", "button", "form", "input"].includes(e.tag))).toEqual([]);
+    expect(byClass(all, "ask-summary")[0]!.children).toEqual([evil]);
+    expect(byClass(all, "ask-explain")[0]!.children).toEqual([evil]);
+    expect(answer.textContent.split(evil).length - 1).toBeGreaterThanOrEqual(6);
+    for (const e of all) for (const k of Object.keys(e.attrs)) expect(k.startsWith("on"), k).toBe(false);
+  });
+
+  it("shows proposals as cards that say what they do, with no control that does anything", async () => {
+    const { all } = await shown(reply({ recommendations: ["Answer the question on the run page."], links: [{ label: "Totally safe", to: "#/runs" }, { label: "Win", to: "https://evil.example" }], drafts: [{ title: "Comment", text: "Line 1\nLine 2" }], actions: [{ id: "cancel", title: "Cancel run r-1", impact: "The run stops." }] }));
+    const cards = byClass(all, "ask-card");
+    expect(cards.map((c) => c.attrs["aria-label"])).toEqual([
+      "What you could do. Read-only",
+      "A page you can open. Read-only",
+      "An address that is not a page here. Read-only",
+      "Draft: Comment. Read-only",
+      "Suggested change: Cancel run r-1. Changes state",
+    ]);
+    expect(cards.map((c) => walk(c).find((e) => e.classList.contains("pill"))!.textContent)).toEqual(["Read-only", "Read-only", "Read-only", "Read-only", "Changes state"]);
+    expect(walk(cards[4]!).find((e) => e.classList.contains("pill"))!.classList.contains("sem-warning")).toBe(true);
+    // one link in all cards: the fixed page, named by the page itself
+    const links = cards.flatMap((c) => walk(c).filter((e) => e.tag === "a"));
+    expect(links.map((l) => [l.attrs.href, l.textContent])).toEqual([["#/runs", "My runs"]]);
+    expect(cards[2]!.textContent).toContain("Win: https://evil.example");
+    expect(walk(cards[3]!).find((e) => e.tag === "pre")!.textContent).toBe("Line 1\nLine 2");
+    // nothing in a reply can be pressed to do something
+    expect(all.filter((e) => e.tag === "button" || e.tag === "form" || e.tag === "input")).toEqual([]);
+    expect(cards[4]!.textContent).toContain("Ask SCF does not do this. Nothing happens here.");
+    for (const c of cards) expect(Object.keys(c.listeners)).toEqual([]);
+  });
+
+  it("following a link closes the drawer, makes no call and leaves the focus to the page", async () => {
+    const { d, all, api } = await shown(reply({ links: [{ label: "Runs", to: "#/runs" }] }));
+    const calls = api.askHelp.mock.calls.length + api.helpConversation.mock.calls.length;
+    all.find((e) => e.tag === "a" && e.attrs.href === "#/runs")!.click();
+    expect(d.state.open).toBe(false);
+    expect(doc().activeElement).toBe(doc().getElementById("main"));
+    expect(api.askHelp.mock.calls.length + api.helpConversation.mock.calls.length).toBe(calls);
+    expect(d.state.conversation.id).toBe("c1");
+  });
+
+  it("shows a request that is not served with its fixed words and no sources", async () => {
+    const { all } = await shown({ type: "product-help", summary: "Ask SCF never shows a password, a token or a key, and it never needs one from you.", explanation: "", certainty: "confirmed", evidence: [], recommendations: ["Do not type a secret into a question."], links: [{ label: "My repositories", to: "#/repos" }], drafts: [], actions: [], limit: { code: "secret", limitation: "x", nextStep: "y" } });
+    expect(byClass(all, "ask-trust")[0]!.classList.contains("ask-trust-limit")).toBe(true);
+    expect(all.find((e) => e.tag === "details")).toBeUndefined();
+    expect(byClass(all, "ask-card").map((c) => c.attrs["aria-label"])).toEqual(["What you can do. Read-only", "A page you can open. Read-only"]);
+  });
+
+  it("an admin page is a link for an admin and text for a user", async () => {
+    const r = reply({ links: [{ label: "Settings", to: "#/settings" }] });
+    const user = await shown(r);
+    expect(user.all.filter((e) => e.tag === "a" && e.attrs.href === "#/settings")).toEqual([]);
+    const admin = await shown(r, { role: "admin" });
+    expect(admin.all.filter((e) => e.tag === "a" && e.attrs.href === "#/settings")).toHaveLength(1);
+  });
+});
+
 describe("narrow screens and reduced motion (ui/css/pages/ask.css)", () => {
   const css = readFileSync("ui/css/pages/ask.css", "utf8");
   const rules = parseCss(css);
