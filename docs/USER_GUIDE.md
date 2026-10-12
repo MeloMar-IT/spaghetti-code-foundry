@@ -4553,6 +4553,27 @@ archived conversation can be read; a new question starts a new conversation.
 reply that was being written is followed again. Nothing is asked a second time. The browser tab keeps
 only the id of that conversation, never a question or an answer.
 
+**Reading an answer.** An answer is shown in parts, in this order:
+
+1. **The short answer**, and under it the longer explanation when there is one.
+2. **How sure it is.** One line with a sign and a name, so the states look different:
+
+   | Line | When |
+   |---|---|
+   | ✓ Checked against its sources | The answer rests on sources of the kind the question needs. |
+   | ≈ Not fully confirmed | Ask SCF has sources but they do not fully confirm the answer. |
+   | ? Not checked: no source | No source of the kind the question needs. A question about your work needs the current state, not only the documentation. Treat the answer as a guess. |
+   | ! The sources do not agree | Two sources say different things about the same place. Look yourself before you act. |
+   | – Not answered | You asked for something Ask SCF does not do. It says what you can do instead. |
+
+3. **What it rests on.** For a statement about your work, the lines of the current state that were read, each with the time it was seen.
+4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A card never does anything. A suggested change is only a suggestion: Ask SCF does not do it, and there is no button for it.
+5. **Sources and assumptions**, to unfold: every source with its kind (documentation or current state) and place, and what the answer takes for granted.
+
+Text of an answer is always shown as text. An address in it is not a link. A link appears only for a
+page of the Foundry that your account has; any other address stays text and is marked as such.
+Following a link closes the panel and opens the page.
+
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no Ask SCF button.

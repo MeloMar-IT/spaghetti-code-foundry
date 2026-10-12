@@ -52,13 +52,53 @@ export function askFrame(on, { questionMax, hints = {} }) {
   return { drawer, scrim, talk, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
 }
 
-/** One message of the conversation. */
-export function entryNode(entry) {
+const sourceLine = (src, { now, onNavigate }) => [
+  h("span", { class: "ask-source-kind" }, `${src.what}: `),
+  src.title,
+  src.ref ? " (" : null,
+  // a source is a link only when the model found a page of this role for it; any other reference stays text
+  src.ref ? (src.href ? h("a", { href: src.href, onClick: () => onNavigate?.() }, src.ref) : src.ref) : null,
+  src.ref ? ")" : null,
+  src.observedAt ? h("span", { class: "muted", title: src.observedAt }, ` seen ${timeAgo(src.observedAt, now)}`) : null,
+];
+
+/** One proposal of a reply as a card. It says whether it only reads or would change something. It has no control that does anything; a page is a plain link. */
+export function cardNode(card, { onNavigate } = {}) {
+  return h("div", { class: `ask-card ask-card-${card.kind}`, role: "group", "aria-label": `${card.title}. ${card.effect === "changes-state" ? "Changes state" : "Read-only"}` },
+    h("div", { class: "ask-card-head" },
+      h("strong", {}, card.title),
+      h("span", { class: `pill ${card.effect === "changes-state" ? "sem-warning" : "sem-neutral"}` }, card.effect === "changes-state" ? "Changes state" : "Read-only")),
+    card.link ? h("a", { href: card.link.href, onClick: () => onNavigate?.() }, card.link.title) : null,
+    card.text ? h(card.pre ? "pre" : "p", { class: "ask-card-text" }, card.text) : null,
+    h("p", { class: "ask-card-note muted" }, card.note));
+}
+
+/** A reply by its parts: the short answer, how sure it is and what it rests on, the proposals, and the sources and assumptions to unfold. */
+export function replyNodes(layout, opts = {}) {
+  const { trust, basis, sources, assumptions } = layout;
+  return [
+    h("p", { class: "ask-summary" }, layout.summary),
+    layout.explanation ? h("p", { class: "ask-explain" }, layout.explanation) : null,
+    h("p", { class: `ask-trust ask-trust-${trust.state}` }, glyph(trust.glyph), " ", h("strong", {}, trust.label), ". ", trust.text),
+    basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
+      basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
+    layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
+    trust.state === "limit" ? null : h("details", { class: "ask-sources" },
+      h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
+      h("h4", {}, "Sources"),
+      sources.length ? h("ul", {}, sources.map((src) => h("li", {}, sourceLine(src, opts)))) : h("p", { class: "muted" }, "This answer names no source."),
+      h("h4", {}, "Assumptions"),
+      h("ul", {}, assumptions.map((a) => h("li", {}, a)))),
+  ];
+}
+
+/** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. */
+export function entryNode(entry, opts = {}) {
   return h("div", { class: `ask-entry ask-${entry.kind}` },
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.text,
+    entry.layout ? replyNodes(entry.layout, opts) : entry.text,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
 }
 

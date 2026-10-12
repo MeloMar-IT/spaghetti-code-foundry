@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CERTAINTY_WORDS, NAV_PAGES, PART_RULES, QUESTION_RULES, checkReply, navPage, type HelpRole } from "../src/help/contract.js";
 import { QUESTION_MAX as SERVER_MAX, checkContext } from "../src/help/store.js";
 import { installFakeDom } from "./helpers/fake-dom.js";
 
@@ -277,5 +278,189 @@ describe("late answers", () => {
     const second = g.ticket();
     expect(second()).toBe(true);
     expect(first()).toBe(false);
+  });
+});
+
+// ---- #236: a reply by its parts ---------------------------------------------------------------------
+
+const SEEN = "2026-10-12T10:00:00.000Z";
+const docSrc = (over: any = {}) => ({ id: "d1", kind: "doc", title: "User guide: Runs", ref: "docs/USER_GUIDE.md#runs", ...over });
+const stateSrc = (over: any = {}) => ({ id: "s1", kind: "state", title: "Run r-1 waits for your answer", ref: "#/runs/r-1", observedAt: SEEN, ...over });
+const reply = (over: any = {}) => ({ type: "product-help", summary: "A run is one start of a flow.", explanation: "", certainty: "confirmed", evidence: [docSrc()], recommendations: [], links: [], drafts: [], actions: [], ...over });
+
+describe("links", () => {
+  it("takes every page the contract allows, for the roles that have it, and no other role", () => {
+    for (const role of ["admin", "user"] as HelpRole[]) {
+      for (const page of NAV_PAGES) {
+        const link = m.pageLink(role, page.to, { fixed: true });
+        if (navPage(role, page.to)) expect(link, `${role} ${page.to}`).toMatchObject({ href: page.to });
+        else expect(link, `${role} ${page.to}`).toBeNull();
+      }
+    }
+  });
+
+  it("takes nothing that is not a page of this interface", () => {
+    const bad = ["https://evil.example/#/runs", "//evil.example", "javascript:alert(1)", "data:text/html,x", "/api/users", "#/runs?repo=a%2Fb", "#/nowhere", "#/your-turn", "#/runs/a/b/c", " #/runs", "#/runs ", "", null, undefined, 7, {}, "#/<img src=x>"];
+    for (const to of bad) {
+      expect(m.pageLink("admin", to), String(to)).toBeNull();
+      expect(m.pageLink("admin", to, { fixed: true }), String(to)).toBeNull();
+    }
+  });
+
+  it("a reply links to fixed pages only; a source may point at one run or one repository", () => {
+    expect(m.pageLink("user", "#/runs/r-1", { fixed: true })).toBeNull();
+    expect(m.pageLink("user", "#/repos/acme%2Fapp", { fixed: true })).toBeNull();
+    expect(m.pageLink("user", "#/runs/r-1")).toEqual({ href: "#/runs/r-1", title: "Run r-1" });
+    expect(m.pageLink("admin", "#/problems/p-1")).toMatchObject({ href: "#/problems/p-1" });
+    expect(m.pageLink("user", "#/problems/p-1")).toBeNull();
+    expect(m.pageLink("user", "#/refinement/backlog", { fixed: true })).toMatchObject({ href: "#/refinement/backlog" });
+    // the name of the link is the page's own, not a text of the reply
+    expect(m.pageLink("user", "#/runs", { fixed: true })!.title).toBe("My runs");
+  });
+});
+
+describe("how sure a reply is", () => {
+  const trust = (r: any, role = "user") => m.replyLayout(r, role).trust;
+
+  it("uses the server's fixed sentences and its rule for the source a question needs", () => {
+    expect(m.CERTAINTY_WORDS).toEqual(CERTAINTY_WORDS);
+    expect(m.NEEDS).toEqual(Object.fromEntries(Object.entries(QUESTION_RULES).map(([k, v]) => [k, v.evidence])));
+  });
+
+  it("has five states that differ in name, sign and class", () => {
+    const states = [
+      trust(reply()),
+      trust(reply({ certainty: "likely" })),
+      trust(reply({ certainty: "unverified", evidence: [] })),
+      trust(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2", title: "Run r-1 is done" })] })),
+      trust(reply({ limit: { code: "secret", limitation: "x", nextStep: "y" }, evidence: [] })),
+    ];
+    expect(states.map((t: any) => t.state)).toEqual(["confirmed", "low", "missing", "conflict", "limit"]);
+    for (const key of ["state", "glyph", "label"]) expect(new Set(states.map((t: any) => t[key])).size, key).toBe(5);
+    for (const t of states) expect(t.text).toMatch(/\.$/);
+  });
+
+  it("low confidence: likely, or unsure although it has sources", () => {
+    expect(trust(reply({ certainty: "likely" }))).toMatchObject({ state: "low", label: "Not fully confirmed", text: CERTAINTY_WORDS.likely });
+    expect(trust(reply({ certainty: "unverified" }))).toMatchObject({ state: "low", text: "Ask SCF has the sources below but is not sure of this. Treat it as a guess." });
+  });
+
+  it("missing evidence: no source of the kind the question needs, whatever the reply claims", () => {
+    expect(trust(reply({ evidence: [], certainty: "unverified" }))).toMatchObject({ state: "missing", label: "Not checked: no source", text: CERTAINTY_WORDS.unverified });
+    // a claim about the current state with only documentation behind it
+    const status = trust(reply({ type: "status", certainty: "confirmed", evidence: [docSrc()] }));
+    expect(status.state).toBe("missing");
+    expect(status.text).toBe(`No source shows the current state of your work. ${CERTAINTY_WORDS.unverified}`);
+    // a reply that says "confirmed" without any source is not shown as confirmed
+    expect(trust(reply({ evidence: [], certainty: "confirmed" })).state).toBe("missing");
+    expect(trust(reply({ evidence: "x", certainty: "confirmed" })).state).toBe("missing");
+  });
+
+  it("contradictory evidence: two sources about one place that differ, and it wins over the claimed level", () => {
+    const two = [stateSrc(), stateSrc({ id: "s2", title: "Run r-1 is done" })];
+    expect(trust(reply({ type: "status", certainty: "confirmed", evidence: two }))).toMatchObject({ state: "conflict", label: "The sources do not agree" });
+    // the same source twice, or two places, is no contradiction
+    expect(trust(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2" })] })).state).toBe("confirmed");
+    expect(trust(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2", ref: "#/runs/r-2", title: "Run r-2 is done" })] })).state).toBe("confirmed");
+    expect(m.sourcesDisagree([])).toBe(false);
+  });
+});
+
+describe("sources and assumptions", () => {
+  it("lists each source with its kind, its place and when the state was read", () => {
+    const layout = m.replyLayout(reply({ type: "status", evidence: [stateSrc(), docSrc()] }), "user");
+    expect(layout.sources).toEqual([
+      { id: "s1", kind: "state", what: "Current state", title: "Run r-1 waits for your answer", ref: "#/runs/r-1", href: "#/runs/r-1", observedAt: SEEN },
+      { id: "d1", kind: "doc", what: "Documentation", title: "User guide: Runs", ref: "docs/USER_GUIDE.md#runs", href: null, observedAt: null },
+    ]);
+    // a statement about the current state is traced to the state sources, next to the answer
+    expect(layout.basis).toEqual({ needs: "state", sources: [layout.sources[0]] });
+    expect(m.replyLayout(reply(), "user").basis).toMatchObject({ needs: "doc", sources: [{ id: "d1" }] });
+  });
+
+  it("links a source only to a page of the role, and never to another site", () => {
+    const of = (ref: string, role = "user") => m.sourcesOf({ evidence: [stateSrc({ ref })] }, role)[0].href;
+    expect(of("#/runs/r-1")).toBe("#/runs/r-1");
+    expect(of("#/problems/p-1")).toBeNull();
+    expect(of("#/problems/p-1", "admin")).toBe("#/problems/p-1");
+    expect(of("https://evil.example")).toBeNull();
+    expect(of("javascript:alert(1)")).toBeNull();
+    expect(m.sourcesOf({ evidence: [null, {}, { title: "" }, stateSrc({ observedAt: "not a time" })] }, "user")).toMatchObject([{ observedAt: null }]);
+    expect(m.sourcesOf(undefined, "user")).toEqual([]);
+  });
+
+  it("says what the reply takes for granted", () => {
+    const of = (r: any) => m.replyLayout(r, "user").assumptions;
+    expect(of(reply())).toEqual(["The documentation of this Foundry was used as it is installed here.", "Ask SCF sees only what your own account can see."]);
+    expect(of(reply({ type: "status", evidence: [stateSrc()] }))[0]).toBe("The current state was read at the times shown. It can have changed since.");
+    expect(of(reply({ evidence: [] }))).toContain("Nothing was checked against the documentation or the current state.");
+    expect(of(reply({ certainty: "likely" }))).toContain("The sources do not fully confirm the answer.");
+    expect(of(reply({ type: "status", evidence: [stateSrc(), stateSrc({ id: "s2", title: "Other" })] }))).toContain("The answer may rest on the wrong one of two sources.");
+    expect(of(reply({ limit: { code: "secret" }, evidence: [] }))).toEqual([]);
+  });
+});
+
+describe("proposals as cards", () => {
+  const cards = (r: any, role = "user") => m.replyLayout(r, role).cards;
+
+  it("marks every card as read-only or as changing state, as the contract does for its part", () => {
+    const all = cards(reply({ recommendations: ["Open the run."], links: [{ label: "Runs", to: "#/runs" }], drafts: [{ title: "Comment", text: "Hello" }], actions: [{ id: "x", title: "Cancel run r-1", impact: "The run stops." }] }));
+    expect(all.map((c: any) => [c.kind, c.effect])).toEqual([["recommendation", "read-only"], ["navigation", "read-only"], ["draft", "read-only"], ["action", "changes-state"]]);
+    for (const c of all) expect(c.effect === "changes-state", c.kind).toBe(PART_RULES[c.kind as keyof typeof PART_RULES].changesState);
+    expect(Object.keys(m.EFFECT_WORDS)).toEqual(["read-only", "changes-state"]);
+    for (const c of all) expect(c.note, c.kind).toMatch(/\.$/);
+  });
+
+  it("shows an action as a suggestion that Ask SCF does not do", () => {
+    const [card] = cards(reply({ actions: [{ id: "cancel-run", title: "Cancel run r-1", impact: "The run stops." }] }));
+    expect(card).toEqual({ kind: "action", effect: "changes-state", title: "Suggested change: Cancel run r-1", text: "The run stops.", note: "Ask SCF does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." });
+    expect(card.link).toBeUndefined();
+  });
+
+  it("makes a link only of a fixed page of the role; any other address stays text", () => {
+    const [ok, id, site, script] = cards(reply({ links: [{ label: "Click here to win", to: "#/runs" }, { label: "One run", to: "#/runs/r-1" }, { label: "Docs", to: "https://evil.example" }, { label: "x", to: "javascript:alert(1)" }] }));
+    expect(ok).toMatchObject({ kind: "navigation", title: "A page you can open", link: { href: "#/runs", title: "My runs" }, text: "" });
+    for (const c of [id, site, script]) {
+      expect(c.link).toBeUndefined();
+      expect(c.title).toBe("An address that is not a page here");
+    }
+    expect(site.text).toBe("Docs: https://evil.example");
+    expect(cards(reply({ links: [{ label: "Settings", to: "#/settings" }] }))[0].link).toBeUndefined();
+    expect(cards(reply({ links: [{ label: "Settings", to: "#/settings" }] }), "admin")[0].link).toEqual({ href: "#/settings", title: "Settings" });
+  });
+
+  it("leaves out empty parts and survives a reply that is not one", () => {
+    expect(cards(reply({ recommendations: ["", 7, null], links: [null, {}], drafts: [{ title: "x" }], actions: [{ id: "x" }] }))).toEqual([]);
+    for (const bad of [null, undefined, "text", 7, {}, { summary: "" }, []]) expect(m.replyLayout(bad, "user"), String(bad)).toBeNull();
+    expect(m.replyLayout({ summary: "Only this." }, "user")).toMatchObject({ summary: "Only this.", explanation: "", cards: [], sources: [], trust: { state: "missing" } });
+  });
+
+  it("lays out a request that is not served: the fixed words, what to do, and no sources", () => {
+    const checked = checkReply({ limit: "secret", summary: "ignored" }, { role: "user" })!.reply;
+    const layout = m.replyLayout(checked, "user");
+    expect(layout.trust.state).toBe("limit");
+    expect(layout.summary).toBe(checked.summary);
+    expect(layout.sources).toEqual([]);
+    expect(layout.cards.map((c: any) => [c.kind, c.title])).toEqual([["recommendation", "What you can do"], ["navigation", "A page you can open"]]);
+    expect(layout.cards[1].link).toEqual({ href: "#/repos", title: "My repositories" });
+  });
+});
+
+describe("a reply as the server checked it", () => {
+  it("is laid out from its parts, and what the server let through is checked again", () => {
+    const offered = [{ id: "s1", kind: "state" as const, title: "Run r-1 waits for your answer", ref: "#/runs/r-1", observedAt: SEEN }];
+    const raw = { type: "status", summary: "Your run waits for an answer. <script>alert(1)</script>", explanation: "See https://evil.example/now", certainty: "confirmed", evidence: ["s1", "made-up"], recommendations: ["Answer the question on the run page."], links: [{ label: "Win", to: "https://evil.example" }, { label: "x", to: "#/runs" }], drafts: [], actions: [{ id: "rm -rf", title: "Delete all", impact: "x" }] };
+    const checked = checkReply(raw, { role: "user", offered })!.reply;
+    const layout = m.replyLayout(checked, "user");
+    expect(layout.summary).toBe("Your run waits for an answer. <script>alert(1)</script>");
+    expect(layout.explanation).toBe("See https://evil.example/now");
+    expect(layout.trust.state).toBe("confirmed");
+    expect(layout.basis.sources).toMatchObject([{ id: "s1", href: "#/runs/r-1", observedAt: SEEN }]);
+    expect(layout.cards.map((c: any) => c.kind)).toEqual(["recommendation", "navigation"]);
+    expect(layout.cards[1].link).toEqual({ href: "#/runs", title: "My runs" });
+    // the message carries the layout; its plain text is not shown a second time
+    const entry = m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", reply: checked, tries: 1 }, { role: "user" });
+    expect(entry).toMatchObject({ kind: "answer", text: "", layout: { summary: layout.summary } });
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask SCF", text: "plain", note: "" });
   });
 });

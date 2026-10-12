@@ -77,7 +77,9 @@ export function createAsk(role, {
       mount(ui.list, historyNodes(st.rows, { current: st.conversation?.id, archived: st.archived, onOpen: (id) => void openConversation(id), now: now() }));
       return;
     }
-    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed() }).map(entryNode));
+    // a link to a page closes the drawer, so the page it opens is seen; the address changes by the link itself
+    const view = { now: now(), onNavigate: () => close({ back: false }) };
+    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed(), role }).map((entry) => entryNode(entry, view)));
     ui.thread.hidden = !st.conversation;
     mount(ui.actions, actionNodes(controlsFor(st.conversation, { busy: st.busy }), CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
     // suggestions are for a start: a conversation that runs has its own questions
@@ -304,7 +306,8 @@ export function createAsk(role, {
     // a reply that was waited for when the drawer was closed is read again; nothing is asked
     else if (pollDelay({ open: true, conversation: st.conversation }) !== null) void read();
   }
-  function close() {
+  /** `back: false`: a page is being opened, and the page takes the focus itself. */
+  function close({ back: giveBack = true } = {}) {
     if (!st.open) return;
     st.open = false;
     ui.drawer.hidden = true;
@@ -315,7 +318,8 @@ export function createAsk(role, {
     // back to where the person was; the button when that control is gone
     const back = opener && opener.isConnected !== false ? opener : button;
     opener = null;
-    back.focus?.();
+    if (giveBack) back.focus?.();
+    else document.getElementById("main")?.focus?.();
   }
 
   // a control of the part that is not shown (the list, or the conversation) is no Tab stop
