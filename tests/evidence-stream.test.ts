@@ -100,6 +100,7 @@ describe("EvidenceStream", () => {
     ];
     for (const text of cases) {
       writeFileSync(file(), text);
+      rmSync(join(runDir, "evidence.incomplete"), { force: true });
       said = [];
       const s = stream();
       expect(s.append({ type: "run.started" }), text).toBeUndefined();
@@ -108,6 +109,7 @@ describe("EvidenceStream", () => {
       expect(readFileSync(file(), "utf8")).toBe(text);
       expect(said).toHaveLength(1);
       expect(said[0]).toMatch(/^! evidence: .*The run itself goes on\.$/);
+      expect(existsSync(join(runDir, "evidence.incomplete"))).toBe(true);
     }
   });
 

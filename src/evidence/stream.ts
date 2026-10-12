@@ -1,19 +1,41 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, ftruncateSync, openSync, readSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import { appendLiveLog } from "../engine/state.js";
-import { parseEvidenceEventLine } from "./parse.js";
+import { canonicalJson, eventHash } from "./canonical.js";
+import { readEvidenceChain, splitEvidenceLines } from "./chain.js";
 import { EvidenceEventSchema, type EvidenceEvent } from "./schema.js";
-import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, EvidenceSchemaError } from "./version.js";
+import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE } from "./version.js";
 
 /**
  * The event stream of a run: `evidence.jsonl` in the run folder, one event per line, only appended.
+ * Every line is in the canonical form and carries the hash of the line before it and its own (see chain.ts).
  *
  * Writing evidence can never fail a run: `append` does not throw. The first problem is reported once (to the live log
- * of the run) and the stream stops for this start of the run. A stream is complete up to its last line or it has
- * stopped; it never goes on after a hole.
+ * of the run) and the stream stops for good: a mark (`evidence.incomplete`) is left in the run folder, and no later
+ * start of the run continues the stream. So a stream is whole up to its last line or it has stopped; it never goes on
+ * after a hole, and a run whose stream stopped never gets a manifest.
  */
+
+/** True when the stream of this run stopped after a problem (see EVIDENCE_INCOMPLETE_FILE). */
+export function evidenceIncomplete(runDir: string): boolean {
+  try {
+    lstatSync(join(runDir, EVIDENCE_INCOMPLETE_FILE));
+    return true;
+  } catch (e) {
+    // only "it is not there" means whole; a mark that cannot be looked at counts as there
+    return (e as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+function markIncomplete(runDir: string): void {
+  try {
+    closeSync(openSync(join(runDir, EVIDENCE_INCOMPLETE_FILE), constants.O_WRONLY | constants.O_CREAT | SAFE, 0o600));
+  } catch {
+    // the folder is gone or cannot be written: there is nothing to continue either
+  }
+}
 
 type Envelope = "version" | "id" | "seq" | "runId" | "time" | "prevHash" | "hash";
 type Body<E> = E extends unknown ? Omit<E, Envelope> : never;
@@ -84,7 +106,6 @@ export function hashPlainFile(path: string): { sha256: string; bytes: number } |
 function reasonOf(e: unknown): string {
   if (e instanceof StreamProblem) return e.message;
   if (e instanceof ZodError) return `an event was not valid (${[...new Set(e.issues.map((i) => i.path.map(String).join(".") || "(root)"))].slice(0, 5).join(", ")})`;
-  if (e instanceof EvidenceSchemaError) return `the file holds a line that is not valid (${e.code})`;
   const code = (e as NodeJS.ErrnoException | undefined)?.code;
   return `the file could not be written (${typeof code === "string" ? code : "error"})`;
 }
@@ -95,6 +116,8 @@ export class EvidenceStream {
   private next = 0;
   /** The size the file has when only this object wrote since it was read; -1: not read yet. */
   private size = -1;
+  /** The `hash` of the last event; null before the first. */
+  private last: string | null = null;
   private stopped = false;
 
   constructor(
@@ -113,6 +136,11 @@ export class EvidenceStream {
   /** Adds one event as one line and returns it; undefined when it was not written. Never throws. */
   append(body: EvidenceEventBody, time: string = new Date().toISOString()): EvidenceEvent | undefined {
     if (this.stopped) return undefined;
+    if (this.size < 0 && evidenceIncomplete(this.runDir)) {
+      this.stopped = true;
+      this.say("· evidence: the evidence of this run stopped earlier; it is not continued");
+      return undefined;
+    }
     try {
       // never makes the run folder: a run that was removed gets no new file
       const fd = openSync(this.file, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | SAFE, 0o600);
@@ -121,9 +149,12 @@ export class EvidenceStream {
         if (!st.isFile()) throw new StreamProblem("evidence.jsonl is not a plain file");
         // Another process may have written since (a resume from the command line): what is on disk decides.
         if (st.size !== this.size) this.load(fd, st.size);
-        const event = EvidenceEventSchema.parse({ ...body, version: EVIDENCE_EVENT_VERSION, id: evidenceEventId(this.next), seq: this.next, runId: this.runId, time });
-        this.write(fd, `${JSON.stringify(event)}\n`);
+        const unhashed = EvidenceEventSchema.parse({ ...body, version: EVIDENCE_EVENT_VERSION, id: evidenceEventId(this.next), seq: this.next, runId: this.runId, time });
+        // the hash is taken over the event as it is written: the last line's hash is in it as prevHash
+        const event = EvidenceEventSchema.parse({ ...unhashed, prevHash: this.last, hash: eventHash({ ...unhashed, prevHash: this.last }) });
+        this.write(fd, `${canonicalJson(event)}\n`);
         this.next++;
+        this.last = event.hash!;
         return event;
       } finally {
         closeSync(fd);
@@ -138,7 +169,8 @@ export class EvidenceStream {
   stop(e: unknown): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.say(`! evidence: ${reasonOf(e)}; no more evidence is written until the run is started again. The run itself goes on.`);
+    markIncomplete(this.runDir);
+    this.say(`! evidence: ${reasonOf(e)}; no more evidence is written for this run and it cannot be verified. The run itself goes on.`);
   }
 
   private say(line: string): void {
@@ -157,36 +189,30 @@ export class EvidenceStream {
   }
 
   /**
-   * Reads what is there and finds the place of the next event. Lines that are complete are never changed.
-   * A last line without its line end was cut off while it was written (the process died): when it is a whole event it
-   * gets its line end, otherwise the piece is removed, because it never was an event.
+   * Reads what is there, checks it as one chain and finds the place of the next event. Lines that are complete are
+   * never changed. A last line without its line end was cut off while it was written (the process died): when it is
+   * the whole next event of the chain it gets its line end, otherwise the piece is removed, because it never was an event.
+   * A stream that is not a chain (a changed line, a line without hashes) is not continued.
    */
   private load(fd: number, size: number): void {
-    const text = readAll(fd, size).toString("utf8");
-    const lines = text.split("\n");
-    const tail = lines.pop()!;
+    const { lines, tail } = splitEvidenceLines(readAll(fd, size).toString("utf8"));
     this.size = size;
+    // first the whole lines: a file that is not a chain is left exactly as it is
+    let chain = readEvidenceChain(lines, this.runId);
+    if (!chain.ok) throw new StreamProblem(`evidence.jsonl is not an unbroken chain of this run (${chain.message})`);
     if (tail !== "") {
-      let whole = false;
-      try {
-        parseEvidenceEventLine(tail);
-        whole = true;
-      } catch {
-        // a piece of a line
-      }
-      if (whole) {
+      const withTail = readEvidenceChain([...lines, tail], this.runId);
+      if (withTail.ok) {
         this.write(fd, "\n");
         lines.push(tail);
+        chain = withTail;
       } else {
         this.size = size - Buffer.byteLength(tail);
         ftruncateSync(fd, this.size);
         this.say("· evidence: the last line was cut off when the run was interrupted; the piece was removed");
       }
     }
-    lines.forEach((line, i) => {
-      const event = parseEvidenceEventLine(line);
-      if (event.seq !== i || event.runId !== this.runId) throw new StreamProblem(`line ${i + 1} of evidence.jsonl is not event ${i} of this run`);
-    });
+    this.last = chain.terminalHash;
     this.next = lines.length;
   }
 }

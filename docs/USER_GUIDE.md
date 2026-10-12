@@ -806,7 +806,9 @@ Every record from `GET /api/next` has these as `status` and `help`. Text the Fou
 ### Evidence of a run
 
 Every run keeps a record of what happened to it in `evidence.jsonl` in its run folder: one line per
-event, in the order they happened. Lines are only added, never changed.
+event, in the order they happened. Lines are only added, never changed. Every line carries the
+hash of the line before it and its own hash, so a line that was changed, added, removed or moved
+can be found.
 
 - **Run events:** queued, created, started, stopped (also: waiting for approval), resumed,
   cancelled, failed, completed.
@@ -820,10 +822,23 @@ event, in the order they happened. Lines are only added, never changed.
 - A shell step whose id has the word `test` or `tests` (for example `run_tests`) is recorded as a
   test run, passed or failed.
 - **It never stops a run.** If the file cannot be written, the live log says so once
-  (`! evidence: …`) and the run goes on without more evidence until it is started again.
-- **Resume:** a resumed run adds to the same file. Runs made before this have no file and work as
-  before.
-- A step of a user's run cannot write the file.
+  (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
+  file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
+  gets no manifest.
+- **The manifest.** When a run ends (succeeded, failed or cancelled), `evidence.json` is written in
+  the run folder: the status and times, the flow and the hash of its definition, the number of
+  events and the hash of the last one, the base and final commit, the models, approvals and test
+  results, every log and transcript with its hash, and the pull request when the run was started
+  for one. For a run that changed code, `evidence.diff` holds the diff between the two commits
+  (stored secrets hidden) and the manifest has its hash. The manifest holds no task, output, note
+  or key.
+- **If the manifest cannot be written,** the live log says
+  `! evidence: no manifest was written (…); this run cannot be verified`, and there is no
+  `evidence.json`. The run and its result are not changed.
+- **Resume:** a resumed run adds to the same file. Its manifest and diff are removed while it goes
+  on, and written again when it ends. Runs made before this have no file and work as before; when
+  such a run is resumed it gets events from then on, but no manifest.
+- A step of a user's run cannot write these files.
 
 ---
 

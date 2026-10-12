@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Evidence 3 — the events of a run are a hash chain, and a run that ends gets a manifest (#136). Part of #133.
+  - **Hash chain.** Every line of `evidence.jsonl` now has `prevHash` (the hash of the line before; `null` for the first) and `hash` (the SHA-256 of the event in its canonical form, without `hash` itself). A changed, added, removed or moved line breaks the chain. The event version stays 1.
+  - **Canonical form** (`src/evidence/canonical.ts`, the rules of RFC 8785): names in order, no spaces, strings and numbers written one way, UTF-8. Every line is written in it, byte for byte. Fixed test vectors hold the texts and their hashes.
+  - **Manifest.** When a run ends as succeeded, failed or cancelled, `runs/<id>/evidence.json` is written from the chain: status and times, the flow and the hash of its stored definition, the number of events and the hash of the last one, base and final commit, models, policies, approvals, test results, every log and transcript with its hash, the diff and the pull request. Only `finalizedAt` depends on when it is written.
+  - **Diff.** For a run with a base and a final commit, `runs/<id>/evidence.diff` holds `git diff <base> <final>` with stored secrets hidden; the manifest has its hash. No diff when git fails, takes longer than 15 seconds or gives more than 20 MB.
+  - **Resume.** A resumed run keeps all its events and goes on in the same chain. Its manifest and diff are removed when it starts again and written anew at the next end.
+  - **A failure is visible.** If the manifest cannot be written, the live log says `! evidence: no manifest was written (…); this run cannot be verified`, and no manifest is left. The run itself is not changed.
+  - **A stream that stopped stays stopped.** A write problem now leaves the mark `evidence.incomplete` in the run folder: no later start continues that stream and the run gets no manifest, so a stream with a hole can never look whole. A stream that is not an unbroken chain (also one written without hashes) is not continued.
+  - The manifest holds ids, names, hashes and commit ids only: no task, output, transcript text, note or key. The OS sandbox of a user's run cannot write `evidence.json`, `evidence.diff` or `evidence.incomplete`.
 - Evidence 2 — every run writes its lifecycle events to `runs/<id>/evidence.jsonl` (#135). Part of #133.
   - **The stream.** One JSON line per event, only appended, in the #134 format. `seq` counts 0, 1, 2, … and the id of an event follows from its place (`ev-000000`, `ev-000001`, …). Nothing is added to `run.json`.
   - **Run events:** `run.queued` (with the time the job was put in the queue), `run.created`, `run.started`, `run.stopped` (also when the run waits for approval), `run.resumed`, `run.cancelled`, `run.failed`, `run.completed`.

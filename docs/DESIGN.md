@@ -225,7 +225,7 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
   size (`required: true`). Reasons, notes, outputs and errors are not recorded.
 - **Never in the way.** No call throws. The first problem (the file cannot be written, an event is
   not valid, the file holds a line that is not an event of this run) is written once to the live
-  log, and the stream stops for this start of the run. It never goes on after a hole, and a
+  log, and the stream stops. It never goes on after a hole, and a
   stream that stopped has no end event, so such a run cannot count as verified later.
 - **Restart.** The file is read when the first event of a start is written, and again when its
   size is not what this process left (another process wrote). Whole lines are never changed. A
@@ -234,10 +234,78 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
 - **Not followed, not waited for.** The file is opened without following a link and without
   waiting for a pipe, and only a plain file is used. The OS sandbox of a user's run denies writes
   to both evidence files.
+- **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
+  in the run folder. While it is there no start of the run continues the stream and the run gets
+  no manifest (#136). Nothing removes it.
 - **What is derived.** A shell step whose id has the word `test` or `tests` is a test run. The
   pull request of a run is known only when the run was started for one (`vars.pr`). A target
   without a model name is recorded as model `default`. A cancel or resume nobody is named for is
   the Foundry's (`system`).
+
+### The hash chain and the manifest
+
+The events of a run are a hash chain, and a run that ends gets a manifest (#136).
+
+**Canonical form** (`src/evidence/canonical.ts`). One text for one value, the rules of RFC 8785:
+
+- An object is `{`, its members, `}`. A member is `"name":value`; members are in the order of
+  their names, compared by UTF-16 code unit, with `,` between them. A member without a value is
+  left out.
+- An array is `[`, its values in their own order with `,` between them, `]`.
+- A string is in double quotes. `"` is `\"`, `\` is `\\`. The control characters U+0000 to
+  U+001F are `\b`, `\t`, `\n`, `\f`, `\r` or `\u00xx` (lower-case hex); a lone surrogate is
+  `\udxxx`. Every other character is written as itself. Nothing is normalized.
+- A number is written as JavaScript writes it (`12`, `-3`, `0.5`); evidence only has whole
+  numbers. `true`, `false` and `null` are these words. There is no space or line break.
+- The text is UTF-8 when it is hashed or written.
+
+**The hash of an event** is the SHA-256 (64 lower-case hex characters) of the canonical form of the
+whole event without its `hash` field. `prevHash` is part of it: `null` for the first event, the
+`hash` of the event before for every other. It is taken over the event as it is written, never
+over one that was brought to a newer version. `tests/evidence-chain.test.ts` holds fixed texts and
+hashes; they change only together with the event version.
+
+**A stream is a chain** (`readEvidenceChain` in `chain.ts`) when every line is a JSON object in
+canonical form, byte for byte; is a valid event with `seq` equal to its place, the run id of the
+stream and an id no earlier line has; has `prevHash` equal to the `hash` of the line before; and
+has the `hash` of its own content. The first line that is not is named with one of eight faults
+(`not-json`, `not-canonical`, `unsupported-version`, `invalid`, `order`, `unchained`, `link`,
+`hash`). The writer checks the chain before it adds to a file it did not write itself, and does
+not continue a file that is not a chain. Someone who can rewrite a line and every line after it
+gets a chain again, with another last hash: that is why the manifest holds the last hash.
+
+**The manifest** (`finalize.ts`). When a run reaches `succeeded`, `failed` or `cancelled`
+(`finish` and `cancelWaitingRun`, right after the end event), `evidence.json` is written:
+
+| Field | From |
+|---|---|
+| `status`, `finishedAt` | the last event (`run.completed`, `run.failed`, `run.cancelled`) and its time |
+| `startedAt` | the time of `run.created` |
+| `flow` | `run.created`, and the SHA-256 of the canonical form of `flowDef` in `run.json` |
+| `events` | `evidence.jsonl`, the number of events, the `hash` of the last one |
+| `git` | base from `run.started`, final from `run.completed` |
+| `models`, `policies` | every model a step was given to or ran on, every policy that refused something: each once |
+| `approvals`, `tests` | every decision at an approval step and every test run, oldest first |
+| `artifacts` | every log, transcript and report the step events name, each path once (named twice: as named last) |
+| `diff` | `evidence.diff`, made at this moment: `git diff <base> <final>` with stored secrets hidden; `required: false` |
+| `pullRequest` | `run.completed` |
+
+- **Deterministic.** The same events and files give the same manifest. The one field that depends
+  on time is `finalizedAt`: the moment of writing, and never before `finishedAt`. The diff is made
+  again each time, from the two commits; it is left out when git fails, takes more than 15
+  seconds or gives more than 20 MB.
+- **Only for the end the run is at.** A resume removes `evidence.json` and `evidence.diff` before
+  its first event; the events stay and the chain goes on. The next end writes a new manifest. The
+  earlier end is still in the chain.
+- **A failure is visible.** Finalizing never throws and never changes the run. When it cannot be
+  done (the stream is not a chain, does not end with the end of the run, ends in another status,
+  has the `evidence.incomplete` mark, or the file cannot be written), any manifest that is there
+  is removed and the live log says so once. A run without a manifest is not a verified run.
+- **Runs that started before evidence.** A resumed older run gets events from the resume on, but
+  no manifest: its stream does not begin with `run.created`.
+- **No secrets.** The manifest is checked with `RunEvidenceSchema` before it is written: ids,
+  names, hashes, commit ids and one pull-request address. Files are written beside their place
+  and moved over it, mode `0600`.
 
 ---
 
@@ -533,7 +601,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | File or folder | Content |
 |---|---|
 | `config.yaml` | Settings and watchers |
-| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace, `evidence.jsonl` (the events of the run) |
+| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace, `evidence.jsonl` (the events of the run), `evidence.json` (the manifest of a run that ended), `evidence.diff`, `evidence.incomplete` (a mark: the events are not whole) |
 | `queue.json` | Queued jobs |
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |

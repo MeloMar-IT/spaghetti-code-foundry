@@ -36,6 +36,7 @@ import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
 import type { Actor } from "../evidence/identity.js";
+import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -186,6 +187,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
   claimRunStart(opts.runsDir, () => saveRun(summary));
+  dropRunEvidence(summary.runDir); // the run is no longer at the end its manifest describes
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);
   evidence.resumed(from, opts.actor ?? SYSTEM_ACTOR);
@@ -340,6 +342,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
+  finalizeRunEvidence(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -380,6 +383,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
   saveRun(summary);
   opts.onUpdate?.(summary);
   runRecorder(summary).ended(summary, { failedStep: r.failedStep, cancelledBy: opts.cancelledBy?.() });
+  finalizeRunEvidence(summary); // only for a run that ended; a failure is one line in the live log and no manifest
   if (r.outcome === "failed") {
     // One short model call for the cause; its note and cost are saved in a second update.
     const ex = await explainFailure({ run: summary, config, runsDir: opts.runsDir, claudeBin: opts.claudeBin, signal: opts.signal, userDailyBudget: opts.userDailyBudget }).catch(() => undefined);

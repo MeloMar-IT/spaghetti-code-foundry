@@ -242,6 +242,6 @@ steps:
     expect(events({ runDir: join(runsDir, w) })[1]).toMatchObject({ type: "run.created", by: { kind: "watcher", id: "w1" } });
     expect(s.cancel(w)).toBe(true);
     expect(events({ runDir: join(runsDir, w) }).at(-1)).toMatchObject({ type: "run.cancelled", by: { kind: "system" } });
-    expect(existsSync(join(runsDir, w, "evidence.json"))).toBe(false);
+    expect(existsSync(join(runsDir, w, "evidence.json"))).toBe(true); // a cancelled run has ended
   });
 });
