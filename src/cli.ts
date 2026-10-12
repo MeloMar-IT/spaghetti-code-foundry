@@ -70,7 +70,9 @@ Usage:
                                                  board, find, repos, settings, providers, monitor, flows, blocks, users,
                                                  account, secrets, audit, admin, refine, watchers, server.
                                                  \`scf <area>\` lists an area's commands; \`scf api routes\` lists every call
-  scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
+  scf analyst run|report|install|uninstall|status|auto on|off|reset
+                                                 Every 6 hours: how each model does per step, and where another level fits;
+                                                 with \`auto on\` it tries that level by itself and puts it back when worse
   scf governor|flaky|limits|blockage|digest run|report|install|uninstall|status
                                                  Helper processes: machine load, unreliable tests, usage limits,
                                                  what holds work up, and a daily digest (see the user guide)

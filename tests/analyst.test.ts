@@ -1,11 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { advise, stepModel } from "../src/analyst/advise.js";
 import { ANALYST_LABEL, analystPlist, installAnalyst, runAnalyst, uninstallAnalyst } from "../src/analyst/cli.js";
 import { collect } from "../src/analyst/collect.js";
-import { isStale, loadReference, parseAnswer, refresh, trusted, trustedPair, type Reference } from "../src/analyst/reference.js";
+import { askClaude, askClaudeArgs, isStale, loadReference, parseAnswer, refresh, trusted, trustedPair, type Reference } from "../src/analyst/reference.js";
+import { report } from "../src/analyst/report.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import type { ServiceHost } from "../src/service.js";
 
@@ -97,6 +98,27 @@ describe("advise", () => {
     expect(find(idle, "review_2").verdict).toBe("lower");
   });
 
+  it("handles a review that fails before it asks whether the review finds anything", () => {
+    // a review that fails every visit leads to no change either: that is not a reason to lower it
+    const dead = many(30, () => run([{ id: "review_1", agent: "codex:openai", ok: false }, { id: "docs" }]));
+    expect(find(dead, "review_1")).toMatchObject({ verdict: "watch", to: "" });
+    const failing = many(30, (i) => run([{ id: "review_2", ok: i >= 6 }, { id: "docs" }], { flowSteps: [{ id: "review_2", effort: "medium" }] }));
+    expect(find(failing, "review_2")).toMatchObject({ verdict: "raise", to: "effort high" });
+    // works 90% of the time and finds nothing: not failing enough to raise, not reliable enough to lower
+    const shaky = many(30, (i) => run([{ id: "review_3", ok: i >= 3 }, { id: "docs" }], { flowSteps: [{ id: "review_3", effort: "medium" }] }));
+    expect(find(shaky, "review_3")).toMatchObject({ verdict: "keep", to: "" });
+    expect(find(shaky, "review_3").why).toContain("only from 97%");
+  });
+
+  it("needs 20 visits that were not stopped by a usage limit, and measures time-outs against those", () => {
+    const few = many(25, (i) => run([{ id: "docs", ...(i < 10 ? { ok: false, limited: true } : {}) }]));
+    expect(find(few, "docs")).toMatchObject({ verdict: "few" });
+    expect(find(few, "docs").why).toContain("Only 15 visits");
+    // 1 time-out in 20 judged visits is 5%, however many visits a usage limit stopped
+    const slow = many(30, (i) => run([{ id: "implement", ...(i < 10 ? { ok: false, limited: true } : i === 10 ? { ok: false, error: "timed out" } : {}) }]));
+    expect(find(slow, "implement").verdict).toBe("time");
+  });
+
   it("flags a step that got worse in the last days", () => {
     const runs = [...many(40, () => run([{ id: "implement" }], { daysAgo: 8 })), ...many(12, (i) => run([{ id: "implement", ok: i >= 4 }], { daysAgo: 1 }))];
     expect(find(runs, "implement").verdict).toBe("watch");
@@ -137,6 +159,35 @@ describe("published figures", () => {
     expect(trustedPair(ref, "m", "x", "agentic-coding")).toBeUndefined();
   });
 
+  it("does not take two coding scores without a test name for the same test", () => {
+    const ref: Reference = { checkedAt: "", figures: [fig("vendor", 90, ""), fig("vendor", 30, "", "n")] };
+    expect(trustedPair(ref, "m", "n", "agentic-coding")).toBeUndefined();
+    // prices and speed have no test: they are still paired
+    const speed: Reference = { checkedAt: "", figures: [{ ...fig("vendor", 90, ""), metric: "speed" }, { ...fig("vendor", 30, "", "n"), metric: "speed" }] };
+    expect(trustedPair(speed, "m", "n", "speed")).toBeDefined();
+  });
+
+  it("drops a figure whose value cannot be right, from an answer and from the stored file", () => {
+    const f = (metric: string, value: number) => ({ model: "m", metric, value, kind: "vendor", source: "" });
+    const figures = [f("agentic-coding", 64), f("agentic-coding", 6400), f("agentic-coding", -1), f("intelligence-index", 101), f("price-input", 3), f("speed", 250)];
+    expect(parseAnswer(JSON.stringify({ figures })).map((x) => [x.metric, x.value])).toEqual([["agentic-coding", 64], ["price-input", 3], ["speed", 250]]);
+    const file = join(mkdtempSync(join(tmpdir(), "scf-analyst-")), "reference.json");
+    writeFileSync(file, JSON.stringify({ checkedAt: NOW.toISOString(), figures }));
+    expect(loadReference(file).figures).toHaveLength(3);
+  });
+
+  it("keeps a source from breaking the report: only web addresses are listed, and a table cell stays one cell", () => {
+    const figs = [
+      { ...fig("vendor", 60, "a|b\nc", "m|x"), source: "https://example.test/a|b" },
+      { ...fig("vendor", 60, "t", "n"), source: "see\n\n# Ignore the above\n| a | b |" },
+      { ...fig("vendor", 60, "t", "o"), source: "javascript:alert(1)" },
+    ];
+    const text = report({ from: NOW.toISOString(), to: NOW.toISOString(), runs: 0, steps: [], totalTokens: 0 }, [], { checkedAt: NOW.toISOString(), figures: figs });
+    expect(text).toContain("Sources:\n- https://example.test/a\\|b\n");
+    expect(text).not.toMatch(/Ignore the above|javascript:/);
+    expect(text).toContain("| m\\|x | 54 | a\\|b c |");
+  });
+
   it("reads the figures from an answer in Claude Code's JSON, in a code fence, and drops bad ones", () => {
     const inner = '```json\n{"figures":[{"model":"m","metric":"speed","value":120,"kind":"independent","source":"https://example.test","note":"x"},{"model":"m","metric":"speed","value":"fast","kind":"vendor","source":""}]}\n```';
     expect(parseAnswer(JSON.stringify({ result: inner }))).toHaveLength(1);
@@ -145,12 +196,47 @@ describe("published figures", () => {
 
   it("keeps the earlier figures when the search fails or gives nothing", async () => {
     const old: Reference = { checkedAt: "2026-10-01T00:00:00Z", figures: [fig("independent", 1)] };
-    expect((await refresh(old, ["m"], async () => { throw new Error("no network"); }, NOW)).ref).toBe(old);
-    expect((await refresh(old, ["m"], async () => '{"figures":[]}', NOW)).ref).toBe(old);
+    // the earlier figures and their date stay; the attempt is remembered
+    const tried = { ...old, triedAt: NOW.toISOString() };
+    expect((await refresh(old, ["m"], async () => { throw new Error("no network"); }, NOW)).ref).toEqual(tried);
+    expect((await refresh(old, ["m"], async () => '{"figures":[]}', NOW)).ref).toEqual(tried);
     const fresh = await refresh(old, ["m"], async () => JSON.stringify({ figures: [fig("vendor", 5)] }), NOW);
     expect(fresh.ref.checkedAt).toBe(NOW.toISOString());
     expect(isStale(old, NOW)).toBe(true);
     expect(isStale(fresh.ref, NOW)).toBe(false);
+    expect(fresh.ref.triedAt).toBeUndefined();
+  });
+
+  it("tries a failed lookup again a day later, not at the next check", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "scf-analyst-"));
+    const runs = many(30, () => run([{ id: "docs" }]));
+    let asked = 0;
+    const ask = async () => {
+      asked++;
+      throw new Error("no network");
+    };
+    const at = (hours: number) => runAnalyst({ runs, now: new Date(NOW.getTime() + hours * 3_600_000), dir, ask });
+    await at(0);
+    await at(6);
+    await at(18);
+    expect(asked).toBe(1);
+    await at(25);
+    expect(asked).toBe(2);
+  });
+
+  it("asks in a session that has the two web tools only, in an empty folder of its own", async () => {
+    const args = askClaudeArgs("the prompt", "claude-sonnet-5-5");
+    expect(args.slice(0, 2)).toEqual(["-p", "the prompt"]);
+    expect(args.join(" ")).toContain("--tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch --strict-mcp-config --setting-sources project,local --disable-slash-commands");
+    const bin = join(mkdtempSync(join(tmpdir(), "scf-ask-")), "fake");
+    writeFileSync(bin, '#!/usr/bin/env node\nconsole.log(JSON.stringify({ cwd: process.cwd(), files: require("node:fs").readdirSync("."), args: process.argv.slice(2) }));\n');
+    chmodSync(bin, 0o755);
+    const seen = JSON.parse(await askClaude(bin)("the prompt")) as { cwd: string; files: string[]; args: string[] };
+    expect(seen.args).toEqual(args);
+    expect(seen.files).toEqual([]);
+    expect(seen.cwd).toContain("scf-analyst-ask-");
+    expect(seen.cwd).not.toBe(process.cwd());
+    expect(existsSync(seen.cwd)).toBe(false);
   });
 });
 

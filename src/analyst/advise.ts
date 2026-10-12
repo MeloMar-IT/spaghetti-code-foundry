@@ -50,9 +50,10 @@ function published(ref: Reference, from: string, to: string, light: boolean): { 
 
 function adviseStep(s: StepStats, ref: Reference, share: number): Advice {
   const base = { flow: s.flow, step: s.step, agent: s.agent, effort: s.effort, share, stats: s };
-  if (s.visits < MIN_VISITS) return { ...base, verdict: "few", to: "", why: `Only ${s.visits} visits in the window; ${MIN_VISITS} are needed for advice.` };
-
+  // a visit stopped by a usage limit says nothing about the model, so it does not count
   const judged = s.visits - s.limited;
+  if (judged < MIN_VISITS) return { ...base, verdict: "few", to: "", why: `Only ${judged} visits in the window${s.limited ? ` (not counting ${s.limited} stopped by a usage limit)` : ""}; ${MIN_VISITS} are needed for advice.` };
+
   const failed = judged - s.ok - s.timeouts;
   const okRate = judged ? s.ok / judged : 1;
   const model = modelOf(s.agent);
@@ -62,28 +63,30 @@ function adviseStep(s: StepStats, ref: Reference, share: number): Advice {
   const repaired = s.ok ? s.fixed / s.ok : 0;
   const changed = s.ok ? s.changed / s.ok : 0;
 
-  if (s.timeouts / s.visits >= 0.05)
+  if (s.timeouts / judged >= 0.05)
     return {
       ...base, verdict: "time", to: s.limitSec ? `a limit above ${Math.round(s.limitSec / 60)} minutes, or smaller work` : "a longer limit, or smaller work",
-      why: `${pct(s.timeouts, s.visits)}% of the visits ran into the time limit (average ${avgMin.toFixed(0)} minutes). That is a limit or size problem before it is a model problem: a stronger model is usually slower.`,
+      why: `${pct(s.timeouts, judged)}% of the visits ran into the time limit (average ${avgMin.toFixed(0)} minutes). That is a limit or size problem before it is a model problem: a stronger model is usually slower.`,
     };
 
   if (s.recent.visits >= 10 && okRate - s.recent.ok / s.recent.visits >= 0.15)
     return { ...base, verdict: "watch", to: "", why: `Worked ${pct(s.ok, judged)}% of the time over the window but ${pct(s.recent.ok, s.recent.visits)}% in the last days. Look at what changed: the model, the flow or the work.` };
 
+  // failure comes first, also for a review: a review that fails finds nothing, and that is not a reason to lower it
+  if (failed / judged >= 0.15 || (!s.reviewer && repaired >= 0.4)) {
+    const up = stepEffort(s.effort, 1) && s.effort !== "xhigh" ? `effort ${stepEffort(s.effort, 1)}` : stepModel(model, 1);
+    const why = s.reviewer ? `Failed ${pct(failed, judged)}% of the time.` : `Failed ${pct(failed, judged)}% of the time and its work needed a repair step ${pct(s.fixed, s.ok)}% of the time.`;
+    return up ? { ...base, verdict: "raise", to: up, why } : { ...base, verdict: "watch", to: "", why: `${why} ${EFFORTS.includes(s.effort) || TIERS.some((t) => model.includes(t)) ? "It already runs on the highest level" : "No higher level is known for it"}, so look at the prompt and the size of the work.` };
+  }
+
   if (s.reviewer) {
-    // a review that almost never leads to a change costs tokens and finds nothing
-    if (changed <= 0.1) {
+    // a review that almost never leads to a change costs tokens and finds nothing; one that does not work reliably is not lowered
+    if (changed <= 0.1 && okRate >= 0.97) {
       const to = stepEffort(s.effort, -1) ? `effort ${stepEffort(s.effort, -1)}` : stepModel(model, -1) || "a lower effort or a smaller model";
       return { ...base, verdict: "lower", to, why: `Only ${pct(s.changed, s.ok)}% of these reviews led to a change, at ${Math.round(s.inputTokens / s.visits / 1000)}k input tokens each.` };
     }
+    if (changed <= 0.1) return { ...base, verdict: "keep", to: "", why: `Only ${pct(s.changed, s.ok)}% of these reviews led to a change, but the step works ${pct(s.ok, judged)}% of the time: a lower level is advised only from 97%.` };
     return { ...base, verdict: "keep", to: "", why: `${pct(s.changed, s.ok)}% of these reviews led to a change, so the review earns its tokens.` };
-  }
-
-  if (failed / Math.max(1, judged) >= 0.15 || repaired >= 0.4) {
-    const up = stepEffort(s.effort, 1) && s.effort !== "xhigh" ? `effort ${stepEffort(s.effort, 1)}` : stepModel(model, 1);
-    const why = `Failed ${pct(failed, judged)}% of the time and its work needed a repair step ${pct(s.fixed, s.ok)}% of the time.`;
-    return up ? { ...base, verdict: "raise", to: up, why } : { ...base, verdict: "watch", to: "", why: `${why} It already runs on the highest level, so look at the prompt and the size of the work.` };
   }
 
   const steady = okRate >= 0.97 && repaired <= 0.1 && (light || changed <= 0.15);

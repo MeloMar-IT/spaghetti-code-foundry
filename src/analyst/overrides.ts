@@ -3,10 +3,15 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { FACTORY_HOME } from "../flow/load.js";
 
-/** What the analyst set for one step: a model spec, an effort, or both. */
-const Override = z.object({
+/**
+ * What the analyst set for one step: a model, an effort, or both. `from` is what the flow itself said
+ * for the step when the analyst set it: the engine applies the override only while that still holds,
+ * so a later edit of the flow wins. Without `from` (a file of an older version) it always applies.
+ */
+export const Override = z.object({
   model: z.string().min(1).max(120).optional(),
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  from: z.object({ model: z.string().max(120), effort: z.string().max(20) }).optional(),
 });
 export type Override = z.infer<typeof Override>;
 
