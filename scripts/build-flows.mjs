@@ -1935,8 +1935,16 @@ write("release-daily", {
         // queueing behind the stories for as long as it takes; after that it runs anyway. A value that is set stays.
         'export FACTORY_TEST_SLOT_WAIT_SEC="${FACTORY_TEST_SLOT_WAIT_SEC:-300}"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
+        // A green run on a clean tree is recorded in tested/ (the checked form, with the tree), so that self-update can skip
+        // its own tests on the same code. Every git exit status is checked. It is written right after the tests and before the
+        // build, so the build can neither hide what the tests left behind nor stop the record. A record that fails changes nothing.
+        'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
         '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
+        'if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then',
+        '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40)',
+        '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi',
+        'fi',
         'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
         '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',

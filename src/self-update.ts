@@ -4,7 +4,7 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
-import { failingTests, slotStep } from "./self-update-tests.js";
+import { detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
 import {
   branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, updateFile, updateState,
   type FailStage, type UpdateStep,
@@ -32,6 +32,7 @@ export interface UpdaterOptions {
   beforeExit: () => void;
   log: (m: string) => void;
   // for tests:
+  testCmd?: (cwd: string) => Promise<string | undefined> | string | undefined;
   slot?: { waitSec?: number; slots?: number; pollMs?: number } | false;
   dir?: string;
   file?: string;
@@ -341,9 +342,18 @@ export class SelfUpdater {
       };
       const added = await git(this.dir, ["worktree", "add", "--detach", this.stageDir(), commit]);
       if (!added.ok) return fail("install", added.out);
+      const known = await this.known(commit); // before the install: a fresh clone, as the release check sees it
+      if (this.stopped) return "stopped";
       for (const name of ["install", "build", "test"] as const) {
         const step = this.steps.find((s) => s.name === name);
         if (!step) continue;
+        if (name === "test") {
+          const by = this.testedBefore(step, known);
+          if (by) {
+            this.say(`self-update: ${short(commit)} is not tested again: the release check passed these tests on this code (${by})`);
+            continue;
+          }
+        }
         // the tests wait for a test slot, like the tests of stories; the tool is the running version's
         const run = name === "test" && this.o.slot !== false
           ? slotStep(step, { tool: join(this.dir, "tools", "test-slot"), slotsDir: join(dirname(this.file), "test-slots"), ...this.o.slot })
@@ -365,6 +375,31 @@ export class SelfUpdater {
         // the next staging removes what is left
       }
       this.working = false;
+    }
+  }
+
+  /** What the skip check needs, read before the install: the tree of `commit` and the test command the release check detects in a
+   *  fresh clone of it. Every doubt (a pinned test_cmd, no command, an error) leaves it empty. Never throws. */
+  private async known(commit: string): Promise<{ tree?: string; cmd?: string }> {
+    try {
+      const dir = this.stageDir();
+      if (pinsTests(dir)) return {};
+      const cmd = await (this.o.testCmd ?? ((cwd: string) => detectTestCmd(cwd, join(this.dir, "tools", "detect-commands"))))(dir);
+      const tree = await git(this.dir, ["rev-parse", "--verify", "--quiet", `${commit}^{tree}`]);
+      return cmd && tree.ok ? { tree: tree.out, cmd } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** "run <id>, <time>" when the release check passed exactly these tests on exactly this code. Not async on purpose: nothing is
+   *  awaited between the build and the tests, so a stop cannot slip in. Every doubt, and every error, is undefined. */
+  private testedBefore(step: UpdateStep, k: { tree?: string; cmd?: string }): string | undefined {
+    try {
+      if (!k.tree || !k.cmd || !sameTests(step, k.cmd)) return undefined;
+      return passedBefore(join(dirname(this.file), "tested"), k.tree, k.cmd);
+    } catch {
+      return undefined;
     }
   }
 
