@@ -62,7 +62,7 @@ describe("scf ask", () => {
     // Ask SCF is off here: the call reaches the server and is answered in its words
     const off = await ask(["context", "#/runs/r1", "--kind", "run", "--id", "r1", "--selection", "exit 1", "--filters", '{"status":"failed"}']);
     expect(off.code).not.toBe(0);
-    expect(off.out).toContain("Ask SCF is switched off on this Foundry.");
+    expect(off.err).toContain("Ask SCF is switched off on this Foundry.");
   });
 
   it("archives, restores and completes, and deletes only after a yes", async () => {
