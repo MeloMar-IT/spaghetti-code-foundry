@@ -204,6 +204,52 @@ describe("modal", () => {
     expect(doc().activeElement).not.toBe(opener);
     void second;
   });
+
+  describe("when the root was taken over", () => {
+    const takeOver = () => {
+      const marker = dom.h("p", {}, "newer");
+      el("modal-root").replaceChildren(marker);
+      return marker;
+    };
+
+    it("a late close keeps the newer content and the focus, resolves, and leaves no listener", async () => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      let late: (v: unknown) => void = () => {};
+      const p = dom.modal("One", (close: (v: unknown) => void) => {
+        late = close;
+        return dom.h("p", {}, "one");
+      });
+      const marker = takeOver();
+      const other = dom.h("button", {}, "other");
+      other.focus();
+      late("x");
+      await expect(p).resolves.toBe("x");
+      expect(el("modal-root").children).toEqual([marker]);
+      expect(doc().activeElement).toBe(other);
+      expect(doc().listeners.keydown).toHaveLength(0);
+    });
+
+    it("Tab while busy does not trap, and the dialog ends", async () => {
+      const p = dom.modal("One", () => dom.h("button", {}, "b"), { busy: () => true });
+      const marker = takeOver();
+      const before = doc().activeElement;
+      const e = keydown("Tab");
+      expect(e.preventDefault).not.toHaveBeenCalled();
+      expect(doc().activeElement).toBe(before);
+      await expect(p).resolves.toBeUndefined();
+      expect(doc().listeners.keydown).toHaveLength(0);
+      expect(el("modal-root").children).toEqual([marker]);
+    });
+
+    it("Escape keeps the newer content", async () => {
+      const p = dom.modal("One", () => dom.h("p", {}, "one"));
+      const marker = takeOver();
+      keydown("Escape");
+      await expect(p).resolves.toBeUndefined();
+      expect(el("modal-root").children).toEqual([marker]);
+    });
+  });
 });
 
 describe("mount", () => {

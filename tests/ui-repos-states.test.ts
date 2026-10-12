@@ -296,11 +296,14 @@ describe("renderRepos states", () => {
     await show();
     press(button(main(), "+ Add repository"));
     await flush();
-    const select = walk(root()).find((e) => e.attrs.name === "method")!;
-    select.value = "ssh-deploy-key";
-    select.dispatch?.("change");
     walk(root()).find((e) => e.attrs.name === "url")!.value = SSH;
+    press(button(root(), "Next"));
+    // the key is not on the host yet: the automatic test fails
+    testResult = { ...goodConn(), ok: false };
     press(button(root(), "Add repository"));
+    await flush();
+    await flush();
+    press(button(root(), "Done"));
     await flush();
     await flush();
     expect(toastText()).toBe("Repository added");
@@ -321,12 +324,14 @@ describe("renderRepos states", () => {
     await show();
     press(button(main(), "+ Add repository"));
     await flush();
-    const select = walk(root()).find((e) => e.attrs.name === "method")!;
-    select.value = "ssh-deploy-key";
-    select.dispatch?.("change");
     walk(root()).find((e) => e.attrs.name === "url")!.value = SSH;
+    press(button(root(), "Next"));
+    testResult = { ...goodConn(), ok: false };
     repoGets.push({ status: 500, error: "down" });
     press(button(root(), "Add repository"));
+    await flush();
+    await flush();
+    press(button(root(), "Done"));
     await flush();
     await flush();
     expect(main().textContent).toContain(SSH);

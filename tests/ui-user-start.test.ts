@@ -1126,8 +1126,13 @@ describe("renderStart: the repository context", () => {
         one(main, "button", { "data-focus": "add-repo" }).click();
         await flush();
         one(modalRoot(), "input", { name: "url" }).value = `https://github.com/o/r${n}`;
+        find(modalRoot(), "button").find((b) => b.textContent === "Next")!.click();
         one(modalRoot(), "input", { name: "token" }).value = "t".repeat(40);
         find(modalRoot(), "button").find((b) => b.textContent === "Add repository")!.click();
+        await flush();
+        await flush();
+        // this fetch has no test route: the test cannot run, and the dialog still resolves with the record
+        find(modalRoot(), "button").find((b) => b.textContent === "Done")!.click();
         await flush();
         await flush();
       };
