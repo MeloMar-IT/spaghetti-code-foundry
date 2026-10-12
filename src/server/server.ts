@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
@@ -59,6 +60,7 @@ const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("ya
 export interface ServerOptions {
   repo: string;
   runsDir: string;
+  /** 0: a free port picked by the system (tests); the result's `port` is the real one. */
   port: number;
   claudeBin?: string;
   /** Run the watchers (default true). */
@@ -117,7 +119,7 @@ export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse,
 
 const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
 
-export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
+export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
   const sink = given.log ?? (() => {});
   const ring = logRing(); // the newest redacted lines, for the monitor
@@ -325,6 +327,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     server.once("error", fail);
     server.listen(opts.port, listen, () => ok());
   });
+  // started with port 0, the system picked the port: the cookie name, the host check and the URL use the real one
+  opts.port = (server.address() as AddressInfo).port;
   // Runs of older versions have no owner. The first admin takes them: now, and again later, since the admin may be
   // made with `scf user create --admin` while we run, and runs that were live are skipped until they end.
   const adopt = () => {
@@ -353,6 +357,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   clarity.start();
   return {
     url: localUrl(listen, opts.port),
+    port: opts.port,
     ctx,
     notifier,
     close: () => {
