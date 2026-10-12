@@ -45,6 +45,8 @@ export interface SourceProblem {
 export type SourcesRead = { state: "none" } | { state: "invalid"; problems: SourceProblem[] } | { state: "ok"; manifest: SourcesManifest };
 
 const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+/** True when the text holds a control, format or line-separator character. */
+export const hasUnsafeChar = (s: string): boolean => UNSAFE.test(s);
 const UNSAFE_G = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const TRACK_RE = /^[A-Za-z0-9._/-]{1,200}$/;
