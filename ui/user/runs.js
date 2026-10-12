@@ -4,7 +4,7 @@ import { api } from "../api.js";
 import { errorText } from "../auth.js";
 import { h, modal, mount, toast } from "../dom.js";
 import { answerable, createRunHeader, firstLine, runActions, workText } from "../run-header.js";
-import { filterBar, filterEmpty, defaultGo, sameRepo, withQuery } from "../filters.js";
+import { filterBar, filterEmpty, defaultGo, sameRepo } from "../filters.js";
 import { pageViews } from "../views.js";
 import { createLog } from "../run-output.js";
 import { skillsCard } from "../run-skills.js";
@@ -13,8 +13,10 @@ import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
-import { CAP_NOTE, RUNS_CAP, diffView, statusAnnouncer } from "../runs.js";
-import { listRow, myRunsEntries, renderSections, runSections } from "../runs-list.js";
+import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
+import { listRow, myRunsEntries, renderSections, runSections, sectionOf } from "../runs-list.js";
+import { noMatch, runsBar } from "../runs-bar.js";
+import { canonRepos, countText, emptyFilter, filterHash, filterOf, isActive, isServerActive, jobMatches, serverKey } from "../runs-filter.js";
 
 export { NO_RUNS, NOT_FOUND } from "../run-states.js";
 export { NO_STEPS } from "../run-tabs.js";
@@ -46,14 +48,20 @@ export async function confirmDialog(title, text, yes = "Yes", no = "No") {
 
 // ── My runs ──
 
-/** The My runs page; refreshes every 30 seconds through the poller and never rejects. Returns a cleanup. */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, go = defaultGo, views = pageViews("runs") } = {}) {
+/**
+ * The My runs page; refreshes every 30 seconds through the poller and never rejects. Returns a cleanup.
+ * `filter` is the full filter of the address (see ../runs-filter.js); without it the filter is built from `query`. The owner
+ * is never used. `go` writes a changed address. `alive` tells whether the page is still the one on screen: nothing is
+ * asked or drawn after it says no.
+ */
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs") } = {}) {
+  let rev = 0; // counts filter changes
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let data = null;
   let asking = false; // the Remove dialog remembers its button: the list is not drawn again until it is closed
   let live;
-  // Only the repository filter counts here: a user never filters by owner.
-  let filters = query.repo ? { repo: query.repo } : {};
+  // A user never filters by owner.
+  let filter = { ...emptyFilter(), ...(start ?? filterOf(query)), owner: "" };
   const alertEl = h("p", { class: "status bad", role: "alert" });
   const list = h("div");
   const sections = h("div", { class: "run-sections" });
@@ -65,32 +73,59 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     mount(s.el, make());
   };
   let closed = false;
+  const gone = () => closed || !alive();
   const refresh = () => live.refresh();
   mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
   const states = runsLiveStates({ body: list, label: "Loading your runs", rows: 4, shape: "cards", what: "Could not load your runs.", denied: "You are not allowed to see your runs.", retry: refresh, focus: "my-runs" });
 
+  const bar = runsBar({ admin: false, onChange: (next) => setFilters(next) });
+  // The address and the bar follow at once; a change of what the server is asked loads again, any other only redraws.
   const setFilters = (next) => {
-    filters = next;
-    go(withQuery("#/runs", filters));
-    render();
+    if (gone()) return;
+    const n = { ...emptyFilter(), ...next, owner: "" };
+    if (JSON.stringify(n) === JSON.stringify(filter)) return;
+    const reload = serverKey(n) !== serverKey(filter);
+    filter = n;
+    rev++; // part of the poller's data: an answer to a changed filter is always drawn, even when it equals the old one
+    go(filterHash(filter));
+    bar.sync(filter);
+    if (reload) {
+      gen++;
+      live.refresh();
+    } else render();
   };
-  const clear = () => setFilters({});
+  const clear = () => setFilters(emptyFilter());
   const render = () => {
-    if (closed || asking || !data) return;
+    if (gone() || asking || !data) return;
     const { runs, queue } = data;
-    const keep = (e) => !filters.repo || sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo);
-    // Saved views: a user filters by repository only, so no owner list is known.
-    const vp = views?.parts(filters, { redraw: () => { slots.empty.key = slots.queue.key = null; render(); } }) ?? {};
+    // The list describes the data on screen (also after a failed reload); the bar and the address show the current filter.
+    const f = { ...data.filter, needs: filter.needs, view: filter.view };
+    const browserRepo = Boolean(f.repo) && !data.canon.length; // the server does not know this repository: filter here
+    const now = Date.now();
+    const keep = (e) => {
+      if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
+      if (!e.run && !jobMatches(e.job, f, { now })) return false;
+      if (f.needs && sectionOf(e) !== "needs") return false;
+      return !f.view || sectionOf(e) === f.view;
+    };
+    // Saved views store the repository only.
+    const vf = f.repo ? { repo: f.repo } : {};
+    const vp = views?.parts(vf, { redraw: () => { slots.empty.key = slots.queue.key = null; render(); } }) ?? {};
     const secs = vp.stale ? [] : runSections(runs, queue.ok ? queue.value?.pending : [], keep);
     const found = secs.length > 0;
-    const note = filters.repo && Array.isArray(runs) && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    const note = Array.isArray(runs) && runs.length >= RUNS_CAP ? (browserRepo ? CAP_NOTE : isServerActive(f) ? MATCH_NOTE : null) : null;
     // The page is drawn once; each part below changes only when its own content does, so the list keeps its nodes and the focus.
-    if (sections.parentNode !== list) mount(list, states.alert, slots.filter.el, slots.queue.el, sections, slots.cap.el, slots.empty.el, states.note);
-    mount(slots.filter.el, filterBar(filters, { onRemove: () => setFilters({}), onClear: clear, row: vp.row, onSave: vp.onSave }));
+    if (sections.parentNode !== list) mount(list, states.alert, bar.el, slots.filter.el, slots.queue.el, sections, slots.cap.el, slots.empty.el, states.note);
+    const values = (key) => (data.values.ok && Array.isArray(data.values.value?.[key]) ? data.values.value[key] : []);
+    bar.setValues({ repos: values("repos"), flows: values("flows") });
+    bar.sync(filter);
+    bar.say(isActive(f) && !vp.stale ? countText(secs.reduce((n, sec) => n + sec.entries.length, 0)) : "");
+    // The bar holds the filters; this part keeps the saved views, "Save view" and the context offer.
+    mount(slots.filter.el, filterBar({}, { onClear: clear, row: vp.row, onSave: vp.onSave }));
     patch(slots.queue, JSON.stringify(queue.ok ? 1 : queue), () => (queue.ok ? null : partNote("the queue", queue, { onRetry: refresh, focus: "queue-retry", safe: "Your runs are shown. Queued runs may be missing." })));
     patch(slots.cap, JSON.stringify([found, note]), () => (found && note ? h("p", { class: "muted" }, note) : null));
-    patch(slots.empty, JSON.stringify([filters, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", filters, { onClear: clear, onDelete: vp.onDelete })
-      : found ? null : filters.repo ? filterEmpty("runs", filters, { note, onClear: clear }) : noRuns()));
+    patch(slots.empty, JSON.stringify([f, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", vf, { onClear: clear, onDelete: vp.onDelete })
+      : found ? null : isActive(f) ? noMatch({ onClear: clear, note }) : noRuns()));
     sections.hidden = !found;
     renderSections(sections, secs, { onRemove: readOnly ? null : remove });
   };
@@ -117,11 +152,30 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
 
   live = poller({
     load: async () => {
+      if (gone()) return undefined;
       const mine = ++gen;
-      const [runs, queue] = await Promise.all([a.runs(), part(a.queue())]).catch((e) => { if (mine === gen) throw e; return []; });
-      return mine === gen ? { runs, queue } : undefined;
+      const f = filter;
+      const at = rev;
+      const runsOf = (names) => askRuns((q) => (Object.keys(q).length ? a.runs(q) : a.runs()), f, names);
+      const values = part(Promise.resolve().then(() => a.runFilters())); // a missing function becomes a failed part
+      const queue = part(a.queue());
+      try {
+        let runs;
+        let canon = [];
+        if (f.repo) {
+          const v = await values;
+          if (mine !== gen || gone()) return undefined;
+          canon = v.ok ? canonRepos(f.repo, v.value?.repos) : [];
+          runs = await runsOf(canon);
+        } else runs = await runsOf([]); // a.runs is called at once, before any await
+        const [v, q] = await Promise.all([values, queue]);
+        return mine === gen && !gone() ? { filter: f, rev: at, runs, queue: q, values: v, canon } : undefined;
+      } catch (e) {
+        if (mine === gen && !gone()) throw e;
+        return undefined;
+      }
     },
-    draw: (next) => { data = next; keepScroll(list, render); },
+    draw: (next) => { if (gone()) return; data = next; keepScroll(list, render); },
     every: REFRESH_MS,
     onState: states.onState,
     hold: () => asking || dialogOpen(),
@@ -129,6 +183,8 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   await live.ready;
   return () => {
     closed = true;
+    gen++;
+    bar.stop();
     live.stop();
   };
 }

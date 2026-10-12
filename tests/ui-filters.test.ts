@@ -808,12 +808,18 @@ describe("My runs", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     data = { runs: [run("r1", "o/r"), run("r2", "x/y", 20)], pending: [job("j1", "o/r"), job("j2", "x/y")] };
-    a = { runs: vi.fn(async () => data.runs), queue: vi.fn(async () => ({ pending: data.pending, active: [] })), cancelRun: vi.fn() };
+    a = {
+      runs: vi.fn(async (q: any = {}) => data.runs.filter((r) => !q.repo || r.vars.github_repo === q.repo)),
+      runFilters: vi.fn(async () => ({ repos: ["o/r", "x/y"], flows: [] })),
+      queue: vi.fn(async () => ({ pending: data.pending, active: [] })),
+      cancelRun: vi.fn(),
+    };
   });
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
   });
+  const repoSelect = (m: FakeElement) => m.all("select").find((s) => s.attrs["data-focus"] === "runs-repo")!;
 
   it("shows only the matching runs and queued jobs for ?repo=", async () => {
     const { main, stop } = await open({ query: { repo: "O/R" }, go: vi.fn() });
@@ -821,7 +827,8 @@ describe("My runs", () => {
     expect(cards(main).join(" ")).toContain("flow-r1");
     expect(cards(main).join(" ")).toContain("queued j1");
     expect(cards(main).join(" ")).not.toContain("flow-r2");
-    expect(main.textContent).toContain("Repository: O/R");
+    expect(repoSelect(main).value).toBe("o/r");
+    expect(a.runs).toHaveBeenCalledWith({ repo: "o/r" });
     stop();
   });
 
@@ -833,35 +840,39 @@ describe("My runs", () => {
     stop();
   });
 
-  it("removes the chip, writes #/runs and shows everything, without a new request", async () => {
+  it("choosing All repositories writes #/runs and shows everything", async () => {
     const go = vi.fn();
     const { main, stop } = await open({ query: { repo: "o/r" }, go });
-    const calls = a.runs.mock.calls.length;
-    click(main.all("span").find((s) => s.attrs.class === "filter-chip")!.all("button")[0]!);
+    expect(cards(main)).toHaveLength(2);
+    repoSelect(main).fire("change", { target: { value: "" } });
+    await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenCalledWith("#/runs");
     expect(cards(main)).toHaveLength(4);
-    expect(a.runs.mock.calls.length).toBe(calls);
     stop();
   });
 
-  it("an empty match shows the filter and Clear filters, not the no-runs text", async () => {
+  it("an empty match shows the message and Clear filters, not the no-runs text", async () => {
     const { main, stop } = await open({ query: { repo: "no/pe" }, go: vi.fn() });
-    expect(main.textContent).toContain("No runs match Repository: no/pe.");
+    expect(main.textContent).toContain("No runs match your search and filters.");
     expect(main.textContent).not.toContain(mine.NO_RUNS);
     click(button(main, "Clear filters"));
+    await vi.advanceTimersByTimeAsync(0);
     expect(cards(main)).toHaveLength(4);
     stop();
   });
 
-  it("notes the cap with a repository filter, whether or not anything matches", async () => {
+  it("notes the cap: for the browser's own filter with an unknown repository, and for 200 server matches", async () => {
     data.runs = Array.from({ length: 200 }, (_, i) => run(`x${i}`, i === 0 ? "o/r" : "x/y"));
-    for (const repo of ["o/r", "no/pe"]) {
-      const { main, stop } = await open({ query: { repo }, go: vi.fn() });
-      expect(main.textContent, repo).toContain(runs.CAP_NOTE);
-      stop();
-    }
+    a.runs = vi.fn(async () => data.runs);
+    const unknown = await open({ query: { repo: "no/pe" }, go: vi.fn() });
+    expect(unknown.main.textContent).toContain(runs.CAP_NOTE);
+    unknown.stop();
+    const known = await open({ query: { repo: "o/r" }, go: vi.fn() });
+    expect(known.main.textContent).toContain(runs.MATCH_NOTE);
+    known.stop();
     const { main, stop } = await open({ go: vi.fn() });
     expect(main.textContent).not.toContain(runs.CAP_NOTE);
+    expect(main.textContent).not.toContain(runs.MATCH_NOTE);
     stop();
   });
 
@@ -871,6 +882,169 @@ describe("My runs", () => {
     expect(a.runs.mock.calls.length).toBeGreaterThan(1);
     expect(cards(main)).toHaveLength(2);
     stop();
+  });
+
+  describe("search and filters", () => {
+    const sel = (m: FakeElement, name: string) => m.all("select").find((s) => s.attrs["data-focus"] === name);
+    const search = (m: FakeElement) => m.all("input").find((i) => i.attrs["data-focus"] === "runs-search")!;
+    const pickIn = (m: FakeElement, name: string, value: string) => sel(m, name)!.fire("change", { target: { value } });
+    const say = (m: FakeElement) => m.all("div").find((d) => d.attrs.role === "status" && d.attrs.class === "sr-only" && d.parent?.attrs.class === "runs-bar")!;
+
+    it("shows the bar without the Owner select, ignores owner, and asks without an argument when nothing is set", async () => {
+      const go = vi.fn();
+      const { main, stop } = await open({ go });
+      expect(search(main)).toBeDefined();
+      for (const n of ["runs-repo", "runs-flow", "runs-status", "runs-time"]) expect(sel(main, n), n).toBeDefined();
+      expect(sel(main, "owner-filter")).toBeUndefined();
+      expect(a.runs).toHaveBeenCalledWith();
+      expect(go).not.toHaveBeenCalled();
+      stop();
+      const filtered = await open({ filter: rf.parseFilter("#/runs?owner=u9&status=failed"), go });
+      expect(a.runs).toHaveBeenLastCalledWith({ status: "failed" });
+      expect(a.runs.mock.calls.every((c: any[]) => !c[0] || !("owner" in c[0]))).toBe(true);
+      filtered.stop();
+    });
+
+    it("writes the address and asks the server for a status change; needs only narrows the rows", async () => {
+      const go = vi.fn();
+      const { main, stop } = await open({ go });
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(go).toHaveBeenLastCalledWith("#/runs?status=failed");
+      expect(a.runs).toHaveBeenLastCalledWith({ status: "failed" });
+      const calls = a.runs.mock.calls.length;
+      main.all("input").find((i) => i.attrs["data-focus"] === "runs-needs")!.fire("change", { target: { checked: true } });
+      expect(go).toHaveBeenLastCalledWith("#/runs?status=failed&needs=1");
+      expect(a.runs.mock.calls.length).toBe(calls);
+      stop();
+    });
+
+    it("types once, 300 ms after the last key, and keeps the search box over a refresh", async () => {
+      const { main, stop } = await open({ go: vi.fn() });
+      const box = search(main);
+      const calls = a.runs.mock.calls.length;
+      box.value = "boom";
+      box.fire("input", { target: box });
+      await vi.advanceTimersByTimeAsync(299);
+      expect(a.runs.mock.calls.length).toBe(calls);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(a.runs).toHaveBeenLastCalledWith({ q: "boom" });
+      expect(a.runs.mock.calls.length).toBe(calls + 1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(search(main)).toBe(box);
+      expect(box.value).toBe("boom");
+      stop();
+    });
+
+    it("always redraws on a filter change, also for an equal answer: count and empty state follow", async () => {
+      data.runs = [];
+      data.pending = [];
+      const { main, stop } = await open({ go: vi.fn() });
+      expect(main.textContent).toContain(mine.NO_RUNS);
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(main.textContent).toContain("No runs match your search and filters.");
+      expect(say(main).textContent).toBe("0 runs match.");
+      stop();
+    });
+
+    it("keeps the new filter and shows Could not refresh with Retry when the reload fails", async () => {
+      const go = vi.fn();
+      const { main, stop } = await open({ go });
+      a.runs.mockRejectedValueOnce(new Error("boom"));
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(go).toHaveBeenCalledTimes(1);
+      expect(sel(main, "runs-status")!.value).toBe("failed");
+      expect(cards(main)).toHaveLength(4);
+      expect(main.textContent).toContain("Could not refresh");
+      click(button(main, "Retry"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.runs).toHaveBeenLastCalledWith({ status: "failed" });
+      expect(go).toHaveBeenCalledTimes(1);
+      stop();
+    });
+
+    it("draws the list with empty menus when runFilters is missing or fails", async () => {
+      delete a.runFilters;
+      const one = await open({ go: vi.fn() });
+      expect(cards(one.main)).toHaveLength(4);
+      expect(sel(one.main, "runs-repo")!.all("option")).toHaveLength(1);
+      one.stop();
+      a.runFilters = vi.fn(async () => { throw new Error("no"); });
+      const two = await open({ go: vi.fn() });
+      expect(cards(two.main)).toHaveLength(4);
+      expect(sel(two.main, "runs-flow")!.all("option")).toHaveLength(1);
+      two.stop();
+    });
+
+    it("drops the answer of a request overtaken by a filter change, then asks again with the latest filter", async () => {
+      const { main, stop } = await open({ go: vi.fn() });
+      let first!: (r: any[]) => void;
+      a.runs.mockImplementationOnce(() => new Promise((r) => { first = r; }));
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      pickIn(main, "runs-flow", "flow-r1");
+      first([run("r2", "x/y")]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.runs).toHaveBeenLastCalledWith({ flow: "flow-r1", status: "failed" });
+      expect(cards(main).join(" ")).not.toContain("flow-r2 ");
+      stop();
+    });
+
+    it("clearing the filters before a pending reload ends shows everything again", async () => {
+      const { main, stop } = await open({ go: vi.fn() });
+      main.all("input").find((i) => i.attrs["data-focus"] === "runs-needs")!.fire("change", { target: { checked: true } });
+      expect(cards(main)).toHaveLength(0);
+      let first!: (r: any[]) => void;
+      a.runs.mockImplementationOnce(() => new Promise((r) => { first = r; }));
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      click(button(main, "Clear filters"));
+      first([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.runs).toHaveBeenLastCalledWith();
+      expect(cards(main)).toHaveLength(4);
+      stop();
+    });
+
+    it("does nothing after the cleanup, also with text typed less than 300 ms before", async () => {
+      const go = vi.fn();
+      const { main, stop } = await open({ go });
+      const box = search(main);
+      box.value = "late";
+      box.fire("input", { target: box });
+      stop();
+      const calls = a.runs.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(a.runs.mock.calls.length).toBe(calls);
+      expect(go).not.toHaveBeenCalled();
+    });
+
+    it("asks nothing when the page was left during the repository lookup", async () => {
+      let lookup!: (v: any) => void;
+      a.runFilters = vi.fn(() => new Promise((r) => { lookup = r; }));
+      let live = true;
+      const main = document.createElement("div") as unknown as FakeElement;
+      const opened = mine.renderMyRuns(main, { a, query: { repo: "o/r" }, go: vi.fn(), alive: () => live });
+      await vi.advanceTimersByTimeAsync(0);
+      live = false;
+      lookup({ repos: ["o/r"], flows: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      const stop = (await opened) as () => void;
+      expect(a.runs).not.toHaveBeenCalled();
+      stop();
+    });
+
+    it("shows the bar and filters in the read-only preview", async () => {
+      const { main, stop } = await open({ readOnly: true, go: vi.fn() });
+      expect(search(main)).toBeDefined();
+      pickIn(main, "runs-status", "failed");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.runs).toHaveBeenLastCalledWith({ status: "failed" });
+      expect(main.all("button").filter((b) => b.textContent === "Remove")).toHaveLength(0);
+      stop();
+    });
   });
 });
 
