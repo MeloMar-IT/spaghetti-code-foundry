@@ -804,6 +804,70 @@ A watcher's own state on the Watchers page has a **?** too:
 Every record from `GET /api/next` has these as `status` and `help`. Text the Foundry quotes
 (an error message, a step's approval message, a label or code-area name) is shown as it is.
 
+### Evidence of a run
+
+Every run keeps a record of what happened to it in `evidence.jsonl` in its run folder: one line per
+event, in the order they happened. Lines are only added, never changed. Every line carries the
+hash of the line before it and its own hash, so a line that was changed, added, removed or moved
+can be found.
+
+- **Run events:** queued, created, started, stopped (also: waiting for approval), resumed,
+  cancelled, failed, completed.
+- **Step events:** started, given to a model (and the model before it, after a fallback), tried
+  again (after an outage or a usage limit), a tool that was refused, approved or rejected, failed,
+  completed.
+- **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
+  the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
+  of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
+  tokens or keys. Logs are named, not copied.
+- A shell step whose id has the word `test` or `tests` (for example `run_tests`) is recorded as a
+  test run, passed or failed.
+- **It never stops a run.** If the file cannot be written, the live log says so once
+  (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
+  file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
+  gets no manifest.
+- **The manifest.** When a run ends (succeeded, failed or cancelled), `evidence.json` is written in
+  the run folder: the status and times, the flow and the hash of its definition, the number of
+  events and the hash of the last one, the base and final commit, the models, approvals and test
+  results, every log and transcript with its hash, and the pull request when the run was started
+  for one. For a run that changed code, `evidence.diff` holds the diff between the two commits
+  (stored secrets hidden) and the manifest has its hash. The manifest holds no task, output, note
+  or key.
+- **If the manifest cannot be written,** the live log says
+  `! evidence: no manifest was written (…); this run cannot be verified`, and there is no
+  `evidence.json`. The run and its result are not changed.
+- **Resume:** a resumed run adds to the same file. Its manifest and diff are removed while it goes
+  on, and written again when it ends. Runs made before this have no file and work as before; when
+  such a run is resumed it gets events from then on, but no manifest.
+- A step of a user's run cannot write these files.
+
+**Check the evidence of a run.** `scf evidence verify <run-id>` reads the run folder and says
+whether the evidence is still what was written. It needs no server and no network.
+
+```
+$ scf evidence verify 20260131-120000-ab12
+✔ verified · run 20260131-120000-ab12
+  Verified: 8 events in an unbroken chain, 3 files unchanged.
+  events:    8, last hash 5d0c…
+  manifest:  sha256 91f2… (succeeded, written 2026-01-31T12:00:02.600Z)
+```
+
+- It checks, in this order: the manifest; the event file; every line of the chain; that the
+  events end where the manifest says; that the manifest says what the events say; the flow
+  definition in `run.json`; and every log, transcript and diff the manifest names.
+- **Not verified** names the first thing that is wrong, for example
+  `Not verified: evidence.jsonl, line 5: was changed (its hash is not the hash of its content).`
+  or `Not verified: logs/002-run_tests.log was changed.`
+- **A file that is gone:** a log or transcript is needed, so the run is not verified. The diff is
+  optional: the run still verifies, and the line says
+  `1 optional file is no longer there (evidence.diff); that is allowed.` A file that was changed
+  is never allowed.
+- **Nothing to verify:** a run made before evidence existed (`· no evidence`), or a run that has
+  not ended or could not be finalized (`■ not finalized`).
+- **Exit code:** 0 verified, 1 not verified, 2 nothing to verify. `--json` prints the whole result
+  (status, the first failure with its code, every check and every file) for a script.
+  `--runs-dir <dir>` reads another runs folder.
+
 ---
 
 ## 4. Write your own flows
@@ -1985,7 +2049,7 @@ not followed; the command says where the server points to and stops.
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); the usage (admin) |
+| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); what a page context is worth (`context`); the usage (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2527,7 +2591,7 @@ show as "n runs ahead of you", without ids.
   - **After the upgrade,** a flow that relied on an inherited variable such as `JAVA_HOME` or `NVM_DIR` in a user's run needs that name added.
   - **Hidden in output.** The values of the provider key variables named in the config (`api_key_env`) are hidden in logs, live output and API answers. A value shorter than 8 characters is not hidden; the server logs a line when it finds one.
   - **The limit.** The agent's own key is still visible to the agent's shell tool unless the agent program hides it.
-- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log` or `logs/`), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
+- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log`, `logs/` or the evidence files), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
   - **Settings.** Tick **Allow user runs without the OS sandbox** (`sandbox.user_runs: off`) to run user runs without it. If no sandbox works (not macOS, or `sandbox-exec` fails) and the box is not ticked, a user's run does not start: "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings." The server variable `SCF_USER_SANDBOX=off` (or `FACTORY_USER_SANDBOX=off`) does the same.
   - **Extra read paths.** `sandbox.user_read` in `config.yaml` lists up to 50 paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
 - **The limit.** Agent steps are **not in an operating-system sandbox** yet, and neither are runs with the sandbox switched off. For them, this is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. With `isolate_agents` on, Codex agents skip the account's `~/.codex/config.toml` too (see "Codex and your personal setup"); with it off, or in a step the OS sandbox holds, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
@@ -2904,6 +2968,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
@@ -3670,6 +3735,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
+| `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
@@ -4442,6 +4508,76 @@ steps. This chapter holds its rules. They are fixed first, and every later part 
 **It reads and explains. It does not act.** Nothing you ask changes the Foundry, a repository or
 GitHub. Today Ask SCF has no action at all on its list, so it cannot change anything.
 
+### Where you ask: the Ask SCF drawer
+
+When an administrator has switched Ask SCF on, the top bar of every page has an **Ask SCF** button, in
+the admin display and in the user display. While Ask SCF is off (the default), the button is not there.
+
+- **Open it** with the button. A panel opens at the right side, over the page. The page behind it is not
+  drawn again: what you typed there, and what was open, stays as it is.
+- **Close it** with Escape, the ✕ or a click beside the panel. The focus goes back to where it was. A
+  question you had started to type is still there when you open the panel again.
+- **Opening sends nothing.** Nothing goes to the AI model until you press **Send**.
+- **Suggested questions** fit the page you are on. A suggestion only fills the question box, so you can
+  change it before you send it.
+- **What is sent with your question** is written under the question box before you send: the address of
+  the page you are on, and nothing else of the page. Untick **Send the page I am on with my question** to
+  send the question alone.
+- **Send** with the button, or with Ctrl+Enter (Cmd+Enter on a Mac). Enter alone starts a new line.
+- The answer appears under your question. A line in the panel says that Ask SCF is working and then that
+  the answer is there; a screen reader reads it.
+
+**Following an answer.** Your question and the reply stand under each other. While the reply is
+written, the panel says that Ask SCF is working. After 20 seconds it says once that this takes longer
+than usual. Under the conversation are its controls; each one says what it does when you point at it,
+and a screen reader reads that too.
+
+| Control | When | What it does |
+|---|---|---|
+| **Stop** | while a reply is written | Stops the answer. Your question stays. |
+| **Try again** | after a stop, or after a failure that trying again can solve | Asks the same question again, in the same two messages. The reply then says which try it is. It counts as one of your questions of today. |
+| **Archive** | when no reply is being written | Moves the conversation out of your list. |
+| **Take back from the archive** | in an archived conversation | Puts it back in your list. |
+| **Delete** | always | Asks first. Then the questions and answers are removed at once and cannot be brought back. A reply that is still being written is stopped. |
+
+When a limit is reached (your questions of today, the budget, the limit of the AI service), the panel
+shows the sentence for it and offers no **Try again**: trying again now cannot help. While a reply is
+written, **Send** sends nothing and says why, so one question never becomes two.
+
+**New conversation** (at the top of the panel) starts an empty one; the one you were in stays in your
+list. **History** shows your conversations, last changed first, each with its state (Answering, Open,
+No answer, Stopped, Closed). **Show archived** shows the archived ones. Choose one to open it. An
+archived conversation can be read; a new question starts a new conversation.
+
+**After you load the page again**, open the panel: the conversation you were in is shown again, and a
+reply that was being written is followed again. Nothing is asked a second time. The browser tab keeps
+only the id of that conversation, never a question or an answer.
+
+**Reading an answer.** An answer is shown in parts, in this order:
+
+1. **The short answer**, and under it the longer explanation when there is one.
+2. **How sure it is.** One line with a sign and a name, so the states look different:
+
+   | Line | When |
+   |---|---|
+   | ✓ Checked against its sources | The answer rests on sources of the kind the question needs. |
+   | ≈ Not fully confirmed | Ask SCF has sources but they do not fully confirm the answer. |
+   | ? Not checked: no source | No source of the kind the question needs. A question about your work needs the current state, not only the documentation. Treat the answer as a guess. |
+   | ! The sources do not agree | Two sources say different things about the same place. Look yourself before you act. |
+   | – Not answered | You asked for something Ask SCF does not do. It says what you can do instead. |
+
+3. **What it rests on.** For a statement about your work, the lines of the current state that were read, each with the time it was seen.
+4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A card never does anything. A suggested change is only a suggestion: Ask SCF does not do it, and there is no button for it.
+5. **Sources and assumptions**, to unfold: every source with its kind (documentation or current state) and place, and what the answer takes for granted.
+
+Text of an answer is always shown as text. An address in it is not a link. A link appears only for a
+page of the Foundry that your account has; any other address stays text and is marked as such.
+Following a link closes the panel and opens the page.
+
+The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
+takes the whole width. It opens without any movement. A preview of another person's display
+("View as user") has no Ask SCF button.
+
 ### What you can ask
 
 | You ask | What it is |
@@ -4514,7 +4650,8 @@ For an administrator some of these sentences differ: they point to Home, Problem
 ### Conversations
 
 A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
-pages for it come later; the server and the command line (`scf ask`) have it now.
+Ask SCF drawer shows the conversation you are in and, under **History**, your earlier ones. The
+command line (`scf ask`) has them too.
 
 **What is kept.** Each conversation has a title (the first line of your first question), a state,
 and its messages: your questions and the replies. A question keeps the page you asked it on and, at
@@ -4570,6 +4707,42 @@ and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/
 A turn sees your question, the page you asked it on, and the last three answered questions of the
 same conversation. It sees nothing of other conversations or other accounts.
 
+### The page context
+
+So that you can ask "what is happening here?" without copying an id, a question can carry a
+**page context**: a small envelope that says where you are. It names things; it never holds them.
+
+| Part | What it is | Limit |
+|---|---|---|
+| `page` | the address of the page, such as `#/runs/<id>` | always kept |
+| `kind` and `id`, `entities` | the things selected on the page: a `run`, `issue`, `repository`, `queue`, `refinement` or `problem`, each with its id | 5 things |
+| `filters` | the filters the page shows, by name | 8 filters, 100 characters each |
+| `selection` | text you marked on the page, as plain text | 2,000 characters |
+
+The whole envelope is at most 4,000 characters. **What is too much is cut in this order:** the
+page is always kept; then the things, in the order sent; then the filters; the marked text gives
+way first and is cut at the end. The stored envelope names the parts that lost something
+(`truncated`). A page never sends its whole content.
+
+**What is refused** (400, and the question is not taken): anything else in the envelope, such as an
+owner, a role, a permission, a token or a copy of a record; markup (`<…>`) anywhere; a file path
+as an id or a filter value; a filter named after an owner, a role, a permission or a secret; and
+an address that is not `#/…`.
+
+**The server looks everything up again.** The envelope is never taken as true. When the turn
+runs, the server finds out which page the address is for your role, and looks up every named
+thing with the rule of the API call that reads it: a run only when it is yours (or you are an
+administrator). A thing that does not exist and a thing of another account give the same result:
+it is left out, and only counted. An address that is no page of your role (an old link, a page of
+the administrators) counts as no page. The model is told only what was found; the marked text is
+handed over as copied text (see "Secrets and copied text"). In this version only runs are looked
+up; other kinds are counted as not found.
+
+**Look before you send.** `POST /api/help/context` with the envelope as its body
+(`scf ask context '#/runs/<id>' --selection "…"`) answers what would be taken: the envelope as it
+would be kept, its size and the limits, the page, and the things found for your account. Nothing
+is stored and no model is called. Leave the context out of a question to ask without it.
+
 **One at a time.** Each account has one turn at a time. Turns of different people wait in one
 line, first come first served, so nobody can fill it alone.
 
@@ -4595,6 +4768,41 @@ you never read the text of the AI service.
 | You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
+| The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
+
+### Secrets and copied text
+
+**Secrets are taken out.** Before a question is stored, before anything is sent to the AI model,
+and before a reply is stored, the server removes what looks like a secret and puts a mark in its
+place. The mark says what kind of thing was removed, never the value:
+
+| Kind | What is removed | What you read instead |
+|---|---|---|
+| A stored credential | any token, password or key that is stored in this Foundry, by its value | `[removed: a credential stored in the Foundry]` |
+| A private key | a block from `-----BEGIN … PRIVATE KEY-----` to its end | `[removed: a private key]` |
+| An authorization header | the value of `Authorization: …`, and `Bearer …` or `Basic …` with a long value | `[removed: an authorization header]` |
+| A cookie | the value of `Cookie: …` and `Set-Cookie: …`, up to the end of the line | `[removed: a cookie]` |
+| A sign-in in an address | the name and password in `https://name:password@host/…` | `[removed: a sign-in in an address]` |
+| A token | the common shapes of tokens: GitHub, GitLab, npm, AI services, Slack, AWS and Google keys, and signed web tokens | `[removed: a token]` |
+| A secret value | the value after a name that holds `password`, `secret`, `token`, `api_key`, `access_key`, `private_key` or `credential`, as in `DB_PASSWORD=…` | `[removed: a secret value]` |
+| A text this Foundry keeps private | what matches a pattern of `help.sensitive_patterns` | `[removed: a text this Foundry keeps private]` |
+
+A message from which something was removed also carries the list of kinds (`redacted` in the
+answer of the API). The check is wide on purpose: now and then it removes a harmless word after
+`token:`. A page context that holds a secret is refused (400): ask again without it.
+
+**Copied text is data.** The text of a document, a record or a log that the server hands to the
+model as a source stands in its own part of the request, apart from the rules and apart from your
+question. A source whose text reads like an order to the model (for example a made-up "system"
+line, or a sentence that tells it to drop its rules) is left out completely: the model does not
+read it and a reply cannot name it as a source. Whatever a model answers, the server keeps only
+what the contract allows, so a text in a document cannot make an action, a link to another site
+or a source that the server did not offer.
+
+**When a check cannot be done, nothing goes out.** If the stored credentials cannot be read or a
+pattern of the settings is broken, a new question is not kept, a waiting turn ends with "Ask SCF
+is not set up to answer here." without a call to the model, and a reply that cannot be checked is
+not stored.
 
 ### Ask SCF for administrators
 
@@ -4610,7 +4818,13 @@ help:
   turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
   max_cost_usd_per_turn: 0.1
   daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+  sensitive_patterns:           # optional: texts to keep out of Ask SCF, as regular expressions
+    - 'CUSTOMER-\d{5}'          # at most 20, each at most 200 characters; upper and lower case are the same
 ```
+
+`sensitive_patterns` adds to what Ask SCF removes anyway (see "Secrets and copied text" above). A
+pattern that is not a regular expression, or that matches the empty text, is refused when the
+settings are read.
 
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
@@ -4631,7 +4845,9 @@ get 403 for it, and their own conversations never show a model, a provider, a co
 count; the name of the configured model and provider is also taken out of the text of their
 replies. Usage is kept for 90 days. An administrator still cannot read another account's
 conversations. The server log gets one line in fixed words for a failed turn, for example
-`help: a turn failed (provider)`, never the question or the answer.
+`help: a turn failed (provider)`, never the question or the answer. When secrets were removed it
+says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
+value.
 
 ### What you never see as a user
 

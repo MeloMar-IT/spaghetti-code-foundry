@@ -82,6 +82,7 @@ describe("user router", () => {
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "/palette.js": { initPalette: vi.fn(() => () => {}) },
+    "/ask.js": { initAsk: vi.fn(async () => null) },
     "/context.js": contextStub(),
     "/home.js": never,
     "/states.js": real.states,
@@ -144,6 +145,16 @@ describe("user router", () => {
     expect(stop).not.toHaveBeenCalled();
     onEnded();
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts Ask SCF for a user, and not in a preview or when the view cannot be shown", async () => {
+    const initAsk = vi.fn(async () => null);
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk } }));
+    expect(initAsk.mock.calls).toEqual([["user"]]);
+    initAsk.mockClear();
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
+    expect(initAsk).not.toHaveBeenCalled();
   });
 
   it("starts no palette when the view cannot be shown", async () => {
@@ -285,6 +296,7 @@ describe("admin router", () => {
       "./viewport.js": real.viewport,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./palette.js": { initPalette: vi.fn() },
+      "./ask.js": { initAsk: vi.fn(async () => null) },
       "./context.js": contextStub(),
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
@@ -360,6 +372,13 @@ describe("admin router", () => {
       expect(mocks[fn].mock.calls[0]!.slice(1), hash).toEqual(expected);
       for (const [name, other] of Object.entries(mocks)) if (name !== fn) expect(other, hash).not.toHaveBeenCalled();
     }
+  });
+
+  it("starts Ask SCF for an admin", async () => {
+    setup("#/dashboard");
+    const initAsk = vi.fn(async () => null);
+    await loadRouter("app.js", stub({ "./ask.js": { initAsk }, "./dashboard.js": { renderDashboard: vi.fn() } }));
+    expect(initAsk.mock.calls).toEqual([["admin"]]);
   });
 
   it("starts the palette for an admin", async () => {
@@ -477,6 +496,7 @@ describe("support levels", () => {
     "./viewport.js": real.viewport,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./ask.js": { initAsk: vi.fn(async () => null) },
     "./context.js": contextStub(),
     "./states.js": real.states,
     "./icons.js": { flowNameMark: () => "" },

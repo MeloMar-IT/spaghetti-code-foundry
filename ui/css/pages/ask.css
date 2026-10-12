@@ -1,0 +1,53 @@
+/* pages/ask.css — Ask SCF, the help drawer of both displays (ui/ask.js, ui/ask-view.js).
+   Belongs here: the drawer, its backdrop, the conversation in it and the question form. Class names start with ask-.
+   Does not belong here: rules for a page, shared component rules, and motion (the drawer opens without any). */
+.ask-scrim { position: fixed; inset: 0; background: var(--color-overlay); z-index: var(--layer-menu); }
+.ask-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); z-index: calc(var(--layer-menu) + 1); display: flex; flex-direction: column; gap: var(--space-lg); padding: var(--space-xl); background: var(--panel); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain; }
+.ask-drawer > * { flex: none; }
+.ask-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-md); }
+.ask-head h2 { flex: 1 1 auto; min-width: 0; }
+.ask-talk { display: flex; flex-direction: column; gap: var(--space-lg); flex: 1 0 auto; }
+.ask-thread { display: grid; gap: var(--space-md); }
+.ask-entry { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-md) var(--space-lg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-entry.ask-question { background: var(--panel-2); }
+.ask-entry.ask-failed, .ask-entry.ask-limit { border-color: var(--fail); }
+.ask-entry.ask-answer { white-space: normal; display: grid; gap: var(--space-md); }
+.ask-summary { margin: 0; font-weight: 600; white-space: pre-wrap; }
+.ask-explain { margin: 0; white-space: pre-wrap; }
+.ask-trust { margin: 0; padding: var(--space-sm) var(--space-md); border-left: 3px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); font-size: var(--text-small); }
+.ask-trust-confirmed { border-left-color: var(--color-success); }
+.ask-trust-low { border-left-color: var(--color-warning); border-left-style: dashed; }
+.ask-trust-missing { border-left-color: var(--color-neutral); border-left-style: dotted; }
+.ask-trust-conflict { border-left-color: var(--color-danger); border-left-style: double; border-left-width: 6px; }
+.ask-trust-limit { border-left-color: var(--color-info); }
+.ask-basis { margin: 0; padding-left: var(--space-2xl); font-size: var(--text-small); }
+.ask-cards { display: grid; gap: var(--space-md); }
+.ask-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-md); display: grid; gap: var(--space-xs); }
+.ask-card-action { border-style: dashed; border-color: var(--color-warning); }
+.ask-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); }
+.ask-card-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-card-note { margin: 0; font-size: var(--text-meta); }
+.ask-sources { font-size: var(--text-small); }
+.ask-sources ul { margin: 0; padding-left: var(--space-2xl); }
+.ask-source-kind { font-weight: 600; }
+.ask-note { display: block; margin-top: var(--space-xs); font-size: var(--text-meta); color: var(--muted); }
+.ask-actions { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.ask-actions:empty { display: none; }
+.ask-who { display: block; font-size: var(--text-meta); font-weight: 600; color: var(--muted); }
+.ask-suggest-box { display: grid; gap: var(--space-md); }
+.ask-suggest { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.ask-suggest button { text-align: left; white-space: normal; }
+.ask-form { display: grid; gap: var(--space-md); margin-top: auto; }
+.ask-form textarea { font-family: inherit; font-size: var(--text-body); }
+.ask-history { display: grid; gap: var(--space-md); }
+.ask-head h3 { flex: 1 1 auto; min-width: 0; }
+.ask-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
+.ask-row { display: grid; gap: var(--space-2xs); width: 100%; text-align: left; justify-items: start; }
+.ask-row[aria-current] { border-color: var(--accent); }
+.ask-row-title { overflow-wrap: anywhere; white-space: normal; }
+.ask-row-meta { font-size: var(--text-meta); }
+.ask-status:empty, .ask-error:empty { display: none; }
+.ask-error { color: var(--fail); }
+@media (max-width: 767px) {
+  .ask-drawer { width: 100vw; border-left: none; padding: var(--space-lg); }
+}

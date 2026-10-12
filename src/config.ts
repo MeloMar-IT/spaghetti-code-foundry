@@ -5,6 +5,7 @@ import { parse, stringify } from "yaml";
 import { z } from "zod";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
 import { REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
@@ -343,6 +344,11 @@ export const ConfigSchema = z
         max_cost_usd_per_turn: z.number().positive().max(100).default(0.1),
         /** The most all help turns of a day may cost together; without it only the limits above apply. */
         daily_budget_usd: z.number().positive().optional(),
+        /**
+         * Regular expressions (no flags; upper and lower case are the same) for texts this install keeps private, besides the stored
+         * credentials and the common shapes of tokens and keys. What matches is taken out of every text before Ask SCF stores it or sends it to a model.
+         */
+        sensitive_patterns: z.array(z.string().min(1).max(PATTERN_MAX).refine(usablePattern, { message: "not a regular expression, or one that matches the empty text" })).max(PATTERN_LIMIT).optional(),
       })
       .strict()
       .prefault({}),

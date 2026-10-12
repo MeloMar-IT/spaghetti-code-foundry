@@ -287,6 +287,7 @@ describe("context bundle: budget and omissions", () => {
   });
 
   it("records a source that was left out with its reason, once, and never together with the source itself", () => {
+    expect(CONTEXT_OMISSION_REASONS).toEqual(["missing", "stale", "ambiguous", "over-budget", "classification", "generated", "unsupported"]);
     for (const reason of CONTEXT_OMISSION_REASONS) {
       expect(parseContextBundle(bundle({ omitted: [{ kind: "issue-comment", uri: "issue:12/comment/99", selection: { reason: "task" }, reason }] })).omitted[0]!.reason).toBe(reason);
     }
