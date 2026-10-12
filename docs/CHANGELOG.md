@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- A command line for the running Foundry: every call of the server's API is a command, `scf <area> <action> … [--json]`. 159 commands in 18 areas (`runs`, `turn`, `board`, `find`, `repos`, `refine`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server`).
+  - **Sign-in.** `scf login`, `scf logout`, `scf whoami`. The same accounts and sessions as the web interface; no server change. The session is kept in `cli-session.json` in the data folder (mode 600); the password is asked without echo and never stored.
+  - **Every command.** `--json`, `--data '{…}'` / `--data @file.json`, `--server`, `--as` (reading as a user, for an admin with a running view), `--help`. `scf <area>` lists the commands of an area. Exit code 4: not signed in or not allowed.
+  - **Safety.** Commands that delete or replace ask for `yes` (`--yes` skips; without a terminal they stop). Secrets are asked for or read from standard input, never taken as an option, and refused inline in `--data`. `scf settings set` insists on `--data` because the server replaces the whole file.
+  - **Any call.** `scf api routes [word]` lists all calls with who may make them; `scf api <METHOD> <path>` makes one.
+  - **Kept complete by a test.** A command for an unknown route fails, and so does a route with neither a command nor a reason in `API_ONLY` (today one: the live event stream of a run). The file commands (`scf run`, `scf user`, `scf monitor on|off|status`, …) are unchanged.
+  - New `src/remote/` (runner, table type, output, session, five area files) and `tests/remote*.test.ts` with the helper `tests/helpers/remote.ts`. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - Fix: the helper processes and the analyst no longer run as macOS background processes. On an overloaded machine those got almost no processor time, so the load governor did not run exactly when it was needed. Install them again (`scf governor install` and so on) to get the new setting.
 - Five helper processes, each with `run|report|install|uninstall|status` and a login agent of its own (macOS): `scf governor`, `scf flaky`, `scf limits`, `scf blockage`, `scf digest`. They read the data folder and write only in their own folder there.
   - **`governor`** (every minute). Lowers the runs at once by one per check while the load is above 2.5 per core or the memory is under pressure (not below half the configured number), raises it after five calm checks, and allows one test run at a time above 4 per core. Changes are logged in `governor/changes.log`; `scf governor reset` takes the limits away.

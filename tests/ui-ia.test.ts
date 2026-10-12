@@ -252,6 +252,8 @@ describe("the data", () => {
     const found = new Set<string>();
     for (const f of files("src")) for (const m of read(f).matchAll(/#\/[a-z][a-z-]*/g)) found.add(m[0]);
     expect(found.size).toBeGreaterThan(0);
+    // the set-password link is read by the sign-in screen (ui/auth.js) before any page exists; the command line prints it for an admin to pass on
+    found.delete("#/set-password");
     for (const h of found) {
       const to = ia.resolve("admin", h);
       expect([null, "alias"], h).toContain(to.reason);

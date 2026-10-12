@@ -1919,6 +1919,67 @@ whose origin is not given, are lowered by a tenth. They are only used to hold ba
 smaller model that scores far lower; your own runs always decide. When the search fails, the
 earlier figures are kept. On Linux, run `scf analyst run` from cron.
 
+#### The command line for a running Foundry
+
+Everything the web interface does goes through the server's API, and every call of that API is
+also a command. These commands talk to the running Foundry, with your account and its rights. (The
+older commands such as `scf run`, `scf resume` and `scf user` work on the files of the data folder
+and need no server; they are unchanged.)
+
+```bash
+scf login                 # asks for your e-mail address and password; --server names another Foundry
+scf whoami                # who is signed in, and where
+scf runs list --status failed
+scf turn list             # what waits for you
+scf repos                 # an area without an action lists its commands
+scf runs list --help      # the options of one command
+scf logout
+```
+
+**Signing in.** `scf login` uses the same accounts as the web interface. The password is typed
+without echo, sent to the server and not kept. What is kept is the session, in
+`cli-session.json` in the data folder, readable by your user only. It ends after 7 days, at
+`scf logout`, or when the account's password changes. A script can pipe the password in as one
+line. A server other than `http://localhost:4777` must be reached over HTTPS, as in a browser.
+
+**The areas.**
+
+| Area | What it covers |
+|---|---|
+| `runs` | List, show, start, answer, approve, reject, resume, cancel and archive runs; a step's log and the diff |
+| `turn` | What waits for you, and answering it: answers, defaults, approve, reject, retry |
+| `board`, `find` | The board, the next steps, what changed since a time; search |
+| `repos` | Your repositories: add, sign-in method, test the connection, remove |
+| `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
+| `flows`, `blocks` | List, show, check, save and remove flows and blocks |
+| `settings`, `providers` | The settings file; the AI tools and model providers |
+| `monitor` | The self-monitor: findings, mutes, bug stories |
+| `users`, `admin`, `audit` | Accounts and their limits, all repositories and their watchers, the audit log (admin) |
+| `account`, `secrets` | Your own password; your stored secrets |
+| `watchers`, `server` | Watchers; server information, queue, statistics, clean-up |
+
+**What every command has.**
+
+- `--json` prints the server's answer as it is, for scripts. Without it you get a table or a few lines.
+- `--data '{…}'` or `--data @file.json` adds fields to the call that have no option of their own.
+- `--server <address>` talks to another Foundry (sign in there first).
+- `--as <account id>` reads as that user would, for an admin who started `scf admin view-as`.
+- Exit code 0 means done; 4 means not signed in or not allowed; 1 is any other refusal by the server.
+
+**Safety.**
+
+- A command that deletes or replaces something asks you to type `yes`. `--yes` answers for you;
+  without a terminal and without `--yes` it stops.
+- A password, token or other secret is never an option or an argument: the command asks for it
+  without echo (or reads one line of standard input), so it is not in your shell history. Given
+  inline in `--data` it is refused; in a file (`--data @file`) it is accepted.
+- `scf settings set` replaces the whole settings file, so it insists on `--data`. Start from
+  `scf settings show --json`.
+
+**Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
+it; `scf api GET runs` (or `POST`, `PUT`, `DELETE`, with `--data`) makes one. One call has no
+command: the live event stream of a run, which never ends.
+
 #### Helper processes
 
 Five small processes that run beside the Foundry, each started by macOS by itself once installed.
