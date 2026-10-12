@@ -257,6 +257,8 @@ describe("the login agents of the helpers", () => {
     expect(daily).toContain("<key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer>");
     expect(daily).not.toContain("StartInterval");
     expect(labelOf("digest")).toBe("com.spaghetti-code-foundry.digest");
+    // not a background process: macOS gives those almost no processor time on a loaded machine, which is when the governor must run
+    expect(every + daily).not.toContain("ProcessType");
   });
 
   it("installs and removes only its own agent", () => {

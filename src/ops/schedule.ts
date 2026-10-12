@@ -39,7 +39,6 @@ ${[process.execPath, o.cliPath, job.name, "run"].map((a) => `    <string>${esc(a
     <key>HOME</key><string>${esc(homedir())}</string>${home}
   </dict>
 ${when}
-  <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>${esc(o.logFile)}</string>
   <key>StandardErrorPath</key><string>${esc(o.logFile)}</string>
 </dict>

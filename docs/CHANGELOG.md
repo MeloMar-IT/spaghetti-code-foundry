@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Fix: the helper processes and the analyst no longer run as macOS background processes. On an overloaded machine those got almost no processor time, so the load governor did not run exactly when it was needed. Install them again (`scf governor install` and so on) to get the new setting.
 - Five helper processes, each with `run|report|install|uninstall|status` and a login agent of its own (macOS): `scf governor`, `scf flaky`, `scf limits`, `scf blockage`, `scf digest`. They read the data folder and write only in their own folder there.
   - **`governor`** (every minute). Lowers the runs at once by one per check while the load is above 2.5 per core or the memory is under pressure (not below half the configured number), raises it after five calm checks, and allows one test run at a time above 4 per core. Changes are logged in `governor/changes.log`; `scf governor reset` takes the limits away.
   - **`flaky`** (every 6 hours). Lists tests that failed, or passed only on a retry, in at least three different stories in 7 days, with a likely cause. `scf flaky auto on` makes one bug story per test file (at most 2 per check, never twice); off by default.

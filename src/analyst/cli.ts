@@ -44,7 +44,6 @@ ${[process.execPath, o.cliPath, "analyst", "run"].map((a) => `    <string>${esc(
   </dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>${EVERY_HOURS * 3600}</integer>
-  <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>${esc(o.logFile)}</string>
   <key>StandardErrorPath</key><string>${esc(o.logFile)}</string>
 </dict>
