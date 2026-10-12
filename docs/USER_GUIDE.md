@@ -443,6 +443,29 @@ runs execute at the same time (Settings → Runs at the same time); the rest que
 shows its place (`1 of 4`), a link to what it waits for and, for a bug story, a "goes first" mark.
 An admin sees the running count (`2/3 running`) in the **Queued** heading.
 
+**Search and filters (admin).** A bar above the list helps you find a run:
+
+- **Search runs** takes a run id, an issue number like `#7`, or text (200 characters at most). The
+  list updates 300 ms after you stop typing. Your text and cursor stay in the box while the list
+  refreshes.
+- **Repository**, **Flow**, **Status**, **Time** (Today, 7 days, 30 days) and **Owner** are
+  selects. The server answers them, so a run older than the newest 200 is found too. A
+  repository name works in any letter case.
+- **Only what needs me** and the **Show** buttons (All, Needs you, Running, Queued, Failed,
+  Completed) only narrow what is already loaded.
+- **Clear filters** shows when a filter is on and puts the list back to `#/runs`.
+
+Queued jobs that have no run yet follow the repository, flow, time, search and owner filters; a
+status filter hides them. A line for screen readers says "1 run matches." or "N runs match."
+With no match you see "No runs match your search and filters." and **Clear filters**. When a
+filter asks the server and 200 runs come back, the list says "Only the newest 200 matches are
+shown." If a change cannot be loaded, the bar and the address go back to the last filter that was
+shown and a message tells you why.
+
+The address keeps your choice, so you can share the link:
+`#/runs?q=…&repo=…&flow=…&status=…&time=…&owner=…&needs=1&view=…`. Unknown values are ignored.
+A saved view still remembers the repository and the owner only.
+
 The list refreshes every 30 seconds without jumping: your keyboard focus, scroll position, open
 sections and the chosen owner stay as they are, and only the rows that changed are redrawn.
 

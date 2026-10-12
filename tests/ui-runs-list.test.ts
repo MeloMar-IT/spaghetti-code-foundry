@@ -319,7 +319,7 @@ describe("the pages", () => {
     await tick(30_000); // an older request waits at the gate
     const old = gate;
     gate = null;
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } });
+    main.all("select").find((s) => s.attrs["data-focus"] === "owner-filter")!.fire("change", { target: { value: "u2" } });
     await tick(0);
     expect(main.textContent).toContain("second");
     gate = old;

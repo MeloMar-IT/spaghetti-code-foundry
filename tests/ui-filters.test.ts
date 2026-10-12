@@ -8,8 +8,10 @@ let f: any;
 let ia: any;
 let runs: any;
 let mine: any;
+let rf: any;
 beforeAll(async () => {
   restore = installFakeDom();
+  rf = await import("../ui/runs-filter.js" as string);
   f = await import("../ui/filters.js" as string);
   ia = await import("../ui/ia.js" as string);
   runs = await import("../ui/runs.js" as string);
@@ -274,7 +276,7 @@ describe("the routers", () => {
   it("the admin router passes the query and a way to write the address", async () => {
     const { readFileSync } = await import("node:fs");
     const app = readFileSync("ui/app.js", "utf8");
-    expect(app).toContain("renderRunsList(box, { admin: true, query: to.query, go })");
+    expect(app).toContain("renderRunsList(box, { admin: true, query: to.query, go, filter: parseFilter(hash), alive: () => mine === routeGen })");
     expect(app).toContain("renderBoard(main, arg, { query: to.query, go })");
     expect(app).toContain("const { path } = splitHash(hash);");
     expect(app).toContain('path !== "#/new"');
@@ -308,6 +310,7 @@ describe("the admin Runs list", () => {
       "/api/runs?owner=u2": [mk("r4", "acme/app"), mk("r5", "other/thing")],
       "/api/queue": { pending: [pend("q1", "acme/app"), pend("q2", "other/thing")], active: [], concurrency: 2 },
       "/api/run-owners": [{ id: "u1", name: "Ann", runs: 3 }, { id: "u2", name: "Bob", runs: 2 }],
+      "/api/run-filters": { repos: [], flows: [] },
     };
     (globalThis as any).fetch = (url: string) => {
       asked.push(url);
@@ -330,7 +333,10 @@ describe("the admin Runs list", () => {
   const rows = (m: FakeElement) => m.all("li").map((r) => r.all("b")[0]!.textContent).filter((t) => t !== "Queued run");
   const chips = (m: FakeElement) => m.all("span").filter((s) => s.attrs.class === "filter-chip").map((s) => s.textContent.replace("×", ""));
   const queued = (m: FakeElement) => m.all("a").map((a) => a.attrs["data-focus"] ?? "").filter((n) => n.startsWith("open-q")).map((n) => n.slice(5));
-  const pick = (m: FakeElement, value: string) => m.all("select")[0]!.fire("change", { target: { value } });
+  const named = (m: FakeElement, name: string) => m.all("select").find((s) => s.attrs["data-focus"] === name)!;
+  const val = (m: FakeElement, name: string) => named(m, name).value;
+  const pick = (m: FakeElement, value: string, name = "owner-filter") => named(m, name).fire("change", { target: { value } });
+  const runsAsked = () => asked.filter((u) => u.startsWith("/api/runs"));
 
   it("filters runs and queued jobs by repository, ignoring case, with one request each", async () => {
     const m = connected();
@@ -338,17 +344,18 @@ describe("the admin Runs list", () => {
     const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "ACME/app" }, go });
     expect(rows(m)).toEqual(["flow-r1", "flow-r3"]);
     expect(queued(m)).toEqual(["q1"]);
-    expect(chips(m)).toEqual(["Repository: ACME/app"]);
-    expect(asked).toEqual(["/api/runs", "/api/queue", "/api/run-owners"]);
+    expect(val(m, "runs-repo")).toBe("ACME/app");
+    expect(asked).toEqual(["/api/run-filters", "/api/run-owners", "/api/queue", "/api/runs"]);
     expect(go).not.toHaveBeenCalled();
     stop();
   });
 
-  it("with no filter there is no bar and go is never called", async () => {
+  it("with no filter there are no chips, Clear filters is hidden and go is never called", async () => {
     const m = connected();
     const go = vi.fn();
     const stop = await runs.renderRunsList(m, { admin: true, go });
     expect(byClass(m, "filter-bar")).toHaveLength(0);
+    expect(button(m, "Clear filters").hidden).toBe(true);
     expect(rows(m)).toHaveLength(3);
     expect(go).not.toHaveBeenCalled();
     stop();
@@ -359,14 +366,13 @@ describe("the admin Runs list", () => {
     const go = vi.fn();
     answers["/api/runs?owner=u1"] = [mk("r6", "acme/app")];
     const stop = await runs.renderRunsList(m, { admin: true, query: { owner: "u2" }, go });
-    expect(asked[0]).toBe("/api/runs?owner=u2");
-    expect(m.all("option").find((o) => o.attrs.selected !== undefined)?.textContent).toBe("Bob (2)");
-    expect(chips(m)).toEqual(["Owner: Bob"]);
+    expect(asked).toContain("/api/runs?owner=u2");
+    expect(val(m, "owner-filter")).toBe("u2");
     pick(m, "u1");
     await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenCalledTimes(1);
     expect(go).toHaveBeenLastCalledWith("#/runs?owner=u1");
-    expect(asked.at(-3)).toBe("/api/runs?owner=u1");
+    expect(runsAsked().at(-1)).toBe("/api/runs?owner=u1");
     pick(m, "");
     await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenLastCalledWith("#/runs");
@@ -384,16 +390,282 @@ describe("the admin Runs list", () => {
     stop();
   });
 
-  it("removing only the repository chip filters what is here and asks the server for nothing", async () => {
+  it("clearing the repository of a name the server does not know asks again and shows everything", async () => {
     const m = connected();
     const go = vi.fn();
     const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "acme/app" }, go });
-    const before = asked.length;
-    click(m.all("span").find((s) => s.attrs.class === "filter-chip")!.all("button")[0]!);
-    expect(asked).toHaveLength(before);
+    expect(rows(m)).toEqual(["flow-r1", "flow-r3"]);
+    pick(m, "", "runs-repo");
+    await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenCalledWith("#/runs");
     expect(rows(m)).toHaveLength(3);
-    expect(byClass(m, "filter-bar")).toHaveLength(0);
+    expect(button(m, "Clear filters").hidden).toBe(true);
+    stop();
+  });
+
+  const box = (m: FakeElement) => m.all("input").find((i) => i.attrs["data-focus"] === "runs-search")!;
+  const type = (m: FakeElement, text: string) => { const b = box(m); b.value = text; b.fire("input", { target: b }); };
+  const say = (m: FakeElement) => m.all("div").find((d) => d.attrs.role === "status" && d.attrs["aria-live"] === "polite" && d.attrs.class === "sr-only" && d.parent?.attrs.class === "runs-bar")!;
+  const start = (m: FakeElement, hash: string, go: any = vi.fn()) => runs.renderRunsList(m, { admin: true, go, filter: rf.parseFilter(hash) });
+
+  it("a cold load of the repository in any letter case asks the server for the name of the list", async () => {
+    answers["/api/run-filters"] = { repos: ["Acme/App", "other/thing"], flows: [] };
+    answers["/api/runs?repo=Acme%2FApp"] = [mk("far", "Acme/App")];
+    const m = connected();
+    const stop = await start(m, "#/runs?repo=ACME/APP");
+    expect(asked).toEqual(["/api/run-filters", "/api/run-owners", "/api/queue", "/api/runs?repo=Acme%2FApp"]);
+    expect(rows(m)).toEqual(["flow-far"]);
+    expect(val(m, "runs-repo")).toBe("Acme/App");
+    stop();
+  });
+
+  it("two spellings of one repository are both asked and merged, newest first, without doubles", async () => {
+    answers["/api/run-filters"] = { repos: ["Acme/App", "acme/app"], flows: [] };
+    answers["/api/runs?repo=Acme%2FApp"] = [mk("a1", "Acme/App", { startedAt: "2026-01-01T00:00:00Z" }), mk("dup", "Acme/App", { startedAt: "2026-01-03T00:00:00Z" })];
+    answers["/api/runs?repo=acme%2Fapp"] = [mk("b1", "acme/app", { startedAt: "2026-01-02T00:00:00Z" }), mk("dup", "Acme/App", { startedAt: "2026-01-03T00:00:00Z" })];
+    const m = connected();
+    const stop = await start(m, "#/runs?repo=acme/app");
+    expect(runsAsked().sort()).toEqual(["/api/runs?repo=Acme%2FApp", "/api/runs?repo=acme%2Fapp"]);
+    expect(rows(m)).toEqual(["flow-dup", "flow-b1", "flow-a1"]);
+    stop();
+  });
+
+  it("sends search, flow, status, time and owner to the server, but not needs or view", async () => {
+    answers["/api/run-filters"] = { repos: ["acme/app"], flows: ["flow-r1"] };
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs", go);
+    pick(m, "flow-r1", "runs-flow");
+    await vi.advanceTimersByTimeAsync(0);
+    pick(m, "failed", "runs-status");
+    await vi.advanceTimersByTimeAsync(0);
+    pick(m, "7d", "runs-time");
+    await vi.advanceTimersByTimeAsync(0);
+    pick(m, "u1");
+    await vi.advanceTimersByTimeAsync(0);
+    type(m, "boom");
+    await vi.advanceTimersByTimeAsync(300);
+    const last = runsAsked().at(-1)!;
+    const p = new URLSearchParams(last.split("?")[1]);
+    expect([...p.keys()]).toEqual(["q", "flow", "status", "since", "owner"]);
+    expect(p.get("since")).toBe(rf.sinceOf("7d", Date.now()));
+    expect(go).toHaveBeenLastCalledWith("#/runs?q=boom&flow=flow-r1&status=failed&time=7d&owner=u1");
+    named(m, "runs-status").fire("change", { target: { value: "" } });
+    await vi.advanceTimersByTimeAsync(0);
+    asked.length = 0;
+    m.all("input").find((i) => i.attrs["data-focus"] === "runs-needs")!.fire("change", { target: { checked: true } });
+    button(m, "Failed").fire("click");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(asked.filter((u) => u.startsWith("/api/runs"))).toHaveLength(0);
+    expect(go).toHaveBeenLastCalledWith("#/runs?q=boom&flow=flow-r1&time=7d&owner=u1&needs=1&view=failed");
+    stop();
+  });
+
+  it("typing asks the server once, 300 ms after the last key, and the box keeps node, text and focus over a refresh", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs", go);
+    const b = box(m);
+    b.focus();
+    type(m, "a");
+    await vi.advanceTimersByTimeAsync(200);
+    type(m, "ab");
+    await vi.advanceTimersByTimeAsync(100);
+    click(m.all("button").find((x) => x.attrs["data-focus"] === "refresh")!);
+    await vi.advanceTimersByTimeAsync(150);
+    type(m, "abc");
+    expect(runsAsked().filter((u) => u.includes("q="))).toHaveLength(0);
+    expect(box(m)).toBe(b);
+    expect(b.value).toBe("abc");
+    await vi.advanceTimersByTimeAsync(299);
+    expect(runsAsked().filter((u) => u.includes("q="))).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runsAsked().filter((u) => u.includes("q="))).toEqual(["/api/runs?q=abc"]);
+    expect(go).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(box(m)).toBe(b);
+    expect(b.value).toBe("abc");
+    expect((document as any).activeElement).toBe(b);
+    stop();
+  });
+
+  it("another control takes the pending text with it", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs", go);
+    type(m, "pending");
+    pick(m, "failed", "runs-status");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenLastCalledWith("#/runs?q=pending&status=failed");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(runsAsked().filter((u) => u.includes("q="))).toEqual(["/api/runs?q=pending&status=failed"]);
+    stop();
+  });
+
+  it("queued jobs without a run follow repository, flow, time, search and owner, and are hidden under a status", async () => {
+    const at = new Date().toISOString();
+    const old = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    answers["/api/runs"] = [];
+    answers["/api/queue"] = { active: [], concurrency: 2, pending: [
+      { runId: "qa", kind: "run", githubRepo: "acme/app", flow: "f1", enqueuedAt: at, ownerName: "Ann", issue: "7", task: "fix the login", ahead: 0 },
+      { runId: "qb", kind: "run", githubRepo: "other/thing", flow: "f2", enqueuedAt: old, ownerName: "Bob", task: "other", ahead: 0 },
+    ] };
+    const check = async (hash: string, expected: string[]) => {
+      const m = connected();
+      const stop = await start(m, hash);
+      expect(queued(m), hash).toEqual(expected);
+      stop();
+    };
+    await check("#/runs", ["qa", "qb"]);
+    await check("#/runs?repo=ACME/app", ["qa"]);
+    await check("#/runs?flow=f2", ["qb"]);
+    await check("#/runs?time=30d", ["qa"]);
+    await check("#/runs?q=%237", ["qa"]);
+    await check("#/runs?q=LOGIN", ["qa"]);
+    await check("#/runs?owner=u2", ["qb"]);
+    await check("#/runs?status=running", []);
+  });
+
+  it("a filter change always redraws, also for an answer equal to the old one: count and empty state follow", async () => {
+    const m = connected();
+    const stop = await start(m, "#/runs");
+    expect(say(m).textContent).toBe("");
+    answers["/api/runs?owner=u1"] = answers["/api/runs"];
+    pick(m, "u1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(say(m).textContent).toBe("3 runs match.");
+    pick(m, "", "owner-filter");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(say(m).textContent).toBe("");
+    answers["/api/runs?status=failed"] = [];
+    answers["/api/queue"] = { pending: [], active: [], concurrency: 2 };
+    pick(m, "failed", "runs-status");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(m.textContent).toContain("No runs match your search and filters.");
+    answers["/api/runs?status=succeeded"] = [];
+    pick(m, "succeeded", "runs-status");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(m.textContent).toContain("No runs match your search and filters.");
+    expect(say(m).textContent).toBe("0 runs match.");
+    stop();
+  });
+
+  it("says 1 run matches", async () => {
+    answers["/api/runs?status=failed"] = [mk("only", "acme/app")];
+    answers["/api/queue"] = { pending: [], active: [], concurrency: 2 };
+    const m = connected();
+    const stop = await start(m, "#/runs?status=failed");
+    expect(say(m).textContent).toBe("1 run matches.");
+    stop();
+  });
+
+  it("no match: Clear filters restores #/runs and the list", async () => {
+    answers["/api/runs?status=failed"] = [];
+    answers["/api/queue"] = { pending: [], active: [], concurrency: 2 };
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs?status=failed", go);
+    expect(rows(m)).toHaveLength(0);
+    click(m.all("button").find((b) => b.attrs["data-focus"] === "runs-empty-clear")!);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(go).toHaveBeenLastCalledWith("#/runs");
+    expect(rows(m)).toHaveLength(3);
+    expect(val(m, "runs-status")).toBe("");
+    stop();
+  });
+
+  it("200 runs with a server-side filter say only the newest 200 matches are shown", async () => {
+    answers["/api/runs?status=failed"] = Array.from({ length: 200 }, (_, i) => mk(`x${i}`, "acme/app"));
+    const m = connected();
+    const stop = await start(m, "#/runs?status=failed");
+    expect(m.textContent).toContain(runs.MATCH_NOTE);
+    expect(m.textContent).not.toContain(runs.CAP_NOTE);
+    stop();
+  });
+
+  it("a failed reload puts address, bar and list back and shows the error", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs?status=failed", go);
+    const ok = (globalThis as any).fetch;
+    (globalThis as any).fetch = (url: string) => (url.includes("status=succeeded") ? Promise.reject(new Error("boom")) : ok(url));
+    const before = rows(m);
+    pick(m, "succeeded", "runs-status");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(go.mock.calls.map((c) => c[0])).toEqual(["#/runs?status=succeeded", "#/runs?status=failed"]);
+    expect(val(m, "runs-status")).toBe("failed");
+    expect(rows(m)).toEqual(before);
+    expect((document as any).getElementById("toast").textContent).toContain("boom");
+    stop();
+  });
+
+  it("a change overtaken by a newer one that fails goes back to what was drawn, not to the overtaken one", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs", go);
+    const ok = (globalThis as any).fetch;
+    (globalThis as any).fetch = (url: string) => (url.includes("owner=u1") ? new Promise(() => {}) : url.includes("owner=u2") ? Promise.reject(new Error("boom")) : ok(url));
+    const before = rows(m);
+    pick(m, "u1");
+    await vi.advanceTimersByTimeAsync(0);
+    pick(m, "u2");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(go.mock.calls.map((c) => c[0])).toEqual(["#/runs?owner=u1", "#/runs?owner=u2", "#/runs"]);
+    expect(val(m, "owner-filter")).toBe("");
+    expect(rows(m)).toEqual(before);
+    stop();
+  });
+
+  it("after the page was left nothing is asked and the address is not written", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const stop = await start(m, "#/runs", go);
+    type(m, "late");
+    stop();
+    const n = asked.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(asked).toHaveLength(n);
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("a page left while the lists load does not ask for the runs", async () => {
+    let open = true;
+    const m = connected();
+    const done = runs.renderRunsList(m, { admin: true, go: vi.fn(), filter: rf.parseFilter("#/runs"), alive: () => open });
+    open = false;
+    await vi.advanceTimersByTimeAsync(0);
+    (await done)();
+    expect(runsAsked()).toEqual([]);
+  });
+
+  it("a refresh queued while the first load is pending starts nothing once the page was left", async () => {
+    let open = true;
+    let release!: () => void;
+    const ok = (globalThis as any).fetch;
+    (globalThis as any).fetch = (url: string) => (url === "/api/run-filters" && !release
+      ? new Promise((r) => { release = () => r(ok(url)); })
+      : ok(url));
+    const m = connected();
+    const done = runs.renderRunsList(m, { admin: true, go: vi.fn(), filter: rf.parseFilter("#/runs"), alive: () => open });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(30_000); // a tick queues a follow-up request
+    open = false;
+    const n = asked.length;
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    (await done)();
+    expect(asked.slice(n).filter((u) => u !== "/api/run-filters")).toEqual([]);
+    expect(runsAsked()).toEqual([]);
+  });
+
+  it("an active saved owner view keeps working with more filters", async () => {
+    const parts = vi.fn(() => ({}));
+    const m = connected();
+    const stop = await runs.renderRunsList(m, { admin: true, go: vi.fn(), filter: rf.parseFilter("#/runs?owner=u1&status=failed"), views: { parts } });
+    expect(parts.mock.calls[0]![0]).toEqual({ owner: "u1" });
+    expect(parts.mock.calls[0]![1].owners).toEqual(["u1", "u2"]);
     stop();
   });
 
@@ -404,7 +676,7 @@ describe("the admin Runs list", () => {
     click(button(m, "Clear filters"));
     await vi.advanceTimersByTimeAsync(0);
     expect(go).toHaveBeenCalledWith("#/runs");
-    expect(asked.at(-3)).toBe("/api/runs");
+    expect(runsAsked().at(-1)).toBe("/api/runs");
     expect(rows(m)).toHaveLength(3);
     stop();
   });
@@ -412,9 +684,10 @@ describe("the admin Runs list", () => {
   it("a filter that matches nothing names the filter and Clear filters restores the list", async () => {
     const m = connected();
     const stop = await runs.renderRunsList(m, { admin: true, query: { repo: "other/repo" }, go: vi.fn() });
-    expect(m.textContent).toContain("No runs match Repository: other/repo.");
+    expect(m.textContent).toContain("No runs match your search and filters.");
     expect(rows(m)).toHaveLength(0);
-    click(button(m, "Clear filters"));
+    click(m.all("button").find((b) => b.attrs["data-focus"] === "runs-empty-clear")!);
+    await vi.advanceTimersByTimeAsync(0);
     expect(rows(m)).toHaveLength(3);
     stop();
   });
@@ -451,7 +724,8 @@ describe("the admin Runs list", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(asked).toContain("/api/runs?owner=u2");
     expect(rows(m)).toEqual(["flow-r4"]);
-    expect(chips(m)).toEqual(["Repository: acme/app", "Owner: Bob"]);
+    expect(val(m, "runs-repo")).toBe("acme/app");
+    expect(val(m, "owner-filter")).toBe("u2");
     stop();
   });
 
@@ -468,6 +742,7 @@ describe("the admin Runs list", () => {
     const stop = await runs.renderRunsList(m, { admin: true, go: vi.fn() });
     hold = true;
     pick(m, "u1");
+    await vi.advanceTimersByTimeAsync(0);
     pick(m, "u2");
     await vi.advanceTimersByTimeAsync(0);
     answers["/api/runs?owner=u1"] = [mk("old", "acme/app")];
@@ -496,7 +771,8 @@ describe("the admin Runs list", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(go.mock.calls.map((c) => c[0])).toEqual(["#/runs?repo=acme%2Fapp&owner=u1", "#/runs?repo=acme%2Fapp"]);
     expect(rows(m)).toEqual(before);
-    expect(chips(m)).toEqual(["Repository: acme/app"]);
+    expect(val(m, "owner-filter")).toBe("");
+    expect(val(m, "runs-repo")).toBe("acme/app");
     stop();
   });
 
@@ -509,7 +785,8 @@ describe("the admin Runs list", () => {
     const again = connected();
     const stop2 = await runs.renderRunsList(again, { admin: true, query: ia.resolve("admin", go.mock.calls.at(-1)![0]).query, go: vi.fn() });
     expect(rows(again)).toEqual(rows(m));
-    expect(chips(again)).toEqual(chips(m));
+    expect(val(again, "runs-repo")).toBe(val(m, "runs-repo"));
+    expect(val(again, "owner-filter")).toBe(val(m, "owner-filter"));
     stop();
     stop2();
   });

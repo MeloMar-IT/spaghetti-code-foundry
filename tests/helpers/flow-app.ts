@@ -96,6 +96,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./library.js": never,
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
     "./home-admin.js": never,
+    "./runs-filter.js": await import("../../ui/runs-filter.js" as string),
     "./work.js": never,
   };
   for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
