@@ -4735,8 +4735,23 @@ thing with the rule of the API call that reads it: a run only when it is yours (
 administrator). A thing that does not exist and a thing of another account give the same result:
 it is left out, and only counted. An address that is no page of your role (an old link, a page of
 the administrators) counts as no page. The model is told only what was found; the marked text is
-handed over as copied text (see "Secrets and copied text"). In this version only runs are looked
-up; other kinds are counted as not found.
+handed over as copied text (see "Secrets and copied text").
+
+What can be found, and by which rule:
+
+| Thing | Who finds it |
+|---|---|
+| A run | its owner; an administrator finds every run |
+| A repository | its owner (under My repositories); an administrator finds every repository |
+| A refinement session | its owner; an administrator finds every session |
+| The queue, or a queued run | you: your own queued runs and how many are ahead; an administrator: the whole queue |
+| An issue on the board | an administrator only |
+| A problem (a finding of the monitor) | an administrator only |
+
+For each found thing the server keeps a small snapshot of plain facts (for a run: the flow, the
+status, the times, the step it waits at or failed at). A snapshot never holds a cost, a model
+name, a folder, a setting of the administrator, an owner, or the text of a talk; this is the
+same for an administrator. A kind that is not in the table is not found.
 
 **Look before you send.** `POST /api/help/context` with the envelope as its body
 (`scf ask context '#/runs/<id>' --selection "…"`) answers what would be taken: the envelope as it

@@ -1244,8 +1244,25 @@ makes of it.
 - **Lookup** (`resolveContext`, `EntityResolver`): at the time of the model call every named
   thing is looked up for the asking account. `helpResolver` in `src/server/api-help.ts` reads the
   account again (a blocked or removed account finds nothing; a changed role counts as the lower
-  one) and calls `authorize` with the rule of `GET /api/runs/:id`. Not found and not allowed are
-  one answer. Without a resolver nothing is found.
+  one) and asks the help context service. Not found and not allowed are one answer. Without a
+  resolver nothing is found.
+- **The help context service** (`src/server/help-context.ts`, #231): `helpSnapshot(ctx, asker,
+  { kind, id })` gives a typed, bounded snapshot of one thing for one account, or undefined. It
+  has no rules of its own. Each adapter names the API call it follows, asks the permission table
+  for that call (`findRule`, `authorize`) and reads through the reader of that call: `run`
+  (`GET /api/runs/:id`, `checkedRun` with the owner, then `userRun` for both roles), `queue`
+  (`GET /api/queue`: `ownQueue` for a user, `queueWithNext` for an admin), `repository`
+  (`GET /api/repos` with `listRepos(owner)`; `GET /api/admin/repos` for an admin), `refinement`
+  (`GET /api/refinement/:id`, `sessionFor`, the check the route itself uses), `issue`
+  (`GET /api/board`), `problem` (`GET /api/monitor/findings/:id`), and two without an id, `next`
+  (`GET /api/next`) and `health` (`GET /api/health`). The last four are admin-only in the table,
+  so a user finds nothing. A snapshot holds at most 24 fields, 300 characters per text and 2,000
+  characters in all; every text passes `guardExcerpt`. It records its fields as included
+  (`fields`), `omitted` (left out on purpose, or a text that reads like an order), `redacted` (a
+  secret was taken out), `unavailable` (the record has none now) and `stale` (known to be old: a
+  connection check older than a day, a finding that is gone). An unknown kind, a wrong id, a
+  reader that throws: undefined, never an error. Nothing is logged. In this story only the label
+  of a snapshot reaches the model; the fields are for the evidence stories (#233).
 - **In the request**: `prepareTurn` takes the resolved context only. The model gets a `PAGE` part
   (page type and title, found things with the server's label, the count of things not found,
   filters), the marked text as an excerpt with the id `selected-text` (which is not a source and

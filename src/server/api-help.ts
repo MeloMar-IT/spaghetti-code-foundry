@@ -24,9 +24,8 @@ import {
   sweepHelp,
 } from "../help/store.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
-import { checkedRun } from "./api-runs.js";
+import { snapshotResolver } from "./help-context.js";
 import { HttpError, readJson, send } from "./http.js";
-import { authorize, findRule } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
 
@@ -42,28 +41,12 @@ const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full"
 
 /**
  * Looks a thing a page context names up again, for the account that asks, with the rules of the API call that
- * reads the same thing. A thing that does not exist and one the account may not see give the same answer: nothing.
+ * reads the same thing (the adapters of `help-context.ts`). A thing that does not exist and one the account may not see give the same answer: nothing.
  * The account is read now, not taken from the question: a removed or blocked account finds nothing, and a role that
  * changed since counts as the lower of the two.
  */
 export function helpResolver(ctx: ApiContext): EntityResolver {
-  return (asker, ref) => {
-    const now = getUser(asker.id);
-    if (!now || now.status !== "active") return undefined;
-    const user: User = asker.role === "admin" && now.role === "admin" ? now : { ...now, role: "user" };
-    if (ref.kind !== "run" || !/^[\w-]{1,100}$/.test(ref.id)) return undefined;
-    // the rule of `GET /api/runs/:id`: every run for an admin, their own for a user
-    const seg = ["runs", ref.id];
-    const rule = findRule("GET", seg);
-    if (!rule) return undefined;
-    try {
-      authorize(ctx, user, rule, seg);
-    } catch {
-      return undefined;
-    }
-    const run = checkedRun(ctx.scheduler, ref.id, user.role === "admin" ? undefined : user.id);
-    return run ? { label: `a run of the flow ${run.flow}` } : undefined;
-  };
+  return snapshotResolver(ctx, () => ({ patterns: ctx.config().help.sensitive_patterns ?? [] }));
 }
 
 const services = new WeakMap<ApiContext, HelpTurns>();
