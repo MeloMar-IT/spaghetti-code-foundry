@@ -44,7 +44,6 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
   .table.cards .task div { white-space: normal; }
   .table.cards .pill { white-space: normal; max-width: 100%; }
   .table.cards tr.link:hover td { background: none; }
-  .run-card .row > .run-link { order: -1; }
   .run-card .pill { white-space: normal; max-width: 100%; }
   .run-card [data-label]::before { content: attr(data-label); content: attr(data-label) / ""; display: block; color: var(--muted); font-size: var(--text-table-head); font-weight: 550; }
 }

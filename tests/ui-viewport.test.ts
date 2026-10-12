@@ -108,8 +108,9 @@ describe("tables", () => {
     expect(compact).not.toMatch(/\.table\.cards tr \{/);
   });
 
-  it("puts the link of a run card first below 768 px", () => {
-    expect(compact).toMatch(/\.run-card \.row > \.run-link \{[^}]*order: -1/);
+  it("keeps the status of a run card before its link below 768 px, and labels the admin fields at every width", () => {
+    expect(compact).not.toMatch(/\.run-card \.row > \.run-link/);
+    expect(css).toMatch(/\.run-card \.run-field\[data-label\]::before \{[^}]*content: attr\(data-label\)/);
     expect(compact).toMatch(/\.run-card \.pill \{[^}]*white-space: normal;[^}]*max-width: 100%/);
     expect(compact).toMatch(/\.run-card \[data-label\]::before \{[^}]*content: attr\(data-label\)/);
   });

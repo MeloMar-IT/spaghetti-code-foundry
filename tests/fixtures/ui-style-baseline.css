@@ -482,6 +482,15 @@ button.icon { justify-content: center; }
 .run-card.who-you { border-color: var(--color-waiting); }
 .run-card .run-link { overflow-wrap: anywhere; }
 .run-card .run-next { margin: 0; }
+.run-sections { display: grid; gap: var(--space-lg); }
+.run-section-head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: baseline; margin-bottom: var(--space-sm); }
+.run-section-head h2 { margin: 0; font-size: var(--text-section); }
+.run-section-toggle { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.run-section.strong .run-card { border-color: var(--color-border-strong); }
+.run-section.quiet .run-card { background: var(--panel-2); }
+.run-section.quiet h2 { color: var(--muted); }
+.run-queue { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.run-card .run-field[data-label]::before { content: attr(data-label); content: attr(data-label) / ""; display: block; color: var(--muted); font-size: var(--text-table-head); font-weight: 550; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .run-now h2 { margin: 0 0 8px; font-size: var(--text-section); }
 .run-dialog { display: grid; gap: 12px; }
@@ -786,7 +795,6 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
   .table.cards .task div { white-space: normal; }
   .table.cards .pill { white-space: normal; max-width: 100%; }
   .table.cards tr.link:hover td { background: none; }
-  .run-card .row > .run-link { order: -1; }
   .run-card .pill { white-space: normal; max-width: 100%; }
   .run-card [data-label]::before { content: attr(data-label); content: attr(data-label) / ""; display: block; color: var(--muted); font-size: var(--text-table-head); font-weight: 550; }
 }

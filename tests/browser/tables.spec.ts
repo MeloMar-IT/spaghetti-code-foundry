@@ -23,16 +23,7 @@ interface CardPage {
 }
 
 const PAGES: CardPage[] = [
-  {
-    name: "Runs", role: "admin", hash: "#/runs", ready: "Seeded failed run", api: /\/api\/runs(\?.*)?$/,
-    stretch: (list: any[]) => {
-      const r = list[0];
-      r.vars = { ...r.vars, github_repo: LONG_NAME, issue: 7 };
-      r.task = LONG_TEXT;
-      if (r.next) r.next = { ...r.next, text: LONG_TEXT };
-    },
-    repoCell: "td:nth-child(2) .mono", textCell: "td.task", long: LONG_NAME,
-  },
+  // Runs is not here any more: both run lists are sections of cards at every width (#378), see the tests at the end.
   {
     name: "Repositories", role: "user", hash: "#/repos", ready: "acme/app", api: /\/api\/repos(\?.*)?$/,
     stretch: (list: any[]) => { list[0].url = `https://github.com/${LONG_NAME}`; },
@@ -228,7 +219,8 @@ test("My runs: the link comes first in the card and the parts are labelled at 36
       const labelled = [...card.querySelectorAll("[data-label]")].map((e) => ({ label: e.getAttribute("data-label")!, content: getComputedStyle(e, "::before").content }));
       return { link: { x: link.x, y: link.y }, others: others.map((o) => ({ x: o.x, y: o.y })), labelled };
     });
-    for (const o of r.others) expect(r.link.y < o.y || (r.link.y === o.y && r.link.x <= o.x)).toBe(true);
+    // the status comes first: it is not after the link
+    for (const o of r.others.slice(0, 1)) expect(o.y < r.link.y || (o.y === r.link.y && o.x <= r.link.x)).toBe(true);
     expect(r.labelled.length).toBeGreaterThan(0);
     for (const l of r.labelled) expect(l.content).toContain(l.label);
   } finally {
@@ -311,3 +303,27 @@ test("every other table is in a .table-box that scrolls inside itself at 360 px"
     }
   }
 });
+
+// ---- Runs: sections of cards at every width (#378) ----
+
+for (const width of [360, 1280]) {
+  test(`Runs: the admin cards show the status first and label Owner, Steps and Cost at ${width} px`, async ({ browser }) => {
+    const page = await openAs(browser, "admin", width, "#/runs");
+    try {
+      await expect(page.locator("#main")).toContainText("Seeded failed run");
+      await expectNoSidewaysScroll(page);
+      const r = await page.evaluate(() => {
+        const card = document.querySelector("ul.run-cards li") as HTMLElement;
+        const pill = card.querySelector(".pill")!.getBoundingClientRect();
+        const link = card.querySelector(".run-link")!.getBoundingClientRect();
+        const fields = [...card.querySelectorAll(".run-field[data-label]")].map((e) => ({ label: e.getAttribute("data-label")!, content: getComputedStyle(e, "::before").content }));
+        return { pillFirst: pill.y < link.y || (pill.y === link.y && pill.x <= link.x), fields };
+      });
+      expect(r.pillFirst).toBe(true);
+      expect(r.fields.map((f) => f.label)).toEqual(expect.arrayContaining(["Owner", "Steps", "Cost"]));
+      for (const f of r.fields) expect(f.content).toContain(f.label);
+    } finally {
+      await page.context().close();
+    }
+  });
+}

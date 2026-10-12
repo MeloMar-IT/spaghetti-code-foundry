@@ -202,7 +202,7 @@ describe("renderMyRuns", () => {
     expect(first.textContent).not.toContain("second line");
     expect(first.textContent).toContain("o/r#7");
     expect(first.textContent).toContain(data.runs[0].next.text);
-    expect(first.textContent).toContain("Started");
+    expect(first.textContent).toContain("Updated");
     expect(items[1]!.textContent).toContain("o/r");
     expect(items[1]!.textContent).not.toContain("o/r#");
     expect(items[2]!.textContent).not.toMatch(/o\/r/);

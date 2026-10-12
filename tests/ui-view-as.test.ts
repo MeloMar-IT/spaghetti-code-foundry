@@ -280,11 +280,11 @@ describe("renderers with readOnly", () => {
     const a = { runs: async () => [], queue: async () => ({ pending: [{ runId: "q1", flow: "build", task: "t", enqueuedAt: new Date().toISOString(), ahead: 1 }], active: [] }), cancelRun: vi.fn() };
     const on = div();
     const stopOn = await runs.renderMyRuns(on, { a, readOnly: true });
-    expect(texts(on)).toEqual([]);
+    expect(texts(on).filter((t) => t === "Remove")).toEqual([]);
     stopOn();
     const off = div();
     const stopOff = await runs.renderMyRuns(off, { a });
-    expect(texts(off)).toEqual(["Remove"]);
+    expect(texts(off).filter((t) => t === "Remove")).toEqual(["Remove"]);
     stopOff();
   });
 

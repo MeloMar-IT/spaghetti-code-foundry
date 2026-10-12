@@ -430,19 +430,28 @@ A run of the architect has the mark **refinement**; click it to open its session
 
 ![Runs](images/runs.png)
 
-Runs whose next move is yours (the record says **You**) are listed under **Needs you**. Runs
-that wait for a limit, the budget or another run are not. Under each task the table shows the
-"what happens next" sentence, also for finished runs. At most *N* runs execute at the same time
-(Settings → Runs at the same time); the rest queue. Each queue line shows the same sentence
-and a link to what it waits for. A bug story in the queue has a "goes first" mark.
+Runs are grouped in sections, in this order, each with a count: **Needs you**, **Running**,
+**Queued**, **Failed** and **Completed**. An empty section is left out, and a run is in exactly one
+section. The section comes from the Foundry's record: **Needs you** holds runs whose next move is
+yours (the record says **You**), **Queued** the runs in the queue, **Running** the running runs
+(and waiting runs that are not yours), **Failed** the failed runs, **Completed** the rest. Runs
+that wait for a limit, the budget or another run are not under **Needs you**. The first three
+sections are open; **Completed** is quieter and collapsed when it has more than 10 runs (press
+**Show all**). Every row shows the status, the next action ("what happens next", also for finished
+runs), the first line of the task, the repository and issue, and when it was updated. At most *N*
+runs execute at the same time (Settings → Runs at the same time); the rest queue. Each queued row
+shows its place (`1 of 4`), a link to what it waits for and, for a bug story, a "goes first" mark.
+An admin sees the running count (`2/3 running`) in the **Queued** heading.
 
-An admin sees every run, with an **Owner** column, and can pick one account in the **Owner**
-filter next to the title (the list shows "All owners" and each account with its number of runs).
-The Owner column shows the account's name, `deleted user` when the account is gone, and nothing for
-a run without an owner.
-The rows of the **Queue** card show the owner's name the same way.
+The list refreshes every 30 seconds without jumping: your keyboard focus, scroll position, open
+sections and the chosen owner stay as they are, and only the rows that changed are redrawn.
+
+An admin sees every run, with the owner, the steps and the cost in each row, and can pick one
+account in the **Owner** filter next to the title (the list shows "All owners" and each account
+with its number of runs). The owner shows the account's name, `deleted user` when the account is
+gone, and nothing for a run without an owner. Queued rows show the owner's name the same way.
 A user sees only their own runs and their own queued runs; runs of others in front of them show
-as "n runs ahead of you".
+as "n runs ahead of you". The same sections show on **My runs**.
 
 The Status column shows the plain status name (see "Words the Foundry uses"). Press the **?**
 next to it to read what it means and what happens next, and press it again to close it. It

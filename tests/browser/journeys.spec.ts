@@ -85,7 +85,7 @@ test.describe("the five tasks", () => {
       await expect(page.locator("#main")).toHaveAttribute("aria-label", /.+/);
       const j = await journey(page);
       await j.click(page.locator('#side a[data-nav="runs"]'), { opens: "page" });
-      await j.click(page.locator("tr.link", { hasText: task }), { opens: "page" });
+      await j.click(page.locator("li.run-card", { hasText: task }), { opens: "page" });
       // The failing step is already open when the run page shows: no click is needed.
       const step = page.locator("details.tl", { hasText: "check" }).first();
       await expect(step).toHaveJSProperty("open", true);
