@@ -1,8 +1,8 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadUpdateState, saveUpdateState } from "../src/self-update-state.js";
-import { fixture, removeFixtures, sha7, updater } from "./helpers/self-update.js";
+import { fixture, removeFixtures, sha7, STEPS, updater } from "./helpers/self-update.js";
 
 vi.setConfig({ testTimeout: 60_000 });
 afterEach(removeFixtures);
@@ -177,6 +177,7 @@ describe("self-update: the tests are tried again", () => {
     expect(failed?.tests?.[0]).toHaveLength(298);
     const all = [readFileSync(f.file, "utf8"), t.logs.join("\n"), t.u.view().update?.text ?? ""].join("\n");
     expect(all).not.toContain(HIDDEN);
+    expect(all).not.toContain("scf-tests-start-");
     expect(all).not.toContain(HIDDEN.slice(0, 6));
     expect(failed?.tests?.join("\n")).not.toContain("yyy"); // the over-long name is dropped from the names
 
@@ -192,5 +193,44 @@ describe("self-update: the tests are tried again", () => {
     expect(g.state().failed?.tests).toBeUndefined();
     expect(g.state().failed?.lines).toEqual(["the output is not shown"]);
     expect(existsSync(g.stage)).toBe(false);
+  });
+});
+
+describe("self-update: the tests run in a test slot", () => {
+  it("holds a slot during the run and frees it afterwards", async () => {
+    const f = fixture();
+    const slots = join(f.root, "data", "test-slots");
+    const v2 = f.publish({ "test.sh": `ls "${slots}" > "${join(f.root, "seen")}"\nexit 0\n` });
+    const t = updater(f);
+    await t.u.tick(true);
+    expect(f.state().tested?.commit).toBe(v2);
+    expect(readFileSync(join(f.root, "seen"), "utf8")).toContain("slot-1");
+    expect(existsSync(join(slots, "slot-1"))).toBe(false);
+  });
+
+  it("runs the tests anyway when both slots are held and no wait is left", async () => {
+    const f = fixture();
+    const slots = join(f.root, "data", "test-slots");
+    for (const n of ["slot-1", "slot-2"]) {
+      mkdirSync(join(slots, n), { recursive: true });
+      writeFileSync(join(slots, n, "pid"), String(process.pid));
+    }
+    const v2 = f.publish({ "test.sh": "# v2\nexit 0\n" });
+    const t = updater(f, { slot: { waitSec: 0, pollMs: 50 } });
+    await t.u.tick(true);
+    expect(f.state().tested?.commit).toBe(v2);
+  });
+
+  it("counts a test run that times out as a failed try", async () => {
+    const f = fixture();
+    f.publish({ "test.sh": "sleep 30\n" });
+    const t = updater(f, { steps: STEPS.map((s) => (s.name === "test" ? { ...s, timeoutMs: 400 } : s)) });
+    const t0 = Date.now();
+    await t.u.tick(true);
+    expect(existsSync(join(f.root, "data", "test-slots", "slot-1"))).toBe(false); // the killed run freed its slot
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    expect(f.state().retry?.tries).toBe(1);
+    expect(f.state().tested).toBeUndefined();
+    expect(existsSync(f.stage)).toBe(false);
   });
 });
