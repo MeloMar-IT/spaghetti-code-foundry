@@ -7,66 +7,19 @@ import { freePort, startTestServer } from "./helpers/port.js";
 import { scanPorts, scanTestPorts } from "./helpers/port-scan.js";
 import { signInAs } from "./helpers/session.js";
 
-// Files that still pick their own port. A later part moves its files and deletes its lines; the list can only shrink.
-// Part 2: refinement
-const PART_2 = [
-  "tests/refinement-api.test.ts",
-  "tests/refinement-architect.test.ts",
-  "tests/refinement-backlog-api.test.ts",
-  "tests/refinement-draft-api.test.ts",
-  "tests/refinement-impact-api.test.ts",
-  "tests/refinement-import-api.test.ts",
-  "tests/refinement-judge-api.test.ts",
-  "tests/refinement-round.test.ts",
-  "tests/refinement-source-label-api.test.ts",
-  "tests/refinement-split-api.test.ts",
-  "tests/refinement-talk-api.test.ts",
-];
-// Part 3: refinement publish
-const PART_3 = [
-  "tests/refinement-publish-api.test.ts",
-  "tests/refinement-publish-changed-api.test.ts",
-  "tests/refinement-publish-close-api.test.ts",
-  "tests/refinement-publish-lock-api.test.ts",
-  "tests/refinement-publish-post-api.test.ts",
-  "tests/refinement-publish-replace-api.test.ts",
-  "tests/refinement-publish-replace-plan-api.test.ts",
-  "tests/refinement-publish-replace-retry-api.test.ts",
-  "tests/refinement-publish-update-api.test.ts",
-];
-// Part 4: repositories, watchers, credentials
-const PART_4 = [
-  "tests/app-repos-api.test.ts",
-  "tests/credentials-api.test.ts",
-  "tests/key-vars-api.test.ts",
-  "tests/repo-key.test.ts",
-  "tests/repo-watchers-api.test.ts",
-  "tests/repo-watchers-gh.test.ts",
-  "tests/repo-watchers-run.test.ts",
-  "tests/repos-admin-api.test.ts",
-  "tests/repos-api.test.ts",
-  "tests/repos-app-api.test.ts",
-  "tests/watcher-move-server.test.ts",
-];
-// Part 5: accounts and sign-in
-const PART_5 = [
+// Files that still pick their own port. The last part moves them and deletes this list; it can only shrink.
+const ALLOWED = [
   "tests/auth.test.ts",
-  "tests/password-change.test.ts",
-  "tests/user-cli.test.ts",
-  "tests/view-as.test.ts",
-];
-// Part 6: server, runs and the rest
-const PART_6 = [
   "tests/browser/seed.ts",
   "tests/home-process.test.ts",
-  "tests/monitor-problems-api.test.ts",
-  "tests/permissions.test.ts",
+  "tests/password-change.test.ts",
+  "tests/repo-key.test.ts",
+  "tests/repo-watchers-run.test.ts",
   "tests/search-api.test.ts",
-  "tests/server.test.ts",
   "tests/skill-cli.test.ts",
   "tests/ui-gallery-server.test.ts",
+  "tests/user-cli.test.ts",
 ];
-const ALLOWED = [...PART_2, ...PART_3, ...PART_4, ...PART_5, ...PART_6];
 
 // Samples are built from pieces so no line of this file holds both the call and "port" or the sum.
 const RND = ["Math", "random()"].join(".");
