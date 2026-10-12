@@ -76,6 +76,8 @@ describe("built-in skills", () => {
     expect(existsSync(join(BUILTIN_SKILLS, "small-changes", "SKILL.md"))).toBe(true);
     expect(existsSync(join(BUILTIN_SKILLS, "java", "SKILL.md"))).toBe(true);
     expect(existsSync(join(BUILTIN_SKILLS, "cassandra", "REVIEW.md"))).toBe(true);
+    expect(findSkill(reg, "ibm-mq")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "ibm-mq", "REVIEW.md"))).toBe(true);
   });
 
   it("builtin: false leaves the source out without a problem", () => {
