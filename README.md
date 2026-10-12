@@ -107,7 +107,7 @@ The run happens in a fresh worktree on a `factory/<run-id>` branch — your chec
 touched. Look at the result in the UI (Runs → the run → Changes) and merge the branch if you
 like it.
 
-To keep it running after you close the terminal: `scf service install`.
+To keep it running after you close the terminal: `scf service install`. To get a report every 6 hours on how each model does per step, and where another level fits: `scf analyst install`.
 
 ## Built-in flows
 

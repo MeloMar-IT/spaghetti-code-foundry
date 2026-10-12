@@ -1855,6 +1855,43 @@ If you installed the service before, run `scf service install` once. It replaces
 `com.claude-factory.server` agent with `com.spaghetti-code-foundry.server`, and puts the old one
 back if the new one can't start.
 
+#### The model analyst
+
+A separate process that reads your own runs every 6 hours and says, per step, how the model does
+and whether another level fits the work. It reads run files and writes a report. It changes no flow
+and no setting, and it does not need the server.
+
+```bash
+scf analyst install     # run every 6 hours as its own macOS login agent; the first time now
+scf analyst run         # write a report now (--no-web: do not look up published figures)
+scf analyst report      # print the last report
+scf analyst status      # uninstall removes the agent
+```
+
+The report is `analyst/report.md` in the data folder; the same advice as data is in
+`analyst/latest.json`. It looks at the last 14 days and needs 20 visits of a step before it says
+anything. Per step and model it shows how often the step worked, ran into its time limit, was
+repaired by a `fix_*` step, or was sent back by a review, and its share of all tokens. From that:
+
+- **Try a lower level.** The step works nearly always and its work is rarely repaired. The advice
+  is one effort level down when the step runs on high or above, otherwise the next smaller model.
+  For a review: almost none of the reviews led to a change.
+- **Try a higher level.** The step fails or its work is repaired often.
+- **Time limit, not model.** 5% or more of the visits ran into the time limit. A stronger model is
+  usually slower, so look at the limit and the size of the work first.
+- **Look at this.** The step got clearly worse in the last two days.
+
+Visits stopped by a usage limit are not counted against a model. Change one step at a time and read
+the next reports: the advice rests on what happened, not on a trial of the other model.
+
+**Published figures.** Once a week the analyst asks Claude Code (web search only, with the Claude
+sign-in of this machine) for published scores, prices and speeds of the models you use and the
+levels next to them, and keeps them in `analyst/reference.json` with the source of each figure.
+Figures a third party measured itself are used as they are. Figures from the makers, and figures
+whose origin is not given, are lowered by a tenth. They are only used to hold back advice for a
+smaller model that scores far lower; your own runs always decide. When the search fails, the
+earlier figures are kept. On Linux, run `scf analyst run` from cron.
+
 #### Self-update
 
 Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in Settings → Safety and name the repository (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.

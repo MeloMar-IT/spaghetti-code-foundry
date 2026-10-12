@@ -63,6 +63,7 @@ Usage:
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
+  scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
         [--every 5m] [--label claude-factory]    each open issue with the label; results are marked
         [--max 1] [--once] [--source …]          with factory:* status labels; resumes runs when
@@ -173,6 +174,7 @@ async function main(argv: string[]): Promise<number> {
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
       max: { type: "string" },
@@ -472,6 +474,11 @@ async function main(argv: string[]): Promise<number> {
     case "credential": {
       const { credentialCommand } = await import("./credentials/cli.js");
       return credentialCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "analyst": {
+      const { analystCommand } = await import("./analyst/cli.js");
+      return analystCommand(positionals.slice(1), { cliPath: fileURLToPath(import.meta.url), noWeb: values["no-web"] }, (line) => void process.stdout.write(line + "\n"));
     }
 
     case "monitor": {

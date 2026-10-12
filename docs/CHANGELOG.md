@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- The model analyst: `scf analyst run|report|install|uninstall|status`. A process of its own that, every 6 hours, reads the runs of the last 14 days and writes `analyst/report.md` and `analyst/latest.json` in the data folder.
+  - **Per step and model:** how often the step worked, timed out, was repaired (`fix_*` came next) or was sent back by a review (`address_*` / `revise_*`), minutes, tokens and its share of all tokens.
+  - **Advice:** try a lower level (effort first, then the next smaller model), try a higher level, time limit rather than model, look at this (worse in the last two days), or keep. 20 visits are needed; visits stopped by a usage limit do not count against a model.
+  - **Published figures:** once a week a Claude Code session with web search only fetches scores, prices and speeds into `analyst/reference.json`, each with its source and who measured it. Independent figures are used as they are; makers' and unattributed figures are lowered by a tenth. They can hold back advice for a much weaker model and never outweigh your own runs. `--no-web` skips the lookup.
+  - **Schedule:** `scf analyst install` adds the login agent `com.spaghetti-code-foundry.analyst` (macOS). It is separate from the server's agent. The analyst changes no flow and no setting.
+  - New `src/analyst/` and `tests/analyst.test.ts`. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - Guided connect and re-authentication with verification and read-back (#382). Part 3 of 5 of #262.
   - **`ui/repo-connect.js` (new).** Holds `repoDialog` (moved from `ui/repos.js`, which re-exports it, so callers do not change) and the pure helpers `storesToken`, `saveUnknown`, `replaceLines`, `verdict` and `readBack`.
   - **Steps.** **Add repository** runs in steps: 1. Address (with **Next** and **Back**; an empty address is refused on the spot), then 2. Method and 3. Details. The focus moves to the first field of each step.

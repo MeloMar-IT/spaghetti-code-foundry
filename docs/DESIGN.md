@@ -689,6 +689,19 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
 
 ---
 
+### The model analyst
+
+`src/analyst/` is a process of its own (`scf analyst run`, every 6 hours through its own login
+agent), so that judging the models never depends on, or slows, the server. It is pure reading:
+`collect.ts` turns the step records of the last 14 days into counts per flow, step, model and
+effort; `advise.ts` turns the counts into one verdict per pair; `report.ts` writes Markdown. The
+quality of a step is read from what came after it in the same run: a `fix_*` step means its work
+was broken, an `address_*` or `revise_*` step after a review means it was sent back. Published
+figures (`reference.ts`) are fetched once a week by a headless Claude Code session that may only
+search the web. Each figure carries who measured it; makers' figures are lowered by a tenth and can
+only veto a step down to a much weaker model. The analyst advises and never changes a flow: a
+wrong model choice made by itself would cost more than the tokens it saves.
+
 ## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`
