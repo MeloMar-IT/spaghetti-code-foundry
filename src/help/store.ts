@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { ReplySchema, displayText, type Reply } from "./contract.js";
+import { SECRET_CATEGORIES, type SecretCategory } from "./guard.js";
 
 /**
  * The stored conversations of Ask SCF: `help.json` in the data folder, written under the lock of the data folder
@@ -100,6 +101,8 @@ const MessageSchema = z
     tries: z.number().int().min(1).max(1000).optional(),
     /** A reply: when it last changed (answered, failed, stopped or started again). */
     updated: z.iso.datetime().optional(),
+    /** The kinds of secret the server took out of this text before it was stored. Never a value. */
+    redacted: z.array(z.enum(SECRET_CATEGORIES)).min(1).max(SECRET_CATEGORIES.length).optional(),
   })
   .strict()
   .superRefine((m, ctx) => {
@@ -304,6 +307,8 @@ export interface NewQuestion {
   conversation?: string;
   question: unknown;
   context?: unknown;
+  /** The kinds of secret that were taken out of the question before it came here. */
+  redacted?: readonly SecretCategory[];
 }
 
 export interface Turn {
@@ -321,8 +326,9 @@ export interface Turn {
 export function addQuestion(owner: string, input: NewQuestion, opts: StoreOptions = {}): Turn {
   const text = checkQuestion(input.question);
   const context = checkContext(input.context);
+  const redacted = SECRET_CATEGORIES.filter((c) => input.redacted?.includes(c));
   const messages = (at: string): [Message, Message] => {
-    const q: Message = { id: randomUUID(), role: "user", at, status: "done", text, ...(context ? { context } : {}) };
+    const q: Message = { id: randomUUID(), role: "user", at, status: "done", text, ...(context ? { context } : {}), ...(redacted.length ? { redacted } : {}) };
     return [q, { id: randomUUID(), role: "assistant", at, status: "pending", text: "", replyTo: q.id, tries: 1, updated: at }];
   };
   if (input.conversation === undefined) {
@@ -390,9 +396,10 @@ function endTurn(id: string, turn: TurnRef, opts: StoreOptions, fn: (m: Message,
  * Stores the reply of a turn: the checked structure, and the text the server writes from it. A reply that comes
  * after the turn was stopped or the conversation was deleted is not stored.
  */
-export function finishTurn(id: string, turn: TurnRef, reply: Reply, opts: StoreOptions = {}): Conversation | undefined {
+export function finishTurn(id: string, turn: TurnRef, reply: Reply, opts: StoreOptions = {}, removed: readonly SecretCategory[] = []): Conversation | undefined {
   const checked = ReplySchema.parse(reply);
-  return endTurn(id, turn, opts, (m, at) => ({ state: "active", message: { ...m, status: "done", reply: checked, text: displayText(checked).slice(0, TEXT_MAX), updated: at } }));
+  const redacted = SECRET_CATEGORIES.filter((c) => removed.includes(c));
+  return endTurn(id, turn, opts, (m, at) => ({ state: "active", message: { ...m, status: "done", reply: checked, text: displayText(checked).slice(0, TEXT_MAX), updated: at, ...(redacted.length ? { redacted } : {}) } }));
 }
 
 /** Marks a turn as failed, with the fixed sentence for its reason. */

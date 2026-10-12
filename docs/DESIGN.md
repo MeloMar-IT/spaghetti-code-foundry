@@ -826,6 +826,42 @@ refinement flows and `src/server/generate.ts`: no flow, no run folder, no schedu
 Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
 the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
 
+### Ask SCF: the guard
+
+`src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.
+Everything except the asker's own question is untrusted: page context, documents, run records,
+issue text, logs, and the model's answer.
+
+- **Secrets** (`scrub`). Stored credentials are removed by value with the redactor of
+  `src/credentials/redact.ts`; then the shapes in `SHAPES` (private key block, authorization
+  header, cookie, sign-in in an address, token shapes, `name = value` for names that hold
+  `password`, `secret`, `token`, …); then `help.sensitive_patterns`. A removed value is replaced by
+  the fixed words of its category (`REMOVED_WORDS`), and the categories are returned. `Removals`
+  collects them over several texts. The categories are stored on the message (`redacted`), and
+  logged; a value never is.
+- **Orders in copied text** (`looksLikeOrders`, `guardExcerpt`). A source is a piece of evidence
+  with an optional excerpt (`Source` in `turn.ts`). `prepareTurn` scrubs the question, the page
+  context, the earlier turns and every source, cuts an excerpt to `EXCERPT_MAX` (all together
+  `EXCERPTS_MAX`, at most `LIST_MAX.evidence` sources), and drops a source whose title, place or
+  excerpt reads like an order. A dropped source is not in `offered`, so `checkReply` drops a
+  citation of it too.
+- **Three parts in the request** (`turnPrompt`): the rules in the server's words; then
+  `EXCERPTS`, one JSON value on one line; then `DATA`, one JSON value on the last line with the
+  question, the page, the earlier turns and the list of sources. A text inside a JSON value has no
+  line break of its own, so it cannot start or end a part.
+- **`checkReply` is still the only way out.** The guard adds nothing to a reply. An answer that
+  obeyed an injected order still loses every action that is not on the server's list (all), every
+  link that is not a fixed page of the role, and every source that was not offered.
+- **Fail closed.** `scrub` throws `GuardError` when the credential store cannot be read
+  (`BLOCKED`), when a stored credential is still found after its removal, when a configured
+  pattern is broken, or when a text is longer than `GUARD_MAX`. `HelpTurns.ask` then refuses the
+  question (`unsafe`, 503) before anything is stored or counted; `HelpTurns.run` ends the turn
+  with `setup` before the model call; a reply whose check throws is not stored. A failing check
+  for orders holds the text back.
+
+Tests: `tests/help-safety.test.ts` (secret fixtures of every category, hostile texts, the three
+parts of the request, and the fail-closed paths).
+
 ### Helper processes
 
 `src/ops/` holds five helpers built like the analyst: a pure function that turns files of the data

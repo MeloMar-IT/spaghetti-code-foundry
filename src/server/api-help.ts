@@ -35,7 +35,7 @@ const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-contex
 /** How often the server applies the retention policy to the stored conversations, in ms. */
 export const HELP_SWEEP_MS = 60 * 60 * 1000;
 
-const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full": 429, limit: 429 };
+const REFUSED: Record<RefusalCode, number> = { off: 503, busy: 409, "queue-full": 429, limit: 429, unsafe: 503 };
 
 const services = new WeakMap<ApiContext, HelpTurns>();
 /** The help turns of this server: what runs and what waits. */

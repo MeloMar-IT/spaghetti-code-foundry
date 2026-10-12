@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: a defence against orders hidden in copied text, and secrets are taken out (#242). Part of #226.
+  - **Secrets.** Before a question is stored, before anything goes to the model and before a reply is stored, the server removes stored credentials (by value), private keys, authorization headers, cookies, sign-ins in addresses, common token shapes, values of names like `DB_PASSWORD=…`, and what matches the new optional setting `help.sensitive_patterns`. In its place stands a mark that names the kind, such as `[removed: a token]`; the message also lists the kinds (`redacted`). The server log names kinds only.
+  - **Copied text is data.** A source can now carry a short excerpt (at most 1,200 characters, 8,000 for one turn). Excerpts stand in their own part of the request, apart from the rules and from the question. A source that reads like an order to the model is left out and cannot be cited.
+  - **Fail closed.** When the stored credentials cannot be read or a pattern is broken, a new question is refused (503, "Ask SCF cannot check your question for secrets right now…") and nothing is stored; a waiting turn ends as "not set up" without a model call; a reply that cannot be checked is not kept. A page context that holds a secret is refused (400).
+  - **Changed for callers.** The reply's texts are no longer cleaned with the stored credentials alone but with all rules above, so a reply can hold `[removed: …]` marks. No new route.
+  - Code in `src/help/guard.ts`; "Secrets and copied text" in chapter 14 of `docs/USER_GUIDE.md`, "Ask SCF: the guard" in `docs/DESIGN.md`. Tests in `tests/help-safety.test.ts`.
 - Ask SCF: help turns run through the configured provider (#229). Part of #226. **Off by default**: an admin sets `help.enabled: true`.
   - **A turn** is one question. `POST /api/help/conversations` (new) or `…/:id/messages` (next question) stores it, answers 202 and queues the turn; `…/retry` tries a failed or stopped answer again in the same messages, `…/cancel` stops one. On the command line: `scf ask new|more|retry|stop`.
   - **No tools.** A turn is one Claude Code call with no tools, no MCP servers, no permissions and no GitHub token, in an empty temporary folder that is removed afterwards. The answer is checked by the contract: no action, only fixed pages, only sources the server offered (none yet, so replies say "could not check"). Only a Claude Code model can answer; a Codex model gives a plain "not set up" answer.

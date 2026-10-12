@@ -4502,6 +4502,41 @@ you never read the text of the AI service.
 | You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
+| The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
+
+### Secrets and copied text
+
+**Secrets are taken out.** Before a question is stored, before anything is sent to the AI model,
+and before a reply is stored, the server removes what looks like a secret and puts a mark in its
+place. The mark says what kind of thing was removed, never the value:
+
+| Kind | What is removed | What you read instead |
+|---|---|---|
+| A stored credential | any token, password or key that is stored in this Foundry, by its value | `[removed: a credential stored in the Foundry]` |
+| A private key | a block from `-----BEGIN … PRIVATE KEY-----` to its end | `[removed: a private key]` |
+| An authorization header | the value of `Authorization: …`, and `Bearer …` or `Basic …` with a long value | `[removed: an authorization header]` |
+| A cookie | the value of `Cookie: …` and `Set-Cookie: …`, up to the end of the line | `[removed: a cookie]` |
+| A sign-in in an address | the name and password in `https://name:password@host/…` | `[removed: a sign-in in an address]` |
+| A token | the common shapes of tokens: GitHub, GitLab, npm, AI services, Slack, AWS and Google keys, and signed web tokens | `[removed: a token]` |
+| A secret value | the value after a name that holds `password`, `secret`, `token`, `api_key`, `access_key`, `private_key` or `credential`, as in `DB_PASSWORD=…` | `[removed: a secret value]` |
+| A text this Foundry keeps private | what matches a pattern of `help.sensitive_patterns` | `[removed: a text this Foundry keeps private]` |
+
+A message from which something was removed also carries the list of kinds (`redacted` in the
+answer of the API). The check is wide on purpose: now and then it removes a harmless word after
+`token:`. A page context that holds a secret is refused (400): ask again without it.
+
+**Copied text is data.** The text of a document, a record or a log that the server hands to the
+model as a source stands in its own part of the request, apart from the rules and apart from your
+question. A source whose text reads like an order to the model (for example a made-up "system"
+line, or a sentence that tells it to drop its rules) is left out completely: the model does not
+read it and a reply cannot name it as a source. Whatever a model answers, the server keeps only
+what the contract allows, so a text in a document cannot make an action, a link to another site
+or a source that the server did not offer.
+
+**When a check cannot be done, nothing goes out.** If the stored credentials cannot be read or a
+pattern of the settings is broken, a new question is not kept, a waiting turn ends with "Ask SCF
+is not set up to answer here." without a call to the model, and a reply that cannot be checked is
+not stored.
 
 ### Ask SCF for administrators
 
@@ -4517,7 +4552,13 @@ help:
   turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
   max_cost_usd_per_turn: 0.1
   daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+  sensitive_patterns:           # optional: texts to keep out of Ask SCF, as regular expressions
+    - 'CUSTOMER-\d{5}'          # at most 20, each at most 200 characters; upper and lower case are the same
 ```
+
+`sensitive_patterns` adds to what Ask SCF removes anyway (see "Secrets and copied text" above). A
+pattern that is not a regular expression, or that matches the empty text, is refused when the
+settings are read.
 
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
@@ -4538,7 +4579,9 @@ get 403 for it, and their own conversations never show a model, a provider, a co
 count; the name of the configured model and provider is also taken out of the text of their
 replies. Usage is kept for 90 days. An administrator still cannot read another account's
 conversations. The server log gets one line in fixed words for a failed turn, for example
-`help: a turn failed (provider)`, never the question or the answer.
+`help: a turn failed (provider)`, never the question or the answer. When secrets were removed it
+says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
+value.
 
 ### What you never see as a user
 
