@@ -2049,7 +2049,7 @@ not followed; the command says where the server points to and stops.
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); the usage (admin) |
+| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); what a page context is worth (`context`); the usage (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2968,6 +2968,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
@@ -4635,6 +4636,42 @@ and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/
 A turn sees your question, the page you asked it on, and the last three answered questions of the
 same conversation. It sees nothing of other conversations or other accounts.
 
+### The page context
+
+So that you can ask "what is happening here?" without copying an id, a question can carry a
+**page context**: a small envelope that says where you are. It names things; it never holds them.
+
+| Part | What it is | Limit |
+|---|---|---|
+| `page` | the address of the page, such as `#/runs/<id>` | always kept |
+| `kind` and `id`, `entities` | the things selected on the page: a `run`, `issue`, `repository`, `queue`, `refinement` or `problem`, each with its id | 5 things |
+| `filters` | the filters the page shows, by name | 8 filters, 100 characters each |
+| `selection` | text you marked on the page, as plain text | 2,000 characters |
+
+The whole envelope is at most 4,000 characters. **What is too much is cut in this order:** the
+page is always kept; then the things, in the order sent; then the filters; the marked text gives
+way first and is cut at the end. The stored envelope names the parts that lost something
+(`truncated`). A page never sends its whole content.
+
+**What is refused** (400, and the question is not taken): anything else in the envelope, such as an
+owner, a role, a permission, a token or a copy of a record; markup (`<…>`) anywhere; a file path
+as an id or a filter value; a filter named after an owner, a role, a permission or a secret; and
+an address that is not `#/…`.
+
+**The server looks everything up again.** The envelope is never taken as true. When the turn
+runs, the server finds out which page the address is for your role, and looks up every named
+thing with the rule of the API call that reads it: a run only when it is yours (or you are an
+administrator). A thing that does not exist and a thing of another account give the same result:
+it is left out, and only counted. An address that is no page of your role (an old link, a page of
+the administrators) counts as no page. The model is told only what was found; the marked text is
+handed over as copied text (see "Secrets and copied text"). In this version only runs are looked
+up; other kinds are counted as not found.
+
+**Look before you send.** `POST /api/help/context` with the envelope as its body
+(`scf ask context '#/runs/<id>' --selection "…"`) answers what would be taken: the envelope as it
+would be kept, its size and the limits, the page, and the things found for your account. Nothing
+is stored and no model is called. Leave the context out of a question to ask without it.
+
 **One at a time.** Each account has one turn at a time. Turns of different people wait in one
 line, first come first served, so nobody can fill it alone.
 
@@ -4660,6 +4697,41 @@ you never read the text of the AI service.
 | You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
+| The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
+
+### Secrets and copied text
+
+**Secrets are taken out.** Before a question is stored, before anything is sent to the AI model,
+and before a reply is stored, the server removes what looks like a secret and puts a mark in its
+place. The mark says what kind of thing was removed, never the value:
+
+| Kind | What is removed | What you read instead |
+|---|---|---|
+| A stored credential | any token, password or key that is stored in this Foundry, by its value | `[removed: a credential stored in the Foundry]` |
+| A private key | a block from `-----BEGIN … PRIVATE KEY-----` to its end | `[removed: a private key]` |
+| An authorization header | the value of `Authorization: …`, and `Bearer …` or `Basic …` with a long value | `[removed: an authorization header]` |
+| A cookie | the value of `Cookie: …` and `Set-Cookie: …`, up to the end of the line | `[removed: a cookie]` |
+| A sign-in in an address | the name and password in `https://name:password@host/…` | `[removed: a sign-in in an address]` |
+| A token | the common shapes of tokens: GitHub, GitLab, npm, AI services, Slack, AWS and Google keys, and signed web tokens | `[removed: a token]` |
+| A secret value | the value after a name that holds `password`, `secret`, `token`, `api_key`, `access_key`, `private_key` or `credential`, as in `DB_PASSWORD=…` | `[removed: a secret value]` |
+| A text this Foundry keeps private | what matches a pattern of `help.sensitive_patterns` | `[removed: a text this Foundry keeps private]` |
+
+A message from which something was removed also carries the list of kinds (`redacted` in the
+answer of the API). The check is wide on purpose: now and then it removes a harmless word after
+`token:`. A page context that holds a secret is refused (400): ask again without it.
+
+**Copied text is data.** The text of a document, a record or a log that the server hands to the
+model as a source stands in its own part of the request, apart from the rules and apart from your
+question. A source whose text reads like an order to the model (for example a made-up "system"
+line, or a sentence that tells it to drop its rules) is left out completely: the model does not
+read it and a reply cannot name it as a source. Whatever a model answers, the server keeps only
+what the contract allows, so a text in a document cannot make an action, a link to another site
+or a source that the server did not offer.
+
+**When a check cannot be done, nothing goes out.** If the stored credentials cannot be read or a
+pattern of the settings is broken, a new question is not kept, a waiting turn ends with "Ask SCF
+is not set up to answer here." without a call to the model, and a reply that cannot be checked is
+not stored.
 
 ### Ask SCF for administrators
 
@@ -4675,7 +4747,13 @@ help:
   turns_per_user_per_day: 30    # per account, per day (UTC); a retry counts
   max_cost_usd_per_turn: 0.1
   daily_budget_usd: 2           # all help turns of a day together; leave out for no such limit
+  sensitive_patterns:           # optional: texts to keep out of Ask SCF, as regular expressions
+    - 'CUSTOMER-\d{5}'          # at most 20, each at most 200 characters; upper and lower case are the same
 ```
+
+`sensitive_patterns` adds to what Ask SCF removes anyway (see "Secrets and copied text" above). A
+pattern that is not a regular expression, or that matches the empty text, is refused when the
+settings are read.
 
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
@@ -4696,7 +4774,9 @@ get 403 for it, and their own conversations never show a model, a provider, a co
 count; the name of the configured model and provider is also taken out of the text of their
 replies. Usage is kept for 90 days. An administrator still cannot read another account's
 conversations. The server log gets one line in fixed words for a failed turn, for example
-`help: a turn failed (provider)`, never the question or the answer.
+`help: a turn failed (provider)`, never the question or the answer. When secrets were removed it
+says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
+value.
 
 ### What you never see as a user
 
