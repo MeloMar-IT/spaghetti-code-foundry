@@ -2,9 +2,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { addRepo, listRepos, type RepoRecord } from "../../src/auth/repos.js";
-import { startServer, type ServerOptions } from "../../src/server/server.js";
+import type { startServer, ServerOptions } from "../../src/server/server.js";
 import { fakeGit, fakeGithub } from "./fake-github.js";
 import { fakeKeychain } from "./keychain.js";
+import { startTestServer } from "./port.js";
 import { signInAs, type TestSession } from "./session.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -39,8 +40,6 @@ export interface World {
 }
 
 export async function openWorld(name: string): Promise<World> {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const base = `http://127.0.0.1:${port}`;
   const gh = fakeGithub();
   fakeGit(gh, "https://github.com/acme/app https://github.com/other/thing");
   const saved: Record<string, string | undefined> = {};
@@ -50,8 +49,9 @@ export async function openWorld(name: string): Promise<World> {
   process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
   for (const k of ["FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND", "FAKE_GH_ISSUES"]) delete process.env[k];
   const kc = fakeKeychain();
-  const opts: ServerOptions = { repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
-  const started = await startServer(opts);
+  const opts: Omit<ServerOptions, "port"> = { repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
+  const started = await startTestServer(opts);
+  const base = started.base;
   const admin = await signInAs(base);
   const ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   const bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
