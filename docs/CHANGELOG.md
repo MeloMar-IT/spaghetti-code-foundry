@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Five helper processes, each with `run|report|install|uninstall|status` and a login agent of its own (macOS): `scf governor`, `scf flaky`, `scf limits`, `scf blockage`, `scf digest`. They read the data folder and write only in their own folder there.
+  - **`governor`** (every minute). Lowers the runs at once by one per check while the load is above 2.5 per core or the memory is under pressure (not below half the configured number), raises it after five calm checks, and allows one test run at a time above 4 per core. Changes are logged in `governor/changes.log`; `scf governor reset` takes the limits away.
+  - **`flaky`** (every 6 hours). Lists tests that failed, or passed only on a retry, in at least three different stories in 7 days, with a likely cause. `scf flaky auto on` makes one bug story per test file (at most 2 per check, never twice); off by default.
+  - **`limits`** (every hour). From one reading (`scf limits set claude|codex <percent> <next reset>`) it estimates the weekly limit and says when it is reached at the pace of the last 24 hours. `scf limits auto on` lowers the runs at once so that it lasts; off by default.
+  - **`blockage`** (every hour). Lists the stories that hold up the most others, through held files and "depends on", and says when run slots are empty while stories wait.
+  - **`digest`** (daily 07:30). What was done, split, failed and what waits for you in the last 24 hours, with a few lines from the other helpers, and a desktop notification.
+  - **Engine.** The scheduler takes the lowest cap that still holds from `governor/caps.json` (never below 1; a cap past its end time is ignored). `tools/test-slot` honours `test-slots/cap`.
+  - New `src/ops/` and `tests/ops.test.ts`. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - Skills.sh metadata discovery without automatic trust (#213). Part of #196.
   - **Command.** `scf skills discover [<export-file> [<file>]]` reads a saved Skills.sh export (no scraping, no site calls), resolves each GitHub https repository to its current `HEAD` commit with `git ls-remote`, and stores it as a `proposed` candidate in `<data folder>/skill-source-candidates.json`. It prints `PROPOSED`, `KNOWN` (already in `skill-sources.yaml`, any status), `UNRESOLVED` and `PROBLEM` lines. With no operand it lists the stored candidates.
   - **No trust.** The command never writes the allowlist, the lock, the quarantine or releases. Trust, licence, popularity and safety claims from the export are not copied; credential-like entries are dropped. It is optional: runs never read the list.

@@ -66,6 +66,9 @@ Usage:
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
+  scf governor|flaky|limits|blockage|digest run|report|install|uninstall|status
+                                                 Helper processes: machine load, unreliable tests, usage limits,
+                                                 what holds work up, and a daily digest (see the user guide)
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
         [--every 5m] [--label claude-factory]    each open issue with the label; results are marked
         [--max 1] [--once] [--source …]          with factory:* status labels; resumes runs when
@@ -483,6 +486,15 @@ async function main(argv: string[]): Promise<number> {
     case "analyst": {
       const { analystCommand } = await import("./analyst/cli.js");
       return analystCommand(positionals.slice(1), { cliPath: fileURLToPath(import.meta.url), noWeb: values["no-web"] }, (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "governor":
+    case "flaky":
+    case "limits":
+    case "blockage":
+    case "digest": {
+      const { opsCommand } = await import("./ops/cli.js");
+      return opsCommand(cmd, positionals.slice(1), fileURLToPath(import.meta.url), (line) => void process.stdout.write(line + "\n"));
     }
 
     case "monitor": {
