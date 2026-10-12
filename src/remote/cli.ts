@@ -24,7 +24,7 @@ export const REMOTE_USAGE = `Commands that talk to a running Foundry (sign in fi
                                   Make any call directly, e.g. scf api GET runs`;
 
 /** Words that are also commands working on files. For these, only a known action is taken here; everything else is left to the file command. */
-export const LOCAL_WORDS = ["run", "resume", "approve", "reject", "eval", "clean", "flows", "blocks", "skills", "validate", "new", "ui", "serve", "user", "credential", "monitor", "service", "watch", "analyst", "governor", "flaky", "limits", "blockage", "digest"];
+export const LOCAL_WORDS = ["run", "resume", "approve", "reject", "eval", "clean", "flows", "blocks", "skills", "validate", "new", "ui", "serve", "user", "credential", "monitor", "evidence", "service", "watch", "analyst", "governor", "flaky", "limits", "blockage", "digest"];
 
 const areasOf = (cmds: Cmd[]) => [...new Set(cmds.map((c) => c.area))].sort();
 

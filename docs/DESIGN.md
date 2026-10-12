@@ -307,6 +307,47 @@ gets a chain again, with another last hash: that is why the manifest holds the l
   names, hashes, commit ids and one pull-request address. Files are written beside their place
   and moved over it, mode `0600`.
 
+### Verifying evidence
+
+`src/evidence/verify.ts` checks the evidence of a run (#137). `verifyEvidence` is pure: it gets the
+texts of the manifest and the event file, the flow definition, and a function that looks at one
+file. `verifyRunEvidence(runDir, runId)` reads them from a run folder. `scf evidence verify
+<run-id>` (`src/evidence/cli.ts`) prints the result. No model, no network, no server, and nothing
+is written.
+
+The checks run in this order, and the first one that fails ends the run of checks (the later ones
+are `skipped`):
+
+| Check | Passes when | Failure codes |
+|---|---|---|
+| `manifest` | `evidence.json` is a valid manifest of a version this Foundry reads and of this run, and there is no `evidence.incomplete` mark | `incomplete`, `manifest-unreadable`, `manifest-version`, `manifest-run` |
+| `events` | `evidence.jsonl` is a plain file that ends with a whole line | `events-missing`, `events-unreadable`, `events-cut` |
+| `chain` | every line is canonical, a valid event of a readable version, at its place, linked to the line before, with its own hash | `chain-` + the fault of `readEvidenceChain`, with the line |
+| `terminal` | the number of events and the hash of the last one are those of the manifest | `events-added`, `events-removed`, `terminal-hash` |
+| `content` | the manifest built again from the events is the same manifest | `manifest-changed` |
+| `flow` | the canonical hash of `flowDef` in `run.json` is the flow hash of the manifest | `flow-missing`, `flow-changed` |
+| `files` | every named file is a plain file of the run folder with the same SHA-256 and size | `file-missing`, `file-changed`, `file-unreadable` |
+
+- **Result** (`VerifyResult`, version 1): `status`, `verified`, `explanation` (one or two short
+  sentences), `failure` (the first one: `check`, `code`, `message`, `line` or `path`), `checks`,
+  `manifest` (the SHA-256 of the file, its status and time), `events` (count and last hash),
+  `files` (each with `state`: `ok`, `changed`, `missing`, `unreadable`) and `missingOptional`.
+- **Four outcomes.** `verified`; `failed`; `not-finalized` (an unbroken chain but no manifest: the
+  run has not ended, or finalizing failed); `absent` (no evidence at all: a run from before
+  evidence). Only `verified` sets `verified: true`.
+- **Required and optional.** A missing file with `required: true` fails. A missing file with
+  `required: false` is listed in `missingOptional` and does not fail. A changed file fails either
+  way. All files are looked at, so the result shows every state; the failure is the first.
+- **Files stay in the run folder.** A file is read without following a link; a link anywhere on
+  its path, a folder or a pipe is `unreadable`. Messages name lines and paths inside the run
+  folder, never content.
+- **What it cannot see.** The manifest is the anchor: someone who can rewrite the events, the
+  manifest and the files together gets evidence that verifies. The result gives the manifest's
+  SHA-256 so it can be kept somewhere else (the delivery contract, #162).
+- **Fixtures.** `tests/fixtures/evidence-runs.ts` writes four runs from fixed content, with its
+  own canonical form and hashes: valid, a changed event, a missing file, and an old run without
+  evidence.
+
 ---
 
 ## 5. Agents and models

@@ -840,6 +840,33 @@ can be found.
   such a run is resumed it gets events from then on, but no manifest.
 - A step of a user's run cannot write these files.
 
+**Check the evidence of a run.** `scf evidence verify <run-id>` reads the run folder and says
+whether the evidence is still what was written. It needs no server and no network.
+
+```
+$ scf evidence verify 20260131-120000-ab12
+✔ verified · run 20260131-120000-ab12
+  Verified: 8 events in an unbroken chain, 3 files unchanged.
+  events:    8, last hash 5d0c…
+  manifest:  sha256 91f2… (succeeded, written 2026-01-31T12:00:02.600Z)
+```
+
+- It checks, in this order: the manifest; the event file; every line of the chain; that the
+  events end where the manifest says; that the manifest says what the events say; the flow
+  definition in `run.json`; and every log, transcript and diff the manifest names.
+- **Not verified** names the first thing that is wrong, for example
+  `Not verified: evidence.jsonl, line 5: was changed (its hash is not the hash of its content).`
+  or `Not verified: logs/002-run_tests.log was changed.`
+- **A file that is gone:** a log or transcript is needed, so the run is not verified. The diff is
+  optional: the run still verifies, and the line says
+  `1 optional file is no longer there (evidence.diff); that is allowed.` A file that was changed
+  is never allowed.
+- **Nothing to verify:** a run made before evidence existed (`· no evidence`), or a run that has
+  not ended or could not be finalized (`■ not finalized`).
+- **Exit code:** 0 verified, 1 not verified, 2 nothing to verify. `--json` prints the whole result
+  (status, the first failure with its code, every check and every file) for a script.
+  `--runs-dir <dir>` reads another runs folder.
+
 ---
 
 ## 4. Write your own flows
@@ -3605,6 +3632,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
+| `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in

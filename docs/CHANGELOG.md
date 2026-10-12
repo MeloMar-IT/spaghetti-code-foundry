@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Evidence 4 — verify the evidence of a run (#137). Part of #133.
+  - **`scf evidence verify <run-id> [--json] [--runs-dir <dir>]`** checks a run folder and prints the result. Exit code 0: verified. 1: not verified. 2: nothing to verify (a run from before evidence, or a run that has not ended). It reads only: no server, no model, no network.
+  - **What is checked, in this order:** the manifest (readable, a version this Foundry reads, of this run, no `evidence.incomplete` mark); the event file; the chain (version, place, link and hash of every line); the end (number of events and last hash as in the manifest); the content (the manifest says what the events say); the flow definition in `run.json` (its hash); every file the manifest names (hash and size).
+  - **The result** (`VerifyResult`, also what `--json` prints): `status` (`verified`, `failed`, `not-finalized`, `absent`), `verified`, a short `explanation`, the first `failure` (`check`, `code`, `message`, and the `line` or `path`), the state of every check, the manifest's SHA-256, the number of events and the last hash, the state of every file (`ok`, `changed`, `missing`, `unreadable`) and `missingOptional`.
+  - **Optional and required files.** A required file (a log, a transcript) that is gone fails the check. An optional file (`evidence.diff`) that is gone is listed under `missingOptional` and the run still verifies. A changed file always fails, optional or not. A link or a folder in place of a file is `unreadable`.
+  - **Module:** `src/evidence/verify.ts` — `verifyEvidence` (pure: texts and a way to look at a file) and `verifyRunEvidence(runDir, runId)`. Neither throws or writes.
+  - No API route yet: that is #138.
 - Evidence 3 — the events of a run are a hash chain, and a run that ends gets a manifest (#136). Part of #133.
   - **Hash chain.** Every line of `evidence.jsonl` now has `prevHash` (the hash of the line before; `null` for the first) and `hash` (the SHA-256 of the event in its canonical form, without `hash` itself). A changed, added, removed or moved line breaks the chain. The event version stays 1.
   - **Canonical form** (`src/evidence/canonical.ts`, the rules of RFC 8785): names in order, no spaces, strings and numbers written one way, UTF-8. Every line is written in it, byte for byte. Fixed test vectors hold the texts and their hashes.
