@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 // Built from pieces so this file does not flag itself.
@@ -24,21 +24,14 @@ function walk(dir: string, root: string, out: string[]): void {
   }
 }
 
-/** Files under <root>/tests (.ts, .mjs, .js, subfolders too) with a self-chosen port, and stale `allowed` entries. */
-export function scanTestPorts(root = ".", allowed: string[] = []): { where: string; problems: string[] }[] {
+/** Files under <root>/tests (.ts, .mjs, .js, subfolders too) with a self-chosen port. There are no exceptions. */
+export function scanTestPorts(root = "."): { where: string; problems: string[] }[] {
   const files: string[] = [];
   walk(join(root, "tests"), root, files);
   const out: { where: string; problems: string[] }[] = [];
-  const hitsOf = (where: string): string[] => scanPorts(readFileSync(join(root, where), "utf8"));
   for (const where of files) {
-    if (allowed.includes(where)) continue;
-    const hits = hitsOf(where);
+    const hits = scanPorts(readFileSync(join(root, where), "utf8"));
     if (hits.length > 0) out.push({ where, problems: hits.map((h) => `${h} — ${HINT}`) });
-  }
-  for (const where of allowed) {
-    if (!existsSync(join(root, where)) || hitsOf(where).length === 0) {
-      out.push({ where, problems: ["no self-chosen port any more — remove it from the allowlist in tests/test-ports.test.ts"] });
-    }
   }
   return out.sort((a, b) => a.where.localeCompare(b.where));
 }
