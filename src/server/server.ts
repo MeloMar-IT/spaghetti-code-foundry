@@ -41,6 +41,7 @@ import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
 import { refinementBacklogRoutes } from "./api-refinement-backlog.js";
+import { HELP_SWEEP_MS, helpRoutes, helpSweeper } from "./api-help.js";
 import { refinementPublishRoutes } from "./api-refinement-publish.js";
 import { auditRoutes } from "./api-audit.js";
 import { AUDIT_SWEEP_MS, auditSweeper } from "../auth/audit.js";
@@ -115,7 +116,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -242,6 +243,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweep();
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
+  // Ask SCF: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
+  const helpSweep = helpSweeper(log);
+  helpSweep();
   const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
   auditSweep();
 
@@ -341,6 +345,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   sweepTimer.unref();
   const refinementTimer = setInterval(refinementSweep, opts.refinementSweepMs ?? REFINEMENT_SWEEP_MS);
   refinementTimer.unref();
+  const helpTimer = setInterval(helpSweep, HELP_SWEEP_MS);
+  helpTimer.unref();
   const auditTimer = setInterval(auditSweep, opts.auditSweepMs ?? AUDIT_SWEEP_MS);
   auditTimer.unref();
   if (opts.watchers !== false) watchers.sync();
@@ -360,6 +366,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(adoptTimer);
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
+      clearInterval(helpTimer);
       clearInterval(auditTimer);
       clearTimeout(retryTimer);
       notifier?.stop();

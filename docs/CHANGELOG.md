@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Ask SCF: conversations and messages are stored (#228). Part of #226.
+  - **What is stored.** `help.json` in the data folder (mode 0600, written under the lock through a temporary file): conversations with stable ids, times, a state and messages. A question keeps the page it was asked on and at most one selected thing; a reply keeps its checked structure (sources, links, drafts, proposals) apart from the text a person reads.
+  - **States.** active, failed, cancelled, completed, archived and deleted. A failed, stopped or interrupted reply is tried again in the same two messages; a late result of an earlier try, of a stopped turn or of a deleted conversation is not stored. A reply left unfinished by a restart is marked as interrupted when the server starts.
+  - **Access.** Only the owner reads and changes a conversation. Another account's id answers like an unknown one. Administrators get no extra access, and "View as user" shows no conversations. Deleting an account removes its conversations.
+  - **Retention.** Delete removes title and messages at once; an empty record stays 30 days. A conversation unchanged for 90 days expires the same way. The clean-up runs hourly, and expired content is never shown before it ran.
+  - **Calls.** `GET /api/help/conversations`, `GET|DELETE /api/help/conversations/:id`, `POST …/complete`, `…/archive`, `…/restore`; on the command line `scf ask list|show|complete|archive|restore|delete`. No call asks a question yet: that comes with the turn service.
+  - The data-folder move copies `help.json` unchanged. Tests in `tests/help-store.test.ts`, `tests/help-api.test.ts` and `tests/remote-help.test.ts`.
 - Ask SCF, the help assistant inside the product: its contract (#227). Part of #226. No page, no route and no model call yet; this is the set of rules every later part goes through.
   - **What it is.** `src/help/contract.ts` names the four kinds of question (product help, status, troubleshooting, guided resolution) and the five parts of a reply (answer, recommendation, navigation, draft, action). Only an action changes something, and the list of allowed actions is empty: Ask SCF is read-only.
   - **Checked on the server.** `checkReply` keeps only evidence the server offered, links to fixed pages the role has, and actions on the server's list (none). Without evidence of the kind a question needs, a reply is marked "could not check"; the sentence is the server's.

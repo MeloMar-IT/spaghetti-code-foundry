@@ -455,6 +455,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
+| Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -472,6 +473,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
@@ -754,6 +756,41 @@ model can never widen what a reply holds.
 
 `tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
 chapter 14 of the user guide holds the same sentences as the code.
+
+### Ask SCF: stored conversations
+
+`src/help/store.ts` keeps the conversations in `help.json` (`{ version: 1, conversations }`), read
+and written like the other account files: `withAuthLock`, a temporary file and a rename. The schema
+is strict, so a file of another version or with unknown fields is refused and left untouched.
+
+- **Records.** A conversation has an id, its owner, a title, a state and its messages. A message
+  is a question (`role: user`, with the bounded page context) or a reply (`role: assistant`,
+  `replyTo` its question). A reply holds `status` (`pending`, `done`, `failed`, `cancelled`), the
+  checked `reply` of the contract (citations are `reply.evidence`, proposals `reply.actions`) and,
+  apart from it, `text`, which `finishTurn` writes with `displayText`. `finishTurn` parses the
+  reply with `ReplySchema` again, so nothing unchecked is stored.
+- **Ownership.** Every call that reads or changes takes the owner from the session. An id of
+  another account is `not-found`, the same as an unknown id. The routes (`src/server/api-help.ts`)
+  use only `user.id`; the role adds nothing, and a call with `?as=` is refused, so the support
+  access of administrators is: none. `deleteUser` removes the conversations of the account under
+  the same lock (`removeHelpLocked`).
+- **Turns and retries.** `addQuestion` stores the question and a `pending` reply. The turn ends
+  through `finishTurn` or `failTurn`, which take a `TurnRef` (`message`, `tries`) and write only
+  while that reply is pending with that try: a result of an earlier try, of a stopped turn or of a
+  deleted conversation is dropped. `retryTurn` sets the same reply to `pending` again and counts
+  `tries`; no message is added. `settleInterrupted` (at server start) marks leftover pending replies
+  as failed with `interrupted`.
+- **States.** `active`, `failed` and `cancelled` follow the last turn; `completed`, `archived`
+  (with `stateBefore`) and `deleted` are set by the owner. Completing and archiving are refused
+  while a reply is pending.
+- **Retention.** `deleteConversation` replaces the record with an empty one (`wiped`): no title, no
+  messages. `current()` applies the policy on every read and write: a conversation unchanged for
+  `KEEP_MS` (90 days) is wiped as `expired`, and a wiped record is dropped after `DELETED_KEEP_MS`
+  (30 days). `helpSweeper` runs it hourly.
+
+Tests: `tests/help-store.test.ts` (ownership, retries, states, retention, older and newer files),
+`tests/help-api.test.ts` (the routes, both roles, the preview, a restart, a broken file) and
+`tests/remote-help.test.ts` (`scf ask`).
 
 ### Helper processes
 

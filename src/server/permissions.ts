@@ -95,7 +95,7 @@ export const RULES: Rule[] = [
   r("POST", "users/:id/unlock", "no", "remove the lock after too many wrong tries (a short wait for the address can remain)"),
   r("GET", "users/:id/app-repos", "no", "the repositories an account may connect through the GitHub App"),
   r("PUT", "users/:id/app-repos", "no", "set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none"),
-  r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions and stored credentials"),
+  r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials"),
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories"),
@@ -153,6 +153,12 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/drafts/:did/suggestions/:sid/reject", "yes", "reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed"),
   r("PUT", "refinement/:id/epic", "yes", "set or clear the Epic of your refinement session"),
   r("GET", "refinement/:id/publish", "yes", "read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403)"),
+  r("GET", "help/conversations", "yes", "your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), and the limits; only your own, for an admin too, and not in a view of a user's display"),
+  r("GET", "help/conversations/:id", "yes", "read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410"),
+  r("POST", "help/conversations/:id/complete", "yes", "close one of your Ask SCF conversations: it stays readable and takes no new question"),
+  r("POST", "help/conversations/:id/archive", "yes", "move one of your Ask SCF conversations to the archive"),
+  r("POST", "help/conversations/:id/restore", "yes", "take one of your Ask SCF conversations out of the archive; it gets the state it had"),
+  r("DELETE", "help/conversations/:id", "yes", "delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back"),
 ];
 
 /** The key of a rule, e.g. "POST runs/:id/approve". */

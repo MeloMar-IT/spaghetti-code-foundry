@@ -1952,6 +1952,7 @@ line. A server other than `http://localhost:4777` must be reached over HTTPS, as
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
+| `ask` | Your Ask SCF conversations: list, show, complete, archive, restore, delete |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2746,7 +2747,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/users/:id/unlock` | yes | no | remove the lock after too many wrong tries (a short wait for the address can remain) |
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
-| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions and stored credentials |
+| `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
@@ -2804,6 +2805,12 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
+| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
+| `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
+| `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
+| `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -3737,7 +3744,7 @@ learnings, queue, locks and evals. The copy is made next to the new folder and r
 in one step, so you never see a half-done move. Paths that point into the old folder (in run state,
 lock files, `queue.json` and `config.yaml`) are rewritten. If `config.yaml` can't be rewritten
 safely, it is kept as it was and a warning lists the values that still point to the old folder.
-`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
+`users.json`, `sessions.json`, `credentials.json`, `refinements.json` and `help.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
 
 **The backup.** `~/.claude-factory` is never changed or deleted, except for a note file
 `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`. Nothing there is used anymore: your settings now live in
@@ -4405,6 +4412,53 @@ safest thing you can do instead. These sentences come from the server, not from 
 | You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
 
 For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
+
+### Conversations
+
+A question and its reply are kept in a **conversation**, so you can go on where you stopped. The
+pages for it come later; the server and the command line (`scf ask`) have it now.
+
+**What is kept.** Each conversation has a title (the first line of your first question), a state,
+and its messages: your questions and the replies. A question keeps the page you asked it on and, at
+most, the kind and id of the one thing selected there (a run, an issue, a repository, a queue item, a
+refinement session or a problem). Nothing else of the page is stored. A reply keeps its checked parts
+(sources, recommendations, links, drafts) and, apart from them, the text you read. Limits: 100
+conversations per account, 100 messages per conversation, 4,000 characters per question.
+
+**States.**
+
+| State | What it means |
+|---|---|
+| active | You can ask the next question. A reply may still be on its way. |
+| failed | The last reply could not be made. **Try again** uses the same question and the same reply: nothing is added twice. You can also ask something new. |
+| cancelled | You stopped the last reply. You can try again or ask something new. |
+| completed | You closed it. It stays readable and takes no new question. |
+| archived | Out of your list, with its content. **Restore** gives it the state it had. |
+| deleted | Its content is gone (see below). |
+
+A reply that was being written when the Foundry restarted is marked as failed with "The Foundry
+restarted before the answer was ready. You can try again."
+
+**Who can read them.** Only you. Another account's conversation answers exactly like one that does
+not exist. An administrator has no more access than a user: no list, no text and no change of
+another account's conversations, and "View as user" shows none of them (the server answers "Ask SCF
+conversations are not shown in a preview"). When an account is deleted, all its conversations are
+removed with it.
+
+**How long they are kept.**
+
+- **Delete** removes the title and every message at once, with the page context, sources and drafts
+  in them. It cannot be undone. An empty record (id, times, "deleted") stays for 30 days so that a
+  late reply or a retry finds nothing to write to; then it is removed too.
+- A conversation that was not changed for **90 days** expires: it is deleted in the same way. Its
+  content is not shown from that moment on, also when the hourly clean-up has not run yet.
+- A reply that arrives after its conversation was deleted, or after you stopped it, is not stored.
+
+**Where it is kept.** In `help.json` in the data folder (mode 0600), written under the lock of the
+data folder. It survives a restart and is copied unchanged when the data folder moves. If the file
+cannot be read (broken, or written by a newer version), the calls answer "Ask SCF is not working;
+see the server log", the file is left as it is, and an account cannot be deleted until it is
+repaired. Calls: `GET /api/help/conversations` and the calls under it in the table of chapter 7.
 
 ### What you never see as a user
 
