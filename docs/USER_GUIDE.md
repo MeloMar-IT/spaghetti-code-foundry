@@ -2003,7 +2003,7 @@ scf governor status     # uninstall removes it and what it set
 
 **The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
 per core, or under memory pressure, it allows one run fewer per check, down to half the configured
-number (at least 2). Work that runs is never stopped; only new starts wait. After five calm checks
+number (at least 2). Work that runs is never stopped; only new runs wait. A run that already started and is resumed (after a restart, an answer or a pause) is not held back, because it may hold the turn to merge that others wait for. After five calm checks
 in a row (1.5 per core or less) it allows one more, until the configured number is back. Above 4
 per core, or under critical memory pressure, only one test run works at a time. Every change is a
 line in `governor/changes.log`. The limits end by themselves four minutes after the last check, so

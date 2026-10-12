@@ -508,8 +508,11 @@ export class Scheduler {
 
   private pump() {
     if (this.paused) return;
-    // helper processes (load governor, limit forecaster) may lower the number for a while
-    const limit = runLimit(this.o.config().concurrency);
+    // Helper processes (load governor, limit forecaster) may lower the number for a while. Their cap holds back new
+    // runs only: a run that already started may hold the turn to merge or a file area that the others wait for, so
+    // keeping it out of a slot would stop everything. Resumes are bound by the configured number alone.
+    const limit = this.o.config().concurrency;
+    const capped = runLimit(limit);
     const states = new Map<string, boolean>();
     const held = (q: QueuedJob) => {
       const id = queuerOf(q);
@@ -610,7 +613,8 @@ export class Scheduler {
     };
 
     while (this.active.size < limit) {
-      const ready = this.pending.filter((q) => !locked(q) && !held(q) && !limitOf(q));
+      const full = this.active.size >= capped;
+      const ready = this.pending.filter((q) => !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
       if (!ready.length) break;
       // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
       const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;

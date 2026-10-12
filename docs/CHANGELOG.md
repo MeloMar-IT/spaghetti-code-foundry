@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Fix: a cap set by a helper process (the load governor, the limit forecaster) no longer holds back the resume of a run that already started. After a restart under a cap, the run that held the turn to merge could stay in the queue while the runs waiting for that turn filled every slot, so nothing was merged for hours. The cap now holds back new runs only; resumes are bound by the configured number of runs at once. Test in `tests/scheduler-fair-use.test.ts`.
 - A command line for the running Foundry: every call of the server's API is a command, `scf <area> <action> … [--json]`. 159 commands in 18 areas (`runs`, `turn`, `board`, `find`, `repos`, `refine`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server`).
   - **Sign-in.** `scf login`, `scf logout`, `scf whoami`. The same accounts and sessions as the web interface; no server change. The session is kept in `cli-session.json` in the data folder (mode 600); the password is asked without echo and never stored.
   - **Every command.** `--json`, `--data '{…}'` / `--data @file.json`, `--server`, `--as` (reading as a user, for an admin with a running view), `--help`. `scf <area>` lists the commands of an area. Exit code 4: not signed in or not allowed.

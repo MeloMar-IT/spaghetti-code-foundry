@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { createUser } from "../src/auth/users.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Scheduler, type Job, type SchedulerOptions } from "../src/queue/scheduler.js";
+import { setCap } from "../src/ops/caps.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 const PLAIN = parseFlow(`name: plain
@@ -70,6 +71,35 @@ describe("scheduler fair use", () => {
     for (const a of s.queue().active) open(a.runId);
     await waitFor(() => s.queue().active.length === 0);
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("a helper's cap holds back new runs only: a run that already started is resumed past it", async () => {
+    // a stopped run on disk, as after a restart; it may hold the turn to merge that the others wait for
+    const runDir = join(tmp, "runs", "stopped-1");
+    mkdirSync(join(runDir, "workspace"), { recursive: true });
+    mkdirSync(join(runDir, "logs"));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({ runId: "stopped-1", flow: "plain", flowDef: PLAIN, task: "t", vars: {}, repo: tmp, status: "stopped", reason: "interrupted", runDir, workdir: join(runDir, "workspace"), startedAt: new Date().toISOString(), totalCostUsd: 0, history: [], state: { next: "a", steps: {} } }));
+    setCap("load", { runs: 1, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+    try {
+      concurrency = 3;
+      mk();
+      s.submit(job(), { source: "a" });
+      const waiting = s.submit(job(), { source: "b" });
+      expect(active()).toEqual(["a"]);
+      expect(pending().map((p) => p.runId)).toEqual([waiting]);
+      s.submit({ kind: "resume", runId: "stopped-1" }, { source: "c" });
+      // the resume took a slot at once although the cap is full; the new run still waits
+      expect(pending().map((p) => p.runId)).toEqual([waiting]);
+      await waitFor(() => JSON.parse(readFileSync(join(runDir, "run.json"), "utf8")).status === "succeeded");
+      expect(pending().map((p) => p.runId)).toEqual([waiting]);
+      // never above the configured number, cap or not
+      concurrency = 1;
+      writeFileSync(join(runDir, "run.json"), readFileSync(join(runDir, "run.json"), "utf8").replace('"succeeded"', '"stopped"'));
+      s.submit({ kind: "resume", runId: "stopped-1" }, { source: "d" });
+      expect(pending().map((p) => p.source)).toEqual(["b", "d"]);
+    } finally {
+      setCap("load", undefined);
+    }
   });
 
   it("shares slots round-robin: a second user's job is the second start", async () => {
