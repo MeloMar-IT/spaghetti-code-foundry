@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -33,6 +34,12 @@ beforeEach(() => {
 });
 
 const active = () => nav.filter((a) => a.classList.contains("active")).map((a) => a.attrs["data-nav"]);
+
+describe("ui/index.html", () => {
+  it("has the empty place for the repository switcher first in the top actions", () => {
+    expect(readFileSync("ui/index.html", "utf8")).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
+  });
+});
 
 describe("titleText", () => {
   it("builds the tab title", () => {

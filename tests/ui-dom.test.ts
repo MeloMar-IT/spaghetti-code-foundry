@@ -204,6 +204,52 @@ describe("modal", () => {
     expect(doc().activeElement).not.toBe(opener);
     void second;
   });
+
+  describe("when the root was taken over", () => {
+    const takeOver = () => {
+      const marker = dom.h("p", {}, "newer");
+      el("modal-root").replaceChildren(marker);
+      return marker;
+    };
+
+    it("a late close keeps the newer content and the focus, resolves, and leaves no listener", async () => {
+      const opener = dom.h("button", {}, "open");
+      opener.focus();
+      let late: (v: unknown) => void = () => {};
+      const p = dom.modal("One", (close: (v: unknown) => void) => {
+        late = close;
+        return dom.h("p", {}, "one");
+      });
+      const marker = takeOver();
+      const other = dom.h("button", {}, "other");
+      other.focus();
+      late("x");
+      await expect(p).resolves.toBe("x");
+      expect(el("modal-root").children).toEqual([marker]);
+      expect(doc().activeElement).toBe(other);
+      expect(doc().listeners.keydown).toHaveLength(0);
+    });
+
+    it("Tab while busy does not trap, and the dialog ends", async () => {
+      const p = dom.modal("One", () => dom.h("button", {}, "b"), { busy: () => true });
+      const marker = takeOver();
+      const before = doc().activeElement;
+      const e = keydown("Tab");
+      expect(e.preventDefault).not.toHaveBeenCalled();
+      expect(doc().activeElement).toBe(before);
+      await expect(p).resolves.toBeUndefined();
+      expect(doc().listeners.keydown).toHaveLength(0);
+      expect(el("modal-root").children).toEqual([marker]);
+    });
+
+    it("Escape keeps the newer content", async () => {
+      const p = dom.modal("One", () => dom.h("p", {}, "one"));
+      const marker = takeOver();
+      keydown("Escape");
+      await expect(p).resolves.toBeUndefined();
+      expect(el("modal-root").children).toEqual([marker]);
+    });
+  });
 });
 
 describe("mount", () => {
@@ -239,6 +285,24 @@ describe("mount", () => {
     dom.mount(alone, draw("other"));
     expect(doc().activeElement).toBe(alone);
     expect(alone.attrs.tabindex).toBe("-1");
+  });
+  it("uses the heading of the nearest .page ancestor when the target and its parent have none", () => {
+    const target = dom.h("div", {});
+    const page = dom.h("div", { class: "page" }, dom.h("h1", {}, "Page"), dom.h("div", { class: "page-notices" }, target));
+    dom.mount(target, draw("add"));
+    (target.querySelector("button") as FakeElement).focus();
+    dom.mount(target, draw("other"));
+    const h1 = page.querySelector("h1") as FakeElement;
+    expect(doc().activeElement).toBe(h1);
+    expect(h1.attrs.tabindex).toBe("-1");
+  });
+  it("finds an ancestor by class in the fake closest, and still rejects an unsupported selector", () => {
+    const inner = dom.h("span", {});
+    const outer = dom.h("div", { class: "page x", "data-x": "1" }, dom.h("p", {}, inner));
+    expect(inner.closest(".page")).toBe(outer);
+    expect(inner.closest("div[data-x]")).toBe(outer);
+    expect(inner.closest(".nope")).toBeNull();
+    expect(() => inner.closest("a b")).toThrow();
   });
   it("does nothing when the focus was outside, or the control has no name", () => {
     const target = dom.h("div", {});
@@ -490,5 +554,66 @@ describe("markInvalid, showError and fieldFor", () => {
     expect(dom.fieldFor("xbx", pairs)).toBe("second");
     expect(dom.fieldFor("zzz", pairs)).toBeUndefined();
     expect(dom.fieldFor(undefined, pairs)).toBeUndefined();
+  });
+});
+
+describe("table and tableBox", () => {
+  const all = (root: FakeElement, tag: string): FakeElement[] => [root, ...root.children.flatMap((c: any) => (c instanceof FakeElement ? all(c, tag) : []))].filter((e) => e.tag === tag);
+  const row = (...cells: (string | null)[]) => dom.h("tr", {}, cells.map((c) => (c === null ? null : dom.h("td", {}, c))));
+  const attr = (els: FakeElement[], k: string) => els.map((e) => e.attrs[k]);
+
+  it("builds div.table-box > table.table with a head of scoped headers", () => {
+    const box = dom.table(["A", "B"], [row("1", "2")]);
+    expect(box.tag).toBe("div");
+    expect(box.attrs.class).toBe("table-box");
+    const t = box.children[0] as FakeElement;
+    expect(t.tag).toBe("table");
+    expect(t.attrs.class).toBe("table");
+    expect(t.children.map((c: FakeElement) => c.tag)).toEqual(["thead", "tbody"]);
+    expect(attr(all(box, "th"), "scope")).toEqual(["col", "col"]);
+  });
+  it("labels each cell from its column; a node header gives its text", () => {
+    const box = dom.table(["Name", dom.h("span", { class: "sr-only" }, "Actions")], [row("x", "y")]);
+    expect(attr(all(box, "td"), "data-label")).toEqual(["Name", "Actions"]);
+  });
+  it("skips null and false headers and keeps labels aligned with rows that omit the cell", () => {
+    const box = dom.table(["A", null, "B", false], [row("1", "2")]);
+    expect(all(box, "th").length).toBe(2);
+    expect(attr(all(box, "td"), "data-label")).toEqual(["A", "B"]);
+  });
+  it("leaves an extra cell unlabelled, keeps an own label and skips a null row", () => {
+    const own = dom.h("tr", {}, dom.h("td", { "data-label": "Mine" }, "1"), dom.h("td", {}, "2"));
+    const box = dom.table(["A"], [own, null, row("3")]);
+    expect(attr(all(box, "td"), "data-label")).toEqual(["Mine", undefined, "A"]);
+    expect(all(box, "tr").length).toBe(3); // the head row and two body rows
+  });
+  it("cards adds the class and the five roles; without it there are none", () => {
+    const cards = dom.table(["A"], [row("1")], { cards: true });
+    expect(all(cards, "table")[0]!.attrs.class).toBe("table cards");
+    expect(all(cards, "table")[0]!.attrs.role).toBe("table");
+    expect(attr(all(cards, "thead").concat(all(cards, "tbody")), "role")).toEqual(["rowgroup", "rowgroup"]);
+    expect(attr(all(cards, "tr"), "role")).toEqual(["row", "row"]);
+    expect(attr(all(cards, "th"), "role")).toEqual(["columnheader"]);
+    expect(attr(all(cards, "td"), "role")).toEqual(["cell"]);
+    const plain = dom.table(["A"], [row("1")]);
+    expect(all(plain, "table")[0]!.attrs.class).toBe("table");
+    for (const tag of ["table", "thead", "tbody", "tr", "th", "td"]) expect(attr(all(plain, tag), "role").every((r) => r === undefined)).toBe(true);
+  });
+  it("caption is screen-reader only and names a card table; label and class are used", () => {
+    const cards = dom.table(["A"], [], { cards: true, caption: "My things" });
+    const cap = all(cards, "caption")[0]!;
+    expect(cap.attrs.class).toBe("sr-only");
+    expect(cap.textContent).toBe("My things");
+    expect(all(cards, "table")[0]!.attrs["aria-label"]).toBe("My things");
+    const plain = dom.table(["A"], [], { caption: "C", label: "L", class: "compact" });
+    expect(all(plain, "table")[0]!.attrs["aria-label"]).toBe("L");
+    expect(all(plain, "table")[0]!.attrs.class).toBe("table compact");
+    expect(all(dom.table(["A"], [], { caption: "C" }), "table")[0]!.attrs["aria-label"]).toBeUndefined();
+  });
+  it("tableBox wraps its children in div.table-box", () => {
+    const [a, b] = [dom.h("p", {}, "a"), dom.h("p", {}, "b")];
+    const box = dom.tableBox(a, b);
+    expect(box.attrs.class).toBe("table-box");
+    expect(box.children).toEqual([a, b]);
   });
 });

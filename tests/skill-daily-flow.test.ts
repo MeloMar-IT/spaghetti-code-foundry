@@ -46,7 +46,7 @@ describe("plan, then code, with skills", () => {
     rmSync(join(dataHome(), "skill-plans"), { recursive: true, force: true });
     gh = fakeGithub();
     root = mkdtempSync(join(tmpdir(), "daily-skills-"));
-    config = ConfigSchema.parse({ protected_branches: ["main"], concurrency: 3, skills: { builtin: false, roots: [root] } });
+    config = ConfigSchema.parse({ protected_branches: ["main"], concurrency: 3, skills: { builtin: false, releases: { allow_unreleased: true }, roots: [root] } });
     process.env.FACTORY_LOCK_DIR = join(gh.tmp, "locks");
     process.env.FAKE_GH_COMMENTS_FROM_LOG = "1";
     scheduler = new Scheduler({ runsDir: runsDir(), config: () => config, claudeBin });

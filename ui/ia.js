@@ -32,6 +32,7 @@ export const PAGES = [
   { id: "runs", path: "#/runs", title: "Runs", area: "runs", dest: "runs", parent: null, nav: "primary", label: { admin: "Runs", user: "My runs" }, roles: AU, scope: true },
   { id: "run", path: "#/runs/:id", title: (id) => `Run ${id}`, area: "runs", dest: "runs", parent: "runs", nav: "detail", label: {}, roles: AU },
   { id: "repos", path: "#/repos", title: "My repositories", area: "repositories", dest: "repos", parent: null, nav: "secondary", label: { admin: "My repositories", user: "My repositories" }, roles: AU, scope: true },
+  { id: "repo", path: "#/repos/:id", title: "Repository", area: "repositories", dest: "repos", parent: "repos", nav: "detail", label: {}, roles: AU },
   { id: "flows", path: "#/flows", title: "Flows", area: "build", dest: "flows", parent: null, nav: "secondary", label: { admin: "Flows" }, roles: A },
   { id: "flow", path: "#/flows/:name", title: (name) => name, area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },
   { id: "new-flow", path: "#/new", title: "New flow", area: "build", dest: "flows", parent: "flows", nav: "detail", label: {}, roles: A },

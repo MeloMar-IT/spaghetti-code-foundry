@@ -5,9 +5,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let view: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/repos.js" as string);
+  view = await import("../ui/repo-view.js" as string);
 });
 afterAll(() => restore());
 
@@ -56,6 +58,7 @@ beforeEach(() => {
       const f = methodsGets.shift();
       return f ? failed(f) : reply({ methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } });
     }
+    if (init.method === "GET" && url.startsWith("/api/runs")) return reply([]);
     if (init.method === "GET") {
       const f = repoGets.shift();
       const wait = gate;
@@ -196,21 +199,32 @@ describe("renderRepos states", () => {
     expect(buttons(main())).not.toContain("+ Add repository");
   });
 
-  it("stale: a removal works but the reload fails; the row stays with a note, the toast is not an error", async () => {
+  it("a removal on the view goes back to the list without loading it; the toast is not an error", async () => {
     const r = rec();
     repos = [r, rec({ url: "https://github.com/o/z" })];
-    await show();
+    const navs: string[] = [];
+    await view.renderRepo(main(), { id: r.id, nav: (h: string) => navs.push(h) });
     press(button(main(), "Remove"));
     await flush();
-    repoGets.push({ status: 500, error: "down" });
     press(button(root(), "Remove"));
     await flush();
     await flush();
     expect(sent).toEqual([`DELETE /api/repos/${r.id}`]);
     expect(toastText()).toBe("Repository removed");
+    expect(navs).toEqual(["#/repos"]);
+  });
+
+  it("the view keeps its page with a stale note when a reload fails, and Retry loads it again", async () => {
+    const r = rec();
+    repos = [r];
+    testResult = goodConn();
+    await view.renderRepo(main(), { id: r.id, nav: () => {} });
+    repoGets.push({ status: 500, error: "down" });
+    press(button(main(), "Test connection"));
+    await flush();
+    await flush();
     expect(byClass(main(), "stale-note")[0]!.attrs.class).toContain("failed");
-    expect(main().textContent).not.toContain(URL_A); // the removed row is gone from what is shown
-    expect(main().textContent).toContain("https://github.com/o/z");
+    expect(main().textContent).toContain(URL_A);
     press(button(byClass(main(), "stale-note")[0]!, "Retry"));
     await flush();
     expect(byClass(main(), "stale-note")).toHaveLength(0);
@@ -227,16 +241,17 @@ describe("renderRepos states", () => {
     expect(row().textContent).toContain("Connection failed");
     expect(row().textContent).toContain("Read: The host did not accept the token.");
     expect(buttons(main()).filter((t) => /^Test /.test(t ?? ""))).toEqual(["Test again"]);
-    // another reload keeps it
-    press(button(main(), "Change authentication"));
+    // another test that fails again keeps it, still with one test button
+    press(button(main(), "Test again"));
     await flush();
     expect(row()).toBeDefined();
+    expect(buttons(main()).filter((t) => /^Test /.test(t ?? ""))).toEqual(["Test again"]);
     // a good test clears it
     testResult = goodConn();
     press(button(main(), "Test again"));
     await flush();
     expect(walk(main()).some((e) => e.attrs["data-state"] === "provider-failure")).toBe(false);
-    expect(buttons(main())).toContain("Test connection");
+    expect(buttons(main())).not.toContain("Test again"); // connected: nothing left to do
   });
 
   it("provider failure is kept on the row when the reload after the test fails", async () => {
@@ -270,8 +285,6 @@ describe("renderRepos states", () => {
     await flush();
     expect(main().textContent).toContain("The test could not run. a test of this repository is running already");
     // survives a reload
-    press(button(main(), "Change authentication"));
-    await flush();
     expect(main().textContent).toContain("The test could not run.");
     press(button(main(), "Test again"));
     await flush();
@@ -283,11 +296,14 @@ describe("renderRepos states", () => {
     await show();
     press(button(main(), "+ Add repository"));
     await flush();
-    const select = walk(root()).find((e) => e.attrs.name === "method")!;
-    select.value = "ssh-deploy-key";
-    select.dispatch?.("change");
     walk(root()).find((e) => e.attrs.name === "url")!.value = SSH;
+    press(button(root(), "Next"));
+    // the key is not on the host yet: the automatic test fails
+    testResult = { ...goodConn(), ok: false };
     press(button(root(), "Add repository"));
+    await flush();
+    await flush();
+    press(button(root(), "Done"));
     await flush();
     await flush();
     expect(toastText()).toBe("Repository added");
@@ -295,7 +311,10 @@ describe("renderRepos states", () => {
     (document as any).getElementById("toast").textContent = "";
     await show();
     expect(banners()[0]!.textContent).toContain(SSH);
-    expect(banners()[0]!.textContent).toContain("Add the public key as a deploy key with write access");
+    expect(banners()[0]!.textContent).toContain("Open the repository to find its public key, add it as a deploy key with write access, then press Test connection");
+    await show({ readOnly: true });
+    expect(banners()[0]!.textContent).toContain("Open the repository to find its public key, add it as a deploy key with write access:");
+    await show();
     repos = repos.map((r) => ({ ...r, connection: goodConn() }));
     await show();
     expect(banners()).toHaveLength(0);
@@ -305,12 +324,14 @@ describe("renderRepos states", () => {
     await show();
     press(button(main(), "+ Add repository"));
     await flush();
-    const select = walk(root()).find((e) => e.attrs.name === "method")!;
-    select.value = "ssh-deploy-key";
-    select.dispatch?.("change");
     walk(root()).find((e) => e.attrs.name === "url")!.value = SSH;
+    press(button(root(), "Next"));
+    testResult = { ...goodConn(), ok: false };
     repoGets.push({ status: 500, error: "down" });
     press(button(root(), "Add repository"));
+    await flush();
+    await flush();
+    press(button(root(), "Done"));
     await flush();
     await flush();
     expect(main().textContent).toContain(SSH);
@@ -374,17 +395,18 @@ describe("renderRepos states", () => {
 
   it("of two overlapping reloads only the newest draws", async () => {
     (globalThis as any).location = { hash: "#/repos" };
-    repos = [rec()];
+    // a record without a method has Change authentication as its next step
+    repos = [rec({ method: "none" })];
     await show();
     const older: (() => void)[] = [];
     gate = older;
-    repos = [rec({ url: "https://github.com/o/old" })];
+    repos = [rec({ url: "https://github.com/o/old", method: "none" })];
     press(button(main(), "Change authentication"));
     await flush();
     // the dialog is open; closing it with Escape runs the first reload, which waits on the gate
     (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
     await flush();
-    repos = [rec({ url: "https://github.com/o/new" })];
+    repos = [rec({ url: "https://github.com/o/new", method: "none" })];
     press(button(main(), "Change authentication"));
     await flush();
     (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));

@@ -2,14 +2,19 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { importsOf, parseCss, readUiCss, uiCssImports, type CssRule } from "./helpers/ui-css.js";
+import { competingSelectors, importsOf, parseCss, readUiCss, sharedSelectors, uiCssImports, type CssRule } from "./helpers/ui-css.js";
 
 // ui/style.css only imports the modules under ui/css/ (#337). These tests keep the split honest.
 
 const ORDER = [
-  "tokens", "reset", "layout", "components", "utilities",
+  "tokens", "reset", "layout", "templates", "components", "utilities",
   "pages/shell", "pages/editor", "pages/runs", "pages/dashboard", "pages/turn", "pages/board", "pages/start", "pages/refinement", "pages/gallery", "pages/work", "responsive",
 ].map((n) => `/css/${n}.css`);
+// Classes that components.css names but whose base rule a page file owns, each with the reason.
+const OWNED_BY_PAGE: Record<string, string> = {
+  "block-card": "pages/editor.css owns the base rule; components.css only has its hover variant",
+  "chart-tip": "pages/dashboard.css owns the base rules; components.css only has the reduced-motion override",
+};
 const file = (imp: string) => readFileSync(join("ui", imp), "utf8");
 const key = (r: CssRule) => `${r.context}|${r.selector}|${r.declarations.join(";")}`;
 const baseline = parseCss(readFileSync("tests/fixtures/ui-style-baseline.css", "utf8"));
@@ -96,11 +101,35 @@ describe("the module split", () => {
     expect(decl(".modal")).toContain("width: min(var(--size-form), 100%)");
   });
 
-  it("keeps shared component classes out of the page files", () => {
-    const comp = /^(?:(?:a|button)?\.(?:pill|card|table|table-box|modal|backdrop|badge|btn|field|seg|tabs|chips|chip|spinner|empty|errors|toolbar|status|small-select|checks)(?![\w-])|button|input|select|textarea|#toast)/;
-    for (const imp of ORDER.filter((i) => i.includes("/pages/"))) {
-      for (const r of parseCss(file(imp))) for (const s of r.selector.split(",").map((x) => x.trim())) expect(comp.test(s), `${imp}: ${s}`).toBe(false);
-    }
+  it("keeps shared component classes out of the page files and the template file", () => {
+    const shared = sharedSelectors(file("/css/components.css"));
+    for (const name of Object.keys(OWNED_BY_PAGE)) shared.classes.delete(name);
+    for (const imp of ["/css/templates.css", ...ORDER.filter((i) => i.includes("/pages/"))]) expect(competingSelectors(file(imp), shared), imp).toEqual([]);
+  });
+
+  it("needs the allow-list: without it the page files that own a base rule are flagged", () => {
+    const shared = sharedSelectors(file("/css/components.css"));
+    const flagged = ORDER.filter((i) => i.includes("/pages/")).flatMap((imp) => competingSelectors(file(imp), shared));
+    for (const name of Object.keys(OWNED_BY_PAGE)) expect(flagged.some((s) => s.includes(`.${name}`)), name).toBe(true);
+    expect(flagged.filter((s) => !Object.keys(OWNED_BY_PAGE).some((n) => s.includes(`.${n}`)))).toEqual([]);
+  });
+
+  it("keeps the editor grid in templates.css under .page-editor, with the pane as the only sticky thing", () => {
+    const rules = parseCss(file("/css/templates.css"));
+    const sticky = rules.filter((r) => r.declarations.some((d) => d.replace(/\s+/g, "") === "position:sticky"));
+    expect(sticky.length).toBeGreaterThan(0);
+    for (const r of sticky) expect(r.selector.startsWith(".page-editor"), r.selector).toBe(true);
+    expect(rules.find((r) => r.selector === ".page-editor.with-overview > .editor" && r.context === "")?.declarations).toContain("grid-template-columns: minmax(0, 1fr) 340px");
+  });
+
+  it("has no editor grid in layout.css and only the run grid in its 1100px block", () => {
+    const rules = parseCss(file("/css/layout.css"));
+    expect(rules.filter((r) => /(^|[\s,.])\.editor\b/.test(r.selector))).toEqual([]);
+    expect(rules.filter((r) => r.context.includes("1100px")).map((r) => r.selector)).toEqual([".run-grid"]);
+  });
+
+  it("has no z-index in templates.css", () => {
+    expect(file("/css/templates.css")).not.toContain("z-index");
   });
 
   it("starts every module with a header comment", () => {
@@ -112,6 +141,30 @@ describe("the module split", () => {
       expect(head, imp).toContain("Belongs here:");
       expect(head, imp).toContain("Does not belong here:");
     }
+  });
+});
+
+describe("competingSelectors", () => {
+  const shared = sharedSelectors(readFileSync("ui/css/components.css", "utf8"));
+  const flag = (css: string) => competingSelectors(css, shared);
+  it("derives the shared names from components.css", () => {
+    for (const c of ["card", "btn", "block-card", "state-error", "modal-head"]) expect(shared.classes.has(c), c).toBe(true);
+    expect(shared.classes.has("d")).toBe(false);
+    expect(shared.classes.has("pill-x")).toBe(false);
+    expect([...shared.controls].sort()).toEqual(["button", "input", "select", "textarea"]);
+    expect([...shared.ids]).toEqual(["#toast"]);
+  });
+  it("flags a selector that competes with a shared component", () => {
+    for (const s of [".card.x", "button.small", ".scf-card", ".skeleton", ".state-error p", ".stale-note", ".modal-head", ".filter-bar", "#toast.show", "input"]) {
+      expect(flag(`${s} { color: red; }`), s).toEqual([s]);
+    }
+    expect(flag(".btn, .y { color: red; }")).toEqual([".btn"]);
+    expect(flag("@media (max-width: 700px) { .card { color: red; } }")).toEqual([".card"]);
+  });
+  it("leaves alone a selector scoped under a page class and an unshared class", () => {
+    expect(flag(".page-board .card { color: red; }")).toEqual([]);
+    expect(flag(".board-card { color: red; }")).toEqual([]);
+    expect(flag("@keyframes spin { to { opacity: 0; } }")).toEqual([]);
   });
 });
 

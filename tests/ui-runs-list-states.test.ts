@@ -96,13 +96,13 @@ describe("Runs list states", () => {
     const p = runs.renderRunsList(main);
     await flush();
     expect(main.all("h1")[0]!.textContent).toBe("Runs");
-    const sk = withClass(main, "skeleton-table");
+    const sk = withClass(main, "skeleton-cards");
     expect(sk).toHaveLength(1);
     expect(sk[0]!.attrs["aria-busy"]).toBe("true");
     release();
     const stop = await p;
     await flush();
-    expect(main.all("table").length).toBeGreaterThan(0);
+    expect(main.all("li").length).toBeGreaterThan(0);
     expect(withClass(main, "skeleton")).toHaveLength(0);
     stop();
   });
@@ -110,23 +110,42 @@ describe("Runs list states", () => {
   it("draws the rows, the counts, the owner filter and the time of the last answer", async () => {
     good([RUN("r1"), RUN("r2")]);
     const { main, stop } = await open();
-    expect(main.all("tr").length).toBeGreaterThan(2);
-    expect(main.textContent).toContain("0/2 running · 0 queued");
-    expect(main.all("select")).toHaveLength(1);
+    expect(main.all("li")).toHaveLength(2);
+    expect(main.textContent).not.toContain("running ·"); // the count is in the Queued heading, and only with a queued run
+    expect(main.all("select")).toHaveLength(5); // repository, flow, status, time and owner
     expect(main.textContent).toContain("Updated ");
     expect(main.textContent).not.toContain("refreshes every");
+    stop();
+  });
+
+  it("draws each run as a card with labelled parts: the admin adds Owner, Steps and Cost", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open();
+    const li = main.all("li")[0]!;
+    expect(li.parent!.attrs.class).toBe("run-cards");
+    const labels = walk(li).map((c) => c.attrs["data-label"]).filter(Boolean);
+    expect(labels).toEqual(["What happens next", "Task", "Owner", "Steps", "Cost"]);
+    expect(li.all("a")[0]!.attrs.href).toBe("#/runs/r1");
+    stop();
+  });
+
+  it("a user's card has no Owner, Steps or Cost", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open({ admin: false });
+    const labels = walk(main.all("li")[0]!).map((c) => c.attrs["data-label"]).filter(Boolean);
+    expect(labels).toEqual(["What happens next", "Task"]);
     stop();
   });
 
   it("does not redraw when the refreshed answer is the same", async () => {
     good();
     const { main, stop } = await open();
-    const row = main.all("tr").find((tr) => (tr.attrs.class ?? "") === "link")!;
+    const row = main.all("li")[0]!;
     const select = named(main, "owner-filter");
     asked.length = 0;
     await tick(30_000);
     expect(asked).toContain("/api/runs");
-    expect(main.all("tr").find((tr) => (tr.attrs.class ?? "") === "link")).toBe(row);
+    expect(main.all("li")[0]).toBe(row);
     expect(named(main, "owner-filter")).toBe(select);
     stop();
   });
@@ -151,7 +170,7 @@ describe("Runs list states", () => {
     expect(asked).toContain("/api/runs");
     expect(named(main, "owner-filter")).toBe(select);
     expect(main.textContent).not.toContain("Brand new task");
-    named(main, "run-r1").focus();
+    named(main, "open-r1").focus();
     await tick(300);
     expect(main.textContent).toContain("Brand new task");
     stop();
@@ -162,10 +181,10 @@ describe("Runs list states", () => {
     answers["/api/runs?owner=u2"] = [RUN("r2", { task: "Bob's task", ownerName: "Bob" })];
     const { main, stop } = await open();
     named(main, "owner-filter").focus();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } });
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } });
     await flush();
     expect(main.textContent).toContain("Bob's task");
-    expect(main.textContent).toContain("Owner: Bob");
+    expect(named(main, "owner-filter").value).toBe("u2");
     stop();
   });
 
@@ -174,12 +193,12 @@ describe("Runs list states", () => {
     answers["/api/runs?owner=u2"] = [RUN("r2", { task: "Bob's task" })];
     const { main, stop } = await open();
     const release = gateOn();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } }); // slow
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } }); // slow
     await flush();
     const quick = gate;
     gate = null; // the next request is not slow
     good([RUN("r1", { task: "Fresh task" })]);
-    main.all("select")[0]!.fire("change", { target: { value: "" } });
+    named(main, "owner-filter").fire("change", { target: { value: "" } });
     await flush();
     expect(main.textContent).toContain("Fresh task");
     gate = quick;
@@ -196,7 +215,7 @@ describe("Runs list states", () => {
     const go = vi.fn();
     const { main, stop } = await open({ go });
     const release = gateOn();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } }); // slow
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } }); // slow
     await flush();
     fails["/api/runs"] = 500;
     await tick(30_000); // the tick overtakes it and fails
@@ -229,7 +248,7 @@ describe("Runs list states", () => {
     const { main, stop } = await open();
     fails["/api/runs"] = 500;
     await tick(30_000);
-    expect(main.all("tr").length).toBeGreaterThan(1);
+    expect(main.all("li").length).toBeGreaterThan(0);
     expect(count(main.textContent, "Could not refresh. Showing data from")).toBe(1);
     await tick(30_000);
     expect(count(main.textContent, "Could not refresh. Showing data from")).toBe(1);
@@ -250,7 +269,7 @@ describe("Runs list states", () => {
     delete fails["/api/runs"];
     named(main, "runs-retry").click();
     await flush();
-    expect(main.all("table").length).toBeGreaterThan(0);
+    expect(main.all("li").length).toBeGreaterThan(0);
     stop();
   });
 
@@ -272,7 +291,7 @@ describe("Runs list states", () => {
     expect(find(main, "runs-retry")).toBeUndefined();
     delete fails["/api/runs"];
     await tick(30_000);
-    expect(main.all("table").length).toBeGreaterThan(0);
+    expect(main.all("li").length).toBeGreaterThan(0);
     stop();
   });
 
@@ -291,15 +310,15 @@ describe("Runs list states", () => {
     answers["/api/queue"] = { pending: [{ runId: "q1", kind: "run", task: "queued", next: nextStep("queued", { runId: "q1" }, {}) }], active: [], concurrency: 2 };
     fails["/api/queue"] = 500;
     const { main, stop } = await open();
-    expect(main.all("tr").length).toBeGreaterThan(1);
-    expect(main.all("h3").some((x) => x.textContent === "Queue")).toBe(false);
-    expect(main.textContent).not.toContain("running ·");
+    expect(main.all("li").length).toBeGreaterThan(0);
+    expect(main.all("h2").some((x) => x.textContent.startsWith("Queued"))).toBe(false);
     expect(main.textContent).toContain("Could not load the queue.");
     delete fails["/api/queue"];
     named(main, "queue-retry").click();
     await flush();
-    expect(main.all("h3").some((x) => x.textContent === "Queue")).toBe(true);
-    expect(main.textContent).toContain("0/2 running · 1 queued");
+    expect(main.all("h2").some((x) => x.textContent === "Queued (1)")).toBe(true);
+    expect(main.textContent).toContain("0/2 running");
+    expect(main.all("h3").some((x) => x.textContent === "Queue")).toBe(false);
     expect(main.textContent).not.toContain("Could not load the queue.");
     stop();
   });
@@ -308,11 +327,11 @@ describe("Runs list states", () => {
     good();
     fails["/api/run-owners"] = 500;
     const { main, stop } = await open({ query: { owner: "u2" } });
-    expect(main.all("tr").length).toBeGreaterThan(1);
-    expect(main.all("select")).toHaveLength(0);
+    expect(main.all("li").length).toBeGreaterThan(0);
+    expect(named(main, "owner-filter").hidden).toBe(true);
     expect(main.textContent).toContain("Could not load the owners.");
     expect(find(main, "owners-retry")).toBeDefined();
-    expect(main.textContent).toContain("Owner: u2");
+    expect(named(main, "owner-filter").value).toBe("u2");
     stop();
   });
 
@@ -320,7 +339,7 @@ describe("Runs list states", () => {
     good();
     fails["/api/queue"] = 500;
     const { main, stop } = await open({ admin: false });
-    expect(main.all("tr").length).toBeGreaterThan(1);
+    expect(main.all("li").length).toBeGreaterThan(0);
     expect(main.textContent).toContain("Could not load the queue.");
     expect(asked).not.toContain("/api/run-owners");
     stop();
@@ -336,5 +355,69 @@ describe("Runs list states", () => {
     const src = readFileSync("ui/runs.js", "utf8");
     const body = src.slice(src.indexOf("export async function renderRunsList"), src.indexOf("export function statusAnnouncer"));
     expect(body).not.toContain("setInterval");
+  });
+});
+
+describe("Runs list page frame", () => {
+  const root = (main: FakeElement) => {
+    expect(main.children).toHaveLength(1);
+    const page = main.children[0] as FakeElement;
+    expect(page.attrs.class).toBe("page page-collection");
+    return page;
+  };
+
+  it("mounts one collection page while loading, with the skeleton in the list", async () => {
+    good();
+    const release = gateOn();
+    const main = connected();
+    const p = runs.renderRunsList(main);
+    await flush();
+    const page = root(main);
+    expect(page.all("h1")).toHaveLength(1);
+    expect(withClass(withClass(page, "page-list")[0]!, "skeleton-cards")).toHaveLength(1);
+    release();
+    (await p)();
+  });
+
+  it("fills the slots with data", async () => {
+    good([RUN("r1")]);
+    const { main, stop } = await open();
+    const page = root(main);
+    const bar = withClass(page, "page-head")[0]!;
+    expect(bar.attrs.class).toBe("toolbar page-head");
+    const after = bar.children.slice(1) as FakeElement[];
+    expect(after[0]!.attrs.class).toBe("spacer");
+    expect(named(withClass(page, "page-filters")[0]!, "owner-filter")).toBeDefined();
+    expect(after[after.length - 1]!.attrs["data-focus"]).toBe("refresh");
+    expect(bar.textContent).not.toContain("running ·");
+    expect(withClass(page, "page-list")[0]!.all("li").length).toBeGreaterThan(0);
+    expect(withClass(page, "page-empty")[0]!.textContent).toBe("");
+    stop();
+  });
+
+  it.each([[500, "state-error"], [403, "state-permission"]])("keeps the first-load state %i inside the page", async (status, cls) => {
+    good();
+    fails["/api/runs"] = status as number;
+    const { main, stop } = await open();
+    const page = root(main);
+    expect(withClass(page, cls as string).length).toBeGreaterThan(0);
+    stop();
+  });
+
+  it("puts the no-runs state in the empty region", async () => {
+    good([]);
+    const { main, stop } = await open();
+    const page = root(main);
+    expect(withClass(page, "page-empty")[0]!.textContent).toContain("No runs yet.");
+    expect(withClass(page, "page-list")[0]!.all("li")).toHaveLength(0);
+    stop();
+  });
+
+  it("puts the no-match state of a filter in the empty region", async () => {
+    good([RUN("r1", { vars: { github_repo: "o/a" } })]);
+    const { main, stop } = await open({ query: { repo: "o/zzz" } });
+    const page = root(main);
+    expect(withClass(page, "page-empty")[0]!.textContent).not.toBe("");
+    stop();
   });
 });

@@ -125,6 +125,15 @@ describe("states", () => {
     globalThis.fetch = realFetch;
   });
 
+  it("mounts one overview page: toolbar head, summary, sections", async () => {
+    const main = await render();
+    expect(main.children).toHaveLength(1);
+    const root = main.children[0] as FakeElement;
+    expect(root.getAttribute("class")).toBe("page page-overview");
+    expect(root.all("h1").map((x) => x.textContent)).toEqual(["Dashboard"]);
+    expect(root.children.map((c) => (c as FakeElement).getAttribute("class"))).toEqual(["toolbar page-head", "page-summary", "page-sections"]);
+  });
+
   it("partNote names the part, is an alert and calls Retry", () => {
     let retried = 0;
     const note = ui.partNote("evals", Object.assign(new Error("boom"), { status: 500 }), () => retried++) as FakeElement;

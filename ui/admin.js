@@ -1,7 +1,8 @@
 import { api } from "./api.js";
 import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
-import { check, input } from "./fields.js";
+import { check, input, lockReadOnly } from "./fields.js";
 import { loadingState } from "./states.js";
+import { settingsPage } from "./templates.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const num = (el) => (el.value.trim() === "" ? undefined : Number(el.value));
@@ -34,8 +35,8 @@ export function serverFrom(v) {
 
 // ── settings ──
 
-export async function renderSettings(main) {
-  mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Settings")), loadingState("Loading settings…", { rows: 6, shape: "detail" }));
+export async function renderSettings(main, { readOnly = false } = {}) {
+  mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
   const [c, info] = await Promise.all([api.config(), api.info()]);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
@@ -126,9 +127,11 @@ export async function renderSettings(main) {
   };
 
   const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
-  mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Settings"), h("span", { class: "muted mono" }, info.configPath), h("span", { class: "spacer" }), saveNote, saveBtn),
-    err,
+  mount(main, settingsPage({
+    title: "Settings",
+    actions: [h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])],
+    notices: err,
+    sections: [
     section("Budget & capacity",
       limits.row,
       h("p", { class: "muted text-sm mt-4 mb-10" }, "Off: costs are still recorded and shown (Dashboard, runs), but no run is ever stopped because of money — for fixed-price subscriptions. Claude's and Codex's own usage limits still pause runs."),
@@ -178,5 +181,8 @@ export async function renderSettings(main) {
         f("App ID", appId),
         f("App name (slug)", appSlug, "The last part of https://github.com/apps/<name>. Needed for the method “GitHub App” on My repositories."),
         f("Private key file", keyPath, "The .pem file of the app, readable only by the server's account."),
-        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))));
+        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))),
+    ],
+  }));
+  if (readOnly) lockReadOnly(main);
 }

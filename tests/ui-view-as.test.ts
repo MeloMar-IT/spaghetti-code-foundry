@@ -280,11 +280,11 @@ describe("renderers with readOnly", () => {
     const a = { runs: async () => [], queue: async () => ({ pending: [{ runId: "q1", flow: "build", task: "t", enqueuedAt: new Date().toISOString(), ahead: 1 }], active: [] }), cancelRun: vi.fn() };
     const on = div();
     const stopOn = await runs.renderMyRuns(on, { a, readOnly: true });
-    expect(texts(on)).toEqual([]);
+    expect(texts(on).filter((t) => t === "Remove")).toEqual([]);
     stopOn();
     const off = div();
     const stopOff = await runs.renderMyRuns(off, { a });
-    expect(texts(off)).toEqual(["Remove"]);
+    expect(texts(off).filter((t) => t === "Remove")).toEqual(["Remove"]);
     stopOff();
   });
 
@@ -346,8 +346,15 @@ describe("renderers with readOnly", () => {
     setViewAs("u1");
     const main = div();
     await repos.renderRepos(main, { admin: false, readOnly: true });
-    expect(texts(main)).toEqual(["Copy"]);
+    expect(texts(main)).toEqual([]);
     expect(nonGets()).toEqual([]);
+    // the view of one repository shows its sections and no button at all
+    (globalThis as any).location = { hash: "#/repos/r1" };
+    const one = div();
+    await (await import("../ui/repo-view.js" as string)).renderRepo(one, { id: "r1", admin: false, readOnly: true });
+    expect(texts(one)).toEqual([]);
+    expect(one.textContent).toContain("Dangerous actions");
+    (globalThis as any).location = { hash: "#/repos" };
     reply = (url) => (url.startsWith("/api/repos/methods") ? {} : []);
     const empty = div();
     await repos.renderRepos(empty, { admin: false, readOnly: true });
@@ -356,7 +363,8 @@ describe("renderers with readOnly", () => {
     reply = (url) => (url.startsWith("/api/repos/methods") ? {} : list);
     const off = div();
     await repos.renderRepos(off, { admin: false });
-    expect(texts(off)).toEqual(expect.arrayContaining(["+ Add repository", "Test connection", "Remove"]));
+    expect(texts(off)).toEqual(expect.arrayContaining(["+ Add repository", "Test connection"]));
+    expect(texts(off)).not.toContain("Remove");
   });
 
   describe("Refinement", () => {

@@ -1,14 +1,16 @@
 import { h } from "./dom.js";
 import { filterFlows } from "./flow-state.js";
 import { flowNameMark } from "./icons.js";
+import { pageHeader } from "./kit/product.js";
 
 const VALIDATION_CLASS = { valid: "ok", problems: "bad", checking: "" };
 
 /**
  * The editor header: the name line with the actions, then the state line.
  * `st` comes from editorState(). Returns the two elements.
+ * `readOnly`: no Save and no More menu; "Test run" is the primary action.
  */
-export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveScope, canDelete, saving = false, deleting = false, onMode, onSave, onRun, onOverview, onProblems, onAsk, onScope, onDelete }) {
+export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveScope, canDelete, saving = false, deleting = false, readOnly = false, onMode, onSave, onRun, onOverview, onProblems, onAsk, onScope, onDelete }) {
   const seg = (m, label) => h("button", { class: mode === m ? "on" : null, onClick: () => onMode?.(m) }, label);
   // A menu button closes the menu first, then does its work.
   const item = (label, fn, props = {}) => h("button", { ...props, onClick: (e) => {
@@ -18,7 +20,7 @@ export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveSco
   } }, label);
   const del = canDelete ? item("Delete flow", onDelete, { title: "Delete flow", "aria-label": "Delete flow" }) : null;
   if (del) del.disabled = !!deleting;
-  const more = h("details", { class: "flow-more", open: moreOpen, onKeydown: (e) => {
+  const more = readOnly ? null : h("details", { class: "flow-more", open: moreOpen, onKeydown: (e) => {
     if (e.key !== "Escape") return;
     more.open = false;
     more.removeAttribute("open");
@@ -32,18 +34,17 @@ export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveSco
         h("option", { value: "repo", selected: saveScope !== "global" }, "this repo"),
         h("option", { value: "global", selected: saveScope === "global" }, "global"))),
     del));
-  const save = h("button", { class: st.primary === "save" ? "primary" : null, "data-focus": "flow-save", title: "⌘S", onClick: () => onSave?.() }, "Save");
-  const run = h("button", { class: st.primary === "run" ? "primary" : null, "data-focus": "flow-run", onClick: () => onRun?.() }, "Test run");
-  save.disabled = !!saving;
-  const actions = st.primary === "save" ? [run, save] : [save, run];
-  const head = h("div", { class: "toolbar flow-head" },
-    h("h1", {}, st.title),
-    h("span", { class: st.scopeLabel === "not saved yet" ? "pill claude" : "pill" }, st.scopeLabel),
-    h("span", { class: "seg" }, seg("visual", "Visual"), seg("yaml", "YAML")),
-    h("span", { class: "spacer" }),
-    h("button", { class: "overview-toggle", "data-focus": "flow-overview", "aria-expanded": overviewOpen ? "true" : "false", "aria-controls": "flow-overview", onClick: () => onOverview?.() }, "Overview"),
-    actions,
-    more);
+  const save = readOnly ? null : h("button", { class: st.primary === "save" ? "primary" : null, "data-focus": "flow-save", title: "⌘S", onClick: () => onSave?.() }, "Save");
+  const run = h("button", { class: readOnly || st.primary === "run" ? "primary" : null, "data-focus": "flow-run", onClick: () => onRun?.() }, "Test run");
+  if (save) save.disabled = !!saving;
+  const actions = readOnly ? [run] : st.primary === "save" ? [run, save] : [save, run];
+  const head = pageHeader({
+    layout: "toolbar", title: st.title,
+    meta: [h("span", { class: st.scopeLabel === "not saved yet" ? "pill claude" : "pill" }, st.scopeLabel), h("span", { class: "seg" }, seg("visual", "Visual"), seg("yaml", "YAML"))],
+    actions: [h("span", { class: "spacer" }),
+      h("button", { class: "overview-toggle", "data-focus": "flow-overview", "aria-expanded": overviewOpen ? "true" : "false", "aria-controls": "flow-overview", onClick: () => onOverview?.() }, "Overview"),
+      actions, more],
+  });
   const state = h("div", { class: "flow-state" },
     h("span", { class: "flow-dirty" }, st.dirtyLabel),
     h("button", { class: `flow-validation status ${VALIDATION_CLASS[st.validation.kind] ?? ""}`.trim(), "data-focus": "flow-validation", onClick: () => onProblems?.() }, st.validation.label),
@@ -51,14 +52,14 @@ export function renderHeader(st, { mode, overviewOpen, moreOpen = false, saveSco
   return [head, state];
 }
 
-/** The left list: the two start buttons, the search box and the flows. */
-export function renderNavigator({ flows, current, query, onQuery, onDraft, onBlank, status = null, empty = null, note = null }) {
+/** The left list: the two start buttons (not when `readOnly`), the search box and the flows. */
+export function renderNavigator({ flows, current, query, onQuery, onDraft, onBlank, status = null, empty = null, note = null, readOnly = false }) {
   const shown = filterFlows(flows, query);
   // The open flow stays listed, even when the search does not match it.
   const open = current?.name ? flows.find((f) => f.name === current.name) : null;
   const list = open && !shown.includes(open) ? [open, ...shown] : shown;
   return [
-    h("div", { class: "side-actions" },
+    readOnly ? null : h("div", { class: "side-actions" },
       h("button", { class: current ? null : "primary", onClick: () => onDraft?.() }, "✨ Draft flow with Claude"),
       h("button", { onClick: () => onBlank?.() }, "+ Blank flow")),
     h("h3", {}, "Flows"),

@@ -5,9 +5,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
 let ui: any;
+let filters: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/board.js" as string);
+  filters = await import("../ui/filters.js" as string);
 });
 afterAll(() => restore());
 
@@ -97,9 +99,15 @@ describe("boardView", () => {
     expect(view({ repos: [], empty: "No stories yet." }).textContent).toContain("No stories yet.");
   });
 
-  it("falls back to the first repository", () => {
-    expect(ui.pickRepo(board(), "nope").repo).toBe("acme/app");
+  it("finds the wanted repository ignoring case, and does not fall back for an unknown one", () => {
+    expect(ui.pickRepo(board(), "nope")).toBeUndefined();
+    expect(ui.pickRepo(board(), "ACME/App").repo).toBe("acme/app");
     expect(ui.pickRepo({ repos: [] }, "x")).toBeUndefined();
+  });
+
+  it("shows the first repository when none is wanted", () => {
+    expect(ui.pickRepo(board(), undefined).repo).toBe("acme/app");
+    expect(ui.pickRepo(board(), "").repo).toBe("acme/app");
   });
 });
 
@@ -299,13 +307,13 @@ describe("renderBoard", () => {
     cleanup();
   });
 
-  it("falls back to the first repository for an unknown argument", async () => {
+  it("shows the not-in-your-list state for an unknown argument", async () => {
     const m = main();
     const cleanup = ui.renderBoard(m, "unknown/repo");
     calls.shift()!.answer(board());
     await flush();
-    expect(m.textContent).toContain("acme/app");
-    expect(m.textContent).toContain("Eighty-nine");
+    expect(m.textContent).toContain(filters.NOT_IN_LIST);
+    expect(m.textContent).not.toContain("Eighty-nine");
     cleanup();
   });
 });
@@ -577,6 +585,165 @@ describe("column picker", () => {
     m.all("button").find((b) => b.textContent === "Show all")!.listeners.click![0]!();
     expect(m.textContent).not.toContain("In the way of");
     expect(pickedCols(m)).toEqual(["done"]);
+    cleanup();
+  });
+});
+
+describe("the board page frame", () => {
+  const one = (d: unknown, owner = "") => {
+    const nodes = ui.boardView(d, undefined, { ...handlers(), owner }) as FakeElement[];
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]!.attrs.class).toBe("page page-board");
+    return nodes[0]!;
+  };
+  const inside = (page: FakeElement, cls: string) => find(page, "div", cls)[0]!;
+
+  it("is one board page on all three paths", () => {
+    one({ repos: [], empty: "Nothing yet" });
+    one(board([card({ owner: "u1" })]), "u2");
+    const page = one(board(), "");
+    const scroll = page.all("div").find((e) => e.attrs["data-scroll"] === "board")!;
+    expect(scroll.parent!.attrs.class).toBe("page-columns");
+  });
+
+  it("puts the filter bar, chain line and column picker in the filters region, and the toolbar before them", () => {
+    const h = { ...handlers(), highlight: 89 };
+    const page = (ui.boardView(board(), undefined, h) as FakeElement[])[0]!;
+    const filters = inside(page, "page-filters");
+    expect(find(filters, "label", "board-pick")).toHaveLength(1);
+    expect(find(filters, "div", "board-chain")).toHaveLength(1);
+    const head = find(page, "div", "page-head")[0]!;
+    expect(head.children.map((c: any) => c.tag)).toEqual(["h1", "span", "select"]);
+  });
+
+  it("puts the empty state in the columns region", () => {
+    const page = one({ repos: [], empty: "Nothing yet" });
+    expect(inside(page, "page-columns").textContent).toBe("Nothing yet");
+  });
+
+  it("mounts the page while loading, and keeps a first-load error inside it", async () => {
+    const m = new FakeElement("main");
+    const cleanup = ui.renderBoard(m, undefined);
+    expect(m.children).toHaveLength(3);
+    const page = m.children[1]!.children[0]!;
+    expect(page.attrs.class).toBe("page page-board");
+    expect(find(inside(page, "page-columns"), "div", "skeleton").length + inside(page, "page-columns").all("div").filter((d) => d.attrs["aria-busy"] === "true").length).toBeGreaterThan(0);
+    calls.shift()!.answer({}, false);
+    await flush();
+    expect(find(page, "div", "state-error").length).toBeGreaterThan(0);
+    cleanup();
+  });
+});
+
+describe("an unknown repository and the context offer", () => {
+  const buttonsOf = (root: FakeElement, text: string) => root.all("button").filter((b) => b.textContent === text);
+  afterEach(() => filters.setContextOffer(null));
+
+  it("shows the not-in-your-list text, the repository buttons and a way to all repositories", () => {
+    const loc = { hash: "" };
+    (globalThis as any).location = loc;
+    const root = view(board(), "nope/x");
+    expect(root.textContent).toContain(filters.NOT_IN_LIST);
+    expect(find(root, "a", "btn").map((a) => a.attrs.href)).toEqual(["#/board/acme%2Fapp"]);
+    expect(find(root, "div", "board-col")).toHaveLength(0);
+    buttonsOf(root, "Clear filters")[0]!.listeners.click![0]!();
+    expect(loc.hash).toBe("#/board?repo=all");
+  });
+
+  it("keeps the owner when it goes to all repositories", () => {
+    const loc = { hash: "" };
+    (globalThis as any).location = loc;
+    const root = new FakeElement("div");
+    root.append(...(ui.boardView(board(), "nope/x", { ...handlers(), owner: "u1" }) as unknown[]).filter(Boolean) as FakeElement[]);
+    buttonsOf(root, "Clear filters").at(-1)!.listeners.click![0]!();
+    expect(loc.hash).toBe("#/board?repo=all&owner=u1");
+  });
+
+  it("shows the not-in-your-list text for an empty list too", () => {
+    expect(view({ repos: [], empty: "No stories yet." }, "x/y").textContent).toContain(filters.NOT_IN_LIST);
+    expect(view({ repos: [], empty: "No stories yet." }).textContent).toContain("No stories yet.");
+  });
+
+  it("shows the first repository when none is wanted", () => {
+    expect(cardEl(view(board())).length).toBeGreaterThan(0);
+  });
+
+  it("offers the repository it shows: the wanted one, or the first when none is wanted", () => {
+    const seen: unknown[] = [];
+    filters.setContextOffer((arg: unknown) => { seen.push(arg); return { label: "Repository: acme/app", onUse: () => {} }; });
+    expect(buttonsOf(view(board(), "acme/app"), "Use as my context")).toHaveLength(1);
+    expect(buttonsOf(view(board()), "Use as my context")).toHaveLength(1);
+    expect(seen).toEqual([undefined, { repo: "acme/app" }]);
+    expect(buttonsOf(view({ repos: [], empty: "x" }), "Use as my context")).toHaveLength(0);
+  });
+});
+
+describe("boardView with saved views", () => {
+  const withViews = (d: unknown, wanted: string | undefined, views: unknown, extra: Record<string, unknown> = {}) => {
+    const root = new FakeElement("div");
+    root.append(...(ui.boardView(d, wanted, { ...handlers(), ...extra, views }) as unknown[]).filter(Boolean) as FakeElement[]);
+    return root;
+  };
+  const parts = (over: Record<string, unknown> = {}) => ({ row: new FakeElement("nav"), onSave: vi.fn(), onDelete: null, stale: false, ...over });
+  const texts = (root: FakeElement) => root.all("button").map((b) => b.textContent);
+
+  it("draws the row and Save view in the filters region", () => {
+    const p = parts();
+    const root = withViews(board(), "acme/app", p);
+    const region = find(root, "div", "page-filters")[0]!;
+    expect(region.all("nav")).toHaveLength(1);
+    expect(texts(region)).toContain("Save view");
+    root.all("button").find((b) => b.textContent === "Save view")!.click();
+    expect(p.onSave).toHaveBeenCalled();
+  });
+
+  it("an unknown repository and an owner without cards get Delete this view", () => {
+    const del = vi.fn();
+    const gone = withViews(board(), "nope/repo", parts({ onDelete: del, stale: true }));
+    expect(texts(gone)).toContain("Delete this view");
+    gone.all("button").find((b) => b.textContent === "Delete this view")!.click();
+    expect(del).toHaveBeenCalled();
+    const owner = withViews(board(), "acme/app", parts({ onDelete: del }), { owner: "nobody" });
+    expect(texts(owner)).toContain("Delete this view");
+  });
+
+  it("an out-of-date view shows the empty state with both actions, even though cards are returned", () => {
+    const root = withViews(board(), "acme/app", parts({ onDelete: vi.fn(), stale: true }));
+    expect(cardEl(root)).toHaveLength(0);
+    expect(texts(root)).toEqual(expect.arrayContaining(["Clear filters", "Delete this view"]));
+  });
+
+  it("without views nothing changes", () => {
+    expect(texts(view(board(), "acme/app"))).not.toContain("Save view");
+  });
+});
+
+describe("renderBoard with saved views", () => {
+  it("asks parts for the repository and owner, and makes no write request", async () => {
+    const m = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m.isConnected = true;
+    const parts = vi.fn(() => ({ row: null, onSave: vi.fn(), onDelete: null, stale: false }));
+    const cleanup = ui.renderBoard(m, "acme/app", { query: { owner: "u1" }, views: { parts }, loadOwners: async () => [{ id: "u1" }] });
+    await flush();
+    calls[0]!.answer(board([card({ owner: "u1" })]));
+    await flush();
+    await flush();
+    expect(parts).toHaveBeenCalled();
+    expect(parts.mock.calls.at(-1)).toEqual([{ repo: "acme/app", owner: "u1" }, expect.objectContaining({ owners: ["u1"] })]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET /api/board"]);
+    cleanup();
+  });
+
+  it("keeps the owners unknown when the owner list fails", async () => {
+    const m = new FakeElement("div") as FakeElement & { isConnected: boolean };
+    m.isConnected = true;
+    const parts = vi.fn(() => ({ row: null, onSave: vi.fn(), onDelete: null, stale: false }));
+    const cleanup = ui.renderBoard(m, undefined, { views: { parts }, loadOwners: async () => { throw new Error("403"); } });
+    await flush();
+    calls[0]!.answer(board());
+    await flush();
+    await flush();
+    expect((parts.mock.calls.at(-1) as any)[1].owners).toBeNull();
     cleanup();
   });
 });

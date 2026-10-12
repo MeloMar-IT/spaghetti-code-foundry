@@ -49,6 +49,16 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+describe("Settings page frame", () => {
+  it("mounts one settings page: toolbar head, notices, sections", async () => {
+    const { main } = await render({});
+    expect(main.children).toHaveLength(1);
+    const root = main.children[0] as FakeElement;
+    expect(root.getAttribute("class")).toBe("page page-settings");
+    expect(root.children.map((c) => (c as FakeElement).getAttribute("class"))).toEqual(["toolbar page-head", "page-notices", "page-sections"]);
+  });
+});
+
 describe("Settings → Network", () => {
   it("shows the settings and the plain-HTTP warning", async () => {
     const { card } = await render({ listen: "::1", allowed_hosts: ["a.test", "b.test"], allow_insecure_http: true });
@@ -270,5 +280,25 @@ describe("Settings → Safety: audit log", () => {
     await save(main);
     expect(puts[0].audit.retention_days).toBe(0);
     expect(main.textContent).toContain("invalid config: nope");
+  });
+});
+
+describe("read-only Settings", () => {
+  it("shows the values without a Save button or any control that changes", async () => {
+    const { main, puts } = await render({});
+    expect(main.all("button").map((b) => b.textContent)).toContain("Save");
+    expect(main.all("input").some((i: any) => i.readOnly)).toBe(false);
+    const ro = new FakeElement("main");
+    await ui.renderSettings(ro, { readOnly: true });
+    expect(ro.all("button")).toHaveLength(0);
+    expect(ro.all("span").some((s) => s.getAttribute("role") === "status")).toBe(false);
+    expect(ro.all("fieldset")).toHaveLength(0);
+    for (const i of ro.all("input") as any[]) {
+      if (i.attrs.type === "checkbox") expect(i.disabled).toBe(true);
+      else expect(i.readOnly).toBe(true);
+    }
+    for (const s of ro.all("select") as any[]) expect(s.disabled).toBe(true);
+    expect((ro.all("label").find((l) => l.textContent.includes("Keep the audit log"))!.all("input")[0] as any).value).toBe("180");
+    expect(puts).toHaveLength(0);
   });
 });

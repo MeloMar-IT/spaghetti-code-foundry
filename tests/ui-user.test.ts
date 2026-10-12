@@ -10,7 +10,8 @@ const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "use
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");
   it("has the places the sign-in and the pages need", () => {
-    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "account"]) expect(html).toContain(`id="${id}"`);
+    for (const id of ["main", "user", "modal-root", "toast", "view-as", "side", "menu-btn", "page-title", "top-actions", "context", "account"]) expect(html).toContain(`id="${id}"`);
+    expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
     expect(html).not.toContain("health-btn");
   });
   it("has exactly five links with the user pages", () => {
@@ -62,7 +63,15 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js", "context.js", "context-view.js"]) expect(seen.has(m), m).toBe(true);
+  });
+
+  it("starts the context after the view is known, and waits for it before the first page", () => {
+    expect(app.indexOf("initContext(")).toBeGreaterThan(app.indexOf("stopped = !view.ready;"));
+    expect(app.indexOf("initContext(")).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
+    expect(app.indexOf("await context?.ready;")).toBeGreaterThan(0);
+    expect(app.indexOf("await context?.ready;")).toBeLessThan(app.indexOf('window.addEventListener("hashchange", route);'));
+    expect(app.indexOf("await context?.ready;")).toBeLessThan(app.lastIndexOf("await route();"));
   });
 
   it("signs in before it listens for hash changes, and reloads for a set-password link first", () => {
@@ -97,7 +106,7 @@ describe("ui/user/app.js", () => {
     const calls = app.match(/render(Refinement|Repos)\(box[^)]*\)/g) ?? [];
     expect(calls).toHaveLength(2);
     expect(app).toContain("renderMyRun(box, page.id, { readOnly })");
-    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query })");
+    expect(app).toContain("await renderMyRuns(box, { readOnly, query: to.query, go, filter: parseFilter(to.hash), alive: () => mine === generation && !stopped })");
     expect(app.indexOf('resolve("user", page.hash)')).toBeLessThan(app.indexOf('showPage("user", to)'));
     for (const c of calls) expect(c, c).toContain("readOnly");
     expect(app).not.toContain('"/runs.js"');
@@ -109,7 +118,7 @@ describe("ui/style.css", () => {
   const css = readUiCss();
   it("wraps the user top bar, scrolls tables in a box and marks the keyboard focus", () => {
     expect(css).toMatch(/\.user-display \.top \{[^}]*flex-wrap: wrap/);
-    expect(css).toContain(".table-box { overflow-x: auto; }");
+    expect(css).toContain(".table-box { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; }");
     expect(css).toContain("a:focus-visible, button:focus-visible");
     expect(css).toContain(".view-bar {");
   });

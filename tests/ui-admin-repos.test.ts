@@ -664,3 +664,39 @@ describe("wiring", () => {
     expect(auth.otherDisplay({ role: "admin" }, "admin", "#/all-repos")).toBe("");
   });
 });
+
+describe("the repository context", () => {
+  let ctx: any;
+  const gh = (github: string) => ({ github, owner: "u1", account: null });
+  const memStore = { getItem: () => null, setItem: () => undefined };
+  const start = async () => {
+    const context = await import("../ui/context.js" as string);
+    const a = { allRepos: vi.fn(() => Promise.resolve([gh("o/a")])) };
+    ctx = context.initContext("admin", { id: "a1" }, { a, go: vi.fn(), notify: vi.fn(), store: context.contextStore("a1", memStore), where: () => "#/all-repos?repo=all" });
+    await ctx.ready;
+    return a;
+  };
+  const pressEscape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
+  afterEach(() => ctx?.stop());
+
+  it("a completed transfer loads the list of the switcher once more; Settings and Definition of Ready do not", async () => {
+    repos = [rec()];
+    const a = await start();
+    await show();
+    press(button(main(), "Settings"));
+    await flush();
+    pressEscape();
+    press(button(main(), "Definition of Ready"));
+    await flush();
+    pressEscape();
+    await flush();
+    expect(a.allRepos).toHaveBeenCalledTimes(1);
+    press(button(main(), "Transfer"));
+    await flush();
+    field(root(), "email")!.value = "bob@example.com";
+    press(button(root(), "Transfer"));
+    await flush();
+    await flush();
+    expect(a.allRepos).toHaveBeenCalledTimes(2);
+  });
+});

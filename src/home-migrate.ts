@@ -180,14 +180,17 @@ export function sameSnapshot(a: Map<string, string>, b: Map<string, string>): bo
 /** Top-level files the move copies byte for byte (they may hold text that looks like a path). */
 const VERBATIM_FILES = ["users.json", "sessions.json", "credentials.json", "repos.json", "refinements.json", "app-repos.json"];
 
-/** Every `*.json` outside runs/<id>/workspace, except the top-level account files. */
+/** Top-level folders the move copies byte for byte. Must equal QUARANTINE_DIR in src/skills/import-stage.ts (a test ties them). */
+export const VERBATIM_DIRS = ["skill-quarantine"];
+
+/** Every `*.json` outside runs/<id>/workspace, except the top-level account files and the verbatim folders. */
 export function jsonFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string, rel: string[]) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const r = [...rel, e.name];
       if (e.isDirectory()) {
-        if (!isWorkspace(r)) walk(join(dir, e.name), r);
+        if (!isWorkspace(r) && !(rel.length === 0 && VERBATIM_DIRS.includes(e.name))) walk(join(dir, e.name), r);
       } else if (e.isFile() && e.name.endsWith(".json") && !(rel.length === 0 && VERBATIM_FILES.includes(e.name))) out.push(join(dir, e.name));
     }
   };

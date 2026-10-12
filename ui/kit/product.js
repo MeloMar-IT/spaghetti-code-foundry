@@ -37,17 +37,27 @@ const errorText = (e) => (e instanceof TypeError ? "Could not reach the server."
 
 // ---- pageHeader ----
 
-/** `pageHeader({ title, back: { label, href }, meta, actions })`: a `<header>` with the page's one `<h1>`. */
-export function pageHeader({ title, back, meta, actions, class: cls, ...more } = {}) {
+/**
+ * `pageHeader({ title, back: { label, href, focus }, meta, actions, layout })`: a `<header>` with the page's one `<h1>`.
+ * `layout: "toolbar"` draws the flat `div.toolbar.page-head` of the existing pages (old classes, on purpose, until the
+ * pages move to the `scf-` header): back link `a.btn.ghost`, `h1`, the meta nodes, the action nodes. `back.focus` is its `data-focus`.
+ */
+export function pageHeader({ title, back, meta, actions, layout = "header", class: cls, ...more } = {}) {
   rest(more);
+  oneOf("page header layout", layout, ["header", "toolbar"]);
   if (blank(title)) throw new Error("a page header needs a title");
   let backLink = null;
   if (back != null) {
     if (blank(back.label)) throw new Error("a back link needs a label");
     const t = target(back.href);
     if (!t) throw new Error("a back link needs a safe href");
+    if (layout === "toolbar") {
+      backLink = h("a", { href: t.href, class: "btn ghost", "aria-label": back.label, "data-focus": back.focus }, "←");
+      return h("div", { ...more, class: cx("toolbar", "page-head", cls) }, backLink, h("h1", {}, title), meta, actions);
+    }
     backLink = link({ href: t.href, external: t.external, class: "scf-page-header__back" }, back.label, t.external ? hiddenNote() : null);
   }
+  if (layout === "toolbar") return h("div", { ...more, class: cx("toolbar", "page-head", cls) }, h("h1", {}, title), meta, actions);
   return h("header", { ...more, class: cx("scf-page-header", cls) },
     backLink,
     h("div", { class: "scf-page-header__main" },

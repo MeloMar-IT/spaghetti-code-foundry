@@ -1,10 +1,11 @@
 import { actorText, targetText, timeText } from "./audit.js";
 import { api } from "./api.js";
 import { tile } from "./dashboard.js";
-import { h, mount, timeAgo, toast } from "./dom.js";
+import { h, mount, tableBox, timeAgo, toast } from "./dom.js";
 import { askCancelRun, renderHealth } from "./health.js";
 import { ownerLabel } from "./runs.js";
 import { loadingState } from "./states.js";
+import { overviewPage } from "./templates.js";
 
 export const QUEUE_SHOWN = 5;
 export const AUDIT_SHOWN = 8;
@@ -72,13 +73,13 @@ const spendText = (s) => (s.enforced === false
   ? `Spent today ${usd(s.spentToday)} (estimate at API prices). No limits are enforced.`
   : s.dailyBudget ? `Spent today ${usd(s.spentToday)} of ${usd(s.dailyBudget)} daily budget.` : `Spent today ${usd(s.spentToday)}. No daily budget set.`);
 const spendSub = (s) => (s.enforced === false ? "estimate at API prices · no limits enforced" : s.dailyBudget ? `of ${usd(s.dailyBudget)} daily budget` : "no daily budget set");
-const table = (caption, heads, rows) => h("table", { class: "table compact" },
+const table = (caption, heads, rows) => tableBox(h("table", { class: "table compact" },
   h("caption", { class: "sr-only" }, caption),
   h("thead", {}, h("tr", {}, heads.map((t) => h("th", { scope: "col" }, t)))),
-  h("tbody", {}, rows));
+  h("tbody", {}, rows)));
 
-/** The Overview page of Administration: what needs attention, on one page. Returns a cleanup. */
-export async function renderOperations(main) {
+/** The Overview page of Administration: what needs attention, on one page. `readOnly`: no Cancel run. Returns a cleanup. */
+export async function renderOperations(main, { readOnly = false } = {}) {
   const mine = ++generation;
   const live = () => mine === generation && onPage();
   const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Overview"), h("span", { class: "muted" }, "What needs attention"));
@@ -106,7 +107,7 @@ export async function renderOperations(main) {
     let healthBody;
     if (ok(health)) {
       healthBody = h("div");
-      renderHealth(healthBody, health.value, { onCancel });
+      renderHealth(healthBody, health.value, { onCancel, readOnly });
     } else healthBody = notAvailable(health);
 
     const pv = ok(providers) ? providerSummary(providers.value) : null;
@@ -155,14 +156,14 @@ export async function renderOperations(main) {
         : h("p", { class: "muted" }, "No entries.")
       : notAvailable(audit);
 
-    mount(main, head(), tiles, h("div", { class: "dash-grid" },
+    mount(main, overviewPage({ head: head(), summary: tiles, sections: h("div", { class: "dash-grid" },
       card("Health", "card span-all", healthBody, null),
       card("Problems", "card", ok(health) ? h("p", {}, findingsText) : notAvailable(health), link("#/problems", "Problems")),
       card("Providers", "card", providersBody, link("#/models", "Models")),
       card("Queue", "card", queueBody, link("#/runs", "Runs")),
       card("Watchers", "card", watchersBody, link("#/watchers", "Watchers")),
       card("Limits", "card", limitsBody, h("p", {}, link("#/settings", "Settings"), " · ", link("#/users", "Users"))),
-      card("Recent audit", "card span-all", auditBody, link("#/audit", "Audit"))));
+      card("Recent audit", "card span-all", auditBody, link("#/audit", "Audit"))) }));
   };
 
   const load = async () => {

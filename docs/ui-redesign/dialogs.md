@@ -4,7 +4,7 @@ Read from the code at commit `27479e3`. Part of the audit in `README.md`; the ro
 
 Four mechanisms draw a dialog:
 
-- **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 25 sites in 17 files.
+- **`modal(title, build, { busy })`** in `ui/dom.js:161`: the base. It draws a title, a close button (✕) and whatever `build(close)` returns. Called at 25 sites in 18 files. A dialog that lost `#modal-root` removes its listener and leaves the newer content; its promise then says "closed", not "finished".
 - **Wrappers over `modal`:** `callDialog` (`ui/users.js:113`, 11 callers), `confirmDialog` in `ui/dom.js` (the shared yes/no dialog, used by `ui/flow-page.js`, `ui/library.js`, the refinement pages and `adminRunActions`), `confirmDialog` in `ui/user/runs.js` (`:76`; a separate helper of the same name), `decisionDialog` in `ui/run-dialogs.js` (`:12`, re-exported by `ui/user/runs.js`), `withDialog` (`ui/user/runs.js:374`, guards against a second dialog), `openDetail` (`ui/turn-act.js:12`, loads the detail first).
 - **A dialog of its own:** the command palette in `ui/palette.js` (combobox and listbox, drawn in `#modal-root` next to any open dialog). The audit test requires a row for every file that builds its own `role="dialog"`.
 - **Native `confirm` and `prompt`:** 0 calls (the second table is empty).
@@ -15,6 +15,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 
 | File | Dialog | Opened by | Fields | Primary action | Helper |
 |---|---|---|---|---|---|
+| `ui/views.js` | Save view | Save view in the filter bar of Runs, Board, Refinement and My runs | name (1–40 characters) | Save | `modal` |
+| `ui/views.js` | Manage views | Manage views in the row of saved views | new name (rename), none (move, delete with an inline confirmation) | Done | `modal` |
 | `ui/admin-repos.js` | Repository settings | Settings button on a row of `#/all-repos` | test command, docs, protected branches, main branch, develop branch | Save | `modal` |
 | `ui/admin-repos.js` | Definition of Ready | Button on a row of `#/all-repos` | checklist items | Save | `modal` |
 | `ui/admin-repos.js` | Transfer repository | Transfer button on a row | new owner e-mail | Transfer | `modal` |
@@ -56,11 +58,11 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/refinement-talk.js` | Edit entry | Edit on a map entry | text | Save | `modal` |
 | `ui/refinement-new.js` | New refinement session | New session and Refine an existing issue on `#/refinement`; Refine an idea first and Refine an existing issue on `#/start` | repository, kind (an idea or an existing issue), then title (optional) and idea, or issue number; with no repository it shows a link to `#/repos` | Start session | `modal` |
 | `ui/refinement.js` | Rename session | Rename on the session page | title | Save | `modal` |
-| `ui/repos.js` | Add repository | Add repository on `#/repos` | address; method list from `methodsFor` (varies with admin and GitHub App); fields change with the method | Add | `modal` (`repoDialog`) |
-| `ui/repos.js` | Change authentication | Change button on a row | method; fields change with the method | Save | `modal` (`repoDialog` with `repo`) |
-| `ui/repos.js` | Definition of Ready | Button on a row of `#/repos` | none (read-only list) | none; the ✕ closes it | `modal` |
-| `ui/repos.js` | Remove repository | Remove on a row | none | Remove | `confirmDialog` (`ui/dom.js`) |
-| `ui/repos.js` | Generate a new key | Generate a new key on a deploy-key row | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |
+| `ui/repo-connect.js` | Add repository | Add repository on `#/repos` | step 1 address; step 2 method and 3 details (method list from `methodsFor`, fields change with the method); then the read-back of the automatic connection test | Next / Back / Add repository / Done (also Change details, Test again) | `modal` (`repoDialog`) |
+| `ui/repo-connect.js` | Change authentication | Next step on a row, or Connection on `#/repos/:id` | method; fields change with the method; a confirm step with a checkbox before every change | Continue / Back / Replace the sign-in / Done | `modal` (`repoDialog` with `repo`) |
+| `ui/repos.js` | Definition of Ready | Overview on `#/repos/:id` | none (read-only list) | none; the ✕ closes it | `modal` |
+| `ui/repos.js` | Remove repository | Dangerous actions on `#/repos/:id` | none | Remove | `confirmDialog` (`ui/dom.js`) |
+| `ui/repos.js` | Generate a new key | Dangerous actions on `#/repos/:id` (deploy key only) | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |
 | `ui/turn-act.js` | Show questions | Button on a Your turn item with questions | answer per question; Accept all recommendations; Use recommendation | Post answers | `openDetail` |
 | `ui/turn-act.js` | Show plan | Button on an item that waits for plan approval | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Show split | Button on an item that waits for split approval | notes | Approve or Reject | `openDetail` |

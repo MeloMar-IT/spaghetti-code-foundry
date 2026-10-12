@@ -173,6 +173,12 @@ describe("the page", () => {
     expect(calls).toHaveLength(7);
   });
 
+  it("mounts one overview page", async () => {
+    await show();
+    expect(main().children).toHaveLength(1);
+    expect((main().children[0] as FakeElement).getAttribute("class")).toBe("page page-overview");
+  });
+
   it("shows a skeleton and no card while the answers are out", async () => {
     const waits: (() => void)[][] = Array.from({ length: 7 }, () => []);
     holdAll = [...waits];
@@ -245,6 +251,12 @@ describe("Cancel run", () => {
     dialogButton("Keep running").click();
     await flush();
     expect(calls).toHaveLength(7);
+  });
+
+  it("has no button when read-only, and sends nothing", async () => {
+    await ui.renderOperations(main(), { readOnly: true });
+    expect(cancelButton().map((b) => b.textContent)).toEqual([]);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
   it("posts the cancel and asks everything again", async () => {

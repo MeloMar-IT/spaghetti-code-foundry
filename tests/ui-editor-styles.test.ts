@@ -34,7 +34,8 @@ describe("editor.css", () => {
     expect(decls(".dirty-dot")).toBeUndefined();
     expect(decls(".dirty-dot.clean")).toBeUndefined();
     expect(decls(".graph-pane")).toBeUndefined();
-    expect(decls(".overview-pane")).toBeDefined();
+    expect(decls(".overview-pane")?.map((d) => d.split(":")[0])).toEqual(["background", "border", "border-radius", "padding"]);
+    expect(decls(".editor-body")).toBeUndefined();
     expect(decls(".flow-state")).toBeDefined();
   });
 
@@ -124,6 +125,14 @@ describe("checkbox rows", () => {
     expect(e.split('class: "row tight text-sm').length - 1).toBe(5);
     expect(s.split('class: "row tight text-sm').length - 1).toBe(2);
     expect(s.split('class: "row tight" }').length - 1).toBe(1);
+  });
+});
+
+describe("the read-only variable grid", () => {
+  it("has two columns in a locked inspector, after the three-column rule", () => {
+    expect(decls(".inspector.read-only .kv")).toContain("grid-template-columns: 1fr 2fr");
+    expect(index(".inspector.read-only .kv")).toBeGreaterThan(index(".kv"));
+    expect(decls(".kv")).toContain("grid-template-columns: 1fr 2fr auto");
   });
 });
 

@@ -48,7 +48,7 @@ Effort is navigation steps / clicks / typed fields. The effort columns come from
 | 1 Start work | | | | | 1 / 2 / 1 | | | | | | 2 / 4 / 1 (above, `test.fixme`) |
 | 2 Approve a waiting run | | | | | 1 / 2 / 0 | | | | | | 1 / 2 / 0 (not measured, `test.fixme`) |
 | 3 Diagnose a failed run | | | | | 2 / 3 / 0 | | | | | | 2 / 3 / 0 |
-| 4 Add a repository | | | | | 2 / 5 / 2 | | | | | | 2 / 4 / 2 |
+| 4 Add a repository | | | | | 2 / 5 / 2 | | | | | | 2 / 5 / 2 |
 | 5 Refine an idea into a story draft | | | | | 3 / 5 / 2 | | | | | | 3 / 5 / 2 |
 
 The baseline has no clarity question, so there is no baseline clarity column. The table in `measurement.md` stays as it is.

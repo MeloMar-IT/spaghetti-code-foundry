@@ -80,6 +80,50 @@ describe("pageHeader", () => {
     expect(() => p.pageHeader({ title: "x", back: { label: "Back", href: "javascript:alert(1)" } })).toThrow();
     expect(() => p.pageHeader({ title: "x", style: {} })).toThrow();
   });
+
+  describe("toolbar layout", () => {
+    it("is div.toolbar.page-head with one bare h1 when only a title is given", () => {
+      const el = p.pageHeader({ layout: "toolbar", title: "Runs" }) as FakeElement;
+      expect(el.tag).toBe("div");
+      expect(el.getAttribute("class")).toBe("toolbar page-head");
+      expect(el.children).toHaveLength(1);
+      const h1 = el.children[0] as FakeElement;
+      expect(h1.tag).toBe("h1");
+      expect(h1.getAttribute("class")).toBeNull();
+      expect(audit(el)).toEqual([]);
+    });
+    it("has flat children in order: back link, h1, meta, actions, and no scf- class", () => {
+      const m1 = dom.h("span", {}, "m1");
+      const a1 = dom.h("button", {}, "A1");
+      const a2 = dom.h("button", {}, "A2");
+      const el = p.pageHeader({ layout: "toolbar", title: "Run", back: { label: "Back", href: "#/runs", focus: "back" }, meta: [m1, null], actions: [a1, false, a2] }) as FakeElement;
+      expect(el.children.map((c) => (c as FakeElement).tag)).toEqual(["a", "h1", "span", "button", "button"]);
+      expect(el.children.slice(2)).toEqual([m1, a1, a2]);
+      const back = el.children[0] as FakeElement;
+      expect(back.getAttribute("class")).toBe("btn ghost");
+      expect(back.textContent).toBe("←");
+      expect(back.getAttribute("aria-label")).toBe("Back");
+      expect(back.getAttribute("href")).toBe("#/runs");
+      expect(back.getAttribute("data-focus")).toBe("back");
+      expect(walk(el).filter((e) => classOf(e).some((c) => c.startsWith("scf-")))).toEqual([]);
+    });
+    it("has no data-focus without back.focus", () => {
+      const el = p.pageHeader({ layout: "toolbar", title: "Run", back: { label: "Back", href: "#/runs" } }) as FakeElement;
+      expect((el.children[0] as FakeElement).getAttribute("data-focus")).toBeNull();
+    });
+    it("keeps the header layout as it is, and rejects other layouts", () => {
+      const a = p.pageHeader({ title: "Runs" }) as FakeElement;
+      const b = p.pageHeader({ layout: "header", title: "Runs" }) as FakeElement;
+      expect(b.tag).toBe("header");
+      expect(b.getAttribute("class")).toBe(a.getAttribute("class"));
+      expect(() => p.pageHeader({ layout: "x", title: "Runs" })).toThrow();
+    });
+    it("throws on a bad back link or title", () => {
+      expect(() => p.pageHeader({ layout: "toolbar", title: "x", back: { label: "Back", href: "javascript:alert(1)" } })).toThrow();
+      expect(() => p.pageHeader({ layout: "toolbar", title: "x", back: { label: " ", href: "#/a" } })).toThrow();
+      expect(() => p.pageHeader({ layout: "toolbar", title: " " })).toThrow();
+    });
+  });
 });
 
 describe("statusSummary", () => {

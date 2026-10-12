@@ -216,6 +216,156 @@ describe("discard on navigation", () => {
   });
 });
 
+describe("below 1024 px", () => {
+  const g = globalThis as any;
+  const note = () => g.document.getElementById("level-note");
+  const width = (w: number) => { g.innerWidth = w; };
+  const h1 = () => main().all("h1")[0]?.textContent;
+  const area = () => main().all("textarea").find((t: any) => t.getAttribute("class") === "yaml-editor");
+  afterEach(() => { delete g.innerWidth; });
+
+  it("keeps an edited flow in both directions and says so", async () => {
+    width(1200);
+    const { go, api } = await launchApp(real, "#/flows/a");
+    await vi.waitFor(() => expect(h1()).toBe("a"));
+    const text = flowJson("a", { description: "changed" });
+    edit(text);
+    width(800);
+    await go("#/flows/a");
+    expect(api.flow).toHaveBeenCalledTimes(1);
+    expect(buttonIn(main(), "Save")).toBeUndefined();
+    expect(buttonIn(main(), "More")).toBeUndefined();
+    expect(buttonIn(main(), "Test run")).toBeDefined();
+    expect(area()!.value).toBe(text);
+    expect(area()!.getAttribute("readonly")).not.toBeNull();
+    expect(note().textContent).toContain("unsaved changes are kept");
+    width(1200);
+    await go("#/flows/a");
+    expect(buttonIn(main(), "Save")).toBeDefined();
+    expect(area()!.value).toBe(text);
+    expect(area()!.getAttribute("readonly")).toBeNull();
+    expect(note().hidden).toBe(true);
+  });
+
+  it("offers no create buttons on the welcome page and the list", async () => {
+    width(800);
+    const { go } = await launchApp(real, "#/flows");
+    await vi.waitFor(() => expect(main().textContent).toContain("Welcome"));
+    for (const box of [main(), sidebar()]) {
+      expect(buttonIn(box, "+ Blank flow")).toBeUndefined();
+      expect(buttonIn(box, "✨ Draft flow with Claude")).toBeUndefined();
+    }
+    width(1024);
+    await go("#/flows");
+    expect(buttonIn(main(), "+ Blank flow")).toBeDefined();
+    expect(buttonIn(sidebar(), "+ Blank flow")).toBeDefined();
+  });
+
+  it("says #/new needs a wider screen when there is no draft", async () => {
+    width(800);
+    await launchApp(real, "#/new");
+    await vi.waitFor(() => expect(main().textContent).toContain("A new flow needs a wider screen (1024 px or more)."));
+    expect(links(main())).toContain("#/flows");
+    expect(history.pushState).not.toHaveBeenCalled();
+  });
+
+  it("shows an unsaved draft read-only on #/new", async () => {
+    width(1200);
+    const { go } = await launchApp(real, "#/flows");
+    await vi.waitFor(() => expect(buttonIn(main(), "+ Blank flow")).toBeDefined());
+    click(main(), "+ Blank flow");
+    await vi.waitFor(() => expect(location.hash).toBe("#/new"));
+    width(800);
+    await go("#/new");
+    expect(h1()).toBeDefined();
+    expect(area()!.getAttribute("readonly")).not.toBeNull();
+    expect(buttonIn(main(), "Save")).toBeUndefined();
+    expect(buttonIn(main(), "Test run")).toBeDefined();
+  });
+
+  describe("a draft made from the Library", () => {
+    const listeners: Record<string, () => unknown> = {};
+    const cross = async (w: number) => { width(w); listeners.wide!(); await new Promise((r) => setTimeout(r, 0)); };
+    const start = async (over: Record<string, any> = {}) => {
+      g.matchMedia = (q: string) => ({ addEventListener: (_t: string, fn: () => unknown) => { listeners[q.includes("max-width: 767") ? "compact" : "wide"] = fn; } });
+      width(1200);
+      const app = await launchApp(real, "#/library", over);
+      await vi.waitFor(() => expect(buttonIn(sidebar(), "+ Blank flow")).toBeDefined());
+      return app;
+    };
+    afterEach(() => { delete g.matchMedia; });
+
+    it("follows the 1024 px limit in both directions, with the real callbacks", async () => {
+      await start();
+      click(sidebar(), "+ Blank flow");
+      await vi.waitFor(() => expect(location.hash).toBe("#/new"));
+      expect(note().hidden).toBe(true);
+      expect(buttonIn(main(), "Save")).toBeDefined();
+      await cross(800);
+      expect(buttonIn(main(), "Save")).toBeUndefined();
+      expect(area()!.getAttribute("readonly")).not.toBeNull();
+      expect(note().textContent).toContain("unsaved changes are kept");
+      await cross(1200);
+      expect(buttonIn(main(), "Save")).toBeDefined();
+      expect(area()!.getAttribute("readonly")).toBeNull();
+      expect(note().hidden).toBe(true);
+    });
+
+    const openAsk = async () => {
+      click(sidebar(), "✨ Draft flow with Claude");
+      await vi.waitFor(() => expect(root().textContent).toContain("Draft a flow with Claude"));
+      root().all("textarea")[0]!.value = "make a flow";
+    };
+
+    it("does not start Claude from a dialog that was open when the window shrank, also after a failure", async () => {
+      const generate = vi.fn().mockRejectedValueOnce(httpError(500));
+      const { api } = await start({ generate });
+      await openAsk();
+      click(root(), "✨ Draft");
+      await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(alertsIn(root())).toHaveLength(1));
+      await cross(800);
+      click(root(), "✨ Draft");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(api.generate).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not start Claude on a late submit", async () => {
+      const { api } = await start();
+      await openAsk();
+      await cross(800);
+      click(root(), "✨ Draft");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(api.generate).not.toHaveBeenCalled();
+    });
+
+    it("keeps the draft of a generation that was already running, and shows it read-only", async () => {
+      const gate = held<any>();
+      const { api } = await start({ generate: vi.fn(() => gate.promise) });
+      await openAsk();
+      click(root(), "✨ Draft");
+      await vi.waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+      await cross(800);
+      gate.resolve({ yaml: flowJson("g"), costUsd: 0.01 });
+      await vi.waitFor(() => expect(location.hash).toBe("#/new"));
+      expect(buttonIn(main(), "Save")).toBeUndefined();
+      expect(buttonIn(main(), "Test run")).toBeDefined();
+      expect(note().textContent).toContain("unsaved changes are kept");
+    });
+  });
+
+  it("does not send a save on Ctrl/Cmd+S", async () => {
+    width(800);
+    const { api } = await launchApp(real, "#/flows/a");
+    await vi.waitFor(() => expect(h1()).toBe("a"));
+    const preventDefault = vi.fn();
+    for (const fn of [...(g.document.listeners.keydown ?? [])]) fn({ key: "s", metaKey: true, preventDefault });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.validate).toHaveBeenCalledTimes(1); // the check that opening the flow starts
+    expect(api.saveFlow).not.toHaveBeenCalled();
+  });
+});
+
 describe("source", () => {
   it("uses no native confirm and keeps the beforeunload guard", () => {
     for (const f of ["ui/app.js", "ui/flow-page.js", "ui/library.js"]) expect(readFileSync(f, "utf8")).not.toMatch(/\bconfirm\(/);

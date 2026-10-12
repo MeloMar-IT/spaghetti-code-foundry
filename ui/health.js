@@ -13,7 +13,7 @@ const findingsLink = ({ open, unreadable }) => (unreadable ? "Findings of the mo
 const problemKey = (n) => [n.kind, n.runId, n.repo, n.issue, n.title, n.action].filter((x) => x != null && x !== "").join("|");
 
 /** Draws the line for one answer of GET /api/health; `health` null: the server did not answer. */
-export function renderHealth(el, health, { onCancel } = {}) {
+export function renderHealth(el, health, { onCancel, readOnly = false } = {}) {
   el.hidden = false;
   if (!health) {
     el.setAttribute("class", "health bad");
@@ -28,7 +28,7 @@ export function renderHealth(el, health, { onCancel } = {}) {
     h("b", {}, health.summary),
     problems.length ? h("ul", { class: "holds" }, problems.map((n) => h("li", {},
       nextParts(n, { status: false, focus: `health-${problemKey(n)}` }),
-      n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", "data-focus": `health-cancel-${n.runId}`, onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
+      !readOnly && n.kind === "closed_elsewhere" && n.runId ? h("button", { class: "small danger", "data-focus": `health-cancel-${n.runId}`, onClick: () => onCancel?.(n.runId) }, "Cancel run") : null))) : null,
     skills.length ? h("ul", { class: "holds" }, [
       ...skills.map((p) => h("li", {}, `Skills (${p.root}${p.package ? " / " + p.package : ""}): ${p.reason}`)),
       health.skillProblemsMore > 0 ? h("li", {}, `and ${health.skillProblemsMore} more skill problem${health.skillProblemsMore === 1 ? "" : "s"}: run "scf skills" to see all`) : null,

@@ -256,7 +256,7 @@ describe("safety", () => {
     writeFileSync(join(dir, "SKILL.md"), "---\nname: canary\ndescription: Line one two.\n---\n\nBODY-CANARY\n");
     writeFileSync(join(dir, "skill.yaml"), "id: canary\nversion: 1.0.0\n");
     writeFileSync(join(dir, "references", "r.md"), "FILE-CANARY");
-    const cfg = ConfigSchema.parse({ skills: { builtin: false, roots: [root] } }).skills;
+    const cfg = ConfigSchema.parse({ skills: { builtin: false, releases: { allow_unreleased: true }, roots: [root] } }).skills;
     const registry = discoverSkills(cfg, { home: tmp(), userHome: tmp(), env: {} });
     const c = buildSkillCatalogue(registry, { task: "TASK-CANARY" });
     expect(c.entries).toHaveLength(1);

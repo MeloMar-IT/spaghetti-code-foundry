@@ -1,8 +1,7 @@
 /* pages/board.css — the board and its cards.
    Belongs here: board columns and board cards, and the column picker of narrow screens.
-   Does not belong here: card variants (components.css). */
+   Does not belong here: card variants (components.css), the `.board` grid (templates.css). */
 
-.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto; align-items: start; }
 .board-col { display: grid; gap: 8px; align-content: start; min-width: 0; }
 .board-col h3 { margin: 0; font-size: var(--text-small); }
 .board-sub { font-size: var(--text-meta); text-transform: uppercase; letter-spacing: .04em; }

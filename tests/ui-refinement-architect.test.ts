@@ -71,7 +71,7 @@ afterEach(() => {
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const main = () => (document as any).getElementById("main") as FakeElement;
 /** The part of the page above the drafts: the part a poll must not draw again when nothing changed. */
-const upper = () => main().children[0] as FakeElement;
+const upper = () => (main().children[0] as FakeElement).children[0] as FakeElement;
 const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
 /** True for an element inside a part of the talk (ui/refinement-talk.js). */
 const inTalk = (el: FakeElement): boolean => {
@@ -149,7 +149,7 @@ describe("pure functions", () => {
   it("the brief part draws no line for a review run", async () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "review", draft: "d", doing: "x" } });
     await show();
-    const upperPart = main().children[0] as FakeElement;
+    const upperPart = upper();
     expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
     expect(upperPart.textContent).not.toContain("reviewing your draft");
   });
@@ -157,7 +157,7 @@ describe("pure functions", () => {
     page = session({ brief: BRIEF, architect: { state: "running", kind: "suggest", draft: "d", field: "title", doing: "x" } });
     await show();
     // the line of a suggestion run is on the draft page (here: at the top of Story drafts, as its draft is not there)
-    const upperPart = main().children[0] as FakeElement;
+    const upperPart = upper();
     expect(walk(upperPart).some((e) => e.attrs.class === "spinner")).toBe(false);
     expect(upperPart.textContent).not.toContain("writing a suggestion");
   });
@@ -513,6 +513,103 @@ describe("states of the poll", () => {
     await flush();
     expect(gets).toHaveLength(1);
     expect(notes()).toHaveLength(0);
+  });
+  it("the page is one conversation page with one header", async () => {
+    page = session({ architect: running });
+    await show();
+    const root = main().children[0] as FakeElement;
+    expect(main().children).toHaveLength(1);
+    expect(classes(root)).toEqual(expect.arrayContaining(["page", "page-conversation"]));
+    expect(root.children[0]).toBe(upper());
+    expect(classes(root.children[1] as FakeElement)).toContain("page-thread");
+    const bar = upper().children[1] as FakeElement;
+    expect(classes(bar)).toEqual(expect.arrayContaining(["toolbar", "page-head"]));
+    expect((upper().children[0] as FakeElement).attrs.href).toBe("#/refinement");
+    expect(walk(main()).filter((e) => e.tag === "h1")).toHaveLength(1);
+  });
+  describe("the focus when the note goes away", () => {
+    const h1 = () => walk(upper()).find((e) => e.tag === "h1")!;
+    const fail = async () => {
+      page = session({ architect: running });
+      await show();
+      getMode = 500;
+      await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+      expect(retry()).toBeDefined();
+    };
+    const active = () => (document as any).activeElement as FakeElement | null;
+    beforeEach(() => { (document as any).activeElement = null; });
+    it("goes to the title after Retry", async () => {
+      await fail();
+      retry()!.focus();
+      getMode = "ok";
+      press(retry());
+      await flush();
+      expect(notes()).toHaveLength(0);
+      expect(active()).toBe(h1());
+      expect(h1().attrs.tabindex).toBe("-1");
+    });
+    it("goes to the new title when the same answer redraws the upper part", async () => {
+      await fail();
+      const old = h1();
+      retry()!.focus();
+      page = session({ title: "Renamed", architect: { state: "idle" } });
+      getMode = "ok";
+      press(retry());
+      await flush();
+      expect(h1()).not.toBe(old);
+      expect(active()).toBe(h1());
+      expect(main().contains(active()!)).toBe(true);
+    });
+    it("goes to the new title when the automatic poll recovers", async () => {
+      await fail();
+      const old = h1();
+      retry()!.focus();
+      page = session({ title: "Renamed", architect: { state: "idle" } });
+      getMode = "ok";
+      await vi.advanceTimersByTimeAsync(ui.POLL_MS);
+      expect(notes()).toHaveLength(0);
+      expect(h1()).not.toBe(old);
+      expect(active()).toBe(h1());
+    });
+    it("stays where it was when it was not in the note", async () => {
+      await fail();
+      getMode = "ok";
+      press(retry());
+      await flush();
+      expect(active()).not.toBe(h1());
+    });
+    // An open dialog holds the recovering answer back; the note is gone, the title has the focus.
+    const held = async () => {
+      await fail();
+      retry()!.focus();
+      modalRoot().replaceChildren(new FakeElement("div"));
+      page = session({ title: "Renamed", architect: { state: "idle" } });
+      getMode = "ok";
+      press(retry());
+      await flush();
+      expect(notes()).toHaveLength(0);
+      expect(active()).toBe(h1());
+    };
+    it("follows a held answer to the new title while the person stays", async () => {
+      await held();
+      const old = h1();
+      modalRoot().replaceChildren();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(h1()).not.toBe(old);
+      expect(active()).toBe(h1());
+    });
+    it("is not taken from a control the person moved to, also when the redraw replaces it", async () => {
+      await held();
+      const drop = walk(upper()).find((e) => e.tag === "button" && e.textContent === "Drop")!;
+      drop.focus();
+      // The browser drops the focus of a removed control to <body>; the fake keeps the node, so say it here.
+      const was = upper().children[1];
+      modalRoot().replaceChildren();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(upper().children[1]).not.toBe(was);
+      expect(active()).toBe(drop);
+      expect(active()).not.toBe(h1());
+    });
   });
   it("Retry while a request runs does not start another", async () => {
     page = session({ architect: running });

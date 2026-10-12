@@ -238,14 +238,14 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
+const USER_HASH = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?)$/;
 // Only these pages take a query (filters) in their address.
 const USER_QUERY = /^#\/(runs|refinement|repos)$/;
 
 /** True when the address names no page at all: no hash, "#" or "#/". */
 export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
 
-/** True for a hash the user display has a page for: Home, Start work, Runs, one run, My repositories, Refinement, one session. */
+/** True for a hash the user display has a page for: Home, Start work, Runs, one run, My repositories, one repository, Refinement, one session. */
 export const isUserHash = (hash) => {
   const text = typeof hash === "string" ? hash : "";
   const { path } = splitHash(text);

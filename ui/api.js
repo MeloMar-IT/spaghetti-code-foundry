@@ -78,7 +78,15 @@ export const api = {
   deleteBlock: (id) => req("DELETE", `/api/blocks/${enc(id)}`),
   validate: (yaml) => req("POST", "/api/validate", { yaml }),
   generate: (request, current) => req("POST", "/api/generate", { request, current }),
-  runs: (owner) => req("GET", owner ? `/api/runs?owner=${enc(owner)}` : "/api/runs"),
+  /** `params` is an owner id (a string) or an object of query parameters (q, repo, flow, status, since, owner). */
+  runs: (params) => {
+    const p = typeof params === "string" ? { owner: params } : params ?? {};
+    const text = ["q", "repo", "flow", "status", "since", "owner"].filter((k) => typeof p[k] === "string" && p[k]).map((k) => `${k}=${enc(p[k])}`).join("&");
+    return req("GET", text ? `/api/runs?${text}` : "/api/runs");
+  },
+  runFilters: () => req("GET", "/api/run-filters"),
+  /** The runs with one status (the server applies the filter before its cap of 200 runs). */
+  runsWithStatus: (status) => req("GET", `/api/runs?status=${enc(status)}`),
   runOwners: () => req("GET", "/api/run-owners"),
   run: (id) => req("GET", `/api/runs/${enc(id)}`),
   startRun: (body) => req("POST", "/api/runs", body),

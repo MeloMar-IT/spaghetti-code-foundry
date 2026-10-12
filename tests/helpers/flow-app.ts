@@ -83,6 +83,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./ia.js": real.ia,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./context.js": { initContext: () => ({ ready: Promise.resolve(), scoped: () => null, keep: (h: string) => h, current: () => ({ active: false, repo: "", own: false }), refresh: async () => {}, stop: vi.fn() }) },
     "./states.js": real.states,
     "./icons.js": { flowNameMark: (f: { name: string }) => f.name },
     "./editor.js": { renderEditor: () => real.dom.h("div"), cleanFlow: (x: unknown) => x, editable: (x: unknown) => !!x && typeof x === "object" && !Array.isArray(x) },
@@ -95,13 +96,16 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./library.js": never,
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
     "./home-admin.js": never,
+    "./runs-filter.js": await import("../../ui/runs-filter.js" as string),
     "./work.js": never,
   };
   for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
-    "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
+    "./refinement.js", "./repos.js", "./repo-view.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
   // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
+  deps["./viewport.js"] = await import("../../ui/viewport.js" as string);
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);
   deps["./flow-shell.js"] = await import("../../ui/flow-shell.js" as string);
+  deps["./templates.js"] = await import("../../ui/templates.js" as string);
   const all = { ...deps, ...depsOver };
   const { createFlowPage } = await loadUiSource("flow-page.js", all, ["createFlowPage"]);
   let page: any;

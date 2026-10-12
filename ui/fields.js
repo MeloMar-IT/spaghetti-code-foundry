@@ -96,6 +96,21 @@ export function insertAtCursor(textarea, snippet) {
 }
 
 export const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
+const LOCK_DISABLED = new Set(["checkbox", "radio", "file", "range", "color"]);
+const LOCK_REMOVED = new Set(["button", "submit", "reset"]);
+
+/** Makes the controls under `root` show without changing anything; returns `root`. */
+export function lockReadOnly(root) {
+  for (const el of [...root.querySelectorAll("input, textarea, select, button")]) {
+    const tag = el.localName;
+    const type = String(el.getAttribute("type") ?? "").toLowerCase();
+    if (tag === "button" || (tag === "input" && LOCK_REMOVED.has(type))) el.remove();
+    else if (tag === "select" || (tag === "input" && LOCK_DISABLED.has(type))) el.disabled = true;
+    else el.readOnly = true;
+  }
+  return root;
+}
+
 export const check = (checked, label) => {
   const el = h("input", { type: "checkbox", class: "fit", checked: !!checked });
   return { el, row: h("label", { class: "row tight" }, el, h("span", {}, label)) };

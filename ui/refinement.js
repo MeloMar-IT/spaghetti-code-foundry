@@ -1,6 +1,7 @@
 import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
-import { confirmDialog, h, modal, mount, timeAgo, toast } from "./dom.js";
+import { pageViews } from "./views.js";
+import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
 import { dialogOpen } from "./live.js";
@@ -9,6 +10,8 @@ import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
 import { sourceSection } from "./refinement-import.js";
 import { newSessionDialog } from "./refinement-new.js";
+import { pageHeader } from "./kit/product.js";
+import { conversationPage } from "./templates.js";
 import { publishSection } from "./refinement-publish.js";
 import { nextNode, sessionNext } from "./refinement-next.js";
 import { drafts as talkDrafts, kindOf, talkSection } from "./refinement-talk.js";
@@ -114,7 +117,7 @@ function renameDialog(session, onRenamed) {
 }
 
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
-export async function renderRefinement(main, { admin = false, id, readOnly = false, quiet = false, query = {}, go = defaultGo, view } = {}) {
+export async function renderRefinement(main, { admin = false, id, readOnly = false, quiet = false, query = {}, go = defaultGo, view, views = pageViews("refinement") } = {}) {
   // one state for the page and its reloads, so a filter removed while a reload runs stays removed (a session page has none)
   view ??= { filters: !id && query.repo ? { repo: query.repo } : {} };
   // In a preview the server answers as the viewed user (`mine: true`); every button hangs on `mine`, so it is turned off here.
@@ -127,7 +130,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   let reloadList; // the list reads itself again in place; a session draws itself again, without a skeleton so the focus stays
   const reload = (loud = false) => {
     if (reloadList) return reloadList();
-    return renderRefinement(main, { admin, id, readOnly, query: view.filters, go, view, quiet: !loud }).then((c) => {
+    return renderRefinement(main, { admin, id, readOnly, query: view.filters, go, view, views, quiet: !loud }).then((c) => {
       reloaded = c;
     }, (e) => toast(errorText(e), "error"));
   };
@@ -203,6 +206,19 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const waiting = announcer(); // "The architect is working", said once
     let at = Date.now(); // when the page last had an answer
     let noteUp = false;
+    let titleHeld = null; // the title that took the focus from Retry; a redraw hands it to the new title
+    const focusTitle = () => {
+      const t = upper.querySelector("h1");
+      t?.setAttribute("tabindex", "-1");
+      t?.focus();
+      return t;
+    };
+    // The Retry button goes with the note: the title takes the focus, so it never drops to <body>.
+    const clearNote = () => {
+      const had = note.contains(document.activeElement);
+      noteUp = false; mount(note);
+      if (had) titleHeld = focusTitle();
+    };
     let inflight = false; // one poll request at a time, also for Retry
     let held = null; // the newest answer that waits while the person types
     let waitTimer;
@@ -223,15 +239,14 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       draws++;
       held = null;
       at = Date.now();
-      if (noteUp) {
-        noteUp = false;
-        mount(note);
-      }
+      if (noteUp) clearNote();
       const json = JSON.stringify(next);
+      const keep = titleHeld !== null && document.activeElement === titleHeld; titleHeld = null; // focus the person moved is left alone
       if (json !== shown) {
         shown = json;
         draw(next);
       }
+      if (keep) focusTitle();
       stopPoll();
       if (architectStatus(next.architect).busy) poll = setTimeout(tick, POLL_MS);
     };
@@ -270,10 +285,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
       inflight = false;
       if (!current() || before !== draws) return;
       at = Date.now();
-      if (noteUp) {
-        noteUp = false;
-        mount(note);
-      }
+      if (noteUp) clearNote();
       // A change is on its way: this answer may show its state before its own answer does. Ask again later.
       if (active) poll = setTimeout(tick, POLL_MS);
       else if (guarding()) {
@@ -350,9 +362,9 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
         shownUpper = upperKey;
         mount(upper,
         h("a", { href: "#/refinement" }, "← All sessions"),
-        h("div", { class: "toolbar" }, h("h1", {}, s.title), h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
-          h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null,
-          h("span", { class: "spacer" }), buttons),
+        pageHeader({ layout: "toolbar", title: s.title,
+          meta: [h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state), h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null],
+          actions: [h("span", { class: "spacer" }), buttons] }),
         nextBox,
         ...sourceSection(s, { send }),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
@@ -386,7 +398,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const nodes = { brief: ideaBox, talk: talkBox, drafts: sections.node, handoff: h("div", {}, publishing.node, handNote), log: lower };
     const ws = workspace({ id, parts: PARTS.map((p) => ({ ...p, node: nodes[p.id] })), initial: chosen.get(id) ?? defaultPart(s) });
     show(s);
-    mount(main, upper, note, waiting.node, ws.node); // after the first draw, so the focus finds its control again
+    mount(main, conversationPage({ head: upper, thread: [note, waiting.node, ws.node] })); // after the first draw, so the focus finds its control again
     return cleanup;
   }
 
@@ -405,7 +417,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   const row = (s) => h("tr", { class: "link", onClick: () => goTo(`#/refinement/${encodeURIComponent(s.id)}`) },
     h("td", {}, h("a", { href: `#/refinement/${encodeURIComponent(s.id)}`, onClick: (e) => e.stopPropagation() }, s.title)),
     h("td", { class: "mono" }, s.repo),
-    h("td", {}, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
+    h("td", { class: s.state === "dropped" && s.mine ? "actions" : null }, h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state),
       s.state === "dropped" ? [" ", h("span", { class: "muted" }, `removed on ${date(s.removedOn)}`)] : null,
       s.state === "dropped" && s.mine ? [" ", h("button", { class: "small", onClick: (e) => {
         e.stopPropagation();
@@ -440,13 +452,15 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const inRepo = filters.repo ? all.filter((s) => sameRepo(s.repo, filters.repo)) : all;
     const shown = inRepo.filter((s) => (s.state === "dropped") === showDropped);
     const known = !filters.repo || inRepo.length > 0 || repos.some((r) => sameRepo(r, filters.repo));
-    mount(head, toolbar(true), filterBar(filters, { onRemove: clear, onClear: clear }));
-    mount(body, shown.length
-      ? h("div", { class: "table-box" }, h("table", { class: "table" },
-        h("thead", {}, h("tr", {}, ["Title", "Repository", "State", "Last change", admin ? "Owner" : null].filter(Boolean).map((t) => h("th", {}, t)))),
-        h("tbody", {}, shown.map(row))))
-      : !known ? filterGone({ onClear: clear })
-        : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear })
+    const vp = views?.parts(filters, { redraw: () => { if (current() && last) drawList(); } }) ?? {};
+    mount(head, toolbar(true), filterBar(filters, { onRemove: clear, onClear: clear, row: vp.row, onSave: vp.onSave }));
+    // An out-of-date saved view is open: the empty state, even when matching sessions are still listed.
+    mount(body, vp.stale
+      ? (known ? filterEmpty("refinement sessions", filters, { onClear: clear, onDelete: vp.onDelete }) : filterGone({ onClear: clear, onDelete: vp.onDelete }))
+      : shown.length
+      ? table(["Title", "Repository", "State", "Last change", admin ? "Owner" : null], shown.map(row), { cards: true, caption: showDropped ? "Dropped sessions" : "Refinement sessions" })
+      : !known ? filterGone({ onClear: clear, onDelete: vp.onDelete })
+        : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear, onDelete: vp.onDelete })
           : emptyState(showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
   };
   /** Reads the list. `first`: nothing is shown yet (or the person pressed Retry), so a failure replaces the page; later a failure keeps the rows and says so. */

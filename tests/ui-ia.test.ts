@@ -152,6 +152,12 @@ describe("resolve for an admin", () => {
     expect(crumbs("#/flows/x")).toEqual([["Flows", "#/flows"], ["x", null]]);
     expect(crumbs("#/library")).toEqual([["Flows", "#/flows"], ["Library", null]]);
     expect(crumbs("#/repos")).toEqual([["Repositories", "#/repos"], ["My repositories", null]]);
+    expect(crumbs("#/repos/abc-1")).toEqual([["Repositories", "#/repos"], ["My repositories", "#/repos"], ["Repository", null]]);
+    expect(r("#/repos/abc-1")).toMatchObject({ page: { id: "repo" }, back: "#/repos", arg: "abc-1" });
+    expect(ia.resolve("user", "#/repos/abc-1")).toMatchObject({ redirected: false, back: "#/repos" });
+    expect(ia.resolve("user", "#/repos/abc-1").crumbs.map((c: any) => [c.label, c.href])).toEqual([["My repositories", "#/repos"], ["Repository", null]]);
+    expect(r("#/repos/a/b")).toMatchObject({ hash: "#/home", redirected: true });
+    expect(ia.PAGES.find((p: any) => p.id === "repo").scope).toBeUndefined();
     expect(r("#/runs/r1").title).toBe("Run r1");
     expect(r("#/runs").title).toBe("Runs");
   });

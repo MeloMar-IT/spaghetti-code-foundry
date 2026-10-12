@@ -358,6 +358,110 @@ describe("delete", () => {
   });
 });
 
+describe("after the window shrank", () => {
+  const width = (w: number) => { (globalThis as any).innerWidth = w; };
+  const alertText = () => alertsIn(main())[0]?.textContent ?? "";
+  const confirmDelete = async () => {
+    trash().click();
+    await vi.waitFor(() => expect(root().textContent).toContain("Delete flow?"));
+  };
+  afterEach(() => { delete (globalThis as any).innerWidth; });
+
+  it("shows no Retry for a delete that fails late", async () => {
+    width(1200);
+    const gate = held<any>();
+    const { api } = await open({ deleteFlow: vi.fn(() => gate.promise) });
+    await confirmDelete();
+    click(root(), "Delete");
+    await vi.waitFor(() => expect(api.deleteFlow).toHaveBeenCalledTimes(1));
+    width(800);
+    gate.reject(httpError(500));
+    await vi.waitFor(() => expect(alertsIn(main())).toHaveLength(1));
+    expect(alertText()).toContain("was not deleted");
+    expect(buttonIn(main(), "Retry")).toBeUndefined();
+  });
+
+  it("does nothing when a Retry drawn earlier is clicked", async () => {
+    width(1200);
+    const { api } = await open({ deleteFlow: vi.fn().mockRejectedValue(httpError(500)) });
+    await confirmDelete();
+    click(root(), "Delete");
+    await vi.waitFor(() => expect(buttonIn(main(), "Retry")).toBeDefined());
+    const retry = buttonIn(main(), "Retry")!;
+    width(800);
+    retry.click();
+    await tick();
+    expect(api.deleteFlow).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete when the question is answered after the shrink", async () => {
+    width(1200);
+    const { api } = await open();
+    await confirmDelete();
+    width(800);
+    click(root(), "Delete");
+    await tick();
+    expect(api.deleteFlow).not.toHaveBeenCalled();
+  });
+
+  it("shows no Retry for a rename clean-up that fails late", async () => {
+    width(1200);
+    const gate = held<any>();
+    const { api } = await open({ deleteFlow: vi.fn(() => gate.promise) });
+    changed("b");
+    saveButton().click();
+    await vi.waitFor(() => expect(api.deleteFlow).toHaveBeenCalledTimes(1));
+    width(800);
+    gate.reject(httpError(500));
+    await vi.waitFor(() => expect(alertsIn(main())).toHaveLength(1));
+    expect(alertText()).toContain('The old flow "a" could not be removed.');
+    expect(buttonIn(main(), "Retry")).toBeUndefined();
+  });
+
+  it("does nothing when a clean-up Retry drawn earlier is clicked", async () => {
+    width(1200);
+    const { api } = await open({ deleteFlow: vi.fn().mockRejectedValue(httpError(500)) });
+    changed("b");
+    saveButton().click();
+    await vi.waitFor(() => expect(buttonIn(main(), "Retry")).toBeDefined());
+    const retry = buttonIn(main(), "Retry")!;
+    width(800);
+    retry.click();
+    await tick();
+    expect(api.deleteFlow).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the rename clean-up and says so when the window shrank before it", async () => {
+    width(1200);
+    const gate = held<any>();
+    const { api } = await open({ saveFlow: vi.fn(() => gate.promise) });
+    changed("b");
+    saveButton().click();
+    await vi.waitFor(() => expect(api.saveFlow).toHaveBeenCalledTimes(1));
+    width(800);
+    gate.resolve({ yaml: flowJson("b") });
+    await vi.waitFor(() => expect(alertsIn(main())).toHaveLength(1));
+    expect(api.deleteFlow).not.toHaveBeenCalled();
+    expect(alertText()).toContain('The old flow "a" could not be removed.');
+    expect(buttonIn(main(), "Retry")).toBeUndefined();
+  });
+
+  it("sends no save when the window shrinks during the check", async () => {
+    width(1200);
+    const { api } = await open();
+    changed();
+    const gate = held<any>();
+    api.validate.mockReturnValueOnce(gate.promise);
+    saveButton().click();
+    width(800);
+    gate.resolve({ ok: true, flow: { name: "a", workspace: "worktree", vars: {} } });
+    await tick();
+    await tick();
+    expect(api.saveFlow).not.toHaveBeenCalled();
+    expect(stateText()).toBe("Unsaved changes");
+  });
+});
+
 describe("run", () => {
   it("stops an invalid flow above the editor and opens no dialog", async () => {
     const { api } = await open();

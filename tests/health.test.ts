@@ -87,7 +87,7 @@ describe("health(): skills", () => {
 
   it("a missing configured root is a problem, with a label and no path", () => {
     const missing = join(tmpDir(), "nope");
-    const h = health(ctxOf({ config: { skills: { roots: [missing] } } }), NOW);
+    const h = health(ctxOf({ config: { skills: { releases: { allow_unreleased: true }, roots: [missing] } } }), NOW);
     expect(h.ok).toBe(false);
     expect(h.summary).toBe("1 problem");
     expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[0]" });
@@ -97,7 +97,7 @@ describe("health(): skills", () => {
   it("an invalid package names its folder; the list is capped and the rest is counted", () => {
     const root = tmpDir();
     for (let i = 0; i < 25; i++) mkdirSync(join(root, `bad${String(i).padStart(2, "0")}`));
-    const h = health(ctxOf({ config: { skills: { roots: [root] } } }), NOW);
+    const h = health(ctxOf({ config: { skills: { releases: { allow_unreleased: true }, roots: [root] } } }), NOW);
     expect(h.summary).toBe("25 problems");
     expect(h.skillProblems).toHaveLength(20);
     expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[0]", package: "bad00" });
@@ -107,7 +107,7 @@ describe("health(): skills", () => {
   it("a missing root after a noisy root is still named", () => {
     const noisy = tmpDir();
     for (let i = 0; i < 25; i++) mkdirSync(join(noisy, `bad${String(i).padStart(2, "0")}`));
-    const h = health(ctxOf({ config: { skills: { roots: [noisy, join(tmpDir(), "nope")] } } }), NOW);
+    const h = health(ctxOf({ config: { skills: { releases: { allow_unreleased: true }, roots: [noisy, join(tmpDir(), "nope")] } } }), NOW);
     expect(h.skillProblems?.[0]).toMatchObject({ root: "skills.roots[1]" });
     expect(h.skillProblems).toHaveLength(20);
   });
@@ -133,14 +133,14 @@ describe("health(): skills", () => {
     };
     const pinned = (root: string, id: string, version = "1.0.0") => {
       pkg(root, id, version);
-      const reg = discoverSkills(ConfigSchema.parse({ skills: { roots: [root] } }).skills, {});
+      const reg = discoverSkills(ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [root] } }).skills, {});
       const e = reg.byKey.get(`${id}@${version}`)!;
       addSkillPins([{ key: e.key, digest: e.digest }]);
       pkg(root, id, version, " Changed.");
       clearSkillRegistryCache();
       return e.digest;
     };
-    const ctx = (roots: string[]) => ctxOf({ config: { skills: { roots } } });
+    const ctx = (roots: string[]) => ctxOf({ config: { skills: { releases: { allow_unreleased: true }, roots } } });
 
     it("a tampered pinned package is a problem with both digests", () => {
       const root = tmpDir();

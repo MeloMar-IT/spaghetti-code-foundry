@@ -1098,3 +1098,55 @@ describe("renderStart: entry choices", () => {
     }
   });
 });
+
+describe("renderStart: the repository context", () => {
+  it("loads the switcher again after the Add dialog: none, one, many; no navigation", async () => {
+    const context: any = await import("../ui/context.js" as string);
+    const reposUi: any = await import("../ui/repos.js" as string);
+    const { api } = (await import("../ui/api.js" as string)) as any;
+    const gh = (github: string) => ({ github, owner: "u1", account: null });
+    const lists = [[], [gh("o/a")], [gh("o/a"), gh("o/b")]];
+    const a = { repos: vi.fn(async () => (lists.length > 1 ? lists.shift() : lists[0])) };
+    const ctxGo = vi.fn();
+    const memory = { getItem: () => null, setItem: () => undefined };
+    const ctx = context.initContext("user", { id: "u1" }, { a, go: ctxGo, notify: vi.fn(), store: context.contextStore("u1", memory), where: () => "#/start" });
+    const realAdd = api.addRepo;
+    const text = () => (document as any).getElementById("context").textContent as string;
+    const modalRoot = () => (document as any).getElementById("modal-root") as FakeElement;
+    try {
+      await ctx.ready;
+      expect(text()).toContain("No repository yet.");
+      let n = 0;
+      api.addRepo = async (body: any) => ({ id: `n${++n}`, url: body.url, method: body.method });
+      data.flows = [flow("a", [field("github_repo")])];
+      data.repos = [];
+      dialog = reposUi.repoDialog;
+      await open();
+      const addOnce = async () => {
+        one(main, "button", { "data-focus": "add-repo" }).click();
+        await flush();
+        one(modalRoot(), "input", { name: "url" }).value = `https://github.com/o/r${n}`;
+        find(modalRoot(), "button").find((b) => b.textContent === "Next")!.click();
+        one(modalRoot(), "input", { name: "token" }).value = "t".repeat(40);
+        find(modalRoot(), "button").find((b) => b.textContent === "Add repository")!.click();
+        await flush();
+        await flush();
+        // this fetch has no test route: the test cannot run, and the dialog still resolves with the record
+        find(modalRoot(), "button").find((b) => b.textContent === "Done")!.click();
+        await flush();
+        await flush();
+      };
+      await addOnce();
+      expect(a.repos).toHaveBeenCalledTimes(2);
+      expect(text()).toContain("o/a");
+      expect(find((document as any).getElementById("context"), "button", { "data-focus": "context-btn" })).toHaveLength(0);
+      await addOnce();
+      expect(a.repos).toHaveBeenCalledTimes(3);
+      expect(find((document as any).getElementById("context"), "button", { "data-focus": "context-btn" })).toHaveLength(1);
+      expect(ctxGo).not.toHaveBeenCalled();
+    } finally {
+      ctx.stop();
+      api.addRepo = realAdd;
+    }
+  });
+});

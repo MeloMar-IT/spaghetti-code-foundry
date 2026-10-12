@@ -87,6 +87,7 @@ button.problem-link { border: none; background: transparent; padding: 0; color: 
 .state-error:not(.pill) .row { margin-top: 8px; }
 .stale-note { color: var(--muted); font-size: var(--text-meta); display: flex; gap: 8px; align-items: center; }
 .stale-note.failed { color: var(--fail); }
+.level-note { margin: 0; padding: 8px 24px; border-bottom: 1px solid var(--border); background: var(--accent-soft); font-size: var(--text-small); }
 .ico { width: var(--size-icon); height: var(--size-icon); flex: none; display: inline-block; vertical-align: text-bottom; }
 .ico-sm { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 .ico.spin { animation: spin .8s linear infinite; }
@@ -134,12 +135,14 @@ button.icon { justify-content: center; }
 }
 
 /* ── a wide table scrolls in its own box ── */
-.table-box { overflow-x: auto; }
+.table-box { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; }
 @media (max-width: 767px) {
   .table { display: block; overflow-x: auto; }
   .table-box > .table { display: table; overflow: hidden; }
 }
 .table tr.link td > a { text-decoration: none; }
+.table td > a.repo-link { color: inherit; }
+.table td > a.repo-link:hover { text-decoration: underline; }
 .modal ol.plan li { margin-bottom: 12px; }
 .modal .plan pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill.ready-met, .pill.state-ready, .pill.state-published { background: var(--ok-soft); color: var(--ok); }
@@ -150,3 +153,8 @@ button.icon { justify-content: center; }
 .filter-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filter-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-small); padding: 1px 4px 1px 10px; border-radius: var(--radius-pill); background: var(--panel-2); border: 1px solid var(--border); }
 .filter-chip button { padding: 0 6px; }
+
+/* My repositories: a long name wraps inside its cell; compact rows hide the helper texts */
+.table td.repo-name { max-width: 32ch; overflow-wrap: anywhere; }
+.table td.next-step .muted { max-width: 36ch; overflow-wrap: anywhere; font-size: var(--text-small); }
+.table.compact .field small { display: none; }

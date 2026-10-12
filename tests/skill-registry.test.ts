@@ -52,7 +52,7 @@ function setup(): Env {
   for (const d of [home, builtin, userHome]) mkdirSync(d);
   return { home, builtin, userHome, root: (n) => join(base, `root${n}`) };
 }
-const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ skills: over }).skills;
+const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, ...over } }).skills;
 const run = (e: Env, over: Record<string, unknown> = {}, extra: { repo?: string; env?: NodeJS.ProcessEnv } = {}): SkillRegistry =>
   discoverSkills(cfg(over), { home: e.home, builtinRoot: e.builtin, userHome: e.userHome, env: {}, ...extra });
 const keys = (r: SkillRegistry) => r.skills.map((s) => `${s.key}@${s.label}`);
@@ -352,7 +352,7 @@ describe("cache and config", () => {
 
   it("an old config gets the defaults; an unknown key is rejected", () => {
     expect(ConfigSchema.parse({}).skills).toEqual({
-      builtin: true, roots: [], repository: false, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
+      builtin: true, roots: [], repository: false, releases: { allow_unreleased: false, approved: [] }, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
       selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] },
       review: { max_tokens: 3000, max_skill_tokens: 1000 },
       unresolved: {
@@ -645,5 +645,35 @@ describe("scf skills", () => {
     expect(r.stdout).toContain("small-changes");
     expect(r.stdout).toContain(`PROBLEM skills.roots[0] ${missing}:`);
     expect(r.status).toBe(1);
+  });
+});
+
+describe("the skill quarantine", () => {
+  it("is never scanned as a root, also through a link", () => {
+    const e = setup();
+    const q = join(e.home, "skill-quarantine", "src", "c");
+    pkg(q, "inside");
+    const direct = run(e, { roots: [q] });
+    expect(kinds(direct)).toEqual(["root-refused"]);
+    expect(direct.problems[0]!.reason).toBe("the skill quarantine is never scanned");
+    expect(direct.skills).toEqual([]);
+    const link = join(tmp(), "link");
+    symlinkSync(join(e.home, "skill-quarantine"), link);
+    const linked = run(e, { roots: [link] });
+    expect(kinds(linked)).toEqual(["root-refused"]);
+    expect(linked.skills).toEqual([]);
+  });
+  it("is never loaded as a package of a root", () => {
+    const e = setup();
+    pkg(e.home, "skill-quarantine");
+    const reg = run(e, { roots: [e.home] });
+    expect(kinds(reg)).toContain("invalid-package");
+    expect(reg.problems.find((p) => p.kind === "invalid-package")!.reason).toBe("the skill quarantine is never scanned");
+    expect(reg.skills).toEqual([]);
+  });
+  it("a normal root still loads", () => {
+    const e = setup();
+    pkg(e.root(0), "fine");
+    expect(keys(run(e, { roots: [e.root(0)] }))).toEqual(["fine@1.0.0@skills.roots[0]"]);
   });
 });

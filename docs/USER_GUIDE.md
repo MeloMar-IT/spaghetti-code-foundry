@@ -96,7 +96,7 @@ admin for a new one.
 
 **Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
-**Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways.
+**Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
 An account with the role `user` works on its own display at `/user/`, with **Home**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
@@ -104,7 +104,7 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 
 **Start work.** The page opens with "How do you want to begin?": **Start a task now** (the form below; chosen by default, and with a kept draft it says so and opens it), **Refine an idea first** and **Refine an existing issue** (both open the new-session dialog with that kind chosen), and **Continue a refinement session** (goes to **Refinement**). The read-only preview shows no choice that makes a session. Starting a task is three steps on one page. (1) Pick a flow: every published flow shows its title and description; the first is chosen. While the flows load, a grey placeholder shows under the heading. With none, the page says "No flows yet. Ask your administrator to publish one." (an admin sees "No published flows yet. Publish one in the flow editor." with a link to the editor). If the flows cannot be loaded, the page says what happened and has **Retry**; without permission it says so. (2) Pick the repository, when the flow has the input `github_repo`: your GitHub repositories as `owner/name`, each with its status (Connected, Failed or Not tested yet). **Add repository** opens the usual dialog; afterwards the list is loaded again and the new repository is chosen. While the list loads, step 2 shows a placeholder and **Start** is off. With no repository the page says so and offers **Add repository**. If the list cannot be loaded, step 2 says so with **Retry**; flows that need no repository still work. If the flow fixes the repository, it is shown and cannot be changed; with no repository field there is no step 2. (3) Fill in the details: a **Task** box when the flow uses the task, then each field the flow asks for, with its help text and default and "(required)" where it must be filled in; fixed fields are shown as text. **Review** checks the form and shows a review page; **Start** on that page starts the run and opens its page (see [Review before start](#review-before-start)). An empty required field shows a message and nothing is sent; if the server refuses, an alert under the form explains what happened, what is safe and what to do. What you typed stays, **Start** is on again, and a second **Start** sends the same values. If the server did not answer or failed, the run may have started: check **My runs** first. The read-only preview shows no **Review**, **Start** or **Add repository**. While the call runs the button is off. Each flow keeps what you typed when you switch to another and back. You can reach every control with Tab and send the form with Enter, or with Ctrl/⌘+Enter in the Task box.
 
-**My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet." and offers **Start work**.
+**My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet." and offers **Start work**. Above the cards a bar lets you search and filter your runs, as on the admin Runs list but without the Owner select: a search box, Repository, Flow, Status and Time, "Only what needs me", **Show** buttons and **Clear filters**. The filter is kept in the address (`#/runs?q=…`); `owner` there is ignored. Search, repository, flow, status and time are asked from the server, so older runs are found; when 200 runs match, the list says "Only the newest 200 matches are shown." With no match it says "No runs match your search and filters." The preview opened with **View as user** can filter too.
 
 **The run page.** A header at the top stays in place when the run updates. It shows the task as the title, the status with its "?", the repository and issue or PR, the branch, when the run started and how long it ran (or has been running), and "resumed N×". Under it come the failure card or **Now**. The page also shows **Now** (what happens next, and the step the run is at, with what that step does). Below it are five tabs: **Overview**, **Steps**, **Changes**, **Evidence** and **Logs**. Overview is the default; a failed run opens on **Steps** once, unless you already chose a tab. The tabs work with the mouse and with Left and Right arrow keys. A live update never changes the tab you are on, closes what you opened or moves your scroll position, and text you are typing in the answer form stays. **Overview** shows the whole task, the questions of a run that stopped, the details (run id, flow and flow version; an administrator also sees the workspace) and a short count such as "3 of 5 steps done, 1 failed". On the user display the answer form and **Answers given** are here. **Steps** is a timeline in time order: run started, each finished step (passed or failed, visit number, how long), "Waiting for approval" with its message, "Running <step>", each answer given and the end of the run. Sub-steps are indented under their step, and each row has a plain label, not just a step id. An administrator can open a step for its error under **Details** and its output or transcript, which load when first opened (tool calls stay closed until clicked); a user sees plain rows with a one-sentence error. Open steps stay open and loaded when the run goes on, and the scroll position does not move. A failed run opens its failing step once. It says "No steps finished yet." while the run is going and "No steps recorded." for a finished run with none. **Changes** shows what the run changed, or a line that there is nothing; it loads when you first open it, when you press **Refresh**, and when the run finishes, and open files stay open. **Evidence** shows only what the run already has: the questions asked and the answers given, with their time; the result of each finished shell or approval step (passed or failed, how long, and the error in one sentence); the link of the next step (the issue or pull request); and, for a failed run, **Already tried**. With none of these it says "No evidence recorded yet." **Logs** is the live log: the full log for an administrator, the filtered log for a user. Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry from the failing step** is for a run that failed, stopped or was cancelled and has a step to continue at; it is the one filled button, except while the answer form is shown (then **Send answer** is the main action). **Cancel** is for a run that is running, waiting or queued, and asks first; a run that is queued can only be cancelled. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. A run that stopped because the planner has questions shows them as text under **Questions**: the planner's own text, the same as in the comment on the issue. The page shows the first 4,000 characters; a longer text is cut, and the whole text is in the comment. "Retry from step…", the owner, costs and raw details belong to the admin display. While the run loads you see a placeholder page. If the run does not exist (or was removed) you see "This run was not found. It may have been removed." with a link back; if you may not see it, you see that, with a link back; any other failure shows the reason with **Retry**. If the live connection to the run is lost for good, a red banner says "Lost connection to the run stream" with **Reconnect**. The page keeps showing the last head, steps and log; **Reconnect** opens the stream again, and the banner goes when the next update arrives. If the changes cannot be loaded, the reason shows in that place with **Retry**.
 
@@ -229,7 +229,7 @@ Home asks again every 30 seconds.
 
 **Messages and confirmations.** After an action a short message appears and goes after a few seconds. An error message stays until you close it with ✕. A screen reader reads each message once. Anything you must still do stays on the page, not in a message. A dangerous action asks first in a dialog where focus starts on **Cancel**; Escape cancels. **Dismiss** on Home and **Drop** in Refinement show **Undo** in the message. Undo on Home brings back only the item you dismissed. Undo stays until you use it, close it or another message replaces it. A dropped session shows Undo only when it is yours.
 
-**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. A read-only preview shows no action buttons.
+**Repository pages.** My repositories, All repositories and Credentials show a grey table while they load. If they cannot load, you see what went wrong and **Retry**; without permission you see that instead. If the list cannot be loaded again after an action, the old list stays with a note and **Retry**. If the sign-in methods cannot be loaded, the list still shows, with a note that you cannot add a repository now. A failed connection test stays on the row ("Connection failed" with the reason) until the next test, and the button reads **Test again**. After you add a deploy-key repository, a note on the page asks you to add the public key as a deploy key on GitHub; it stays until the connection works. **Remove** and **Generate a new key** ask first in a dialog. **Add repository** runs in steps and tests the connection after saving; **Change authentication** asks you to confirm. A read-only preview shows no action buttons. **Rows on My repositories.** Each row shows the short name (`owner/name`, or the address), how the Foundry signs in, whether it is Connected, Failed or Not tested yet, when it was last checked and how many runs are running or waiting for it ("—" if that cannot be read). A row has at most one thing to do, shown as one button: change the authentication (an account that needs a sign-in), install the GitHub App again, or test the connection (after a failed or missing test; a failed test also shows its first message). Repositories that need attention come first, and a line above the table says how many. From 8 repositories a filter box narrows the list by address. **Compact rows** makes the rows smaller; the browser remembers it. Long names are cut, with the full text on hover. No secret is shown. **One repository.** **Open** on a row (or `#/repos/<id>`) opens the page of that repository, in both displays. It has three sections. **Overview**: name, address, the attention state and next action (as on the row), active runs, the date it was added and **Definition of Ready** (read-only). **Connection**: the method, the user name if there is one, the public key with **Copy** and the deploy-key hint (deploy key), or the install link (GitHub App); the last test with every check (Read, Write, GitHub API) and its message; and the buttons **Test connection** and **Change authentication**. **Dangerous actions**, last and set apart: **Generate a new key** (deploy key only) and **Remove**. Each asks first and names the repository and what is deleted. While one action runs, the other buttons are disabled. An unknown repository, or one of another account, shows "No such repository." with a link back. A read-only preview shows the sections without buttons. The breadcrumb names the repository; Back goes to the list. A row no longer shows the public key, so open the repository to copy it after you add a deploy-key repository.
 
 **Refinement pages.** The session list and a session show a grey skeleton while they load. If they cannot load, you see what went wrong and **Retry**; a session that is not found and a missing permission are shown as their own messages. A session refreshes by itself; a refresh that fails keeps what you see and says "Could not refresh. Showing data from …" with **Retry**. A refresh never replaces a field you are typing in or that has unsaved text. While the architect works, the page says so once. Each field shows whether it is saving, saved or failed; a failed save keeps your text and has **Retry**. If a publish creates some issues and fails for the rest, a banner lists both and has **Retry** for the rest; it stays until the rest is published or removed. A draft that was split can no longer be changed: you see a message with a link to each part, and your text is kept. Removing a draft, moving text to the notes, merging, publishing with text that is not saved, removing a reason, replacing a field with a suggestion, removing a map entry and dropping a session ask first in a dialog.
 
@@ -322,7 +322,10 @@ With it on, **Board** (`#/board`, and `#/board/<repo>` for one repository) shows
 - **Keys on the board:** each column has one Tab stop (the card you used last). Up and Down move in the column; Left and Right move to the same place in the next column that has cards; Home and End go to the first and last card of the column; Enter opens the run. Tab reaches the links inside a card. Focus stays on the same card when the board updates.
 - **Touch and narrow screens (below 768 px):** columns scroll sideways and snap into place. Each column scrolls on its own, with its heading kept in view, and buttons and links in cards are at least 44 px tall. Nothing needs hover. On a large board, column bodies have a maximum height and scroll.
 - **What is in the way?** A card or row with blockers has a button **What is in the way?**. It opens a side panel for that story; nothing on the board is dimmed or moved. The panel shows the title, issue link, status, the full sentence, who has the next move and where, owner, age and **Open run** when there is a run. Under "In the way of #N" every story that must finish first is listed in the order it must finish, the deepest blocker first; direct blockers are marked "directly". A story that is on the board is a button that opens it in the panel, and **Back** returns to the story before; one that is not on the board is a GitHub link. On a wide screen the panel sits next to the board and the board stays usable. Below 768 px it covers the page and Tab stays inside it. **Escape** or **Close** closes it and focus returns to the button. A card without a run opens the panel on Enter. The panel updates every 5 seconds; if the story is gone it closes with "#N is no longer on the board". Filters, layout and scroll position do not change. The open panel is not saved.
-- **Saved choices:** your layout, filters, display choices, grouping and order are kept in this browser for your account. Another account on the same browser has its own. A saved repository or owner that is gone is dropped.
+- **Repository and owner come from the address:** `#/board/<name>?owner=<id>`. A saved repository or owner is ignored when the page opens, so the switcher, shared links and the page always agree. Changing the repository select writes `#/board/<name>` (or `#/board` for all) and keeps `owner`; changing the owner writes `?owner=`; **Clear filters** writes `#/board`. A later update keeps your selection and the address.
+- **Unknown repository or owner:** a repository in the address that is not in your list is kept. The page says "This repository is not in your list…" with **Show all repositories**, and does not widen the scope by itself. An owner without stories is kept too: you see "No story matches the filters." and **Clear filters**.
+- **Use as my context:** when a context is offered, the toolbar shows **Use as my context**; a click sets it.
+- **Saved choices:** your layout, filters (status, who, text), display choices, grouping and order are kept in this browser for your account. Another account on the same browser has its own. The repository and owner are not saved.
 - **Updates:** like the board, every 5 seconds, and a check of the watcher when you come back from a GitHub link. If loading fails you see an error and **Retry**; data already shown stays.
 ### Filters in the address
 
@@ -331,7 +334,11 @@ part of the address, so you can share it, and Back and Forward restore it:
 
 - `#/runs?repo=owner%2Fname&owner=<account>` (admin Runs). `repo` and `owner` are the only keys;
   anything else is ignored. A repository must look like `owner/name`.
-- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`.
+- The Board keeps `#/board/<repository>` and only adds `?owner=<account>`. The classic Board
+  matches the repository name without regard to case. For `#/board/<name>` with a name that is not
+  in your list (for example an old link) it shows "This repository is not in your list…", all
+  repository buttons and a button to `#/board?repo=all`; it no longer opens the first repository.
+  Without a name in the address it still shows the first repository.
 - On the user display, **My runs** accepts the address too and uses `repo`. `owner` is ignored
   there: a user only ever sees their own runs.
 
@@ -341,6 +348,17 @@ part of the address, so you can share it, and Back and Forward restore it:
 Above the list a filter bar shows one chip per active filter, each with a remove button, and
 **Clear filters**. With no filter there is no bar. If nothing matches, the page names the filter
 and offers **Clear filters**; this also happens for a repository your account cannot see.
+
+With a repository context set, **Clear filters** and the remove button on the repository chip write
+`?repo=all` (an `owner` filter stays), so the next page does not put your context back. For
+example `#/runs?owner=u1` becomes `#/runs?repo=all&owner=u1`. An address that names a repository,
+`#/board/<name>?owner=…` and pages that do not follow the context are not changed.
+
+**Use as my context.** When the page shows another repository from your list than your context, or
+all repositories while a context is set, the filter bar shows **Use as my context** and names the
+scope ("All repositories" or "Repository: owner/name"), even with no chips. One click makes it your
+context, updates the switcher and hides the button. It is not shown for the same repository, a
+repository that is not in your list, without a context, or on pages that do not follow the context.
 
 The browser filters what the server already sent; no call gets a new parameter. The Runs list
 holds the newest 200 runs, so with a repository filter on a full list you see "Only the newest
@@ -357,25 +375,106 @@ been removed, or you may not have access." with **Clear filters**; the text is t
 the repository exists for another account or not. Refreshes keep the filter. The server gets no
 new parameter.
 
+### Repository context
+
+The switcher sits at the start of the top bar, on both displays. It shows your current repository
+so that you do not filter each page yourself.
+
+- **No repository:** the switcher shows a short text. **One repository:** a plain label. **Two or
+  more:** a button that opens a panel. When you add or remove a repository, the switcher loads
+  again and changes by itself.
+- **The panel** lists **All repositories** first, then **Favourites** (use the star), **Recent**
+  and the rest. As an admin the rest is grouped by owner. From eight repositories the panel has a
+  search box. Escape or a choice closes it.
+- **Pages that follow it:** Runs, Refinement, Board, My repositories and, as an admin, All
+  repositories. With two or more repositories they open on your current repository
+  (`?repo=<name>`, `#/board/<name>`, or `?repo=all` for All repositories). If you choose another
+  repository on one of these pages, the address changes and the page draws again; an `owner`
+  filter stays. On other pages only the label changes.
+- **The address wins.** An address that already names a repository, or has any filter, is not
+  changed (see "Filters in the address"). With fewer than two repositories no address is changed.
+- **Where the choice is kept:** per account, in this browser. In the read-only preview (`?as=`) it
+  is not read or written.
+- **Problems.** If the stored repository is no longer in your list, a notice says so and the
+  switcher shows All repositories. If the list cannot be loaded, the switcher shows "Repositories
+  could not be loaded." with **Retry**; the pages still open.
+
+### Saved views
+
+You can save the filters of a list or board under a name and come back with one click. This works
+on Runs, Board (also the redesigned Work page), Refinement and My runs.
+
+- **Save view** is in the filter bar. Type a name of 1–40 characters (spaces at the ends are
+  removed). A name can be used once per page. You can keep up to 20 views per account. A view with
+  no filters is allowed; its link uses `repo=all`.
+- **The row.** Your views of the current page are shown as links above the list. A view is only an
+  address (the page and its filters). Opening it just goes there and writes nothing; the data is
+  what the server returns for you now. The active view is marked.
+- **Manage views** opens a dialog where you can rename, move up or down, and delete views. Delete
+  asks you to confirm and says that only the saved view is removed, not runs, sessions or
+  repositories.
+- **Where they are kept:** in this browser (`localStorage`), per account. They are never sent to
+  the server, and another account in the same browser does not see them. If the stored data is
+  garbage, it is ignored and replaced when you next save. If the browser storage does not work,
+  the page works without views.
+- **Out of date.** If a view's repository is no longer in your list, or its owner is no longer
+  among the run owners, the view is marked "out of date" in the row and in the dialog. Opening it
+  shows "nothing matches" with **Clear filters** and **Delete this view**. Nothing is deleted
+  automatically. On the Board and Work page the owner check needs the owner list, which only
+  admins can load; for others the owner is never marked out of date.
+- **Preview.** In a "view as user" preview no views are shown and none can be saved.
+
 ### The runs list
 
 A run of the architect has the mark **refinement**; click it to open its session.
 
 ![Runs](images/runs.png)
 
-Runs whose next move is yours (the record says **You**) are listed under **Needs you**. Runs
-that wait for a limit, the budget or another run are not. Under each task the table shows the
-"what happens next" sentence, also for finished runs. At most *N* runs execute at the same time
-(Settings → Runs at the same time); the rest queue. Each queue line shows the same sentence
-and a link to what it waits for. A bug story in the queue has a "goes first" mark.
+Runs are grouped in sections, in this order, each with a count: **Needs you**, **Running**,
+**Queued**, **Failed** and **Completed**. An empty section is left out, and a run is in exactly one
+section. The section comes from the Foundry's record: **Needs you** holds runs whose next move is
+yours (the record says **You**), **Queued** the runs in the queue, **Running** the running runs
+(and waiting runs that are not yours), **Failed** the failed runs, **Completed** the rest. Runs
+that wait for a limit, the budget or another run are not under **Needs you**. The first three
+sections are open; **Completed** is quieter and collapsed when it has more than 10 runs (press
+**Show all**). Every row shows the status, the next action ("what happens next", also for finished
+runs), the first line of the task, the repository and issue, and when it was updated. At most *N*
+runs execute at the same time (Settings → Runs at the same time); the rest queue. Each queued row
+shows its place (`1 of 4`), a link to what it waits for and, for a bug story, a "goes first" mark.
+An admin sees the running count (`2/3 running`) in the **Queued** heading.
 
-An admin sees every run, with an **Owner** column, and can pick one account in the **Owner**
-filter next to the title (the list shows "All owners" and each account with its number of runs).
-The Owner column shows the account's name, `deleted user` when the account is gone, and nothing for
-a run without an owner.
-The rows of the **Queue** card show the owner's name the same way.
+**Search and filters (admin).** A bar above the list helps you find a run:
+
+- **Search runs** takes a run id, an issue number like `#7`, or text (200 characters at most). The
+  list updates 300 ms after you stop typing. Your text and cursor stay in the box while the list
+  refreshes.
+- **Repository**, **Flow**, **Status**, **Time** (Today, 7 days, 30 days) and **Owner** are
+  selects. The server answers them, so a run older than the newest 200 is found too. A
+  repository name works in any letter case.
+- **Only what needs me** and the **Show** buttons (All, Needs you, Running, Queued, Failed,
+  Completed) only narrow what is already loaded.
+- **Clear filters** shows when a filter is on and puts the list back to `#/runs`.
+
+Queued jobs that have no run yet follow the repository, flow, time, search and owner filters; a
+status filter hides them. A line for screen readers says "1 run matches." or "N runs match."
+With no match you see "No runs match your search and filters." and **Clear filters**. When a
+filter asks the server and 200 runs come back, the list says "Only the newest 200 matches are
+shown." If a change cannot be loaded, the bar and the address go back to the last filter that was
+shown and a message tells you why.
+
+The address keeps your choice, so you can share the link:
+`#/runs?q=…&repo=…&flow=…&status=…&time=…&owner=…&needs=1&view=…`. Unknown values are ignored.
+A saved view still remembers the repository and the owner only.
+
+The list refreshes every 30 seconds without jumping: your keyboard focus, scroll position, open
+sections and the chosen owner stay as they are, and only the rows that changed are redrawn.
+
+An admin sees every run, with the owner, the steps and the cost in each row, and can pick one
+account in the **Owner** filter next to the title (the list shows "All owners" and each account
+with its number of runs). The owner shows the account's name, `deleted user` when the account is
+gone, and nothing for a run without an owner. Queued rows show the owner's name the same way.
 A user sees only their own runs and their own queued runs; runs of others in front of them show
-as "n runs ahead of you".
+as "n runs ahead of you". The same sections show on **My runs**.
 
 The Status column shows the plain status name (see "Words the Foundry uses"). Press the **?**
 next to it to read what it means and what happens next, and press it again to close it. It
@@ -614,6 +713,32 @@ A failed test, guard or review, too many visits of a step and a push blocked by 
 are code failures and keep the usual text. A step budget that is used up is a limit, and a
 rejection is a person's decision. If a command was blocked earlier in such a run, the
 sentence adds a hint to allow it in the flow if it was needed.
+
+### Small screens
+
+On a small screen some pages show their content but not the controls that change things. A note above the page says why: "Editing needs a wider screen (768 px or more)." Use a wider screen to make changes.
+
+| Page | Below 768 px | 768–1023 px |
+|---|---|---|
+| Users, one user, Settings | read-only | full |
+| Credentials, Audit, Dashboard | read-only (the note only; they have nothing to change) | full |
+| Overview, Watchers, one watcher | read-only | full |
+| All repositories, Models, Problems, Maintenance | full for now | full |
+| Flows and the flow editor | view and run (below 1024 px) | full from 1024 px |
+| Every other page, the Library included | full | full |
+
+On a read-only page:
+
+- **Users:** the table stays; there is no "+ Add user", no "Default limits" and no action in the empty state.
+- **One user:** only "View as user" is offered; the Account card stays.
+- **Settings:** no Save button. You can select and scroll through text fields but not change them; lists and checkboxes are disabled.
+- **Watchers:** the ↻ button stays; there is no "+ Add watcher", "+ Add the monitor" or empty-state action.
+- **One watcher:** the settings text stays; there is no Check now, Edit, Enable/Disable or Delete.
+- **The monitor's page:** the findings table stays; there is no "Switch bug stories…" button, no "Mute a detector" row, no Actions column and no "End mute".
+- **Overview:** a problem that was closed elsewhere shows no "Cancel run" button. The health panel in the header and the Problems page are unchanged.
+- **Flows (below 1024 px):** the note says "Editing a flow needs a wider screen (1024 px or more)." You can open a flow, read it in Visual or YAML mode and start a **Test run**. There is no Save, no More menu, no add-step bar and no "Draft flow" or "Blank flow"; fields can be selected and scrolled but not changed, and Ctrl/Cmd+S does nothing. `#/new` says it needs a wider screen, unless you have an unsaved draft; then the draft shows read-only. If the window gets narrower, an unsaved flow keeps its edits (the note says "unsaved changes are kept") and you can save it after widening the window again. The same holds in the other direction.
+
+Resizing the window across 768 px redraws the page only when its level changes. If a dialog is open, it stays and the page is redrawn when you close it. **Unsaved Settings fields are lost when the width crosses 768 px.** The lock is in the page only; the server still accepts changes made from a wider screen or through the API.
 
 ### Accessibility
 
@@ -1730,6 +1855,70 @@ If you installed the service before, run `scf service install` once. It replaces
 `com.claude-factory.server` agent with `com.spaghetti-code-foundry.server`, and puts the old one
 back if the new one can't start.
 
+#### The model analyst
+
+A separate process that reads your own runs every 6 hours and says, per step, how the model does
+and whether another level fits the work. It reads run files and writes a report, and it does not
+need the server. By default it only advises; with self-tuning on it changes the model or effort of a
+step by itself (see below).
+
+```bash
+scf analyst install     # run every 6 hours as its own macOS login agent; the first time now
+scf analyst run         # write a report now (--no-web: do not look up published figures)
+scf analyst report      # print the last report
+scf analyst status      # uninstall removes the agent
+scf analyst auto on     # let it change models and efforts by itself; auto off: only advise
+scf analyst reset       # put back everything it changed
+```
+
+The report is `analyst/report.md` in the data folder; the same advice as data is in
+`analyst/latest.json`. It looks at the last 14 days and needs 20 visits of a step before it says
+anything. Per step and model it shows how often the step worked, ran into its time limit, was
+repaired by a `fix_*` step, or was sent back by a review, and its share of all tokens. From that:
+
+- **Try a lower level.** The step works nearly always and its work is rarely repaired. The advice
+  is one effort level down when the step runs on high or above, otherwise the next smaller model.
+  For a review: almost none of the reviews led to a change.
+- **Try a higher level.** The step fails or its work is repaired often.
+- **Time limit, not model.** 5% or more of the visits ran into the time limit. A stronger model is
+  usually slower, so look at the limit and the size of the work first.
+- **Look at this.** The step got clearly worse in the last two days.
+
+Visits stopped by a usage limit are not counted against a model. The advice rests on what happened,
+not on a trial of the other model. Self-tuning does that trial.
+
+**Self-tuning** (`scf analyst auto on`; off by default). At every check the analyst may start a
+trial: it takes the advice with the largest token share that says "effort …" or names a Claude
+model, and sets it for that step. There is one trial per flow at a time, so the effect of a change
+can be told apart. The change is written to `analyst/overrides.json`; the engine reads that file at
+the start of every agent step, so it takes effect at the next step, also in a run that is under way.
+No flow file is changed. A router rule of yours for the step wins over the analyst.
+
+A trial is judged on the visits since it started, against the numbers of the step before it:
+
+- After 20 visits a **lower** level is kept unless the step does worse: it works more than 5 points
+  less often, its work is repaired more than 10 points more often, it times out more than 5 points
+  more often, or reviews send its work back more than 15 points more often. For a review step:
+  unless it leads to a change more than 15 points less often.
+- A **higher** level is kept only when the step works at least 5 points more often or is repaired
+  at least 10 points less often. Otherwise it is not worth its tokens and is put back.
+- After 8 visits a trial that works 25 points less often is stopped at once.
+- A trial with fewer than 20 visits in 7 days is put back.
+
+A change that was put back is not tried again for 30 days, and a step is left alone for 3 days
+after any trial. The run log of a step says "set by the analyst" when an override applied. The
+report lists what is set now, what happened at this check, and the last ten trials;
+`analyst/tuning.json` holds the full record. `scf analyst auto off` stops new trials and keeps what
+is set; `scf analyst reset` removes it all.
+
+**Published figures.** Once a week the analyst asks Claude Code (web search only, with the Claude
+sign-in of this machine) for published scores, prices and speeds of the models you use and the
+levels next to them, and keeps them in `analyst/reference.json` with the source of each figure.
+Figures a third party measured itself are used as they are. Figures from the makers, and figures
+whose origin is not given, are lowered by a tenth. They are only used to hold back advice for a
+smaller model that scores far lower; your own runs always decide. When the search fails, the
+earlier figures are kept. On Linux, run `scf analyst run` from cron.
+
 #### Self-update
 
 Off by default, because it lets merged code run on this machine without a person looking. For a Foundry that runs from a git checkout of its own repository. Switch it on in Settings → Safety and name the repository (`self_update: { enabled: true, repo: owner/name }` in `config.yaml`). After upgrading, stop and start the Foundry once, so that it can go back after a bad update.
@@ -2170,18 +2359,18 @@ environment only, and is never stored, logged or shown). If the app is no longer
 
 **The My repositories page.** `#/repos` is in the top bar for every account. It lists your repositories
 with the URL, how the Foundry signs in (the authentication method) and the connection status, which is
-"Not tested yet" until you press **Test connection** (see below). **Add repository** asks for the URL and the method:
+"Not tested yet" until it is tested (see below). **Add repository** works in steps. Step 1 asks for the address; press **Next**. Steps 2 and 3 ask for the method and its details; **Back** returns to the address and keeps what you typed. Press **Add repository** to save. The Foundry then tests the connection by itself, and the dialog shows what it stored: the address, the method, the user name, the public key of a deploy key, the result of each check, and "A token is stored. It is never shown again." If the test fails, the repository is kept; press **Test again**, or **Change details** to enter new details. Press **Done** to close. The methods:
 a GitHub fine-grained personal access token (give it these repository permissions, each "Read and write":
 Contents, Issues and Pull requests), an HTTPS user name + token for other git hosts, an SSH deploy key, or
 the **GitHub App**. The token is typed in a password field and is never shown again. **Change authentication** keeps the stored
-token if you leave the token empty; a new method needs a new token. **Remove** asks first and deletes the
+token if you leave the token empty; a new method needs a new token. After **Continue**, a last step says what will be replaced or deleted; tick "Replace the current sign-in" and press **Replace the sign-in**. If a change fails and may still have been saved, the dialog reads the repository again and shows what is stored now. **Remove** asks first and deletes the
 stored token or key too.
 
 With **GitHub App** you need no token. It is offered only for a GitHub repository with an https address, and
 only when the administrator has set up the app; otherwise the dialog says "GitHub App is not available: the
 administrator has not set up the app (Settings → GitHub App)". The dialog shows **Install the app on GitHub**
 (`https://github.com/apps/<name>/installations/new`). Install the app on this repository (choose "Only select
-repositories" and pick it), then save, then press **Test connection**. When you save, the server looks up the
+repositories" and pick it), then save; the connection is tested right after you save. When you save, the server looks up the
 installation of the app on the repository and keeps its ID with the repository; if the app is not installed
 there, it says so (409) and nothing is saved. The row keeps the link, to install the app on more repositories or
 change which ones it may use. If the administrator removes the app, the row says so; choose another
@@ -2585,6 +2774,8 @@ The estimate counts the description and `SKILL.md`, not reference files. A resum
 #### Trust
 
 - **Sources** come in this order: the data folder, `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
+- **Releases.** A folder in the data folder or in `skills.roots` is a catalogue release: it holds `catalogue-release.json` (`schema: 1`, `catalogue`, `version`, `createdAt`, `source` with `repository` and a full `commit`, and `skills` with `id`, `version` and `digest`). It loads only if its catalogue, version and digest are listed in `skills.releases.approved`, and its packages match the manifest exactly. Otherwise the whole folder is refused (`root-refused`) and none of its packages load. `scf skills` shows a `RELEASE` line for each. Skills are never fetched from the network during a run or a resume.
+- **Local development.** To try an unpublished catalogue, set `skills.releases.allow_unreleased: true`. Folders without an approved release then load, and `scf skills` prints a `NOTE` for each. Keep it `false` (the default) in production. Existing folders are refused after an update until they are an approved release or this is set.
 - **Pins** tie a version to its digest. A mismatch blocks the skill until you pin it again or give it a new version.
 - **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
 - **Isolation.** A Claude session that gets a skill block, or that is a reviewer, runs without your personal Claude setup, even with `isolate_agents` off. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn it on by themselves. Codex reviewers ignore your Codex user config.
@@ -2705,6 +2896,84 @@ A pin ties one skill version to the exact content you looked at. If the content 
 - **An unreadable lock** (bad JSON, wrong version, a symlink or a folder in its place) makes every approved and built-in skill `unverified`, and nothing is pinned or unpinned. Health shows `skill lock`. Fix or delete `skills.lock.json` in the data folder, then pin again. The server still starts.
 - **Runs** must name the exact version (`id@version`). A newer or older version is never used instead. Repository skills can never be selected for unattended runs.
 - **Limit:** the lock detects a change after the pin, not a bad first copy. Anyone who can write the data folder can also change the lock.
+
+### Skill library sources
+
+An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import` fetches from the network, and never during a run.
+
+```yaml
+schema: 1
+sources:
+  - id: example-skills
+    repository: https://github.com/example/skills
+    status: enabled
+    ref:
+      approved: 0123456789abcdef0123456789abcdef01234567   # full commit id
+      track: main                                          # only to look for updates
+    paths: [skills]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT, Apache-2.0] }
+    update: { cadence: weekly }
+    owner: "@octocat"
+```
+
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`) and `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`).
+- **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
+- **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
+- **Owner and policy.** Every source has an owner and an update cadence.
+- **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
+- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
+
+Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
+
+#### Import a source into quarantine
+
+`scf skills import <source-id> [<file>]` reads `skill-sources.yaml` (or the file you name), fetches the approved commit of an enabled source and stages its skills in quarantine. Nothing is loaded or run.
+
+```
+scf skills import example-skills
+```
+
+```
+REJECTED skills/link: a symbolic link
+OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (staged)
+Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
+```
+
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
+- **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
+- **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.
+- **`(staged)` and `(unchanged)`.** A second import of the same commit prints the same digest and `(unchanged)`. If the folder holds a different import of this commit, the result is `conflict`: remove the folder and import again.
+- **Ctrl-C.** The import stops and nothing is staged. Once writing into the quarantine has started, the import is finished.
+- **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
+- **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
+
+#### Discover candidate sources from Skills.sh
+
+`scf skills discover [<export-file> [<file>]]` proposes candidate sources from a saved Skills.sh export. It does not call Skills.sh and does not scrape it. Nothing it finds is approved, fetched or staged. You add a source to `skill-sources.yaml` by hand.
+
+```
+scf skills discover skills-sh-export.json
+```
+
+```
+PROPOSED github.com/example/skills@0123456789ab (3 listed)
+KNOWN github.com/example/other is in the source list (enabled)
+UNRESOLVED github.com/example/gone: the repository could not be reached
+```
+
+- **Export.** A JSON array, an object with `skills` or `repositories`, or one repository per line. Only https GitHub repositories are kept. Entries that look like a credential are dropped. Trust, licence, popularity and safety claims in the export are not copied.
+- **Revision.** Each repository is resolved to the commit its own `HEAD` points at (`git ls-remote`, 20 s each). A repository git cannot read is `UNRESOLVED` and not stored.
+- **Candidate list.** `<data folder>/skill-source-candidates.json`, with status `proposed`, origin `skills.sh`, repository and revision. It is the only file written. The allowlist, the lock, the quarantine and releases are never touched.
+- **Already known.** A repository already in `skill-sources.yaml`, in any status, is shown as `KNOWN` and not added. A repository already in the candidate list is skipped.
+- **Review.** To use a candidate, review it and add it to `skill-sources.yaml`; then `scf skills import` fetches it. The revision shown is a proposal, not an approved commit.
+- **List.** `scf skills discover` with no operand prints the stored candidates and `OK <n> candidates`.
+- **Optional.** Runs never read the candidate list. A missing list, a failed discovery or a missing export does not affect approved skills.
+- **Ctrl-C.** The run stops and the list is not changed. A broken list is never overwritten.
+- **Exit codes.** 0 on success. 1 for a `PROBLEM` or a usage error. Limits: export 4 MiB, 20,000 entries, 100 repositories per run, 500 candidates in the list.
 
 ### Skill catalogue
 
@@ -2839,7 +3108,7 @@ A skill can say what it needs: a shell, network access, write access or a connec
 | Shell or network | What the flow gives its Claude steps | `tool-not-in-flow` |
 | A connector | Nothing: no connector can be granted yet | `connector-unavailable` |
 
-> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and the text of that skill can still reach Claude sessions. Leaving it out of sessions is not done yet. No connector is granted in either case.
+> **In this version the check decides whether the run goes on.** With `missing: stop` (the default) a skill that fails it stops the run, so nothing of it is used. With `missing: degrade` the run goes on with a warning, and Claude coder sessions leave the skill out (see below). Codex sessions and reviewer steps are not checked yet. No connector is granted in either case.
 
 ```yaml
 skills:
@@ -2861,8 +3130,18 @@ It decides whether a run may go on with a skill. It does not limit what a sessio
   - The run goes on with a `⚠` warning.
   - The skill, the skills that depend on it and the dependencies only it needed are listed in `skillPlan.tools.leftOut`.
   - A mandatory skill still stops the run, and so does a skill that a mandatory skill needs, directly or through other skills.
-  - "Left out" is a record and a warning in this version: the skill stays in the run's lock and its text can still reach sessions. Use `stop` when the skill must not be used at all.
+  - "Left out" is a record and a warning at the plan gate. Claude coder sessions then leave the skill out; Codex sessions and reviewer steps are not checked yet. Use `stop` when the skill must not be used at all.
 - **Where to see it:** the stop reason, `run.json` → `skillPlan.tools` (`action`, `met`, `missing`, `leftOut`, `warnings`), and the log line `· skill tools: <key> <need> — <sources>`.
+
+**In a Claude session.** Before every Claude coder session the locked skills are checked again against `skills.tools` and against what that step gives.
+
+- **Loaded only where it fits.** A skill that needs a shell is loaded only into a step that has one. In a step without it (for example a read-only step) the skill is not loaded and the step is not refused. The log says `· skill tools: <key> not loaded in this step [tool-not-in-step]`.
+- **Policy changed after the lock.** The session is refused with `skill tools: <key> [tool-not-approved]: …`. Allow it under `skills.tools`, or set `skills.tools.missing: degrade`, then resume the run. With `degrade` the skill is left out and the log says `! skill tools: <key> left out [tool-not-approved]`. A skill that depends on it is left out too.
+- **Isolation.** A session stays without your personal Claude setup when a skill was left out. A step with `resume:` starts a new session instead of continuing one that may hold the skill.
+- **What the run records.** The step record has `skills.grant`: the permission mode, the approved tool rules, the sandbox, the capabilities (shell, network, files) with where each came from, `connectors: []`, what was met and what was left out. The log has one line with the same counts.
+- **It is an estimate.** It is built from the step's settings and decides only which skills are loaded. It does not limit the session. The repository's own `.claude/settings.json` can approve more tools than the record lists.
+- **`allowed-tools` in SKILL.md is never granted.** Tools come only from the step's `allowed_tools` and the permission mode.
+- Codex sessions and reviewer steps are not checked this way.
 
 ### Skills on the run page
 
@@ -3340,7 +3619,7 @@ learnings, queue, locks and evals. The copy is made next to the new folder and r
 in one step, so you never see a half-done move. Paths that point into the old folder (in run state,
 lock files, `queue.json` and `config.yaml`) are rewritten. If `config.yaml` can't be rewritten
 safely, it is kept as it was and a warning lists the values that still point to the old folder.
-`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode.
+`users.json`, `sessions.json`, `credentials.json` and `refinements.json` are copied unchanged, with their mode. The `skill-quarantine/` folder is copied unchanged too.
 
 **The backup.** `~/.claude-factory` is never changed or deleted, except for a note file
 `MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt`. Nothing there is used anymore: your settings now live in

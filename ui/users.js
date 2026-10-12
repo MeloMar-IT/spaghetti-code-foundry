@@ -412,7 +412,7 @@ const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "sta
 let reloads = 0; // the newest reload wins
 
 /** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. `data` is a list already loaded. Returns a cleanup. */
-export async function renderUsers(main, { me = "", notice, page = browserPage, data } = {}) {
+export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false } = {}) {
   const mine = ++generation;
   if (!data && onPage()) mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Users")), loadingState("Loading users…", { rows: 5, shape: "table" }));
   const [users, limits] = data ?? await loadUsers();
@@ -429,7 +429,7 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
       if (my === reloads && mine === generation && onPage()) mount(note, noticeLine(next), staleNote(at, { failed: true, onRetry: () => reload(next) }));
       return;
     }
-    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh });
+    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh, readOnly });
   };
 
   const add = async () => {
@@ -453,10 +453,10 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
   ];
   mount(main,
     h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
-      h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
-      h("button", { class: "primary", onClick: add }, "+ Add user")),
+      ...(readOnly ? [] : [h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
+        h("button", { class: "primary", onClick: add }, "+ Add user")])),
     note,
-    users.length === 0 ? emptyState("No users yet.", { label: "+ Add user", onClick: add }) : table({ caption: "Users", hideCaption: true, columns, rows: users }));
+    users.length === 0 ? (readOnly ? emptyState("No users yet.") : emptyState("No users yet.", { label: "+ Add user", onClick: add })) : table({ caption: "Users", hideCaption: true, columns, rows: users, class: "table-box" }));
   return () => {
     generation++;
   };

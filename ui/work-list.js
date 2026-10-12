@@ -1,4 +1,4 @@
-import { h } from "./dom.js";
+import { h, tableBox } from "./dom.js";
 import { whereLink, whereTarget, whoClass } from "./next.js";
 import { ownerLabel } from "./runs.js";
 import { ageText } from "./work-model.js";
@@ -84,6 +84,6 @@ export function listView(groups, prefs, handlers = {}) {
   return groups.map((g) => h("div", { class: "work-group" },
     g.title ? h("h3", {}, g.title, " ", h("span", { class: "muted" }, String(g.items.length))) : null,
     g.items.length
-      ? h("table", { class: prefs.compact ? "table work-list compact" : "table work-list" }, h("thead", {}, headRow()), h("tbody", {}, ...g.items.map((i) => rowView(i, cols, handlers))))
+      ? tableBox(h("table", { class: prefs.compact ? "table work-list compact" : "table work-list" }, h("thead", {}, headRow()), h("tbody", {}, ...g.items.map((i) => rowView(i, cols, handlers)))))
       : null));
 }

@@ -31,6 +31,39 @@ const one = (root: FakeElement, tag: string, attrs: Record<string, string> = {})
   return e;
 };
 
+describe("lockReadOnly", () => {
+  it("removes buttons, disables selects, checkboxes and radios, and makes the rest read-only", () => {
+    const root = new FakeElement("div");
+    const mk = (tag: string, attrs: Record<string, string> = {}) => {
+      const e = new FakeElement(tag);
+      Object.assign(e.attrs, attrs);
+      root.append(e);
+      return e as any;
+    };
+    const text = mk("input", { type: "text" });
+    const num = mk("input", { type: "number" });
+    const time = mk("input", { type: "time" });
+    const area = mk("textarea");
+    const sel = mk("select");
+    const box = mk("input", { type: "checkbox" });
+    const radio = mk("input", { type: "radio" });
+    mk("button");
+    mk("button");
+    text.value = "keep";
+    expect(fields.lockReadOnly(root)).toBe(root);
+    expect(root.all("button")).toHaveLength(0);
+    for (const e of [text, num, time, area]) {
+      expect(e.readOnly).toBe(true);
+      expect(e.disabled).not.toBe(true);
+    }
+    for (const e of [sel, box, radio]) expect(e.disabled).toBe(true);
+    expect(text.value).toBe("keep");
+  });
+  it("accepts an empty root", () => {
+    expect(() => fields.lockReadOnly(new FakeElement("div"))).not.toThrow();
+  });
+});
+
 describe("fields", () => {
   it("label sets aria-label on text, area, select and list, and is absent otherwise", () => {
     const o: any = {};

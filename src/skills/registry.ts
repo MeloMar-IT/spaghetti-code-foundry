@@ -6,7 +6,9 @@ import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { credentialProblem } from "./credential-scan.js";
+import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
+import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
 export type SkillSourceKind = "admin" | "builtin" | "repository";
@@ -21,6 +23,8 @@ export interface SkillSource {
 export interface SkillSourceReport extends SkillSource {
   status: "ok" | "missing" | "unreadable" | "refused" | "disabled";
   packages: number;
+  /** For administrator folders that could be listed. */
+  release?: ReleaseCheck;
 }
 /** `approved`: administrator folders. `builtin`: ships with the release. `unapproved`: the repository, never selectable. */
 export type SkillTrust = "approved" | "builtin" | "unapproved";
@@ -81,7 +85,7 @@ export interface DiscoverOptions {
   /** The user's home folder (where ~/.claude and ~/.codex live). */
   userHome?: string;
   /** For tests: a lower registry-wide package limit. */
-  limits?: { skills?: number };
+  limits?: { skills?: number; bytes?: number };
 }
 
 export const BUILTIN_SKILLS = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills");
@@ -127,6 +131,14 @@ export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {
 
 const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", builtin: "builtin", repository: "unapproved" };
 
+const refusal = (rel: ReleaseCheck) =>
+  releaseProblemText(rel) + (rel.state === "none" ? ". Approve a release, or set skills.releases.allow_unreleased on a development install" : "");
+
+/** Administrator folders that are loaded without an approved release (development only). */
+export function unreleasedSources(reg: Pick<SkillRegistry, "sources">): (SkillSourceReport & { release: ReleaseCheck })[] {
+  return reg.sources.filter((r): r is SkillSourceReport & { release: ReleaseCheck } => r.kind === "admin" && !!r.release && r.release.state !== "approved" && r.packages > 0);
+}
+
 const code = (e: unknown) => String((e as NodeJS.ErrnoException)?.code ?? "unknown error");
 const cut = (s: string) => (s.length > 300 ? s.slice(0, 299) + "…" : s);
 
@@ -140,6 +152,7 @@ function packageBytes(p: SkillPackage): number {
 export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions = {}): SkillRegistry {
   const env = opts.env ?? process.env;
   const userHome = opts.userHome ?? homedir();
+  const home = opts.home ?? dataHome();
   const problems: SkillProblem[] = [];
   const notes: SkillNote[] = [];
   const reports: SkillSourceReport[] = [];
@@ -167,6 +180,10 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     if (personalAgentPath(src.root, env, userHome)) {
       fail("root-refused", "refused", "personal agent folders are never scanned");
+      continue;
+    }
+    if (quarantinePath(src.root, home)) {
+      fail("root-refused", "refused", "the skill quarantine is never scanned");
       continue;
     }
     let names: string[];
@@ -199,24 +216,52 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       continue;
     }
 
+    // Step 1 for an administrator folder: identity, before any package is read.
+    let read: ReleaseRead | undefined;
+    let rel: ReleaseCheck | undefined;
+    const allow = skills.releases.allow_unreleased;
+    if (src.kind === "admin") {
+      read = readRelease(src.root);
+      rel = report.release = matchRelease(read, skills.releases.approved);
+      // An empty folder without a manifest is not a problem.
+      if (rel.state !== "approved" && !allow && !(rel.state === "none" && names.length === 0)) {
+        fail("root-refused", "refused", refusal(rel));
+        continue;
+      }
+    }
+    const mark: { found: number; bytes: number; stopped: boolean } = { found: found.length, bytes, stopped };
+    let invalid = 0;
+    let incomplete = false;
+
     if (names.length > MAX_SKILLS_PER_ROOT) {
       problems.push({ kind: "too-many", ...base, reason: `more than ${MAX_SKILLS_PER_ROOT} folders; the rest are not read` });
       names = names.slice(0, MAX_SKILLS_PER_ROOT);
+      incomplete = true;
     }
     for (const name of names) {
       const dir = join(src.root, name);
       // A folder name that looks like a credential is not repeated in the problem list.
       const shown = credentialProblem(name) ? "(name not shown)" : name;
-      const bad = (reason: string, issues?: SkillIssue[]) =>
+      const bad = (reason: string, issues?: SkillIssue[]) => {
+        invalid++;
         problems.push({ kind: "invalid-package", ...base, package: shown, reason: cut(reason), ...(issues ? { issues } : {}) });
+      };
       if (dirs.get(name)) {
         bad("symbolic link, not scanned");
         continue;
       }
-      if (stopped) continue;
-      if (found.length >= (opts.limits?.skills ?? MAX_SKILLS_TOTAL) || bytes >= MAX_SKILL_BYTES_TOTAL) {
+      if (stopped) {
+        incomplete = true;
+        continue;
+      }
+      if (found.length >= (opts.limits?.skills ?? MAX_SKILLS_TOTAL) || bytes >= (opts.limits?.bytes ?? MAX_SKILL_BYTES_TOTAL)) {
         stopped = true;
+        incomplete = true;
         problems.push({ kind: "too-many", ...base, reason: `the registry limit (${MAX_SKILLS_TOTAL} packages or ${MAX_SKILL_BYTES_TOTAL / 1048576} MiB) is reached; the rest are not read` });
+        continue;
+      }
+      if (quarantinePath(dir, home)) {
+        bad("the skill quarantine is never scanned");
         continue;
       }
       try {
@@ -229,6 +274,25 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         else bad(code(e));
       }
     }
+
+    // Step 2: content, after the packages are read.
+    if (read?.state === "ok" && rel?.state === "approved") {
+      const reason = incomplete
+        ? "could not be read completely (a limit was reached)"
+        : invalid
+          ? "holds a folder that is not a valid package"
+          : releaseContentProblem(read.manifest, found.slice(mark.found));
+      if (reason) {
+        rel = report.release = { ...rel, state: "mismatch", reason };
+        if (!allow) {
+          found.length = mark.found;
+          bytes = mark.bytes;
+          stopped = mark.stopped;
+          report.packages = 0;
+          fail("root-refused", "refused", refusal(rel));
+        }
+      }
+    }
   }
 
   // Sources were visited in precedence order, so the first sight of a key wins.
@@ -236,13 +300,14 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   for (const s of found) {
     const have = byKey.get(s.key);
     if (have) {
-      problems.push({ kind: "duplicate", source: s.source, label: s.label, root: s.label, package: s.id, reason: `${s.key} is already provided by ${have.label}; this copy is ignored` });
+      const other = have.digest !== s.digest ? " with another digest" : "";
+      problems.push({ kind: "duplicate", source: s.source, label: s.label, root: s.label, package: s.id, reason: `${s.key} is already provided by ${have.label}${other}; this copy is ignored` });
       continue;
     }
     byKey.set(s.key, s);
   }
   // Pins are looked up by key alone: the source does not matter, only the bytes.
-  const lock = readSkillLock(opts.home ?? dataHome());
+  const lock = readSkillLock(home);
   if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });
   for (const s of byKey.values()) {
     if (s.trust === "unapproved") continue;

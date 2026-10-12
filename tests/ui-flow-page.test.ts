@@ -17,9 +17,14 @@ beforeAll(async () => {
     ia: await import("../ui/ia.js" as string),
     problems: await import("../ui/flow-problems.js" as string),
     states: await import("../ui/states.js" as string),
+    templates: await import("../ui/templates.js" as string),
   };
 });
-afterAll(() => restore());
+// The page validates 300 ms after the last edit; let a pending timer fire while the fake DOM is still installed.
+afterAll(async () => {
+  await new Promise((r) => setTimeout(r, 350));
+  restore();
+});
 
 const g = globalThis as any;
 const text = (el: FakeElement) => el.textContent;
@@ -70,6 +75,8 @@ describe("editorState", () => {
   it("falls back for the title and the scope", () => {
     expect(state.editorState(clean({ obj: { name: 5 } }), []).title).toBe("a");
     expect(state.editorState(clean({ obj: null, name: null }), []).title).toBe("flow");
+    expect(state.editorState(clean({ obj: { name: "  " } }), []).title).toBe("a");
+    expect(state.editorState(clean({ obj: { name: " " }, name: null }), []).title).toBe("flow");
     expect(state.editorState(clean({ scope: undefined }), [{ name: "a", scope: "global" }]).scopeLabel).toBe("global");
   });
 });
@@ -115,6 +122,24 @@ describe("renderHeader", () => {
     expect(byText(root, "Visual")).toBeDefined();
   });
 
+  it("is the page header of the kit: one h1 and the flat children in order", () => {
+    const h = handlers();
+    const nodes = shell.renderHeader(state.editorState(clean(), []), { mode: "visual", overviewOpen: false, saveScope: "repo", canDelete: false, ...h });
+    const [head, line] = nodes as FakeElement[];
+    expect((head!.getAttribute("class") ?? "").split(" ")).toEqual(["toolbar", "page-head"]);
+    expect(head!.all("h1")).toHaveLength(1);
+    const kids = head!.children as FakeElement[];
+    expect(kids.map((k) => k.tag)).toEqual(["h1", "span", "span", "span", "button", "button", "button", "details"]);
+    expect(kids.map((k) => k.getAttribute("class"))).toEqual([null, "pill", "seg", "spacer", "overview-toggle", null, "primary", "flow-more"]);
+    expect(text(kids[4]!)).toBe("Overview");
+    expect(line!.getAttribute("class")).toBe("flow-state");
+  });
+
+  it("draws a whitespace name without throwing", () => {
+    expect(() => draw(clean({ obj: { name: "   " } }))).not.toThrow();
+    expect(draw(clean({ obj: { name: "   " } })).root.all("h1").map(text)).toEqual(["a"]);
+  });
+
   it("calls the handlers", () => {
     const { root, h } = draw(clean({ validation: { ok: false }, problems: [{}] }), { overviewOpen: true });
     byText(root, "1 problem")!.click();
@@ -128,6 +153,32 @@ describe("renderHeader", () => {
     byText(root, "✨ Ask Claude")!.click();
     expect(h.onAsk).toHaveBeenCalled();
     expect(draw(clean()).root.all("button").find((b) => text(b) === "Overview")!.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("renderHeader and renderNavigator read-only", () => {
+  const draw = (cur: object) => mountAll(shell.renderHeader(state.editorState(cur, []), { mode: "visual", overviewOpen: false, saveScope: "repo", canDelete: true, readOnly: true, onMode: vi.fn(), onRun: vi.fn() }));
+
+  it.each([["dirty", clean({ dirty: true })], ["clean", clean()]])("has no Save and no More, and Test run is primary (%s)", (_n, cur) => {
+    const root = draw(cur);
+    expect(byText(root, "Save")).toBeUndefined();
+    expect(root.all("details")).toHaveLength(0);
+    expect(withClass(root, "button", "primary").map(text)).toEqual(["Test run"]);
+  });
+
+  it("keeps the title, the pill, the switch, Overview and the state line", () => {
+    const root = draw(clean({ dirty: true, validation: { ok: false }, problems: [{}] }));
+    expect(root.all("h1").map(text)).toEqual(["a"]);
+    for (const t of ["Visual", "YAML", "Overview"]) expect(byText(root, t)).toBeDefined();
+    for (const t of ["repo", "Unsaved changes", "1 problem", "Saves to this repo"]) expect(text(root)).toContain(t);
+  });
+
+  it("has no start buttons in the list, but the search, the links and the unsaved row", () => {
+    const flows = [{ name: "alpha", scope: "repo" }];
+    const root = mountAll(shell.renderNavigator({ flows, current: { name: null, obj: { name: "n" } }, query: "", readOnly: true }));
+    expect(buttons(root)).toHaveLength(0);
+    expect(root.all("input")[0]!.getAttribute("aria-label")).toBe("Search flows");
+    expect(root.all("a").map((a) => a.getAttribute("href"))).toEqual(["#/new", "#/flows/alpha"]);
   });
 });
 
@@ -251,6 +302,7 @@ describe("the flow page controller", () => {
       "./flow-shell.js": shell,
       "./flow-problems.js": real.problems,
       "./states.js": real.states,
+      "./templates.js": real.templates,
       "./ia.js": real.ia,
       "./graph.js": { renderGraph: (_o: unknown, opts: unknown) => { graphOpts = opts; drawn++; return real.dom.h("div", {}, "graph"); } },
       "./library.js": library,
@@ -274,12 +326,12 @@ describe("the flow page controller", () => {
     deleteFlow: vi.fn(async () => ({})),
     ...over,
   });
-  async function open(opts: { storage?: any; narrow?: boolean; api?: any; cur?: any } = {}) {
+  async function open(opts: { storage?: any; narrow?: boolean; api?: any; cur?: any; ro?: () => boolean } = {}) {
     const createFlowPage = await load();
     const s: any = { info: { repo: "r" }, flows: [{ name: "a", scope: "repo" }], flowsLoaded: true, cur: opts.cur ?? null };
     const onNavigate = vi.fn();
     const api = opts.api ?? apiFor();
-    const page = createFlowPage({ main: mainEl, sidebar: sideEl, state: s, api, onNavigate, storage: opts.storage, isNarrow: () => !!opts.narrow });
+    const page = createFlowPage({ main: mainEl, sidebar: sideEl, state: s, api, onNavigate, storage: opts.storage, isNarrow: () => !!opts.narrow, isReadOnly: opts.ro });
     await page.openFlow("a");
     await tick();
     return { page, s, onNavigate, api };
@@ -301,6 +353,69 @@ describe("the flow page controller", () => {
     g.document.activeElement = null;
   });
 
+  describe("read-only", () => {
+    const area = () => mainEl.all("textarea")[0]!;
+
+    it("draws the editor read-only, the list without create buttons, and sends nothing", async () => {
+      const { page, onNavigate, api } = await open({ ro: () => true });
+      expect(editorOpts.readOnly).toBe(true);
+      expect(buttons(sideEl).map(text)).toEqual([]);
+      expect(byText(mainEl, "Save")).toBeUndefined();
+      expect(byText(mainEl, "Test run")).toBeDefined();
+      const checks = api.validate.mock.calls.length;
+      await page.save();
+      await page.newBlank();
+      await page.generateDialog(false);
+      await page.generateDialog(true);
+      expect(api.validate.mock.calls.length).toBe(checks);
+      expect(api.saveFlow).not.toHaveBeenCalled();
+      expect(onNavigate).not.toHaveBeenCalled();
+      expect(g.document.getElementById("modal-root")?.children?.length ?? 0).toBe(0);
+    });
+
+    it("makes the YAML read-only and leaves Tab alone", async () => {
+      await open({ ro: () => true });
+      byText(mainEl, "YAML")!.click();
+      expect(area().getAttribute("readonly")).not.toBeNull();
+      expect(area().listeners.keydown?.length ?? 0).toBe(0);
+      expect(area().listeners.input?.length ?? 0).toBe(0);
+    });
+
+    it("keeps the edits in both directions", async () => {
+      let ro = false;
+      const { page, s, api } = await open({ ro: () => ro });
+      editorOpts.onChange();
+      const edited = s.cur.yaml;
+      s.cur.obj = { ...s.cur.obj, description: "changed" };
+      editorOpts.onChange();
+      const yaml = s.cur.yaml;
+      expect(s.cur.dirty).toBe(true);
+      expect(edited).not.toBe(yaml);
+      ro = true;
+      await page.openFlow("a");
+      expect(api.flow).toHaveBeenCalledTimes(1);
+      expect(s.cur.dirty).toBe(true);
+      expect(s.cur.yaml).toBe(yaml);
+      expect(byText(mainEl, "Save")).toBeUndefined();
+      expect(editorOpts.readOnly).toBe(true);
+      ro = false;
+      await page.openFlow("a");
+      expect(byText(mainEl, "Save")).toBeDefined();
+      expect(s.cur.yaml).toBe(yaml);
+      expect(editorOpts.readOnly).toBe(false);
+    });
+
+    it("inserts no block after the window shrank", async () => {
+      let ro = false;
+      library.pickBlock.mockResolvedValue({ block: { name: "b" } });
+      await open({ ro: () => ro });
+      const pick = editorOpts.onLibrary(0);
+      ro = true;
+      await pick;
+      expect(library.insertBlock).not.toHaveBeenCalled();
+    });
+  });
+
   it("opens with the overview closed, draws the state line, and opens it on request", async () => {
     const storage = memory();
     await open({ storage });
@@ -314,6 +429,42 @@ describe("the flow page controller", () => {
     expect(drawn).toBeGreaterThan(0);
     expect(toggle().getAttribute("aria-expanded")).toBe("true");
     expect(storage.m.get("scf-overview")).toBe("open");
+  });
+
+  it("is one editor page: the pane in the side, the body in the main, with-overview on the page root", async () => {
+    await open({ storage: memory() });
+    expect(mainEl.children).toHaveLength(1);
+    const root = mainEl.children[0] as FakeElement;
+    expect(root.classList.contains("page")).toBe(true);
+    expect(root.classList.contains("page-editor")).toBe(true);
+    expect(root.children.map((c) => (c as FakeElement).getAttribute("class"))).toEqual([null, "page-notices", "editor page-body"]);
+    expect((pane().parent as FakeElement).getAttribute("class")).toBe("page-side");
+    expect(root.classList.contains("with-overview")).toBe(false);
+    toggle().click();
+    expect(root.classList.contains("with-overview")).toBe(true);
+    toggle().click();
+    expect(root.classList.contains("with-overview")).toBe(false);
+  });
+
+  it.each(["flow-save", "flow-more"])("keeps the focus on %s when the header is drawn again", async (focus) => {
+    await open({ storage: memory() });
+    const find = () => [...mainEl.all("button"), ...mainEl.all("summary")].find((e) => e.getAttribute("data-focus") === focus)!;
+    const before = find();
+    before.focus();
+    editorOpts.onChange();
+    expect(g.document.activeElement).not.toBe(before);
+    expect(g.document.activeElement.getAttribute("data-focus")).toBe(focus);
+    expect(mainEl.contains(g.document.activeElement)).toBe(true);
+  });
+
+  it("keeps the focus on the Overview button when it is clicked", async () => {
+    await open({ storage: memory() });
+    const before = toggle();
+    before.focus();
+    before.click();
+    expect(g.document.activeElement).not.toBe(before);
+    expect(g.document.activeElement.getAttribute("data-focus")).toBe("flow-overview");
+    expect(mainEl.contains(g.document.activeElement)).toBe(true);
   });
 
   it("remembers the choice, also on a narrow window, and works when storage throws", async () => {
@@ -441,12 +592,16 @@ describe("the flow page controller", () => {
     await page.openFlow("a");
     await tick();
     expect(pane().hidden).toBe(false);
+    const root = () => mainEl.children[0] as FakeElement;
+    expect(root().classList.contains("with-overview")).toBe(true);
     narrow = true;
     change();
     expect(pane().hidden).toBe(true);
+    expect(root().classList.contains("with-overview")).toBe(false);
     narrow = false;
     change();
     expect(pane().hidden).toBe(false);
+    expect(root().classList.contains("with-overview")).toBe(true);
     // Entering the editor again at the other width reads that width's choice too.
     narrow = true;
     s.cur = null;
@@ -524,9 +679,14 @@ describe("the source", () => {
     expect(src).toContain("drawHeader");
   });
 
+  it("the page and the header hold no old grid or head class", () => {
+    expect(readFileSync("ui/flow-page.js", "utf8")).not.toContain("ui.grid");
+    expect(readFileSync("ui/flow-shell.js", "utf8")).not.toContain("flow-head");
+  });
+
   it("app.js uses the flow page and no longer holds the editor", () => {
     const src = readFileSync("ui/app.js", "utf8");
     expect(src).not.toContain("renderEditor(");
-    expect(src).toContain("createFlowPage({ main, sidebar, state: S, api, onNavigate");
+    expect(src).toContain("createFlowPage({ main, sidebar, state: S, api, isReadOnly: flowsReadOnly, onNavigate");
   });
 });

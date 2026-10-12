@@ -1,6 +1,7 @@
 import { api } from "./api.js";
-import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
+import { fieldFor, h, modal, mount, showError, tableBox, toast } from "./dom.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
+import { reposChanged } from "./context.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { connectionProblem, connectionStatus, focusRepoRow, loadFailed, methodLabel, plainError } from "./repos.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
@@ -259,7 +260,7 @@ export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) 
         reload();
       } }, "Definition of Ready"), " ",
       h("button", { class: "small", onClick: async () => {
-        await transferDialog(repo);
+        await transferDialog(repo); void reposChanged();
         reload();
       } }, "Transfer")));
   const setFilters = (next) => {
@@ -275,10 +276,10 @@ export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) 
       filterBar(state.filters, { onRemove: clear, onClear: clear }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
       shown.length
-        ? h("table", { class: "table" },
+        ? tableBox(h("table", { class: "table" },
           h("caption", { class: "sr-only" }, "Repositories of all accounts"),
           h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, sortRepos(shown).map(row)))
+          h("tbody", {}, sortRepos(shown).map(row))))
         : state.filters.repo ? filterGone({ onClear: clear }) : emptyState("No repositories yet."));
   };
   // The palette's repository result: a wish that came before this page, or one for the page as it is.

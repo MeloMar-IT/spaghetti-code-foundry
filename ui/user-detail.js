@@ -43,7 +43,7 @@ const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "sta
  * name once the account is loaded; `notice` ({ text }) is a line kept from the last block; `data` is `[users, limits]` already loaded.
  * Returns a cleanup.
  */
-export async function renderUserDetail(main, id, { me = "", page = browserPage, onName, notice, data } = {}) {
+export async function renderUserDetail(main, id, { me = "", page = browserPage, onName, notice, data, readOnly = false } = {}) {
   const mine = ++generation;
   const live = () => mine === generation && onAccount(id);
   if (!data && live()) mount(main, loadingState("Loading the account…", { rows: 4, shape: "detail" }));
@@ -70,7 +70,7 @@ export async function renderUserDetail(main, id, { me = "", page = browserPage, 
       if (my === reloads && live()) mount(note, noticeLine(next), staleNote(at, { failed: true, onRetry: () => reload(next) }));
       return;
     }
-    if (my === reloads && live()) await renderUserDetail(main, id, { me, page, onName, notice: next, data: fresh });
+    if (my === reloads && live()) await renderUserDetail(main, id, { me, page, onName, notice: next, data: fresh, readOnly });
   };
 
   const act = async (kind) => {
@@ -118,10 +118,13 @@ export async function renderUserDetail(main, id, { me = "", page = browserPage, 
     { label: "Limits", value: h("span", {}, limitsCell(limits, u.id)) },
     { label: "Id", value: h("span", { class: "mono" }, u.id) },
   ];
+  const groups = readOnly
+    ? groupsFor(u).map((g) => ({ ...g, kinds: g.kinds.filter((k) => k === "view") })).filter((g) => g.kinds.length)
+    : groupsFor(u);
   mount(main,
     pageHeader({ title: u.name, back: { label: "Users", href: "#/users" }, meta: [h("span", { class: pillClass(u) }, statusText(u)), u.id === me ? h("span", { class: "muted" }, " (you)") : null] }),
     note,
     card({ title: "Account" }, statusSummary({ label: "Account", items })),
-    groupsFor(u).map((g) => card({ title: g.label, tone: g.id === "danger" ? "fail" : "neutral" }, h("div", { class: "row" }, g.kinds.map(button)))));
+    groups.map((g) => card({ title: g.label, tone: g.id === "danger" ? "fail" : "neutral" }, h("div", { class: "row" }, g.kinds.map(button)))));
   return stop;
 }

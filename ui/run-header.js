@@ -1,6 +1,7 @@
 // The header both run pages share: title, status, facts, one main button, and what happens next. It builds its nodes once
 // and `update` changes only what differs, so a focused button, an open "?" note and the page position survive a stream update.
 import { h, mount, timeAgo } from "./dom.js";
+import { pageHeader } from "./kit/product.js";
 import { nextBlock, nextStatus } from "./next.js";
 // This module and ./runs.js import each other: neither uses the other at the top level, only inside functions.
 import { aheadText, failedStepIndex, failureCard, money, ownerText, refinementMark, retiredLine, stepRow, versionRow } from "./runs.js";
@@ -95,18 +96,17 @@ const mainFirst = (list) => list.sort((a, b) => Number(b.cls === "primary") - Nu
  * the administrator's DOM buttons instead. `onFailedStep(index)` makes "Show the failed step".
  */
 export function createRunHeader({ admin = false, onAction = null, actions = null, onFailedStep = null, backLabel = "Back to Runs" } = {}) {
-  const title = h("h1", {}, "Run");
   const pillBox = h("span");
   const helpBox = h("span");
   const refBox = h("span");
+  const bar = pageHeader({ layout: "toolbar", title: "Run", back: { label: backLabel, href: "#/runs", focus: "back" }, meta: [pillBox, helpBox, refBox] });
+  const title = bar.querySelector("h1");
   const facts = h("dl", { class: "meta" });
   const box = h("div", { class: "run-actions" });
   box.hidden = true;
   const belowBody = h("div");
   const below = h("section", { class: "run-now", "aria-label": "Now" }, h("h2", {}, "Now"), belowBody);
-  const el = h("div", { class: "run-header" },
-    h("div", { class: "toolbar" }, h("a", { class: "btn ghost", href: "#/runs", "data-focus": "back", "aria-label": backLabel }, "←"), title, pillBox, helpBox, refBox),
-    facts, box, below);
+  const el = h("div", { class: "run-header" }, bar, facts, box, below);
 
   let statusKey = null;
   let helpEl = null;

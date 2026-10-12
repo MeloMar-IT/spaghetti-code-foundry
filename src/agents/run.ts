@@ -8,13 +8,15 @@ import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, t
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
+import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
 import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, type Target } from "./targets.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, specOf, toTarget, type Target } from "./targets.js";
+import { stepOverride } from "../analyst/overrides.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -30,7 +32,7 @@ type Iso = { who: CommitIdentity };
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue, toolCheck?: { tools: SessionTools; check: ToolCheck }): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const ghDir = iso ? ghConfigDir() : undefined;
@@ -76,7 +78,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
@@ -103,6 +105,8 @@ interface WithOptions {
   again?: boolean;
   /** The skill catalogue of a `skills: catalog` step: put before the prompt on both agents. */
   catalogue?: RunCatalogue;
+  /** A Claude coder session: what the step gives and how the locked skills were checked against it. */
+  toolCheck?: { tools: SessionTools; check: ToolCheck };
 }
 
 /** Which session a step with `resume:` asks to continue, and the digest of the skill block that session received. */
@@ -125,9 +129,19 @@ export function claudeIsolated(isolateAgents: boolean, userRun: boolean, skills?
   return isolateAgents || userRun || reviewer || Boolean(skills && (skills.loaded.length || skills.omitted.length));
 }
 
+/** The skills that count for isolation: a skill left out for its tools still isolates the session. */
+export function isolationSkills(s: SkillPayload | undefined, check?: Pick<ToolCheck, "leftOut">): Pick<SkillPayload, "loaded" | "omitted"> | undefined {
+  return s && { loaded: s.loaded, omitted: [...s.omitted, ...(check?.leftOut.map((l) => l.key) ?? [])] };
+}
+
+/** May the session a step continues hold a skill this step was not given? The last digest a session recorded does not prove what its transcript holds, so any left-out skill means no resume. */
+export function resumeHoldsLeftOut(check: Pick<ToolCheck, "leftOut"> | undefined): boolean {
+  return Boolean(check?.leftOut.length);
+}
+
 /** The record of a skill block on a step result. */
-function skillsRecord(s?: SkillPayload, attach?: ReturnType<typeof attachSkillPayload>): Pick<StepResult, "skills"> {
-  return s ? { skills: { loaded: s.loaded, ...(s.omitted.length ? { omitted: s.omitted } : {}), bytes: s.bytes, estimatedTokens: s.estimatedTokens, ...(s.role ? { role: s.role } : {}), ...(attach ? { state: attach.state, digest: attach.digest, attachedBytes: attach.attachedBytes, attachedEstimatedTokens: attach.attachedEstimatedTokens } : {}) } } : {};
+function skillsRecord(s?: SkillPayload, attach?: ReturnType<typeof attachSkillPayload>, grant?: SessionToolGrant): Pick<StepResult, "skills"> {
+  return s ? { skills: { ...(grant ? { grant } : {}), loaded: s.loaded, ...(s.omitted.length ? { omitted: s.omitted } : {}), bytes: s.bytes, estimatedTokens: s.estimatedTokens, ...(s.role ? { role: s.role } : {}), ...(attach ? { state: attach.state, digest: attach.digest, attachedBytes: attach.attachedBytes, attachedEstimatedTokens: attach.attachedEstimatedTokens } : {}) } } : {};
 }
 
 function catalogueRecord(o: WithOptions): Pick<StepResult, "skillCatalogue"> {
@@ -143,7 +157,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   // profiles may not nest: the outer profile holds a boxed step, so the agent's own sandbox is off
   const sandboxed = boxed ? false : asked;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
-  const effort = step.effort ?? d.effort;
+  const tuned = stepOverride(flow.name, step.id).effort;
+  if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
+  const effort = tuned ?? step.effort ?? d.effort;
   const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
   let resumeId = askedId;
   if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
@@ -152,6 +168,11 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     engine.log(`    · not resuming ${step.resume}: this step has skills: ${step.skills} and a resumed session may hold a skill block`);
   }
   const prev = step.resume ? ctx.steps[step.resume] : undefined;
+  // A skill left out of this step for its tools must not come back with the transcript of the earlier session.
+  if (resumeId && t.agent === "claude" && resumeHoldsLeftOut(o.toolCheck?.check)) {
+    resumeId = undefined;
+    engine.log(`    · not resuming ${step.resume}: a skill was left out of this step for its tools and that session may hold it`);
+  }
   // A Codex session lives in one Codex folder: resume only where the earlier step ran with the same one.
   const locked = o.draft ? undefined : o.skills;
   let home: string | undefined;
@@ -229,13 +250,18 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     });
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
   const caps = t.free || !engine.config.cost_limits ? [] : [step.max_budget_usd ?? d.max_budget_usd, engine.remainingBudget()].filter((n): n is number => n !== undefined);
-  const isolatedSession = claudeIsolated(engine.config.isolate_agents, isolated, o.skills, step.skill_role === "reviewer");
+  const isolatedSession = claudeIsolated(engine.config.isolate_agents, isolated, isolationSkills(o.skills, o.toolCheck?.check), step.skill_role === "reviewer");
   if (isolatedSession && !engine.config.isolate_agents && !isolated) engine.log("    · skills: this session runs without the personal Claude setup");
+  let claudeSkills = skills;
+  if (o.toolCheck) {
+    claudeSkills = skillsRecord(o.skills, attach, sessionToolGrant(o.toolCheck.tools, o.toolCheck.check, isolatedSession));
+    engine.log(`    · ${sessionToolsLine(o.toolCheck.tools)}`);
+  }
   logSkills();
   const r = await runClaude({
     ...common,
@@ -262,8 +288,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     // Claude Code prices unknown local models as if they were Claude — they cost nothing.
     costUsd: local ? 0 : r.costUsd,
     agent: t.label,
+    ...(effort ? { effort } : {}),
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
-    ...skills,
+    ...claudeSkills,
     ...catalogueRecord(o),
   };
 }
@@ -294,7 +321,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const boxed = sb === "on";
   let target: Target;
   try {
-    target = engine.budgetFallback ?? resolveTarget(step, scope.flow, config, scope.visits[step.id] ?? 1);
+    const visit = scope.visits[step.id] ?? 1;
+    // your router rules are your policy and win; below them the analyst may have set another model for this step
+    const tuned = routeModel(config, scope.flow.name, step.id, visit) ? undefined : stepOverride(scope.flow.name, step.id).model;
+    target = engine.budgetFallback ?? (tuned ? toTarget(specOf(tuned, config), config) : resolveTarget(step, scope.flow, config, visit));
+    if (tuned && !engine.budgetFallback) engine.log(`    · model ${tuned}: set by the analyst`);
   } catch (e) {
     return { ok: false, output: "", error: (e as Error).message };
   }
@@ -309,16 +340,22 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       ? runSkillCatalogue({ workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) })
       : undefined;
   if (catalogue) engine.log(`    · ${catalogue.log}`);
+  const tools = sessionTools({
+    stepId: scope.prefix + step.id,
+    step,
+    defaults: scope.flow.defaults,
+    sandbox: { step: step.sandbox, flow: scope.flow.sandbox.claude, config: config.sandbox.claude, boxed },
+  });
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
-    const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog");
+    const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
     if ("refused" in session) {
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
     tried.add(target.label);
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue);
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools });
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

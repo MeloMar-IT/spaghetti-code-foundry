@@ -59,6 +59,11 @@ const draw = async (id = "mon") => {
   await watchersMod.renderWatcherDetail(main, id);
   return main;
 };
+const drawRO = async (id = "mon") => {
+  const main = new FakeElement("div");
+  await watchersMod.renderWatcherDetail(main, id, { readOnly: true });
+  return main;
+};
 
 describe("storiesLine", () => {
   it("says on, and when no repository is set", () => {
@@ -247,12 +252,44 @@ describe("the findings and mutes of the monitor's card", () => {
     expect(mod.storyCell(undefined, true).textContent).toBe("needs you");
   });
 
+  it("read-only: no switch, no Mute a detector, no End mute, four columns; findings stay", async () => {
+    withLists([finding(1), finding(2)], [{ id: "m1", kind: "detector", detector: "restart-loop", reason: "noise", since: iso(9, 0), by: "u" }]);
+    const main = await drawRO();
+    expect(buttonOf(main)).toBeUndefined();
+    expect(main.textContent).toContain("Bug stories: on");
+    const p = panel(main);
+    expect(button(p, "Mute a detector")).toBeUndefined();
+    expect(button(p, "End mute")).toBeUndefined();
+    expect(p.textContent).not.toContain("null");
+    const mutes = p.all("table").find((t) => t.attrs["aria-label"] === "Mutes")!;
+    expect(mutes.all("th")).toHaveLength(4);
+    expect(mutes.all("tbody")[0]!.all("tr").every((r) => r.all("td").length === 4)).toBe(true);
+    const table = p.all("table").find((t) => t.attrs["aria-label"] === "Findings")!;
+    expect(table.all("a").map((a) => a.attrs.href)).toEqual(["#/problems/0000000000000001", "#/problems/0000000000000002"]);
+  });
+
+  it("mutesTable called with two arguments (the Problems page) keeps Actions and End mute", () => {
+    const m = { mutes: [{ id: "m1", kind: "detector", detector: "d", reason: "r", since: iso(9, 0) }] };
+    const t = mod.mutesTable(m, async () => {});
+    expect(t.all("th")).toHaveLength(5);
+    expect(t.all("button").map((b: FakeElement) => b.textContent)).toEqual(["End mute"]);
+  });
+
   it("with 150 findings it draws 100 rows and Show 50 more draws the rest", async () => {
     withLists(Array.from({ length: 150 }, (_, i) => finding(i + 1)));
     const p = panel(await draw());
     const rows = () => p.all("tr").length - 1;
     expect(p.all("summary")[0]!.textContent).toBe("Findings (150) · Mutes (0)");
     expect(rows()).toBe(100);
+    // read-only: paging still works, and no mutation control or stray text appears
+    const ro = panel(await drawRO());
+    expect(ro.all("tr").length - 1).toBe(100);
+    expect(button(ro, "Mute a detector")).toBeUndefined();
+    expect(ro.textContent).not.toContain("null");
+    button(ro, "Show 50 more")!.click();
+    expect(ro.all("tr").length - 1).toBe(150);
+    expect(button(ro, "Mute a detector")).toBeUndefined();
+    expect(ro.textContent).not.toContain("null");
     button(p, "Show 50 more")!.click();
     expect(rows()).toBe(150);
     expect(button(p, "Show 50 more")).toBeUndefined();

@@ -98,7 +98,7 @@ afterEach(() => {
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const main = () => (document as any).getElementById("main") as FakeElement;
-const upper = () => main().children[0] as FakeElement;
+const upper = () => (main().children[0] as FakeElement).children[0] as FakeElement;
 const walk = (el: FakeElement): FakeElement[] => el.children.flatMap((c) => (c instanceof FakeElement ? [c, ...walk(c)] : []));
 const section = () => walk(main()).find((e) => e.attrs.class === "drafts")!;
 const buttons = () => walk(section()).filter((e) => e.tag === "button");

@@ -540,6 +540,8 @@ The existing `max-width: 1100px` rule stays as "two panes side by side".
 
 The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.css`); width rules that belong to one component stay next to their base rules.
 
+**Support levels.** `supportLevel(pageId, width)` in `ui/viewport.js` maps a page id from `ui/ia.js` to `"full"` or `"read-only"`: administration pages are read-only at 767 px and below (`BREAKPOINTS.compact`), `flows`, `flow` and `new-flow` at 1023 px and below (`BREAKPOINTS.medium`); everything else, an unknown id and a missing or `NaN` width are `"full"`. `levelNotice(pageId, { dirty })` returns the notice text or `null`. In `ui/app.js`, `route()` fills the single `#level-note` element above `#main` and passes `readOnly` to the renderers; `NOT_YET` lists the pages not wired yet (they stay full, with no notice); `flows`, `flow` and `new-flow` are wired (read-only at 1023 px and below), while the repositories, models, problems and maintenance pages are still in it. The flow page asks `isReadOnly` (from `supportLevel("flow", innerWidth)`) at the moment of every change, so `save`, `remove`, `newBlank`, `generateDialog` and the late Retry callbacks do nothing once the window is narrow. `markDrawn(to)` records the drawn page and its notice. The flow list in the sidebar has its own check in `onWidth`: it redraws whenever 1024 px is crossed and the destination is `flows`, also on the Library page. The width is read from `globalThis.innerWidth`; the listeners are on `mediaFor("compact")` and `mediaFor("wide")`, and a change redraws only if the level of the drawn page changed. While `#modal-root` holds a dialog the crossing is remembered, and a `MutationObserver` on `#modal-root` redraws once it is empty. `lockReadOnly(root)` in `ui/fields.js` makes the controls under `root` read-only: inputs and textareas get `readOnly`, selects and checkboxes are `disabled`, buttons are removed. There is no blanket disabled `fieldset`, so text can still be focused and scrolled. `renderUsers`, `renderUserDetail` and `renderSettings` take a `readOnly` option and pass it on when they redraw themselves. `operations`, `watchers` and `watcher` have left `NOT_YET`: `renderOperations`, `renderWatchers` and `renderWatcherDetail` take `readOnly` too (also in their `reload`). Read-only leaves out "Cancel run" (`renderHealth`); the add buttons, Check now, Edit, Enable/Disable, Delete and the bug-stories switch (`ui/watchers.js`, `storiesRow`); and the mute row, the Actions column and "End mute" (`monitorLists`, `mutesTable` in `ui/monitor.js`). The header health panel and the Problems page do not pass it.
+
 ### Development gallery
 
 `scf ui --dev` and `scf serve --dev` set `ServerOptions.dev`. With it, the static branch in `src/server/server.ts` serves `ui/gallery/` (`/gallery` and `/gallery/` map to `gallery/index.html`, like `/user`). Without it, `isGalleryPath` (`src/server/http.ts`) catches every spelling of a path under `/gallery` (`..`, `\`, case) and the server answers 404 before `serveStatic`. The switch is on the command line only. The gallery is plain static files under the existing CSP, adds no API route and so needs no rule in `permissions.ts`. See `docs/UI_COMPONENTS.md`.
@@ -554,21 +556,28 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 |---|---|
 | `tokens.css` | Only a pointer: the custom properties (colours, type, spacing, density, the `--layer-*` scale, `--size-form`) are in `ui/tokens.css`, which is linked before `/style.css`. No selectors. |
 | `reset.css` | Bare elements: body, headings, links, `code`, `pre`, `details`. `.mono` stays here because it shares the `code, pre, .mono` rule. |
-| `layout.css` | The page frame and grids: body, `.layout`, `aside`, `main`, and how they collapse on narrow screens. |
+| `layout.css` | The page frame and the run grid: body, `.layout`, `aside`, `main`, `.run-grid`, and how they collapse on narrow screens. |
+| `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
 | `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+
+**Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
+- **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
+- **Regions.** Plain `div`s in a fixed order, with no grid and no gap, so margins collapse as before. An empty slot (`null`, `false`, `[]`, `[null, false]`) draws no region. Slots: overview `summary`, `sections`; settings `sections`; collection `filters`, `list`, `empty`; board `filters`, `columns`; master-detail `master`, `detail` in `.page-body`; editor `main`, `side` in `.editor.page-body` (side first); conversation `thread`, `composer`, `side`; detail `meta`, `sections`, `side` (`.page-body` gets `with-side` only when `side` is filled).
+- **Used by** the dashboard (`overviewPage`), the settings page (`settingsPage`), the flow editor (`editorPage`) and the refinement session (`conversationPage`). The other pages move over in later parts of #341.
+- **Focus after a redraw.** `mount()` in `ui/dom.js` looks for the fallback heading in the target, then its parent, then the nearest `.page` ancestor, then the target itself.
 
 **Where a new rule goes.**
 1. A custom property: `tokens.css`.
 2. A bare element: `reset.css`.
 3. A control or box used on more than one page, or a variant of one: `components.css`.
 4. A one-purpose helper: `utilities.css`.
-5. Anything else: the page file of the area that uses it. A page file does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page.
+5. Anything else: the page file of the area that uses it. A page file (and `templates.css`) does not start a rule with a shared component class (`.card`, `.pill`, `.table`, `.modal` …); put it in `components.css`, or scope it under a class of the page. A test (`competingSelectors` in `tests/helpers/ui-css.ts`) enforces this; a class whose base rule a page file owns goes on a short allow-list with a reason.
 
 Use a token, not a number, for z-index and for the widths below. Keep rules that override each other in the same module and in the same order.
 
-**Import order, and why.** Tokens, reset, layout, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. The shell rules at the end of `pages/shell.css` (for example `.spacer`) come after `utilities.css` on purpose.
+**Import order, and why.** Tokens, reset, layout, templates, components, utilities, then the pages. Rules of equal weight are decided by source order, so a later file wins. Tokens come first because everything reads them. Reset comes before any class. Components come before utilities, so a helper such as `.muted` can override a component. Pages come last, so a page can adjust what it uses. Do not reorder the list, or the rules inside a module, without checking the cascade. The shell rules at the end of `pages/shell.css` (for example `.spacer`) come after `utilities.css` on purpose.
 
 **z-index scale** (`--layer-*` in `ui/tokens.css`; a test fails on a `z-index` that is not a layer token):
 
@@ -596,9 +605,9 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
 
 **Content widths.** `--size-form` (640px, in `ui/tokens.css`) is used by `.start-form` and `.modal`; `.modal:has(.block-grid)` is 900px.
 
-**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--layer-sticky`; static in the user display on narrow screens) and `.graph-pane` in the editor (sticks under the top bar). The sidebar `.side` is sticky below the top bar too.
+**Sticky regions.** There are two: `.top` (stuck to the top of the page at `--layer-sticky`; static in the user display on narrow screens) and `.page-editor .page-side > *` in the editor, the Overview pane (sticks under the top bar). The sidebar `.side` is sticky below the top bar too.
 
-**Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. On a narrow screen the sidebar is a drawer (`.side` with `body.drawer-open`) at `--layer-menu` plus one; it scrolls itself.
+**Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.page-board .board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. On a narrow screen the sidebar is a drawer (`.side` with `body.drawer-open`) at `--layer-menu` plus one; it scrolls itself.
 
 **Tests.** `readUiCss()` in `tests/helpers/ui-css.ts` follows the imports and returns the whole stylesheet, for tests that read CSS. It fails on an import that does not resolve and on a `.css` file under `ui/css/` that is not imported. `tests/ui-css.test.ts` checks the import order, that the rule set equals the frozen `tests/fixtures/ui-style-baseline.css`, the tokens, the z-index rule, the module comments, and that no page file starts a rule with a shared component class.
 
@@ -679,6 +688,26 @@ detectors → findings file → Reporter → bug story → goes first → hotfix
   [user guide](USER_GUIDE.md#13-self-repair-for-admins).
 
 ---
+
+### The model analyst
+
+`src/analyst/` is a process of its own (`scf analyst run`, every 6 hours through its own login
+agent), so that judging the models never depends on, or slows, the server. It is pure reading:
+`collect.ts` turns the step records of the last 14 days into counts per flow, step, model and
+effort; `advise.ts` turns the counts into one verdict per pair; `report.ts` writes Markdown. The
+quality of a step is read from what came after it in the same run: a `fix_*` step means its work
+was broken, an `address_*` or `revise_*` step after a review means it was sent back. Published
+figures (`reference.ts`) are fetched once a week by a headless Claude Code session that may only
+search the web. Each figure carries who measured it; makers' figures are lowered by a tenth and can
+only veto a step down to a much weaker model.
+
+With self-tuning on (`tune.ts`), advice becomes a trial: an entry in `analyst/overrides.json` (flow →
+step → model, effort) that `runAgentStep` reads at the start of each agent step, below the user's
+router rules. Flows are never edited, so a change is one small file that can be emptied. A trial is
+a controlled change: one per flow at a time, a stored baseline, a fixed number of visits, and a rule
+that puts the old value back when the step does worse (or, for a higher level, not better). The
+effort a step ran with is stored in its step record, so that the visits before and after a change
+can be told apart.
 
 ## 18. Where it is going
 

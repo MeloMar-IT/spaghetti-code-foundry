@@ -2,8 +2,7 @@
    Belongs here: editor panes, graph, block library.
    Does not belong here: card and pill variants; shared helpers (components.css). */
 
-.overview-pane { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--size-bar) + var(--space-2xl)); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; max-height: calc(100vh - var(--size-bar) - 40px); overflow: auto; }
-.editor-body { grid-column: 1; grid-row: 1; min-width: 0; }
+.overview-pane { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
 .flow-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin: -8px 0 14px; font-size: var(--text-small); }
 .flow-dirty { font-weight: 600; }
 .flow-validation { border: none; background: transparent; padding: 0; cursor: pointer; text-decoration: underline; }
@@ -32,6 +31,7 @@
 .route-list { display: grid; gap: 6px; margin-bottom: 8px; }
 .route { display: grid; grid-template-columns: auto 1fr auto 160px auto; gap: 6px; align-items: center; font-size: var(--text-small); }
 .kv { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; align-items: center; }
+.inspector.read-only .kv { grid-template-columns: 1fr 2fr; }
 
 /* ── graph ── */
 .graph { max-width: 100%; height: auto; display: block; }
@@ -79,8 +79,6 @@
 .block-item { display: grid; gap: 6px; align-content: start; }
 .block-item pre { background: var(--panel-2); border-radius: var(--radius-md); padding: 10px; overflow: auto; max-height: 300px; margin: 6px 0 0; }
 @media (max-width: 1100px) {
-  .overview-pane, .editor-body { grid-column: auto; grid-row: auto; }
-  .overview-pane { position: static; max-height: none; }
   .flow-form { grid-template-columns: 1fr; }
 }
 @media (max-width: 767px) {

@@ -18,6 +18,38 @@ export function h(tag, props = {}, ...children) {
   return el;
 }
 
+/** A table's own scroll box: a wide table scrolls here, never the page. */
+export const tableBox = (...nodes) => h("div", { class: "table-box" }, ...nodes);
+
+const ROLES = { table: "table", thead: "rowgroup", tbody: "rowgroup", tr: "row", th: "columnheader", td: "cell" };
+
+/**
+ * A table in its own scroll box: div.table-box > table.table. `headers`: one string or node per column (null/false are skipped);
+ * `rows`: `tr` elements — each cell gets `data-label` from the header of its column. `cards`: below 768 px every row is a card
+ * (ui/css/responsive.css); ARIA roles keep it a table for screen readers. `caption` is for screen readers only.
+ */
+export function table(headers, rows, { cards = false, caption, label, class: cls } = {}) {
+  const heads = headers.filter((x) => x != null && x !== false);
+  const labels = heads.map((x) => (typeof x === "string" ? x : x.textContent ?? "").trim());
+  const role = (tag) => (cards ? { role: ROLES[tag] } : {});
+  const body = [];
+  for (const row of rows.flat()) {
+    if (row == null || row === false) continue;
+    const cells = [...row.children].filter((c) => c?.localName === "td" || c?.localName === "th");
+    cells.forEach((c, i) => {
+      if (labels[i] && c.getAttribute("data-label") == null) c.setAttribute("data-label", labels[i]);
+      if (cards) c.setAttribute("role", ROLES.td);
+    });
+    if (cards) row.setAttribute("role", ROLES.tr);
+    body.push(row);
+  }
+  const aria = label ?? (cards ? caption : undefined);
+  return tableBox(h("table", { class: `table${cards ? " cards" : ""}${cls ? ` ${cls}` : ""}`, "aria-label": aria, ...role("table") },
+    caption ? h("caption", { class: "sr-only" }, caption) : null,
+    h("thead", role("thead"), h("tr", role("tr"), heads.map((t) => h("th", { scope: "col", ...role("th") }, t)))),
+    h("tbody", role("tbody"), body)));
+}
+
 /** A glyph for the eye only: hidden from screen readers. The control around it needs its own name. */
 export const glyph = (g) => h("span", { "aria-hidden": "true" }, g);
 
@@ -55,7 +87,8 @@ export function mount(target, ...nodes) {
   const same = [...target.querySelectorAll("[data-focus]")].find((el) => el.getAttribute("data-focus") === name);
   if (same) return same.focus();
   // The control is gone: the heading of this part takes the focus, so it never drops to `<body>`.
-  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3") ?? target;
+  const heading = target.querySelector("h1, h2, h3") ?? target.parentNode?.querySelector?.("h1, h2, h3")
+    ?? target.closest?.(".page")?.querySelector("h1, h2, h3") ?? target;
   heading.setAttribute("tabindex", "-1");
   heading.focus();
 }
@@ -164,18 +197,25 @@ export function modal(title, build, { busy = () => false } = {}) {
     const opener = document.activeElement;
     const titleId = `modal-title-${++modalSeq}`;
     let closed = false;
+    let backdrop = null;
+    // "mine": the root still holds this dialog. Other content may have taken it over.
+    const mine = () => !!backdrop && backdrop.parentNode === root;
     const close = (v) => {
       // A dialog can finish its work after Escape closed it: a second call must not touch a newer dialog.
       if (closed) return;
       closed = true;
-      root.replaceChildren();
       document.removeEventListener("keydown", onKey);
-      opener?.focus?.();
+      if (mine()) {
+        root.replaceChildren();
+        opener?.focus?.();
+      }
       resolve(v);
     };
     // `busy()`: a request is in flight, so Escape, ✕ and the backdrop do nothing until it is answered.
     const dismiss = () => (busy() ? undefined : close(undefined));
     const onKey = (e) => {
+      // A dialog that lost the root has no box to trap in: it ends at the first key, busy or not.
+      if (!mine()) return close(undefined);
       if (e.key === "Escape") return dismiss();
       if (e.key !== "Tab") return;
       const to = trapTarget(tabStops(box), document.activeElement, e.shiftKey);
@@ -188,7 +228,8 @@ export function modal(title, build, { busy = () => false } = {}) {
     const box = h("div", { class: "modal", role: "dialog", "aria-labelledby": titleId, "aria-modal": "true", tabindex: "-1" },
       h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, glyph("✕"))),
       build(close));
-    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
+    backdrop = h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box);
+    mount(root, backdrop);
     (box.querySelector("textarea, input") ?? box).focus();
   });
 }

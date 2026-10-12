@@ -6,10 +6,12 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 let restore: () => void;
 let ui: any;
 let api: any;
+let view: any;
 beforeAll(async () => {
   restore = installFakeDom();
   ui = await import("../ui/repos.js" as string);
   api = (await import("../ui/api.js" as string)).api;
+  view = await import("../ui/repo-view.js" as string);
 });
 afterAll(() => restore());
 
@@ -41,7 +43,9 @@ const APP_URL = "https://github.com/apps/foundry-app/installations/new";
 const appOptions = (over: object = {}) => ({ methods: ["github-token", "https-token", "ssh-deploy-key", "github-app"], githubApp: { available: true, installUrl: APP_URL }, ...over });
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
-let heldGets: (() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
+let runsAnswer: unknown[] = []; // answer of GET /api/runs
+let runsFail = false;
+let heldGets:(() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
 const realFetch = globalThis.fetch;
 let nextId = 1;
 let keyCount = 0;
@@ -66,11 +70,19 @@ beforeEach(() => {
   methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } };
   methodsFail = false;
   methodsCalls = 0;
+  runsAnswer = [];
+  runsFail = false;
   readyAnswer = undefined;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET" && url === "/api/repos/methods") {
       methodsCalls++;
       return methodsAnswer && !methodsFail ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+    }
+    if (init.method === "GET" && url.startsWith("/api/runs")) {
+      if (runsFail) return reply({ error: "x" }, 500);
+      // like the server: the status filter applies before the cap of 200
+      const status = new URL(url, "http://x").searchParams.get("status");
+      return reply((runsAnswer as { status?: string }[]).filter((r) => !status || r.status === status).slice(0, 200));
     }
     if (init.method === "GET" && url.endsWith("/ready")) {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
@@ -107,9 +119,17 @@ beforeEach(() => {
       repos.push(rec);
       return reply(rec, 201);
     }
-    if (init.method === "PUT" && (body.newKey || body.method === "ssh-deploy-key")) {
+    if (init.method === "PUT" && repos.some((r) => `/api/repos/${r.id}/auth` === url)) {
+      // as the server does: the answer is the updated record, and the status of an older sign-in is gone
       const at = repos.findIndex((r) => `/api/repos/${r.id}/auth` === url);
-      repos[at] = { ...repos[at], ...(body.url ? { url: body.url } : {}), method: "ssh-deploy-key", publicKey: nextKey() };
+      const { connection: _old, ...old } = repos[at];
+      const method = body.newKey ? "ssh-deploy-key" : body.method;
+      const next: any = { ...old, ...(body.url ? { url: body.url } : {}), method };
+      if (method === "https-token") next.username = body.username;
+      else delete next.username;
+      if (method === "ssh-deploy-key") next.publicKey = nextKey();
+      else delete next.publicKey;
+      repos[at] = next;
       return reply(repos[at]);
     }
     if (init.method === "DELETE") repos = repos.filter((r) => `/api/repos/${r.id}` !== url);
@@ -143,6 +163,10 @@ const rec = (over: object = {}) => ({ id: `r${nextId++}`, url: "https://github.c
 const show = async (admin = false) => {
   await ui.renderRepos(main(), { admin });
 };
+/** The view of one repository (`#/repos/<id>`). */
+const showOne = async (id: string, opts: object = {}) => {
+  await view.renderRepo(main(), { id, nav: () => {}, ...opts });
+};
 const type = (name: string, value: string) => {
   field(root(), name)!.value = value;
 };
@@ -150,6 +174,31 @@ const choose = (id: string) => {
   const s = field(root(), "method")!;
   s.value = id;
   s.fire("change");
+};
+/** The first step of Add repository: type the address and press Next. */
+const address = (url: string) => {
+  type("url", url);
+  press(button(root(), "Next"));
+};
+/** What was sent without the automatic connection tests. */
+const saves = () => sent.filter((s) => !s.url.endsWith("/test"));
+/** Waits for the save and the test, then presses Done. */
+const finish = async () => {
+  await flush();
+  press(button(root(), "Done"));
+  await flush();
+};
+const tick = (on = true) => {
+  const c = field(root(), "replace")!;
+  c.checked = on;
+  c.fire("change");
+};
+/** Change authentication: Continue, tick the box, Replace the sign-in, then wait for the save and the test. */
+const replaceSignIn = async () => {
+  press(button(root(), "Continue"));
+  tick();
+  press(button(root(), "Replace the sign-in"));
+  await flush();
 };
 
 describe("pure functions", () => {
@@ -218,7 +267,7 @@ describe("pure functions", () => {
   it("readyView shows the list read-only, with who set it", async () => {
     repos = [{ id: "r1", url: "https://github.com/o/a", method: "github-token" }];
     readyAnswer = { items: [{ id: "a", text: "first" }, { id: "b", text: "<b>second</b>" }], isDefault: false };
-    await ui.renderRepos(main());
+    await showOne("r1");
     press(button(main(), "Definition of Ready"));
     await flush();
     expect(walk(root()).filter((e) => e.tag === "li").map((e) => e.textContent)).toEqual(["first", "<b>second</b>"]);
@@ -228,6 +277,7 @@ describe("pure functions", () => {
     expect(button(root(), "Save")).toBeUndefined();
     readyAnswer = { items: [{ id: "a", text: "first" }], isDefault: true };
     pressEscape();
+    await flush();
     press(button(main(), "Definition of Ready"));
     await flush();
     expect(root().textContent).toContain("The default list.");
@@ -235,7 +285,7 @@ describe("pure functions", () => {
 
   it("readyView toasts an error and opens no dialog", async () => {
     repos = [{ id: "r1", url: "https://github.com/o/a", method: "github-token" }];
-    await ui.renderRepos(main());
+    await showOne("r1");
     press(button(main(), "Definition of Ready"));
     await flush();
     expect(toastText()).toBe("no such repository");
@@ -259,6 +309,35 @@ describe("pure functions", () => {
 });
 
 describe("the page", () => {
+  it("repoWebUrl turns the supported address formats into the GitHub page, and nothing else", () => {
+    const page = "https://github.com/o/a";
+    for (const url of ["https://github.com/o/a", "https://github.com/o/a.git", "https://github.com/o/a/", "https://user@github.com/o/a.git", "git@github.com:o/a.git", "ssh://git@github.com/o/a.git", "git@github.com:o/a"]) expect(ui.repoWebUrl(url), url).toBe(page);
+    for (const url of ["", undefined, "https://gitlab.com/o/a", "https://github.com.evil.test/o/a", "https://github.com/o", "https://github.com/o/a/b", "javascript:alert(1)", "https://github.com/../a", "file:///tmp/x", "git@github.com:o/a b"]) expect(ui.repoWebUrl(url), String(url)).toBe("");
+  });
+
+  it("is a card table: labelled cells, the repository link first and the actions last", async () => {
+    repos = [rec({ url: "git@github.com:o/a.git" }), rec({ url: "https://example.test/x/y" })];
+    await show();
+    const table = walk(main()).find((e) => e.tag === "table")!;
+    expect(table.attrs.class).toBe("table cards");
+    expect(table.parent!.attrs.class).toBe("table-box");
+    expect(walk(table).find((e) => e.tag === "caption")!.textContent).toBe("My repositories");
+    const [first, second] = walk(table).filter((e) => e.tag === "tr" && e.parent!.tag === "tbody");
+    const cells = (tr: FakeElement) => tr.children.filter((c): c is FakeElement => c instanceof FakeElement);
+    expect(cells(first!).map((c) => c.attrs["data-label"])).toEqual(["Repository", "Authentication", "Connection", "Active runs", "Next step", "Actions"]);
+    const link = cells(first!)[0]!.children[0] as FakeElement;
+    expect(link.tag).toBe("a");
+    expect(link.attrs.href).toBe("https://github.com/o/a");
+    expect(link.attrs.rel).toContain("noopener");
+    expect(link.textContent).toBe("git@github.com:o/a.git");
+    const open = walk(cells(first!)[5]!).filter((e) => e.tag === "a");
+    expect(open.map((a) => [a.textContent, a.attrs.href])).toEqual([["Open", `#/repos/${repos[0].id}`]]);
+    expect(walk(cells(first!)[5]!).some((e) => e.tag === "button")).toBe(false);
+    // an address that is not understood stays plain text
+    expect(walk(cells(second!)[0]!).some((e) => e.tag === "a")).toBe(false);
+    expect(cells(second!)[0]!.textContent).toBe("https://example.test/x/y");
+  });
+
   it("lists the repositories without per-repository settings", async () => {
     repos = [rec(), rec({ url: "https://git.example.com/a/b", method: "https-token", username: "ann" })];
     await show();
@@ -269,8 +348,11 @@ describe("the page", () => {
     expect(text).toContain("ann");
     expect(text.split("Not tested yet")).toHaveLength(3);
     const rowButtons = walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent);
-    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Change authentication", "Definition of Ready", "Remove", "Test connection", "Change authentication", "Definition of Ready", "Remove"]);
-    for (const tag of ["input", "select", "textarea"]) expect(main().all(tag)).toEqual([]);
+    expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Test connection"]);
+    // the row keeps the next step and an Open link; the other controls are in the view
+    expect(walk(main()).filter((e) => e.tag === "a" && e.textContent === "Open").map((a) => a.attrs.href)).toEqual(repos.map((r) => `#/repos/${r.id}`));
+    expect(main().all("input").map((i: FakeElement) => i.attrs["data-focus"])).toEqual(["repos-compact"]);
+    for (const tag of ["select", "textarea"]) expect(main().all(tag)).toEqual([]);
     expect(errLine(main())).toEqual([]);
   });
 
@@ -279,9 +361,10 @@ describe("the page", () => {
     await show();
     const cells = walk(main()).filter((e) => e.tag === "td" && e.textContent.includes("Connected") || e.textContent.includes("Failed") || e.textContent === "Not tested yet");
     expect(cells.length).toBeGreaterThan(0);
-    const pills = byClass(main(), "pill");
-    expect(pills.map((p) => p.textContent)).toEqual(["Connected", "Failed", "Not tested yet"]);
-    expect(pills.map((p) => p.attrs.class)).toEqual(["pill ok", "pill fail", "pill"]);
+    // the failed row comes first, then the untested one
+    const pills = walk(main()).filter((e) => e.tag === "td" && e.attrs["data-label"] === "Connection").flatMap((td) => byClass(td, "pill"));
+    expect(pills.map((p) => p.textContent)).toEqual(["Failed", "Not tested yet", "Connected"]);
+    expect(pills.map((p) => p.attrs.class)).toEqual(["pill fail", "pill", "pill ok"]);
     expect(byClass(main(), "muted").filter((e) => e.textContent.startsWith("tested ")).map((e) => e.textContent)).toEqual(["tested just now", "tested just now"]);
     expect(byClass(main(), "muted").find((e) => e.textContent.startsWith("tested "))!.attrs.title).toBeTruthy();
     expect(byClass(main(), "status").map((e) => [e.attrs.class, e.textContent])).toEqual([
@@ -375,16 +458,16 @@ describe("the page", () => {
     }
   });
 
-  it("gives the focus back to Change authentication of the second repository", async () => {
+  it("gives the focus back to Change authentication of the view", async () => {
     repos = [rec(), rec({ url: "https://github.com/o/b" })];
-    await show();
+    await showOne(repos[1].id);
     const changes = () => walk(main()).filter((e) => e.tag === "button" && e.textContent === "Change authentication");
-    const opener = changes()[1]!;
+    const opener = changes()[0]!;
     opener.focus();
     press(opener);
     pressEscape();
     await flush();
-    expect((document as any).activeElement).toBe(changes()[1]);
+    expect((document as any).activeElement).toBe(changes()[0]);
     expect((document as any).activeElement).not.toBe(opener);
   });
 
@@ -392,6 +475,8 @@ describe("the page", () => {
     await show();
     press(button(main(), "+ Add repository"));
     expect(field(root(), "url")).toBeDefined();
+    expect(field(root(), "method")).toBeUndefined();
+    address("https://git.example.com/a/b");
     expect(field(root(), "method")!.all("option")).toHaveLength(3);
     const token = field(root(), "token")!;
     expect(token.attrs.type).toBe("password");
@@ -402,12 +487,12 @@ describe("the page", () => {
     choose("https-token");
     expect(field(root(), "username")).toBeDefined();
     expect(field(root(), "token")!.attrs.type).toBe("password");
-    type("url", "https://git.example.com/a/b");
     type("username", "ann");
     type("token", TOKEN);
     press(button(root(), "Add repository"));
     await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://git.example.com/a/b", method: "https-token", username: "ann", token: TOKEN } }]);
+    expect(saves()).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://git.example.com/a/b", method: "https-token", username: "ann", token: TOKEN } }]);
+    await finish();
     expect(root().children).toEqual([]);
     expect(gets).toBe(2);
     expect(main().textContent).toContain("https://git.example.com/a/b");
@@ -417,38 +502,42 @@ describe("the page", () => {
   it("adds a repository as an admin with the server's own access", async () => {
     await show(true);
     press(button(main(), "+ Add repository"));
+    address("https://github.com/o/a");
     expect(field(root(), "method")!.all("option")).toHaveLength(4);
     choose("none");
-    expect(root().all("input").map((i) => i.attrs.name)).toEqual(["url"]);
-    type("url", "https://github.com/o/a");
+    expect(root().all("input").map((i) => i.attrs.name)).toEqual([]);
     press(button(root(), "Add repository"));
     await flush();
-    expect(sent[0]!.body).toEqual({ url: "https://github.com/o/a", method: "none" });
+    expect(saves()[0]!.body).toEqual({ url: "https://github.com/o/a", method: "none" });
+    expect(sent).toHaveLength(1);
+    await finish();
   });
 
   it("supports a method with a multi-line secret", async () => {
     await show();
     const done = ui.repoDialog({ admin: false, methods: [KEY_METHOD] });
+    address("https://github.com/o/a");
     const ta = field(root(), "key")!;
     expect(ta.tag).toBe("textarea");
     expect(ta.value).toBe("");
-    expect(root().all("input").map((i) => i.attrs.name)).toEqual(["url"]);
-    type("url", "https://github.com/o/a");
+    expect(root().all("input").map((i) => i.attrs.name)).toEqual([]);
     press(button(root(), "Add repository"));
     expect(errLine(root())[0]!.textContent).toBe("Fill in the private key.");
     expect(sent).toEqual([]);
     ta.value = "a\nb\n";
     press(button(root(), "Add repository"));
+    await finish();
     await done;
-    expect(sent[0]!.body).toEqual({ url: "https://github.com/o/a", method: "test-key", key: "a\nb" });
+    expect(saves()[0]!.body).toEqual({ url: "https://github.com/o/a", method: "test-key", key: "a\nb" });
   });
 
   it("checks an empty URL before sending", async () => {
     await show();
     press(button(main(), "+ Add repository"));
-    type("token", TOKEN);
-    press(button(root(), "Add repository"));
+    press(button(root(), "Next"));
     expect(errLine(root())[0]!.textContent).toBe("Fill in the repository URL.");
+    expect(field(root(), "url")!.attrs["aria-invalid"]).toBe("true");
+    expect(field(root(), "method")).toBeUndefined();
     expect(sent).toEqual([]);
   });
 
@@ -456,6 +545,7 @@ describe("the page", () => {
     await show();
     press(button(main(), "+ Add repository"));
     expect(field(root(), "url")!.parent!.parent!.attrs.class).toBe("stack");
+    address("https://github.com/o/a");
     expect(field(root(), "token")!.parent!.parent!.attrs.class).toBe("stack");
   });
 
@@ -467,21 +557,22 @@ describe("the page", () => {
   ])("shows a server error %i in the dialog", async (status, error) => {
     await show();
     press(button(main(), "+ Add repository"));
-    type("url", "https://github.com/o/a");
+    address("https://github.com/o/a");
     type("token", TOKEN);
     answers.push({ status, error });
-    const btn = button(root(), "Add repository")!;
-    press(btn);
+    press(button(root(), "Add repository"));
     await flush();
     expect(errLine(root())[0]!.textContent).toBe(error);
     expect(root().children.length).toBe(1);
-    expect(btn.disabled).toBe(false);
+    // an address error is shown on the address view; the others stay with the form
+    expect(!!field(root(), "method")).toBe(!/you have that repository|address/.test(error));
+    expect(button(root(), "Add repository")?.disabled ?? false).toBe(false);
   });
 
   it("explains a network failure", async () => {
     await show();
     press(button(main(), "+ Add repository"));
-    type("url", "https://github.com/o/a");
+    address("https://github.com/o/a");
     type("token", TOKEN);
     answers.push("throw");
     press(button(root(), "Add repository"));
@@ -492,7 +583,7 @@ describe("the page", () => {
   describe("change authentication", () => {
     const open = async (r: any, admin = false) => {
       repos = [r];
-      await show(admin);
+      await showOne(r.id, { admin });
       press(button(main(), "Change authentication"));
     };
     const https = () => rec({ url: "https://git.example.com/a/b", method: "https-token", username: "ann" });
@@ -506,62 +597,73 @@ describe("the page", () => {
       expect(field(root(), "username")!.value).toBe("ann");
       expect(field(root(), "token")!.value).toBe("");
       type("username", "ann2");
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
+      expect(sent).toEqual([]);
+      tick();
+      press(button(root(), "Replace the sign-in"));
       await flush();
-      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { method: "https-token", username: "ann2" } }]);
+      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { method: "https-token", username: "ann2" } }, { method: "POST", url: `/api/repos/${r.id}/test`, body: {} }]);
+      await finish();
       expect(root().children).toEqual([]);
     });
 
     it("needs a token for a new method", async () => {
       await open(https());
       choose("github-token");
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
       expect(errLine(root())[0]!.textContent).toBe("Fill in the token.");
       expect(sent).toEqual([]);
       type("token", TOKEN);
-      press(button(root(), "Save"));
-      await flush();
-      expect(sent[0]!.body).toEqual({ method: "github-token", token: TOKEN });
+      await replaceSignIn();
+      expect(saves()[0]!.body).toEqual({ method: "github-token", token: TOKEN });
     });
 
     it("sends nothing when nothing changed", async () => {
       await open(https());
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
       await flush();
       expect(sent).toEqual([]);
       expect(root().children).toEqual([]);
     });
 
-    it("keeps the dialog on a failed save and lets the person try again", async () => {
+    it("goes back to the form on a failed save, reads the record again and asks to confirm again", async () => {
       await open(https());
       type("username", "ann2");
       const msg = "the repository was changed, but an old key is still in the Keychain";
       answers.push({ status: 500, error: msg });
-      const btn = button(root(), "Save")!;
-      press(btn);
+      await replaceSignIn();
+      expect(errLine(root())[0]!.textContent).toContain(msg);
+      expect(gets).toBe(2);
+      // after an uncertain save the token is asked for again
+      press(button(root(), "Continue"));
+      expect(errLine(root())[0]!.textContent).toBe("Fill in the token.");
+      type("token", TOKEN);
+      press(button(root(), "Continue"));
+      expect(field(root(), "replace")).toBeDefined();
+      expect(root().textContent).toContain("The last change may not have finished.");
+      tick();
+      press(button(root(), "Replace the sign-in"));
       await flush();
-      expect(errLine(root())[0]!.textContent).toBe(msg);
-      expect(btn.disabled).toBe(false);
-      press(btn);
-      await flush();
-      expect(sent).toHaveLength(2);
-      expect(sent[1]).toEqual(sent[0]);
+      expect(saves()).toHaveLength(2);
+      expect(saves()[1]!.body).toEqual({ ...saves()[0]!.body, token: TOKEN });
     });
 
     it("starts a user's record without a method on GitHub", async () => {
       await open(rec({ method: "none" }));
       expect(field(root(), "method")!.value).toBe("github-token");
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
       expect(errLine(root())[0]!.textContent).toBe("Fill in the token.");
     });
 
     it("never shows the token again", async () => {
       await show();
       press(button(main(), "+ Add repository"));
-      type("url", "https://github.com/o/a");
+      address("https://github.com/o/a");
       type("token", TOKEN);
       press(button(root(), "Add repository"));
-      await flush();
+      await finish();
+      expect(main().textContent).not.toContain(TOKEN);
+      await showOne(repos[0].id);
       expect(main().textContent).not.toContain(TOKEN);
       press(button(main(), "Change authentication"));
       expect(root().textContent).not.toContain(TOKEN);
@@ -569,74 +671,36 @@ describe("the page", () => {
     });
   });
 
-  describe("closed while saving", () => {
-    const start = async () => {
-      await show();
-      press(button(main(), "+ Add repository"));
-      type("url", "https://github.com/o/a");
-      type("token", TOKEN);
-      holdNext = true;
-      press(button(root(), "Add repository"));
-      await flush();
+  describe("remove", () => {
+    let navs: string[];
+    beforeEach(() => {
+      navs = [];
+    });
+    const open = async (r: any) => {
+      repos = [r];
+      await showOne(r.id, { nav: (hash: string) => navs.push(hash) });
     };
 
-    it("sends nothing twice while the dialog is open", async () => {
-      await start();
-      press(button(root(), "Add repository"));
-      await flush();
-      expect(sent).toHaveLength(1);
-      hold!.release();
-      await flush();
-    });
-
-    it("keeps a newer dialog and reports the result as a toast", async () => {
-      await start();
-      pressEscape();
-      expect(root().children).toEqual([]);
-      expect(gets).toBe(1);
-      const marker = new FakeElement("div");
-      root().append(marker);
-      hold!.release();
-      await flush();
-      expect(root().children).toContain(marker);
-      expect(toastText()).toBe("Repository added");
-      expect(gets).toBe(2);
-      expect(main().textContent).toContain("https://github.com/o/a");
-    });
-
-    it("reports a failure as a toast", async () => {
-      await start();
-      pressEscape();
-      const marker = new FakeElement("div");
-      root().append(marker);
-      hold!.release({ status: 409, error: "that repository belongs to another account" });
-      await flush();
-      expect(root().children).toContain(marker);
-      expect(toastText()).toBe("that repository belongs to another account");
-      expect(gets).toBe(2);
-    });
-  });
-
-  describe("remove", () => {
     it("asks first", async () => {
-      repos = [rec()];
-      await show();
+      const r = rec();
+      await open(r);
       press(button(main(), "Remove"));
       await answerDialog("Cancel");
       await flush();
       expect(sent).toEqual([]);
       expect(root().children).toHaveLength(0);
+      expect(button(main(), "Remove")!.disabled).toBeFalsy();
+      expect(navs).toEqual([]);
     });
 
-    it("removes after a confirmation and disables the button meanwhile", async () => {
+    it("removes after a confirmation, disables the button meanwhile and goes back to the list", async () => {
       const r = rec();
-      repos = [r];
-      await show();
+      await open(r);
       holdNext = true;
       const btn = button(main(), "Remove")!;
       press(btn);
       await flush();
-      expect(root().textContent).toContain(`Remove ${r.url}? Its stored token is deleted too.`);
+      expect(root().textContent).toContain(`Remove ${r.url} from the Foundry? Its settings and its watchers are deleted. Its stored token is deleted too. The repository itself is not changed.`);
       await answerDialog("Remove");
       await flush();
       expect(btn.disabled).toBe(true);
@@ -644,35 +708,32 @@ describe("the page", () => {
       hold!.release();
       await flush();
       expect(toastText()).toBe("Repository removed");
-      expect(gets).toBe(2);
-      expect(main().textContent).not.toContain(r.url);
+      expect(navs).toEqual(["#/repos"]);
       expect(errLine(main())).toEqual([]);
     });
 
-    it("shows a failed removal above the list without a retry", async () => {
-      repos = [rec()];
-      await show();
-      answers.push({ status: 404, error: "no such repository" });
+    it("shows a failed removal on the view without a retry", async () => {
+      await open(rec());
+      answers.push({ status: 409, error: "a run uses this repository" });
       press(button(main(), "Remove"));
       await answerDialog("Remove");
       await flush();
-      expect(errLine(main())[0]!.textContent).toBe("no such repository");
+      expect(errLine(main())[0]!.textContent).toBe("a run uses this repository");
       expect(button(main(), "Try again")).toBeUndefined();
-      expect(gets).toBe(2);
+      expect(navs).toEqual([]);
     });
 
     describe("cleanup retry", () => {
       const msg = "the repository was removed, but an old key is still in the Keychain";
       const first = async () => {
         const r = rec();
-        repos = [r];
-        await show();
+        await open(r);
         answers.push({ status: 500, error: msg });
         press(button(main(), "Remove"));
         await answerDialog("Remove");
         await flush();
-        expect(main().textContent).not.toContain(r.url);
         expect(errLine(main())[0]!.textContent).toContain(msg);
+        expect(navs).toEqual([]);
         return r;
       };
 
@@ -682,8 +743,9 @@ describe("the page", () => {
         press(button(main(), "Try again"));
         await flush();
         expect(sent[1]).toEqual({ method: "DELETE", url: `/api/repos/${r.id}`, body: undefined });
-        expect(errLine(main())).toEqual([]);
+        expect(root().children).toHaveLength(0); // no second question
         expect(toastText()).toBe("Repository removed");
+        expect(navs).toEqual(["#/repos"]);
       });
 
       it("a second 500 keeps the line and the button", async () => {
@@ -693,14 +755,14 @@ describe("the page", () => {
         await flush();
         expect(errLine(main())).toHaveLength(1);
         expect(button(main(), "Try again")).toBeDefined();
+        expect(navs).toEqual([]);
       });
 
-      it("a 200 on the repeat clears the line", async () => {
+      it("a 200 on the repeat goes back to the list", async () => {
         await first();
         press(button(main(), "Try again"));
         await flush();
-        expect(errLine(main())).toEqual([]);
-        expect(button(main(), "Try again")).toBeUndefined();
+        expect(navs).toEqual(["#/repos"]);
       });
     });
   });
@@ -830,7 +892,7 @@ describe("late answers", () => {
 
 describe("the repository filter", () => {
   const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
-  const urls = () => byClass(main(), "mono").map((e) => e.textContent);
+  const urls = () => byClass(main(), "repo-name").map((e) => e.textContent);
   const bars = () => byClass(main(), "filter-bar");
   const setHash = (hash: string) => {
     (globalThis as any).location = { hash };
@@ -844,7 +906,7 @@ describe("the repository filter", () => {
     setup();
     setHash("#/repos?repo=O%2FA");
     await showFiltered("O/A");
-    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(urls()).toEqual(["o/a"]);
     expect(main().textContent).toContain("Repository: O/A");
   });
 
@@ -897,14 +959,11 @@ describe("the repository filter", () => {
     press(button(main(), "Test connection"));
     await flush();
     await flush();
-    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(urls()).toEqual(["o/a"]);
     expect(bars()).toHaveLength(1);
-    answers.push({ status: 500, error: "Could not clean up." });
-    press(button(main(), "Remove"));
-    await answerDialog("Remove");
-    await flush();
-    await flush();
+    await ui.renderRepos(main(), { admin: false, query: { repo: "o/a" }, notice: { text: "Could not clean up." } });
     expect(main().textContent).toContain("Could not clean up.");
+    expect(button(main(), "Try again")).toBeUndefined();
     expect(bars()).toHaveLength(1);
   });
 
@@ -950,29 +1009,31 @@ describe("the SSH deploy key", () => {
   const keyOf = (r: any) => byClass(main(), "field").flatMap((e) => e.all("code")).find((c) => c.textContent === r.publicKey);
   afterEach(() => vi.unstubAllGlobals());
 
-  it("adds one as a user: the placeholder changes and the row shows the key and the hint", async () => {
+  it("adds one as a user: the placeholder changes, and the list points to the repository for the key", async () => {
     await show();
     press(button(main(), "+ Add repository"));
     expect(field(root(), "url")!.attrs.placeholder).toBe("https://github.com/owner/name");
-    choose("ssh-deploy-key");
-    expect(field(root(), "url")!.attrs.placeholder).toBe("git@github.com:owner/name.git");
-    expect(root().all("input").map((i) => i.attrs.name)).toEqual(["url"]);
-    choose("github-token");
-    expect(field(root(), "url")!.attrs.placeholder).toBe("https://github.com/owner/name");
-    choose("ssh-deploy-key");
-    type("url", SSH);
+    address(SSH);
+    // an SSH address preselects the deploy key
+    expect(field(root(), "method")!.value).toBe("ssh-deploy-key");
+    expect(root().all("input").map((i) => i.attrs.name)).toEqual([]);
     press(button(root(), "Add repository"));
-    await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: SSH, method: "ssh-deploy-key" } }]);
+    await finish();
+    expect(saves()).toEqual([{ method: "POST", url: "/api/repos", body: { url: SSH, method: "ssh-deploy-key" } }]);
+    // the key is on the repository page, not on the row
+    expect(main().textContent).not.toContain(repos[0].publicKey);
+    expect(main().textContent).not.toContain(ui.DEPLOY_KEY_HINT);
+    expect(main().textContent).toContain("SSH deploy key");
+    expect(main().textContent).toContain("Open the repository to find its public key");
+    await showOne(repos[0].id);
     expect(main().textContent).toContain(repos[0].publicKey);
     expect(main().textContent).toContain(ui.DEPLOY_KEY_HINT);
-    expect(main().textContent).toContain("SSH deploy key");
   });
 
   it("copies the key", async () => {
     const r = deployRec();
     repos = [r];
-    await show();
+    await showOne(r.id);
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     press(button(main(), "Copy"));
@@ -989,7 +1050,7 @@ describe("the SSH deploy key", () => {
   it("generates a new key only after a confirmation, and shows it", async () => {
     const r = deployRec();
     repos = [r];
-    await show();
+    await showOne(r.id);
     press(button(main(), "Generate a new key"));
     await answerDialog("Cancel");
     await flush();
@@ -1001,7 +1062,7 @@ describe("the SSH deploy key", () => {
     const asked = walk(root()).find((e) => e.tag === "p")!.textContent;
     await answerDialog("Generate a new key");
     await flush();
-    expect(asked).toBe(`Generate a new key for ${SSH}? The old key stops working. Add the new public key as a deploy key and remove the old one.`);
+    expect(asked).toBe(`Generate a new key for ${SSH}? The old key is deleted and stops working. Add the new public key as a deploy key and remove the old one.`);
     expect(btn.disabled).toBe(true);
     expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { newKey: true } }]);
     hold!.release();
@@ -1011,9 +1072,9 @@ describe("the SSH deploy key", () => {
     expect(main().textContent).not.toContain(r.publicKey);
   });
 
-  it("shows a failed new key above the list without a retry", async () => {
+  it("shows a failed new key on the view without a retry", async () => {
     repos = [deployRec()];
-    await show();
+    await showOne(repos[0].id);
     answers.push({ status: 500, error: "the SSH key could not be made; see the server log" });
     press(button(main(), "Generate a new key"));
     await answerDialog("Generate a new key");
@@ -1024,10 +1085,10 @@ describe("the SSH deploy key", () => {
 
   it("asks about the stored key when removing", async () => {
     repos = [deployRec(), rec()];
-    await show();
     const asked: string[] = [];
-    for (const b of walk(main()).filter((e) => e.tag === "button" && e.textContent === "Remove")) {
-      press(b);
+    for (const r of repos) {
+      await showOne(r.id);
+      press(button(main(), "Remove"));
       await flush();
       asked.push(walk(root()).find((e) => e.tag === "p")?.textContent ?? "");
       await answerDialog("Cancel");
@@ -1036,9 +1097,9 @@ describe("the SSH deploy key", () => {
     expect(asked[1]).toContain("Its stored token is deleted too.");
   });
 
-  it("a token row has no key block and no new-key button", async () => {
+  it("a token repository has no key block and no new-key button", async () => {
     repos = [rec()];
-    await show();
+    await showOne(repos[0].id);
     expect(button(main(), "Copy")).toBeUndefined();
     expect(button(main(), "Generate a new key")).toBeUndefined();
     expect(main().textContent).not.toContain("Public key");
@@ -1047,7 +1108,7 @@ describe("the SSH deploy key", () => {
   describe("change authentication", () => {
     const open = async (r: any) => {
       repos = [r];
-      await show();
+      await showOne(r.id);
       press(button(main(), "Change authentication"));
     };
 
@@ -1060,13 +1121,17 @@ describe("the SSH deploy key", () => {
       expect(url.attrs.class).toBe("mono");
       expect(url.value).toBe("");
       expect(root().textContent).toContain("SSH address");
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
       expect(errLine(root())[0]!.textContent).toBe("Fill in the repository URL.");
       expect(sent).toEqual([]);
       type("url", SSH);
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
+      expect(sent).toEqual([]);
+      expect(root().textContent).toContain(`The address changes to ${SSH}.`);
+      tick();
+      press(button(root(), "Replace the sign-in"));
       await flush();
-      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: SSH, method: "ssh-deploy-key" } }]);
+      expect(saves()).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: SSH, method: "ssh-deploy-key" } }]);
     });
 
     it("keeps what was typed in the address when the method changes back and forth", async () => {
@@ -1088,12 +1153,11 @@ describe("the SSH deploy key", () => {
       expect(url.attrs.placeholder).toBe("https://github.com/owner/name");
       expect(root().textContent).toContain("HTTPS address");
       type("token", TOKEN);
-      press(button(root(), "Save"));
+      press(button(root(), "Continue"));
       expect(errLine(root())[0]!.textContent).toBe("Fill in the repository URL.");
       type("url", "https://github.com/o/a");
-      press(button(root(), "Save"));
-      await flush();
-      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: "https://github.com/o/a", method: "github-token", token: TOKEN } }]);
+      await replaceSignIn();
+      expect(saves()).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { url: "https://github.com/o/a", method: "github-token", token: TOKEN } }]);
     });
 
     it("has no address input on an SSH record", async () => {
@@ -1101,17 +1165,17 @@ describe("the SSH deploy key", () => {
       await open(r);
       choose("ssh-deploy-key");
       expect(field(root(), "url")).toBeUndefined();
-      press(button(root(), "Save"));
-      await flush();
-      expect(sent).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { method: "ssh-deploy-key" } }]);
+      await replaceSignIn();
+      expect(saves()).toEqual([{ method: "PUT", url: `/api/repos/${r.id}/auth`, body: { method: "ssh-deploy-key" } }]);
     });
   });
 
   it("shows the method name in a server error", async () => {
     await show();
     press(button(main(), "+ Add repository"));
+    address("https://github.com/o/a");
     choose("ssh-deploy-key");
-    type("url", "https://github.com/o/a");
+    type("url", "git@github.com:o/a.git");
     answers.push({ status: 400, error: '"ssh-deploy-key" works only with an SSH address' });
     press(button(root(), "Add repository"));
     await flush();
@@ -1159,6 +1223,8 @@ describe("the GitHub App", () => {
   const anchors = (el: FakeElement) => walk(el).filter((e) => e.tag === "a");
   const optionIds = () => field(root(), "method")!.children.map((o: any) => o.value);
   const NOT_AVAILABLE = "GitHub App is not available";
+  /** Links to other sites, leaving out the repository link, Open and the back link. */
+  const external = () => anchors(main()).filter((a) => a.attrs.class !== "repo-link" && (a.attrs.href ?? "").startsWith("https://"));
 
   it("asks the server for the methods", async () => {
     methodsAnswer = appOptions();
@@ -1171,6 +1237,7 @@ describe("the GitHub App", () => {
     methodsAnswer = appOptions();
     await show();
     press(button(main(), "+ Add repository"));
+    address("https://github.com/o/a");
     expect(optionIds()).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
     expect(root().textContent).not.toContain(NOT_AVAILABLE);
     pressEscape();
@@ -1179,6 +1246,7 @@ describe("the GitHub App", () => {
     methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
     await show();
     press(button(main(), "+ Add repository"));
+    address("https://github.com/o/a");
     expect(optionIds()).not.toContain("github-app");
     expect(root().textContent).toContain(`${NOT_AVAILABLE}: the administrator has not set up the app (Settings → GitHub App).`);
   });
@@ -1187,16 +1255,19 @@ describe("the GitHub App", () => {
     methodsAnswer = appOptions();
     await show();
     press(button(main(), "+ Add repository"));
-    type("url", "https://github.com/o/a");
+    address("https://github.com/o/a");
     choose("github-app");
     expect(field(root(), "token")).toBeUndefined();
     const [link] = anchors(root());
     expect(link!.attrs.href).toBe(APP_URL);
     expect(link!.attrs.rel).toBe("noopener noreferrer");
     expect(link!.attrs.target).toBe("_blank");
+    expect(root().textContent).toContain("The connection is tested right after you save.");
+    expect(root().textContent).not.toContain("press Test connection");
     press(button(root(), "Add repository"));
     await flush();
-    expect(sent).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://github.com/o/a", method: "github-app" } }]);
+    expect(saves()).toEqual([{ method: "POST", url: "/api/repos", body: { url: "https://github.com/o/a", method: "github-app" } }]);
+    expect(sent).toHaveLength(2);
   });
 
   it("shows the server's sentence when the app is not installed", async () => {
@@ -1204,7 +1275,7 @@ describe("the GitHub App", () => {
     answers = [{ status: 409, error: "the GitHub App is not installed on this repository; install it with the link on the page, then save again" }];
     await show();
     press(button(main(), "+ Add repository"));
-    type("url", "https://github.com/o/a");
+    address("https://github.com/o/a");
     choose("github-app");
     press(button(root(), "Add repository"));
     await flush();
@@ -1224,17 +1295,22 @@ describe("the GitHub App", () => {
     methodsAnswer = appOptions({ githubApp: { available: true, installUrl: "https://evil.example/x" } });
     await show();
     press(button(main(), "+ Add repository"));
+    address("https://github.com/o/a");
     choose("github-app");
     expect(anchors(root())).toEqual([]);
   });
 
-  it("shows the label and the link in the row", async () => {
+  it("shows the label on the row and the link on the view", async () => {
     methodsAnswer = appOptions();
     repos = [rec({ method: "github-app", installationId: "42" })];
     await show();
     expect(main().textContent).toContain("GitHub App");
+    // the row has no app hint and no install link of its own
+    expect(main().textContent).not.toContain("Install the app on this repository");
+    expect(anchors(main()).filter((a) => a.attrs.class !== "repo-link" && a.textContent !== "Open")).toEqual([]);
+    await showOne(repos[0].id);
     expect(main().textContent).toContain("Install the app on this repository, or change which repositories it may use. Then press Test connection.");
-    expect(anchors(main())[0]!.attrs.href).toBe(APP_URL);
+    expect(external()[0]!.attrs.href).toBe(APP_URL);
     expect(errLine(main())).toEqual([]);
   });
 
@@ -1242,18 +1318,243 @@ describe("the GitHub App", () => {
     methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key"], githubApp: { available: false } };
     repos = [rec({ method: "github-app", installationId: "42" })];
     await show();
+    expect(errLine(main())).toEqual([]);
+    await showOne(repos[0].id);
     expect(errLine(main()).map((e) => e.textContent)).toEqual(["The administrator removed the GitHub App. Choose another authentication."]);
-    expect(anchors(main())).toEqual([]);
+    expect(external()).toEqual([]);
   });
 
   it("tells that the app stays installed when the repository is removed", async () => {
     methodsAnswer = appOptions();
     repos = [rec({ method: "github-app", installationId: "42" })];
-    await show();
+    await showOne(repos[0].id);
     press(button(main(), "Remove"));
     await flush();
     const asked = walk(root()).find((e) => e.tag === "p")!.textContent;
     expect(asked).toContain("The app stays installed on GitHub.");
     expect(asked).not.toContain("token");
+  });
+});
+
+describe("the repository context", () => {
+  let ctx: any;
+  const gh = (github: string) => ({ github, owner: "u1", account: null });
+  const memStore = { getItem: () => null, setItem: () => undefined };
+  const start = async (lists: any[][], where = "#/repos") => {
+    const context = await import("../ui/context.js" as string);
+    const queue = [...lists];
+    const a = { repos: vi.fn(() => Promise.resolve(queue.length > 1 ? queue.shift() : queue[0])) };
+    const go = vi.fn();
+    ctx = context.initContext("user", { id: "u1" }, { a, go, notify: vi.fn(), store: context.contextStore("u1", memStore), where: () => where });
+    await ctx.ready;
+    return { a, go };
+  };
+  const switcher = () => (document as any).getElementById("context").textContent as string;
+  afterEach(() => ctx?.stop());
+
+  it("a confirmed removal loads the list of the switcher once more", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")], []]);
+    await showOne(repos[0].id);
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(switcher()).toContain("No repository yet.");
+  });
+
+  it("a removal that fails in the cleanup still loads it again, and the retry stays", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")], []]);
+    await showOne(repos[0].id);
+    answers.push({ status: 500, error: "an old key is still in the Keychain" });
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(switcher()).toContain("No repository yet.");
+    expect(button(main(), "Try again")).toBeDefined();
+  });
+
+  it("a removal that fails before anything is removed does not", async () => {
+    repos = [rec()];
+    const { a } = await start([[gh("o/a")]]);
+    await showOne(repos[0].id);
+    answers.push({ status: 404, error: "no such repository" });
+    press(button(main(), "Remove"));
+    await answerDialog("Remove");
+    await flush();
+    expect(a.repos).toHaveBeenCalledTimes(1);
+  });
+
+  it("an added repository changes the switcher from one to many and rewrites #/repos without a redraw", async () => {
+    const { a, go } = await start([[gh("o/a")], [gh("o/a"), gh("o/b")]]);
+    await show();
+    press(button(main(), "+ Add repository"));
+    address("https://github.com/o/b");
+    type("token", TOKEN);
+    press(button(root(), "Add repository"));
+    await finish();
+    expect(a.repos).toHaveBeenCalledTimes(2);
+    expect(go).toHaveBeenCalledWith("#/repos?repo=all", { replace: true, draw: false });
+  });
+
+  it("changing the authentication does not load the list again", async () => {
+    repos = [rec({ url: "https://git.example.com/a/b", method: "https-token", username: "ann" })];
+    const { a } = await start([[gh("o/a")]]);
+    await showOne(repos[0].id);
+    press(button(main(), "Change authentication"));
+    type("username", "ann2");
+    await replaceSignIn();
+    await finish();
+    expect(a.repos).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("rows with health and the next step (#380)", () => {
+  const cell = (tr: FakeElement, label: string) => walk(tr).find((e) => e.tag === "td" && e.attrs["data-label"] === label)!;
+  const rows = () => walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]);
+  const texts = (el: FakeElement, tag = "button") => walk(el).filter((e) => e.tag === tag).map((b) => b.textContent);
+  const searchBox = () => main().all("input").find((i: FakeElement) => i.attrs.type === "search");
+  const memory = () => {
+    const m = new Map<string, string>();
+    return { m, store: { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) } };
+  };
+
+  it("shows the short name with the address in the title, and the address without github", async () => {
+    repos = [rec({ github: "o/a" }), rec({ url: "https://example.test/x/y" })];
+    await show();
+    const [a, b] = rows();
+    expect(cell(a!, "Repository").textContent).toBe("o/a");
+    expect(cell(a!, "Repository").attrs.title).toBe("https://github.com/o/a");
+    expect(cell(b!, "Repository").textContent).toBe("https://example.test/x/y");
+  });
+
+  it("counts running and waiting runs, and shows a dash when the runs fail", async () => {
+    repos = [rec({ github: "o/a" })];
+    runsAnswer = [{ status: "running", vars: { github_repo: "o/a" } }, { status: "waiting", vars: { github_repo: "O/A" } }, { status: "succeeded", vars: { github_repo: "o/a" } }];
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("2");
+    runsFail = true;
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("—");
+    expect(errLine(main())).toEqual([]);
+  });
+
+  it("counts an active run that is older than 200 finished runs", async () => {
+    repos = [rec({ github: "o/a" })];
+    const done = Array.from({ length: 250 }, () => ({ status: "succeeded", vars: { github_repo: "o/a" } }));
+    runsAnswer = [...done, { status: "waiting", vars: { github_repo: "o/a" } }];
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("1");
+  });
+
+  it("shows a dash when an answer reaches the cap of 200", async () => {
+    repos = [rec({ github: "o/a" })];
+    runsAnswer = Array.from({ length: 200 }, () => ({ status: "running", vars: { github_repo: "o/b" } }));
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("—");
+  });
+
+  it("puts the next action in the Next step cell, once", async () => {
+    repos = [rec({ method: "none" }), rec({ connection: connection(false) }), rec({ connection: connection(true) })];
+    await show();
+    const [none, fail, ok] = rows();
+    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill fail");
+    expect(texts(cell(none!, "Next step"))).toEqual(["Change authentication"]);
+    expect(texts(cell(none!, "Actions"))).not.toContain("Change authentication");
+    expect(texts(cell(fail!, "Next step"))).toEqual(["Test again"]);
+    expect(cell(fail!, "Next step").textContent).toContain("The host did not accept the token.");
+    expect(texts(cell(ok!, "Next step"))).toEqual([]);
+    expect(cell(ok!, "Next step").textContent).toBe("Nothing to do");
+    for (const tr of [none!, fail!, ok!]) {
+      const all = texts(tr);
+      expect(new Set(all).size).toBe(all.length);
+    }
+  });
+
+  it("offers the install link for an app that is not installed, else the test button", async () => {
+    const c = connection(false, { checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "The app is not installed." }] });
+    repos = [rec({ method: "github-app", connection: c })];
+    methodsAnswer = appOptions();
+    await show();
+    const next = cell(rows()[0]!, "Next step");
+    expect(walk(next).find((e) => e.tag === "a")!.attrs.href).toBe(APP_URL);
+    expect(texts(cell(rows()[0]!, "Actions"))).toEqual([]);
+    methodsAnswer = appOptions({ githubApp: { available: true, installUrl: "https://evil.example/x" } });
+    await show();
+    expect(texts(cell(rows()[0]!, "Next step"))).toEqual(["Test again"]);
+  });
+
+  it("draws failed, untested and connected rows in that order with the count", async () => {
+    repos = [rec({ github: "o/c", connection: connection(true) }), rec({ github: "o/u" }), rec({ github: "o/f", connection: connection(false) })];
+    await show();
+    expect(rows().map((r) => cell(r, "Repository").textContent)).toEqual(["o/f", "o/u", "o/c"]);
+    expect(main().textContent).toContain("2 repositories need attention.");
+  });
+
+  it("shows the text filter from 8 repositories and narrows without a new load", async () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => rec({ github: `o/r${i}`, url: `https://github.com/o/r${i}` }));
+    repos = many(7);
+    await show();
+    expect(searchBox()).toBeUndefined();
+    repos = many(8);
+    await show();
+    const input = searchBox()!;
+    const before = gets;
+    (input as any).value = "o/r3";
+    input.fire("input", {});
+    expect(rows().map((r) => cell(r, "Repository").textContent)).toEqual(["o/r3"]);
+    expect(gets).toBe(before);
+    (input as any).value = "nothing";
+    input.fire("input", {});
+    expect(rows()).toHaveLength(0);
+    expect(main().textContent).toContain("No repository matches the filter.");
+    expect(searchBox()).toBe(input);
+  });
+
+  it("draws 50 repositories in one table box", async () => {
+    repos = Array.from({ length: 50 }, (_, i) => rec({ github: `o/r${i}`, url: `https://github.com/o/r${i}` }));
+    await show();
+    expect(rows()).toHaveLength(50);
+    expect(byClass(main(), "table-box")).toHaveLength(1);
+  });
+
+  it("remembers Compact rows", async () => {
+    const { m, store } = memory();
+    repos = [rec()];
+    await ui.renderRepos(main(), { admin: false, store });
+    const box = () => main().all("input").find((i: FakeElement) => i.attrs["data-focus"] === "repos-compact")!;
+    const tableClass = () => walk(main()).find((e) => e.tag === "table")!.attrs.class;
+    expect(tableClass()).toBe("table cards");
+    (box() as any).checked = true;
+    box().fire("change", { currentTarget: box() });
+    expect(tableClass()).toBe("table cards compact");
+    expect(m.get("scf.repos.compact")).toBe("1");
+    await ui.renderRepos(main(), { admin: false, store });
+    expect(tableClass()).toBe("table cards compact");
+    (box() as any).checked = false;
+    box().fire("change", { currentTarget: box() });
+    expect(m.get("scf.repos.compact")).toBe("0");
+  });
+
+  it("shows no button and no secret in read-only mode", async () => {
+    const c = connection(false, { checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "No." }] });
+    repos = [rec({ connection: connection(false), token: TOKEN }), rec({ method: "github-app", connection: c })];
+    methodsAnswer = appOptions();
+    await ui.renderRepos(main(), { admin: false, readOnly: true });
+    expect(walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent)).toEqual([]);
+    expect(walk(main()).filter((e) => e.tag === "a" && e.attrs.href === APP_URL)).toEqual([]);
+    expect(main().textContent).toContain("Last test failed");
+    expect(main().textContent).not.toContain(TOKEN);
+  });
+
+  it("lets a long name wrap inside its cell", () => {
+    const css = readFileSync(new URL("../ui/css/components.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.table td\.repo-name\s*\{[^}]*max-width[^}]*overflow-wrap:\s*anywhere/);
   });
 });

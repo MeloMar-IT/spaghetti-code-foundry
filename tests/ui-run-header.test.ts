@@ -92,6 +92,23 @@ describe("role safety", () => {
   });
 });
 
+describe("the bar", () => {
+  it.each([[undefined, "Back to Runs"], ["Back to My runs", "Back to My runs"]])("is a toolbar page-head with the back link before the title (%s)", (label, expected) => {
+    const head = rh.createRunHeader({ admin: false, onAction: () => {}, ...(label ? { backLabel: label } : {}) });
+    const h1 = head.el.all("h1")[0] as FakeElement;
+    const bar = h1.parent as FakeElement;
+    expect(bar.attrs.class).toBe("toolbar page-head");
+    const back = bar.children[bar.children.indexOf(h1) - 1] as FakeElement;
+    expect(back.attrs["data-focus"]).toBe("back");
+    expect(back.attrs.href).toBe("#/runs");
+    expect(back.attrs.class).toBe("btn ghost");
+    expect(back.attrs["aria-label"]).toBe(expected);
+    expect(bar.children.slice(bar.children.indexOf(h1) + 1).map((c: FakeElement) => c.tag)).toEqual(["span", "span", "span"]);
+    head.update(base(), {});
+    expect(h1.textContent).toBe("Do the thing");
+  });
+});
+
 describe("the main button", () => {
   const make = (s: any, opts: any = {}) => {
     const head = rh.createRunHeader({ admin: false, onAction: vi.fn(), ...opts });

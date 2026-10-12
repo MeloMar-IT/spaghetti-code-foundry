@@ -551,7 +551,8 @@ describe("the Runs pages for a user", () => {
       answers["/api/queue"] = { pending: [pending(0)], active: [], concurrency: 2 };
       const main = connected();
       (await runs.renderRunsList(main, { admin: false }))();
-      expect(main.textContent).toContain("q1");
+      expect(main.all("a").some((a) => a.attrs["data-focus"] === "open-q1")).toBe(true);
+      expect(main.textContent).toContain("1 of 1");
       expect(main.textContent).not.toContain("ahead of you");
     } finally {
       answers["/api/queue"] = QUEUE;
@@ -566,12 +567,11 @@ describe("the Runs pages for a user", () => {
     try {
       const main = connected();
       const stop = await runs.renderRunsList(main);
-      expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue", "/api/run-owners"]));
-      expect(main.textContent).toContain("0/2 running");
-      expect(main.all("th").map((th) => th.textContent)).toContain("Owner");
-      const cells = main.all("tr").map((tr) => tr.all("td").map((td) => td.textContent)).filter((c) => c.length);
-      expect(cells.map((c) => c[3])).toEqual(["Ann", "deleted user", ""]);
-      const select = main.all("select")[0]!;
+      expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue", "/api/run-owners", "/api/run-filters"]));
+      expect(main.textContent).not.toContain("running ·");
+      const owners = main.all("li").map((li) => li.all("div").filter((d) => d.attrs["data-label"] === "Owner").map((d) => d.textContent));
+      expect(owners.flat()).toEqual(["Ann", "deleted user", ""]);
+      const select = main.all("select").find((s) => s.attrs["data-focus"] === "owner-filter")!;
       expect(select.all("option").map((o) => o.textContent)).toEqual(["All owners", "Ann (3)", "Bob (1)", "deleted user (1)"]);
       asked.length = 0;
       select.fire("change", { target: { value: "u2" } });
@@ -592,9 +592,9 @@ describe("the Runs pages for a user", () => {
     try {
       const main = connected();
       const stop = await runs.renderRunsList(main);
-      main.all("select")[0]!.fire("change", { target: { value: "u1" } });
+      main.all("select").find((s) => s.attrs["data-focus"] === "owner-filter")!.fire("change", { target: { value: "u1" } });
       await vi.advanceTimersByTimeAsync(0);
-      expect(main.textContent).toContain("No runs match Owner: Ann.");
+      expect(main.textContent).toContain("No runs match your search and filters.");
       stop();
     } finally {
       delete answers["/api/run-owners"];
@@ -741,7 +741,8 @@ describe("the Runs pages for a user", () => {
     const runs = (await import("../ui/runs.js" as string)) as any;
     const user = connected();
     (await runs.renderRunsList(user, { admin: false }))();
-    expect(user.all("th").map((t) => t.textContent)).not.toContain("Cost");
+    const labels = (m: FakeElement) => m.all("div").map((d) => d.attrs["data-label"]);
+    expect(labels(user)).not.toContain("Cost");
     const admin = connected();
     answers["/api/run-owners"] = [];
     try {
@@ -749,7 +750,7 @@ describe("the Runs pages for a user", () => {
     } finally {
       delete answers["/api/run-owners"];
     }
-    expect(admin.all("th").map((t) => t.textContent)).toContain("Cost");
+    expect(labels(admin)).toContain("Cost");
   });
 
   it("the run page of an admin shows the retired line and no Resume, Retry, Approve or Reject", async () => {

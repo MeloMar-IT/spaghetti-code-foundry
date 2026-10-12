@@ -296,15 +296,15 @@ describe("Runs list", () => {
     const stop = await runs.renderRunsList(main);
     expectNamed(main);
     expect(auditPage(main)).toEqual([]);
-    const row = main.all("tr").find((tr) => tr.all("a").length)!;
-    expect(kids(kids(row)[0]!).some((a) => a.tag === "a" && a.attrs.href === "#/runs/r1")).toBe(true);
-    for (const name of ["run-r1", "needs-r1"]) {
-      const before = named(main, name);
-      before.focus();
-      listAnswers([RUN("r1", { task: `changed ${name}` })]);
-      await tick(30_000);
-      expectKept(main, name, before);
-    }
+    const row = main.all("li")[0]!;
+    expect(row.all("a").some((a) => a.attrs.href === "#/runs/r1")).toBe(true);
+    const before = named(main, "open-r1");
+    before.focus();
+    const select = named(main, "owner-filter");
+    listAnswers([RUN("r1", { task: "changed" })]);
+    await tick(30_000);
+    expectKept(main, "open-r1", before);
+    expect(named(main, "owner-filter")).toBe(select);
     stop();
   });
 
@@ -320,10 +320,10 @@ describe("Runs list", () => {
     expect(asked).toContain("/api/runs");
     expect(named(main, "owner-filter")).toBe(select);
     expect(main.textContent).not.toContain("Changed");
-    named(main, "run-r1").focus();
+    named(main, "open-r1").focus();
     await tick(300);
     expect(main.textContent).toContain("Changed");
-    expect(named(main, "owner-filter")).not.toBe(select);
+    expect(named(main, "owner-filter")).toBe(select); // the owner select is kept, not drawn again
     stop();
   });
 
@@ -331,7 +331,7 @@ describe("Runs list", () => {
     listAnswers([RUN("r1")]);
     const main = connected();
     const stop = await runs.renderRunsList(main);
-    named(main, "run-r1").focus();
+    named(main, "open-r1").focus();
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     (globalThis as any).fetch = async (url: string) => {
@@ -347,7 +347,7 @@ describe("Runs list", () => {
     await flush();
     expect(named(main, "owner-filter")).toBe(select);
     expect(main.textContent).not.toContain("Changed");
-    named(main, "run-r1").focus();
+    named(main, "open-r1").focus();
     await tick(300);
     expect(main.textContent).toContain("Changed");
     stop();
@@ -545,17 +545,20 @@ describe("My runs", () => {
     const list = main.children[2] as FakeElement;
     expectNamed(list);
     expect(auditPage(main)).toEqual([]);
-    for (const name of ["open-r1", "remove-q1"]) {
-      const before = named(list, name);
-      before.focus();
-      runsNow = [myRun("r1", { task: name })];
-      await tick(30_000);
-      expectKept(list, name, before);
-    }
+    const link = named(list, "open-r1");
+    link.focus();
+    runsNow = [myRun("r1", { task: "open-r1" })]; // the row changes: a new node, the focus follows
+    await tick(30_000);
+    expectKept(list, "open-r1", link);
+    const remove = named(list, "remove-q1");
+    remove.focus();
+    runsNow = [myRun("r1", { task: "other" })]; // another row changes: this node stays, with its focus
+    await tick(30_000);
+    expect(named(list, "remove-q1")).toBe(remove);
+    expect(doc().activeElement).toBe(remove);
     queueNow = [];
     await tick(30_000);
-    expect(doc().activeElement).toBe(main.all("h1")[0]);
-    expect(main.all("h1")[0]!.attrs.tabindex).toBe("-1");
+    expect(doc().activeElement?.attrs["data-focus"]).toMatch(/^sec-/);
     stop();
   });
 
@@ -649,7 +652,7 @@ describe("Admin run page", () => {
     answers["/api/users"] = [];
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1");
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     handlers.update!({ data: JSON.stringify({ summary: RUN("r1", { next: undefined }) }) });
     const s = RUN("r1", { status: "waiting" });
     handlers.update!({ data: JSON.stringify({ summary: s }) });
@@ -666,7 +669,7 @@ describe("Admin run page", () => {
     const handlers = stubEventSource();
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1", { admin: false });
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(stopped());
     const select = named(head, "act-retry-from");
@@ -692,7 +695,7 @@ describe("Admin run page", () => {
     };
     const main = connected();
     const stop = runs.renderRunDetail(main, "r1");
-    const head = main.children[0] as FakeElement;
+    const head = main.children[0].children[0] as FakeElement;
     const send = (s: unknown) => handlers.update!({ data: JSON.stringify({ summary: s }) });
     send(stopped());
     named(head, "act-retry-from").focus();

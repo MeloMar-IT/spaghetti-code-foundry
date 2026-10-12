@@ -7,10 +7,11 @@ import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 let restore: () => void;
 let ui: any;
 let list: any;
-beforeAll(async () => {
-  restore = installFakeDom();
+let filters: any;
+beforeAll(async () => {  restore = installFakeDom();
   ui = await import("../ui/work.js" as string);
   list = await import("../ui/work-list.js" as string);
+  filters = await import("../ui/filters.js" as string);
 });
 afterAll(() => restore());
 
@@ -27,6 +28,7 @@ beforeEach(() => {
     });
 });
 afterEach(() => {
+  filters.setContextOffer(null);
   vi.clearAllTimers();
   vi.useRealTimers();
   globalThis.fetch = realFetch;
@@ -204,6 +206,42 @@ describe("counts and empty states", () => {
     expect(root.textContent).toContain("No stories yet.");
     expect(root.all("h3")).toHaveLength(0);
   });
+  it("keeps the scope controls and Clear filters on an empty board with an owner of the address", () => {
+    const h = handlers();
+    const root = view({ ...board([]), empty: "No stories yet." }, prefs({ owner: "u2" }), h);
+    expect(root.textContent).toContain("No story matches the filters.");
+    expect(root.textContent).not.toContain("No stories yet.");
+    expect(focus(root, "work-owner")).toBeTruthy();
+    focus(root, "work-clear").listeners.click![0]!();
+    expect(h.onClear).toHaveBeenCalled();
+  });
+  it("shows the Use as my context button, also on an empty board", () => {
+    const onUse = vi.fn();
+    expect(focus(view(two, prefs({ repo: "acme/app" })), "work-context")).toBeUndefined();
+    const source = vi.fn(() => ({ label: "Repository: acme/app", onUse }));
+    filters.setContextOffer(source);
+    for (const d of [two, { ...board([]), empty: "No stories yet." }]) {
+      const root = view(d, prefs({ repo: "acme/app" }));
+      expect(source).toHaveBeenLastCalledWith({ repo: "acme/app" });
+      const b = focus(root, "work-context");
+      b.listeners.click![0]!();
+      expect(onUse).toHaveBeenCalled();
+      expect(b.hidden).toBe(true);
+    }
+  });
+  it("shows 'not in your list' for a repository that is not there, instead of stories or the server's text", () => {
+    const h = handlers();
+    const root = view(two, prefs({ repo: "x/y" }), h);
+    expect(root.textContent).toContain("This repository is not in your list");
+    expect(root.all("h3")).toHaveLength(0);
+    expect(root.textContent).not.toContain("stories");
+    expect(focus(root, "work-clear")).toBeUndefined();
+    focus(root, "work-all").listeners.click![0]!();
+    expect(h.onChange).toHaveBeenCalledWith({ repo: "" });
+    const empty = view({ repos: [], empty: "No stories yet." }, prefs({ repo: "x/y" }));
+    expect(empty.textContent).toContain("This repository is not in your list");
+    expect(empty.textContent).not.toContain("No stories yet.");
+  });
 });
 
 describe("toolbar", () => {
@@ -245,13 +283,13 @@ describe("toolbar", () => {
 
 describe("renderWork", () => {
   const main = () => new FakeElement("main");
-  const open = async (d: unknown, wanted?: string, store: any = mem(), user = "u1") => {
+  const open = async (d: unknown, wanted?: string, store: any = mem(), user = "u1", query: Record<string, string> = {}, go = vi.fn()) => {
     if (!store.data["scf.work.u1"]) store.data["scf.work.u1"] = JSON.stringify({ layout: "list" });
     const m = main();
-    const cleanup = ui.renderWork(m, wanted, { user, store, now: () => NOW });
+    const cleanup = ui.renderWork(m, wanted, { user, store, now: () => NOW, query, go });
     calls.shift()!.answer(d);
     await flush();
-    return { m, cleanup, store };
+    return { m, cleanup, store, go };
   };
   const pickValue = (m: FakeElement, name: string, value: string) => focus(m, name).listeners.change![0]!({ target: { value } });
   const selected = (m: FakeElement, name: string) => focus(m, name).all("option").find((o) => "selected" in o.attrs)?.value;
@@ -395,15 +433,183 @@ describe("renderWork", () => {
     cleanup();
   });
 
-  it("uses the repository of the address, and All for an unknown one", async () => {
+  it("keeps an unknown repository of the address and shows 'not in your list'", async () => {
     const d = board([card()], "acme/app", { "acme/lib": [] });
     const a = await open(d, "acme/lib");
     expect(selected(a.m, "work-repo")).toBe("acme/lib");
     a.cleanup();
     const b = await open(d, "unknown/repo");
-    expect(selected(b.m, "work-repo")).toBe("");
-    expect(b.m.textContent).toContain("Eighty-nine");
+    const check = () => {
+      expect(b.m.textContent).toContain("This repository is not in your list");
+      expect(b.m.textContent).not.toContain("Eighty-nine");
+      expect(rows(b.m)).toHaveLength(0);
+      expect(selected(b.m, "work-repo")).toBe("unknown/repo");
+      expect(b.go).not.toHaveBeenCalled();
+    };
+    check();
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([card({ title: "Changed" })], "acme/app", { "acme/lib": [] }));
+    await flush();
+    check();
+    focus(b.m, "work-all").listeners.click![0]!();
+    expect(b.go).toHaveBeenLastCalledWith("#/board");
+    expect(rows(b.m)).toHaveLength(1);
     b.cleanup();
+  });
+
+  it("lets the address win over a saved repository and owner", async () => {
+    const store = mem();
+    store.data["scf.work.u1"] = JSON.stringify({ layout: "list", repo: "acme/lib", owner: "u2" });
+    const d = board([card()], "acme/app", { "acme/lib": [] });
+    const a = await open(d, undefined, store, "u1", { repo: "all", owner: "u1" });
+    expect(selected(a.m, "work-repo")).toBe("");
+    expect(selected(a.m, "work-owner")).toBe("u1");
+    a.cleanup();
+    const b = await open(d, undefined, store, "u1", {});
+    expect(selected(b.m, "work-repo")).toBe("");
+    expect(selected(b.m, "work-owner")).toBe("");
+    b.cleanup();
+    const c = await open(d, "acme/app", store, "u1", {});
+    expect(selected(c.m, "work-repo")).toBe("acme/app");
+    expect(selected(c.m, "work-owner")).toBe("");
+    c.cleanup();
+  });
+
+  it("writes the address when the repository, the owner or Clear filters change", async () => {
+    const d = board([card()], "acme/app", { "acme/lib": [] });
+    const a = await open(d, "acme/app", mem(), "u1", { owner: "u1" });
+    pickValue(a.m, "work-repo", "acme/lib");
+    expect(a.go).toHaveBeenLastCalledWith("#/board/acme%2Flib?owner=u1");
+    pickValue(a.m, "work-repo", "");
+    expect(a.go).toHaveBeenLastCalledWith("#/board?owner=u1");
+    pickValue(a.m, "work-owner", "");
+    expect(a.go).toHaveBeenLastCalledWith("#/board");
+    a.cleanup();
+    const b = await open(d, "acme/app");
+    pickValue(b.m, "work-owner", "u1");
+    expect(b.go).toHaveBeenLastCalledWith("#/board/acme%2Fapp?owner=u1");
+    b.cleanup();
+    const c = await open(d, "acme/app", mem(), "u1", { owner: "u1" });
+    focus(c.m, "work-text").listeners.input![0]!({ target: { value: "zzz" } });
+    focus(c.m, "work-clear").listeners.click![0]!();
+    expect(c.go).toHaveBeenLastCalledWith("#/board");
+    expect(selected(c.m, "work-repo")).toBe("");
+    expect(selected(c.m, "work-owner")).toBe("");
+    c.cleanup();
+  });
+
+  it("keeps a changed repository after a changed poll answer (A to B, A to All)", async () => {
+    const lib = card({ issue: 3, title: "Lib", key: "acme/lib#3" });
+    const d = board([card()], "acme/app", { "acme/lib": [lib] });
+    const next = board([card({ title: "Changed" })], "acme/app", { "acme/lib": [lib] });
+    const a = await open(d, "acme/app");
+    pickValue(a.m, "work-repo", "acme/lib");
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(next);
+    await flush();
+    expect(selected(a.m, "work-repo")).toBe("acme/lib");
+    expect(a.m.textContent).toContain("Lib");
+    expect(a.m.textContent).not.toContain("Changed");
+    expect(a.go).toHaveBeenCalledTimes(1);
+    a.cleanup();
+    const b = await open(d, "acme/app");
+    pickValue(b.m, "work-repo", "");
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(next);
+    await flush();
+    expect(selected(b.m, "work-repo")).toBe("");
+    expect(rows(b.m)).toHaveLength(2);
+    expect(b.go).toHaveBeenCalledTimes(1);
+    b.cleanup();
+  });
+
+  it("does not save the repository or the owner, but saves other choices", async () => {
+    const store = mem();
+    store.data["scf.work.u1"] = JSON.stringify({ layout: "list", repo: "acme/lib", owner: "u2" });
+    const before = store.data["scf.work.u1"];
+    const { m, cleanup } = await open(board(), "acme/app", store);
+    pickValue(m, "work-repo", "");
+    pickValue(m, "work-owner", "u1");
+    expect(store.data["scf.work.u1"]).toBe(before);
+    pickValue(m, "work-group", "repo");
+    expect(JSON.parse(store.data["scf.work.u1"])).toMatchObject({ group: "repo", repo: "", owner: "" });
+    cleanup();
+  });
+
+  it("finds the repository of the address in any letter case, without writing the address", async () => {
+    const { m, go, cleanup } = await open(board(), "ACME/App");
+    expect(selected(m, "work-repo")).toBe("acme/app");
+    expect(rows(m)).toHaveLength(1);
+    expect(go).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("keeps a repository called all in the path, and reads all only from ?repo=", async () => {
+    const a = await open(board(), "all");
+    expect(a.m.textContent).toContain("This repository is not in your list");
+    expect(selected(a.m, "work-repo")).toBe("all");
+    a.cleanup();
+    const b = await open(board(), undefined, mem(), "u1", { repo: "all" });
+    expect(selected(b.m, "work-repo")).toBe("");
+    expect(rows(b.m)).toHaveLength(1);
+    b.cleanup();
+  });
+
+  it("shows an owner of the address without cards in the select", async () => {
+    const { m, cleanup } = await open(board(), undefined, mem(), "u1", { owner: "u2" });
+    expect(selected(m, "work-owner")).toBe("u2");
+    cleanup();
+  });
+
+  it("keeps the owner and offers Clear filters on an empty board, also when the last story goes", async () => {
+    const empty = { ...board([]), empty: "No stories yet." };
+    const a = await open(empty, undefined, mem(), "u1", { owner: "u2" });
+    expect(a.m.textContent).toContain("No story matches the filters.");
+    expect(selected(a.m, "work-owner")).toBe("u2");
+    expect(a.go).not.toHaveBeenCalled();
+    a.cleanup();
+    const b = await open(board([card({ owner: "u2", ownerName: "Bob" })]), undefined, mem(), "u1", { owner: "u2" });
+    expect(rows(b.m)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(empty);
+    await flush();
+    expect(b.m.textContent).toContain("No story matches the filters.");
+    expect(selected(b.m, "work-owner")).toBe("u2");
+    focus(b.m, "work-clear").listeners.click![0]!();
+    expect(b.go).toHaveBeenLastCalledWith("#/board");
+    b.cleanup();
+  });
+
+  it("shows Use as my context on an empty board and a click uses it", async () => {
+    const onUse = vi.fn();
+    filters.setContextOffer(() => ({ label: "Repository: acme/app", onUse }));
+    const { m, cleanup } = await open({ ...board([]), empty: "No stories yet." }, "acme/app");
+    focus(m, "work-context").listeners.click![0]!();
+    expect(onUse).toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("keeps an owner of the address that has no cards: an empty list, also after a refresh", async () => {
+    const { m, cleanup } = await open(board(), undefined, mem(), "u1", { repo: "all", owner: "u2" });
+    expect(rows(m)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board([card(), card({ issue: 7, key: "acme/app#7" })]));
+    await flush();
+    expect(rows(m)).toHaveLength(0);
+    pickValue(m, "work-owner", "");
+    expect(rows(m).length).toBeGreaterThan(0);
+    cleanup();
+  });
+
+  it("keeps an owner of the address whose last card disappears during a refresh", async () => {
+    const d = board([card(), card({ issue: 5, key: "acme/app#5", owner: "u2", ownerName: "Bob" })]);
+    const { m, cleanup } = await open(d, undefined, mem(), "u1", { owner: "u2" });
+    expect(rows(m)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    calls.shift()!.answer(board());
+    await flush();
+    expect(rows(m)).toHaveLength(0);
+    cleanup();
   });
 
   it("applies the saved choices of the account only", async () => {
@@ -417,7 +623,7 @@ describe("renderWork", () => {
     b.cleanup();
   });
 
-  it("drops a saved owner that is gone without writing storage", async () => {
+  it("ignores a saved owner without writing storage", async () => {
     const store = mem();
     store.data["scf.work.u1"] = JSON.stringify({ owner: "gone", layout: "list" });
     const before = store.data["scf.work.u1"];
@@ -458,7 +664,7 @@ describe("renderWork", () => {
 describe("source", () => {
   const read = (f: string) => readFileSync(f, "utf8");
   it("switches the board route on the setting", () => {
-    expect(read("ui/app.js")).toContain("S.info.redesign ? renderWork(main, arg, { user: S.me }) : renderBoard(main, arg, { query: to.query, go })");
+    expect(read("ui/app.js")).toContain('S.info.redesign ? renderWork(main, arg, { user: S.me, query: to.query, go }) : renderBoard(main, arg, { query: to.query, go })');
   });
   it("uses no inline style", () => {
     for (const f of ["ui/work.js", "ui/work-list.js", "ui/work-model.js", "ui/work-prefs.js", "ui/work-board.js", "ui/work-display.js"]) expect(read(f), f).not.toMatch(/style\s*:/);

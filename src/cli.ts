@@ -45,7 +45,10 @@ Usage:
   scf skills pin <id@version> <digest> [--replace]   Pin a listed skill package (copy the digest from the list)
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
-  scf validate <flow|file.yaml>                  Check a flow definition
+  scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
+  scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
+  scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
+  scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
                                                  (give it to any LLM, then ask it for a flow)
   scf new <name> [--from <flow>] [--global]      Create your own flow (copies a template)
@@ -62,6 +65,7 @@ Usage:
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
+  scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
         [--every 5m] [--label claude-factory]    each open issue with the label; results are marked
         [--max 1] [--once] [--source …]          with factory:* status labels; resumes runs when
@@ -172,6 +176,7 @@ async function main(argv: string[]): Promise<number> {
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
       max: { type: "string" },
@@ -197,8 +202,11 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
-  if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
+  // `scf skills sources …` only checks a file: it runs without choosing or moving the data folder.
+  if (!(cmd === "skills" && arg === "sources")) {
+    const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
+    if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
+  }
 
   switch (cmd) {
     case "run": {
@@ -268,6 +276,8 @@ async function main(argv: string[]): Promise<number> {
     case "skills": {
       const { skillsCommand } = await import("./skills/cli.js");
       const { help: _h, ...given } = values;
+      if (arg === "import") return (await import("./skill-import/cli.js")).skillImportCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
+      if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
     }
 
@@ -468,6 +478,11 @@ async function main(argv: string[]): Promise<number> {
     case "credential": {
       const { credentialCommand } = await import("./credentials/cli.js");
       return credentialCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "analyst": {
+      const { analystCommand } = await import("./analyst/cli.js");
+      return analystCommand(positionals.slice(1), { cliPath: fileURLToPath(import.meta.url), noWeb: values["no-web"] }, (line) => void process.stdout.write(line + "\n"));
     }
 
     case "monitor": {

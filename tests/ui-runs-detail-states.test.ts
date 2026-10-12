@@ -217,6 +217,39 @@ describe("renderRunDetail states", () => {
     expect(main.textContent).toContain("do the thing");
   });
 
+  it("mounts one detail page: the head holder first, then four sections", async () => {
+    table["/api/runs/r1"] = { hang: true };
+    await open();
+    expect(main.children).toHaveLength(1);
+    const page = main.children[0]!;
+    expect(page.attrs.class).toBe("page page-detail");
+    expect(page.children[0]!.all("div").some((d) => (d.attrs.class ?? "").includes("skeleton-detail"))).toBe(true);
+    pending["/api/runs/r1"]!({ body: RUN });
+    await flush();
+    expect(main.children).toHaveLength(1);
+    expect(page.children[0]!.all("div").some((d) => d.attrs.class === "run-header")).toBe(true);
+    const sections = page.all("div").find((d) => d.attrs.class === "page-sections")!;
+    expect(sections.parent!.attrs.class).toBe("page-body");
+    expect(sections.children).toHaveLength(4);
+    expect(sections.children[3]).toBe(tabsBox());
+  });
+
+  it("moves the focus to the run title when the focused Reconnect goes away", async () => {
+    await open();
+    update(0);
+    lose();
+    const dom = (globalThis as any).document;
+    const reconnect = one(main, "button", { "data-focus": "stream-reconnect" });
+    dom.activeElement = null;
+    reconnect.focus();
+    expect(dom.activeElement).toBe(reconnect);
+    update(0);
+    expect(banners()).toHaveLength(0);
+    const title = main.all("h1")[0]!;
+    expect(dom.activeElement).toBe(title);
+    expect(title.attrs.tabindex).toBe("-1");
+  });
+
   it("a stream update ends the skeleton while the GET is still pending", async () => {
     table["/api/runs/r1"] = { hang: true };
     await open();

@@ -5,6 +5,7 @@ import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
 import type { RunSkillPlan } from "../skills/run-plan.js";
+import type { SessionToolGrant } from "../skills/tool-policy.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -22,6 +23,8 @@ export interface StepRecord {
   costUsd?: number;
   /** Agent step target, e.g. "codex:openai:gpt-5". */
   agent?: string;
+  /** The effort the agent step ran with, when one was set (by the flow or by the analyst). Absent on older runs. */
+  effort?: string;
   tokens?: { input: number; output: number };
   /** The agent hit a usage/rate limit and no fallback model could take over. */
   limited?: boolean;
@@ -31,8 +34,8 @@ export interface StepRecord {
   retried?: { blips: number; models: number };
   /** Tool calls Claude Code refused (at most 5), e.g. "Bash: mkdir out". */
   denied?: string[];
-  /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. */
-  skills?: { loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
+  /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. `grant`: what a Claude coder session was given when the skill tools were checked; an estimate, absent on older runs, Codex and reviewer steps. */
+  skills?: { grant?: SessionToolGrant; loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
   /** A skill catalogue was put before this step's prompt: counts only, never the text. `hidden`: skills left out only because they are not pinned. */
   skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number };
   startedAt: string;

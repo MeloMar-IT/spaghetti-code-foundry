@@ -1,8 +1,14 @@
 import { api } from "./api.js";
+import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
-import { confirmDialog, fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
+import { repoDialog } from "./repo-connect.js";
 import { onWish, takeWish } from "./palette-data.js";
+import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
+import { safeStore } from "./shell.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
+
+export { repoDialog };
 
 /**
  * The ways to sign in to a repository. A later method (the GitHub App) is another entry:
@@ -53,7 +59,7 @@ export const METHODS = [
     help: [
       "The Foundry signs in as the GitHub App the administrator set up. You need no personal token.",
       "First install the app on this repository with the link below (choose Only select repositories and pick this one).",
-      "Then save here, and press Test connection.",
+      "Then save here. The connection is tested right after you save.",
     ],
   },
   {
@@ -77,9 +83,19 @@ export const appInstallUrl = (options) => {
   return typeof url === "string" && /^https:\/\/github\.com\/apps\/[A-Za-z0-9-]+\/installations\/new$/.test(url) ? url : "";
 };
 
-const appAvailable = (options) => options?.githubApp?.available === true;
+/**
+ * The page of a repository on GitHub for its https, `git@github.com:owner/name` or `ssh://git@github.com/owner/name`
+ * address (with or without `.git`); "" for any other host or shape, so no link is made from text we do not understand.
+ */
+export function repoWebUrl(url) {
+  const m = /^(?:https:\/\/(?:[^@/\s]+@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i.exec(text(url).trim());
+  return m && m[1] !== "." && m[1] !== ".." && m[2] !== "." && m[2] !== ".." ? `https://github.com/${m[1]}/${m[2]}` : "";
+}
 
-const installLink = (options) => {
+export const appAvailable = (options) => options?.githubApp?.available === true;
+
+/** The link to install the app, or null. */
+export const installLink = (options) => {
   const href = appInstallUrl(options);
   return href ? h("a", { href, target: "_blank", rel: "noopener noreferrer" }, "Install the app on GitHub") : null;
 };
@@ -118,13 +134,13 @@ const CHECK_LABELS = { clone: "Read", push: "Write", "github-api": "GitHub API" 
 
 /**
  * The lines of the last test as { ok, text } ("Read: the message"). A failed test shows every check; a good one only
- * the checks that were skipped (they say why something was not checked).
+ * the checks that were skipped (they say why something was not checked). With `all` every check is returned.
  */
-export function connectionLines(repo) {
+export function connectionLines(repo, { all = false } = {}) {
   const c = repo?.connection;
   if (!c) return [];
   return c.checks
-    .filter((x) => !c.ok || x.skipped)
+    .filter((x) => all || !c.ok || x.skipped)
     .map((x) => ({ ok: !!x.ok, text: `${CHECK_LABELS[x.check] ?? x.check}: ${x.message}` }));
 }
 
@@ -147,7 +163,7 @@ const connectionCell = (repo, extra = {}) => {
     connectionProblem(repo, extra));
 };
 
-const methodOf = (methods, id) => methods.find((m) => m.id === id) ?? { id, fields: [] };
+export const methodOf = (methods, id) => methods.find((m) => m.id === id) ?? { id, fields: [] };
 
 /** What is missing in the input, or "" when it can be sent. */
 export const repoProblem = (x) => repoProblemAt(x).text;
@@ -161,14 +177,6 @@ export function repoProblemAt({ url, method, values = {}, needUrl = true, needSe
   }
   return { text: "", field: undefined };
 }
-
-// Which control a server sentence is about (src/auth/repo-url.ts, src/server/api-repos.ts). The URL entry covers address errors and a duplicate, not quota ("at most N repositories").
-const REPO_PAIRS = [
-  [/GitHub App|may choose|authentication|method/i, "method"],
-  [/address|host name|\bport\b|\bpath\b|transport|ssh form|you have that repository|^the repository (?:must|is empty)|repository is written/i, "url"],
-  [/user name/i, "username"],
-  [/token/i, "token"],
-];
 
 /** The request body: only the fields of the chosen method, trimmed; an empty secret is left out. */
 export function repoBody({ url, method, values = {}, withUrl = true, methods = METHODS }) {
@@ -203,105 +211,6 @@ export function loadFailed(e, { what, denied, back, onRetry }) {
 /** The deploy-key repositories whose connection does not work yet (the follow-up after adding one). */
 export const needsDeployKey = (repos) => repos.filter((r) => r.method === "ssh-deploy-key" && r.publicKey && !r.connection?.ok);
 
-/**
- * Asks for the URL (when adding) and the method. Resolves once the dialog is closed and any request that
- * was started has finished; the caller then loads the list again. Resolves with the record the server made
- * when a repository was added (undefined otherwise).
- */
-export function repoDialog({ admin = false, options, methods = methodsFor(admin, options), repo } = {}) {
-  let pending = null;
-  let created;
-  let closed = false;
-  const shown = modal(repo ? "Change authentication" : "Add repository", (close) => {
-    const HTTPS_EXAMPLE = "https://github.com/owner/name";
-    const SSH_EXAMPLE = "git@github.com:owner/name.git";
-    const urlInput = repo ? null : h("input", { name: "url", class: "mono", placeholder: HTTPS_EXAMPLE, autocomplete: "off" });
-    const initial = methods.some((m) => m.id === repo?.method) ? repo.method : methods[0].id;
-    const select = h("select", { name: "method" }, methods.map((m) => h("option", { value: m.id }, m.label)));
-    select.value = initial;
-    const values = repo ? { ...repo } : {};
-    delete values.token;
-    // the address of the record is not a field value; the SSH address input starts empty
-    delete values.url;
-    let els = {};
-    const area = h("div", { class: "stack" });
-    const err = h("p", { class: "status bad flush", role: "alert" });
-    const controls = () => ({ ...(urlInput ? { url: urlInput } : {}), ...els, method: select });
-    const fail = (m, key) => showError(err, m, { fields: Object.values(controls()), field: controls()[key ?? fieldFor(m, REPO_PAIRS)] });
-    const draw = () => {
-      const m = methodOf(methods, select.value);
-      els = {};
-      if (urlInput) urlInput.setAttribute("placeholder", m.ssh ? SSH_EXAMPLE : HTTPS_EXAMPLE);
-      // a method whose address form differs from the stored one needs the other form of the address
-      const toSsh = repo && m.ssh && !isSshUrl(repo.url);
-      const toHttps = repo && m.https && isSshUrl(repo.url);
-      if (toSsh || toHttps) {
-        els.url = h("input", { name: "url", class: "mono", placeholder: toSsh ? SSH_EXAMPLE : HTTPS_EXAMPLE, autocomplete: "off", value: values.url ?? "" });
-      }
-      mount(area,
-        h("div", { class: "field" }, (m.help ?? []).map((t) => h("small", {}, t)), m.app ? installLink(options) : null),
-        els.url ? h("label", { class: "field" }, h("span", {}, toSsh ? "SSH address" : "HTTPS address"), els.url) : null,
-        m.fields.map((f) => {
-          const attrs = { name: f.key, autocomplete: f.secret ? "new-password" : "off" };
-          els[f.key] = f.multiline
-            ? h("textarea", { ...attrs, rows: 5, class: "mono" })
-            : h("input", { ...attrs, type: f.secret ? "password" : "text", value: f.secret ? "" : values[f.key] ?? "" });
-          return h("label", { class: "field" }, h("span", {}, f.label), els[f.key]);
-        }));
-    };
-    const read = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value]));
-    select.addEventListener("change", () => {
-      // keep what was typed in plain fields; a secret is not carried over to another method
-      for (const [k, v] of Object.entries(read())) if (!methods.some((m) => m.fields.some((f) => f.key === k && f.secret))) values[k] = v;
-      draw();
-      fail("");
-    });
-    draw();
-
-    let busy = false;
-    const run = () => {
-      if (busy) return;
-      const method = select.value;
-      const v = read();
-      const withUrl = !repo || !!els.url;
-      const input = { url: els.url ? v.url : urlInput?.value, method, values: v, methods };
-      const needSecret = !repo || method !== repo.method;
-      const problem = repoProblemAt({ ...input, needUrl: withUrl, needSecret });
-      if (problem.text) return void fail(problem.text, problem.field);
-      const body = repoBody({ ...input, withUrl });
-      if (repo) {
-        const same = method === repo.method && Object.entries(body).every(([k, x]) => k === "method" || (k !== "token" && x === repo[k]));
-        if (same) return close(true);
-      }
-      busy = true;
-      save.disabled = true;
-      fail("");
-      pending = (async () => {
-        try {
-          if (repo) await api.setRepoAuth(repo.id, body);
-          else created = await api.addRepo(body);
-        } catch (e) {
-          busy = false;
-          if (closed) return toast(plainError(e), "error");
-          fail(plainError(e));
-          save.disabled = false;
-          return;
-        }
-        toast(repo ? "Authentication changed" : "Repository added");
-        if (!closed) close(true);
-      })();
-    };
-    const save = h("button", { class: "primary", onClick: run }, repo ? "Save" : "Add repository");
-    return h("div", { class: "stack" },
-      repo ? h("p", { class: "mono" }, repo.url) : h("label", { class: "field" }, h("span", {}, "Repository URL"), urlInput),
-      h("label", { class: "field" }, h("span", {}, "Authentication"), select),
-      options && !appAvailable(options) ? h("small", {}, "GitHub App is not available: the administrator has not set up the app (Settings → GitHub App).") : null,
-      area, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
-  });
-  shown.then(() => { closed = true; });
-  return shown.then(() => pending).then(() => created);
-}
-
 async function whileBusy(btn, fn) {
   btn.disabled = true;
   try {
@@ -323,6 +232,125 @@ export async function readyView(repo) {
     h("p", { class: "mono" }, repo.url),
     h("ol", {}, (ready.items ?? []).map((i) => h("li", {}, i.text))),
     h("small", {}, ready.isDefault ? "The default list." : "Set by your administrator.")));
+}
+
+/** The address of the view of one repository. */
+export const repoHref = (repo) => `#/repos/${encodeURIComponent(repo.id)}`;
+
+/** The public key with Copy and the deploy-key hint. `copy: false` leaves the button out. */
+export function keyBlock(repo, { copy = true } = {}) {
+  const copyKey = async () => {
+    if (await copyText(repo.publicKey)) toast("Public key copied");
+    else toast("Could not copy. Select the key and copy it yourself.", "error");
+  };
+  return h("div", { class: "field mt-6 maxw-520" },
+    h("span", {}, "Public key"),
+    h("code", { class: "mono break-all select-all" }, repo.publicKey),
+    copy ? h("button", { class: "small", onClick: copyKey }, "Copy") : null,
+    h("small", {}, DEPLOY_KEY_HINT));
+}
+
+/** The install link with its hint, or the "administrator removed the GitHub App" line. `options` undefined: unknown, the hint is shown. */
+export const appBlock = (options) => appAvailable(options) || !options
+  ? h("div", { class: "field mt-6 maxw-520" },
+    installLink(options),
+    h("small", {}, "Install the app on this repository, or change which repositories it may use. Then press Test connection."))
+  : h("div", { class: "status bad" }, "The administrator removed the GitHub App. Choose another authentication.");
+
+/** What the Remove confirmation asks: { title, text, confirm } for confirmDialog. Names what the server deletes. */
+export function removeQuestion(repo) {
+  const byMethod = { "ssh-deploy-key": "Its stored key is deleted too.", "github-token": "Its stored token is deleted too.",
+    "https-token": "Its stored token is deleted too.", "github-app": "The app stays installed on GitHub." };
+  return {
+    title: "Remove repository",
+    text: [`Remove ${repo.url} from the Foundry? Its settings and its watchers are deleted.`, byMethod[repo.method], "The repository itself is not changed."].filter(Boolean).join(" "),
+    confirm: "Remove",
+  };
+}
+
+/** What the Generate a new key confirmation asks. */
+export const newKeyQuestion = (repo) => ({
+  title: "Generate a new key",
+  text: `Generate a new key for ${repo.url}? The old key is deleted and stops working. Add the new public key as a deploy key and remove the old one.`,
+  confirm: "Generate a new key",
+});
+
+/**
+ * Runs the connection test with the button busy and "Testing…". Toasts the outcome, then awaits
+ * apply({ connection }) (the answer has checks), apply({ error }) (the test could not run) or apply({}).
+ */
+export function test(btn, repo, apply) {
+  const label = btn.textContent;
+  btn.textContent = "Testing…";
+  return whileBusy(btn, async () => {
+    let result = {};
+    try {
+      const r = await api.testRepo(repo.id);
+      if (Array.isArray(r?.checks)) result = { connection: r };
+      if (r.ok) toast("Connection works");
+      else toast("Connection failed", "error");
+    } catch (err) {
+      result = { error: explainRepoError(err, "The test could not run.").what };
+      toast(plainError(err), "error");
+    } finally {
+      btn.textContent = label;
+    }
+    return apply(result);
+  });
+}
+
+/** Asks, then makes a new key with the button busy. Cancelled: resolves without calling apply. apply({ repo }) or apply({ error }). */
+export async function newKey(btn, repo, apply) {
+  if (!(await confirmDialog(newKeyQuestion(repo)))) return;
+  return whileBusy(btn, async () => {
+    let made;
+    try {
+      made = await api.setRepoAuth(repo.id, { newKey: true });
+    } catch (err) {
+      // the client cannot tell whether a key was made, so there is no retry
+      return apply({ error: plainError(err) });
+    }
+    toast("New key generated");
+    return apply({ repo: made?.id === repo.id ? made : undefined });
+  });
+}
+
+/**
+ * Asks (not when `again`), then removes with the button busy. apply({ removed: true }) after the toast;
+ * apply({ error, retry }) otherwise (`retry` is true for a 500). Cancelled: resolves without calling apply.
+ */
+export async function remove(btn, repo, apply, { again = false } = {}) {
+  if (!again && !(await confirmDialog(removeQuestion(repo)))) return;
+  return whileBusy(btn, async () => {
+    try {
+      await api.removeRepo(repo.id);
+    } catch (e) {
+      // a repeat that finds no repository: the first try removed it, and the old key is gone now
+      if (!(again && e.status === 404)) {
+        // a 500 comes from the cleanup after the record is gone: the switcher must not keep the repository
+        if (e.status === 500) void reposChanged();
+        return apply({ error: plainError(e), retry: e.status === 500 });
+      }
+    }
+    void reposChanged();
+    toast("Repository removed");
+    return apply({ removed: true });
+  });
+}
+
+const RUNS_CAP = 200; // GET /api/runs returns at most this many runs
+
+/** Running and waiting runs, or null when they cannot be known (a failed call, or an answer at the cap of 200). */
+export const loadActiveRuns = () =>
+  // asked for by status, so the server's cap of 200 runs does not hide an old active run; an answer at the cap may be cut
+  Promise.all(["running", "waiting"].map((s) => api.runsWithStatus(s)))
+    .then(([a, b]) => (Array.isArray(a) && Array.isArray(b) && a.length < RUNS_CAP && b.length < RUNS_CAP ? [...a, ...b] : null), () => null);
+
+/** Writes the Active runs value into `el`: the count, "—" with a title for null, "…" for undefined. */
+export function fillRuns(el, runs, repo) {
+  el.textContent = runs ? String(activeRuns(runs, repo)) : runs === null ? "—" : "…";
+  if (runs === null) el.setAttribute("title", "The runs could not be loaded.");
+  else el.removeAttribute("title");
 }
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
@@ -347,17 +375,29 @@ export function focusRepoRow(main, id) {
   row.focus();
 }
 
-/** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo } = {}) {
+/** The My repositories page. `notice` ({ text }) is a message kept from the last removal. Returns a cleanup. */
+export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo, store = safeStore() } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
   // the filters live in the state, so a reload keeps them and a removed filter stays removed
-  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {} };
+  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {},
+    runs: undefined, text: "", compact: readCompact(store) }; // runs: undefined while loading, null when they could not be loaded
   const live = () => mine === generation && onPage();
   const fetchAll = async (n) => {
     const [repos, methods] = await Promise.all([api.repos(), api.repoMethods().then((options) => ({ options }), () => ({ failed: true }))]);
     if (n !== seq) return;
     Object.assign(state, { repos, options: methods.options, methodsFailed: !!methods.failed, at: new Date(), stale: false });
+  };
+  // The runs load on their own: the page never waits for them, and a failed call only shows "—".
+  const loadRuns = (n) => {
+    loadActiveRuns().then((runs) => {
+      if (n !== seq || !live()) return;
+      state.runs = runs;
+      for (const td of main.querySelectorAll("td[data-runs]")) {
+        const repo = state.repos.find((r) => r.id === td.getAttribute("data-runs"));
+        if (repo) fillRuns(td, runs, repo);
+      }
+    });
   };
   const reload = async (next) => {
     state.notice = next;
@@ -367,9 +407,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     } catch {
       if (n === seq) state.stale = true; // the list on screen stays
     }
-    if (n === seq && live()) draw();
+    if (n === seq && live()) {
+      draw();
+      loadRuns(n);
+    }
   };
-  const load = async () => {
+  const load= async () => {
     mount(main, head(false), loadingState("Loading your repositories", { rows: 3, shape: "table" }));
     const n = ++seq;
     try {
@@ -378,106 +421,52 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       if (n !== seq || !live()) return;
       return mount(main, head(false), loadFailed(e, { what: "Your repositories could not be loaded.", denied: "You are not allowed to see these repositories.", onRetry: load }));
     }
-    if (n === seq && live()) draw();
+    if (n === seq && live()) {
+      draw();
+      loadRuns(n);
+    }
   };
-  const head = (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
+  const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
     h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
     h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
-  const remove = async (id, again = false) => {
-    try {
-      await api.removeRepo(id);
-    } catch (e) {
-      // a repeat that finds no repository: the first try removed it, and the old key is gone now
-      if (!(again && e.status === 404)) return reload({ text: plainError(e), retryId: e.status === 500 ? id : undefined });
-    }
-    state.repos = state.repos.filter((r) => r.id !== id);
-    toast("Repository removed");
-    return reload();
-  };
   const add = async () => {
     const created = await repoDialog({ admin, options: state.options });
     if (created?.id && !state.repos.some((r) => r.id === created.id)) state.repos = [...state.repos, created];
     return reload();
   };
-  const copy = async (value) => {
-    if (await copyText(value)) toast("Public key copied");
-    else toast("Could not copy. Select the key and copy it yourself.", "error");
-  };
-  const newKey = async (e, repo) => {
-    const btn = e.currentTarget;
-    if (!(await confirmDialog({
-      title: "Generate a new key",
-      text: `Generate a new key for ${repo.url}? The old key stops working. Add the new public key as a deploy key and remove the old one.`,
-      confirm: "Generate a new key",
-    }))) return;
-    return whileBusy(btn, async () => {
-      try {
-        const made = await api.setRepoAuth(repo.id, { newKey: true });
-        if (made?.id === repo.id) state.repos = state.repos.map((r) => (r.id === repo.id ? made : r));
-      } catch (err) {
-        // the client cannot tell whether a key was made, so there is no retry button
-        return reload({ text: plainError(err) });
-      }
-      toast("New key generated");
-      return reload();
-    });
-  };
-  const test = (e, repo) => {
-    const btn = e.currentTarget;
-    const label = btn.textContent;
-    btn.textContent = "Testing…";
-    state.testErrors.delete(repo.id);
-    return whileBusy(btn, async () => {
-      try {
-        const r = await api.testRepo(repo.id);
-        if (Array.isArray(r?.checks)) state.repos = state.repos.map((x) => (x.id === repo.id ? { ...x, connection: r } : x));
-        if (r.ok) toast("Connection works");
-        else toast("Connection failed", "error");
-      } catch (err) {
-        state.testErrors.set(repo.id, explainRepoError(err, "The test could not run.").what);
-        toast(plainError(err), "error");
-      } finally {
-        btn.textContent = label;
-      }
-      return reload(state.notice);
-    });
-  };
-  const keyBlock = (repo) => h("div", { class: "field mt-6 maxw-520" },
-    h("span", {}, "Public key"),
-    h("code", { class: "mono break-all select-all" }, repo.publicKey),
-    h("button", { class: "small", onClick: () => copy(repo.publicKey) }, "Copy"),
-    h("small", {}, DEPLOY_KEY_HINT));
-  const appBlock = () => appAvailable(state.options) || !state.options
-    ? h("div", { class: "field mt-6 maxw-520" },
-      installLink(state.options),
-      h("small", {}, "Install the app on this repository, or change which repositories it may use. Then press Test connection."))
-    : h("div", { class: "status bad" }, "The administrator removed the GitHub App. Choose another authentication.");
   const row = (repo) => {
     const testError = state.testErrors.get(repo.id);
     const failed = !!testError || (repo.connection && !repo.connection.ok);
+    const webUrl = repoWebUrl(repo.url);
+    const att = repoAttention(repo, { admin, options: state.options });
+    const name = repoName(repo);
+    const testBtn = h("button", { class: "small", onClick: (e) => {
+      state.testErrors.delete(repo.id);
+      return test(e.currentTarget, repo, ({ connection, error }) => {
+        if (connection) state.repos = state.repos.map((x) => (x.id === repo.id ? { ...x, connection } : x));
+        if (error) state.testErrors.set(repo.id, error);
+        return reload(state.notice);
+      });
+    } }, failed ? "Test again" : "Test connection");
+    const authBtn = h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
+      await repoDialog({ admin, options: state.options, repo });
+      reload();
+    } }, "Change authentication");
+    const link = att.action === "install" ? installLink(state.options) : null;
+    // the one next action sits in the Next step cell and is left out of the Actions cell
+    const promoted = att.action === "auth" ? authBtn : att.action === "test" || att.action === "install" ? (link ?? testBtn) : null;
+    const runs = h("td", { "data-runs": repo.id });
+    fillRuns(runs, state.runs, repo);
     return h("tr", { "data-repo": repo.id },
-      h("td", { class: "mono" }, repo.url),
-      h("td", {}, methodLabel(repo, admin),
-        repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
-        repo.method === "github-app" ? appBlock() : null),
+      h("td", { class: "mono repo-name", title: repo.url }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, name) : name),
+      h("td", {}, methodLabel(repo, admin)),
       connectionCell(repo, { error: testError }),
-      readOnly ? h("td", {}) : h("td", {},
-        h("button", { class: "small", onClick: (e) => test(e, repo) }, failed ? "Test again" : "Test connection"), " ",
-        h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
-          await repoDialog({ admin, options: state.options, repo });
-          reload();
-        } }, "Change authentication"), " ",
-        h("button", { class: "small", onClick: (e) => whileBusy(e.currentTarget, () => readyView(repo)) }, "Definition of Ready"), " ",
-        repo.method === "ssh-deploy-key" ? [h("button", { class: "small", onClick: (e) => newKey(e, repo) }, "Generate a new key"), " "] : null,
-        h("button", { class: "small danger", onClick: async (e) => {
-          const btn = e.currentTarget;
-          if (!(await confirmDialog({
-            title: "Remove repository",
-            text: `Remove ${repo.url}? ${repo.method === "ssh-deploy-key" ? "Its stored key is deleted too." : repo.method === "github-app" ? "The app stays installed on GitHub." : "Its stored token is deleted too."}`,
-            confirm: "Remove",
-          }))) return;
-          return whileBusy(btn, () => remove(repo.id));
-        } }, "Remove")));
+      runs,
+      h("td", { class: "next-step" },
+        h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text),
+        att.detail ? h("div", { class: "muted", title: att.detail }, att.detail) : null,
+        !readOnly && promoted ? h("div", {}, promoted) : null),
+      h("td", {}, h("a", { class: "btn small", href: repoHref(repo) }, "Open")));
   };
   const setFilters = (next) => {
     state.filters = next;
@@ -488,7 +477,27 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const draw = () => {
     const canAdd = !readOnly && !state.methodsFailed;
     const pending = needsDeployKey(state.repos);
-    const shown = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const inContext = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const ctx = { admin, options: state.options };
+    const showFilter = state.repos.length >= FILTER_FROM;
+    if (!showFilter) state.text = "";
+    // only this part is drawn again while typing, so the search box keeps its caret
+    const results = h("div", {});
+    const drawResults = () => {
+      const shown = sortByAttention(inContext.filter((r) => matchesText(r, state.text)), ctx);
+      mount(results,
+        shown.length
+          ? table(["Repository", "Authentication", "Connection", "Active runs", "Next step", h("span", { class: "sr-only" }, "Actions")], shown.map(row),
+            { cards: true, caption: "My repositories", class: state.compact ? "compact" : undefined })
+          : inContext.length ? h("div", { class: "empty" }, "No repository matches the filter.")
+          : state.filters.repo ? filterGone({ onClear: clear })
+          : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
+    };
+    drawResults();
+    const filterInput = showFilter
+      ? h("input", { type: "search", "aria-label": "Filter repositories", placeholder: "Filter by address", "data-focus": "repos-filter", value: state.text,
+        onInput: () => { state.text = filterInput.value; drawResults(); } })
+      : null;
     mount(main,
       head(canAdd),
       filterBar(state.filters, { onRemove: clear, onClear: clear }),
@@ -497,20 +506,18 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         ? banner("warn", "The sign-in methods could not be loaded. You cannot add a repository now.", [{ label: "Retry", onClick: () => reload(state.notice) }])
         : null,
       pending.length
-        ? banner("warn", `Add the public key as a deploy key with write access${readOnly ? "" : ", then press Test connection"}: ${pending.map((r) => r.url).join(", ")}`)
+        ? banner("warn", `Open the repository to find its public key, add it as a deploy key with write access${readOnly ? "" : ", then press Test connection"}: ${pending.map((r) => r.url).join(", ")}`)
         : null,
-      state.notice ? h("p", { class: "status bad", role: "alert" }, state.notice.text,
-        state.notice.retryId ? [" ", h("button", { class: "small", onClick: (e) => {
-          const btn = e.currentTarget;
-          return whileBusy(btn, () => remove(state.notice.retryId, true));
-        } }, "Try again")] : null) : null,
-      shown.length
-        ? h("div", { class: "table-box" }, h("table", { class: "table" },
-          h("caption", { class: "sr-only" }, "My repositories"),
-          h("thead", {}, h("tr", {}, ["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, shown.map(row))))
-        : state.filters.repo ? filterGone({ onClear: clear })
-        : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
+      state.notice ? h("p", { class: "status bad", role: "alert" }, state.notice.text) : null,
+      inContext.length
+        ? h("div", { class: "row" },
+          h("p", { class: "muted flush", "data-attention": String(attentionCount(inContext, ctx)) }, attentionSummary(attentionCount(inContext, ctx))),
+          h("span", { class: "spacer" }),
+          filterInput,
+          h("label", {}, h("input", { type: "checkbox", "data-focus": "repos-compact", checked: state.compact,
+            onChange: (e) => { state.compact = e.currentTarget.checked; writeCompact(store, state.compact); drawResults(); } }), " Compact rows"))
+        : null,
+      results);
   };
   // The palette's repository result: a wish that came before this page, or one for the page as it is.
   unwish();
