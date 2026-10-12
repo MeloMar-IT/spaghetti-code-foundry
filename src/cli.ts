@@ -37,6 +37,8 @@ Usage:
   scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
+  scf eval help [--live]                         Check Ask SCF against its fixed scenarios; no model is called
+                                                 (--live: ask the model of help.model; each scenario costs a turn)
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run]
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
@@ -194,6 +196,7 @@ async function main(argv: string[]): Promise<number> {
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      live: { type: "boolean" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
@@ -437,7 +440,16 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "eval": {
-      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]");
+      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]\n       scf eval help [--live]");
+      if (arg === "help") {
+        // The scenario evaluation of Ask SCF. Without --live no model is called: every scenario has a fixed answer.
+        const { runHelpEval, stubModel, liveModel, reportText, saveHelpEval } = await import("./server/help-evals.js");
+        const { HELP_SCENARIOS } = await import("./server/help-eval-scenarios.js");
+        const live = values.live === true;
+        const report = await runHelpEval(HELP_SCENARIOS, live ? liveModel(loadConfig()) : stubModel, live ? "configured" : "stub");
+        process.stdout.write(`${reportText(report)}\nreport: ${saveHelpEval(report)}\n`);
+        return report.passed ? 0 : 1;
+      }
       const split = (v?: string) => v?.split(",").map((x) => x.trim()).filter(Boolean);
       const { report, file } = await runEval({
         suitePath: arg,

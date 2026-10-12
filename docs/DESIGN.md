@@ -1441,6 +1441,33 @@ The interface of Ask SCF is one drawer for both displays (#234). Three files, an
   - **Cards never act.** `cardsOf` marks each card `read-only` or `changes-state`, as `PART_RULES` of the contract does. An action is drawn as a suggestion without any control; running one is #240.
 - **Styles.** `ui/css/pages/ask.css`, class names start with `ask-`. The drawer is `--layer-menu` + 1, so a dialog and a toast lie over it. It is the whole width at 767 px and below. It has no transition and no animation.
 
+### Ask SCF: scenario evaluations
+
+`src/server/help-evals.ts` and `src/server/help-eval-scenarios.ts` (#244) prove the promises of
+Ask SCF on fixed inputs. A scenario is a question, a role, optionally a page context with the
+things the account can see, the sources the server would offer, the answer of a stubbed
+provider, and what must hold.
+
+- **The path** (`runScenario`): `resolveContext` → `prepareTurn` → `turnPrompt` → the model
+  (a function) → `jsonOf` → `checkReply` → `doubted` (the rule of the turn service, now an
+  exported function of `turn.ts`). Nothing is stored; the guard uses the scenario's own
+  patterns and no stored credentials.
+- **The sources** are made by `sourceOf`, `conflictSource`, `diagnose` and `diagnosisSource`,
+  so a scenario offers what a server offers.
+- **Checks** (`CHECKS`): `secret-leak` and `permission-leak` (a text the scenario names is in
+  the prompt or in the kept reply), `unsafe-action`, `citation`, `grounding` (the certainty is no
+  higher than the cited sources allow; with the stub it is also exactly the expected one), `withheld`, `refusal`, `usefulness`,
+  `context-size` (`PROMPT_BUDGET`), `told`, and `sent` / `contract` when no reply is kept.
+- **The verdict** (`runHelpEval`, `THRESHOLDS`): the zero-tolerance numbers, the rates, and
+  with the stub any failed scenario. `blocking` says in fixed words what blocks a release.
+- **The report** (`reportText`, `saveHelpEval`): ids, counts and fixed sentences only; the
+  file goes to `evals/help/` (mode 0600), which `listEvalReports` does not read.
+- **Providers**: `stubModel` in `npm test`; `liveModel` (the options of a turn: no tools, no
+  MCP servers, no GitHub token, an empty folder, the cost limit of a turn) only behind
+  `scf eval help --live`.
+
+Tests: `tests/help-evals.test.ts`.
+
 ### Helper processes
 
 `src/ops/` holds five helpers built like the analyst: a pure function that turns files of the data

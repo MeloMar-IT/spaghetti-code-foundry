@@ -5,7 +5,7 @@ import { claudeProviderEnv, isAuthError, isQuotaError, specOf, toTarget, type Ta
 import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
-import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole } from "./contract.js";
+import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
 import {
@@ -245,6 +245,11 @@ export function classifyFailure(r: Pick<ClaudeRunResult, "error" | "output">): F
   if (/CLI not found/.test(error) || isAuthError(error, r.output)) return "setup";
   if (isQuotaError(error, r.output)) return "quota";
   return "provider";
+}
+
+/** A reply that rests on a source the server marked as old or in disagreement (`Prepared.uncertain`) is "likely" at most, whatever the model said. */
+export function doubted(reply: Reply, uncertain: readonly string[]): Reply {
+  return reply.certainty === "confirmed" && reply.evidence.some((e) => uncertain.includes(e.id)) ? { ...reply, certainty: "likely" } : reply;
 }
 
 /** The JSON object in a model's answer: the text from the first `{` to the last `}`. Undefined when there is none. */
@@ -604,7 +609,7 @@ export class HelpTurns {
     if (seen.removed.length) this.deps.log?.(`help: secrets were taken out of a reply (${seen.removed.join(", ")})`);
     if (checked.dropped.length) this.deps.log?.(`help: ${checked.dropped.length} part(s) of a reply were left out`);
     // a reply that rests on a source the server marked as old or in disagreement is not "confirmed", whatever the model said
-    const reply = checked.reply.certainty === "confirmed" && checked.reply.evidence.some((e) => ready.uncertain.includes(e.id)) ? { ...checked.reply, certainty: "likely" as const } : checked.reply;
+    const reply = doubted(checked.reply, ready.uncertain);
     try {
       finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed);
     } catch {
