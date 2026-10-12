@@ -12,6 +12,13 @@ export const RUN_EVIDENCE_VERSION = 1;
 export const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
 /** The manifest of a finished run, relative to the run folder. */
 export const EVIDENCE_MANIFEST_FILE = "evidence.json";
+/** The diff between the base and the final commit of a run that ended with success, relative to the run folder. Made when the run is finalized. */
+export const EVIDENCE_DIFF_FILE = "evidence.diff";
+/**
+ * An empty mark in the run folder: an event of this run could not be written, so its stream is not whole.
+ * While it is there the stream is not continued and the run gets no manifest. Nothing removes it.
+ */
+export const EVIDENCE_INCOMPLETE_FILE = "evidence.incomplete";
 
 export type EvidenceKind = "event" | "manifest";
 export type EvidenceErrorCode = "not-an-object" | "no-version" | "unsupported-version" | "invalid";

@@ -64,6 +64,7 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
+  scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
@@ -208,6 +209,7 @@ async function main(argv: string[]): Promise<number> {
       "stop-work": { type: "boolean" },
       name: { type: "string" },
       email: { type: "string" },
+      json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -269,6 +271,7 @@ async function main(argv: string[]): Promise<number> {
         runsDir,
         from: cmd === "resume" ? values.from : undefined,
         decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
+        actor: { kind: "cli" },
         log: (m) => process.stdout.write(m + "\n"),
       });
       return report(summary);
@@ -353,7 +356,7 @@ async function main(argv: string[]): Promise<number> {
       let stopping = false;
       process.on("SIGINT", () => {
         if (stopping) {
-          for (const a of scheduler.queue().active) scheduler.cancel(a.runId);
+          for (const a of scheduler.queue().active) scheduler.cancel(a.runId, { kind: "cli" });
           log("cancelling running runs (they resume on the next start)…");
           setTimeout(() => process.exit(130), 3000).unref();
           return;
@@ -509,6 +512,11 @@ async function main(argv: string[]): Promise<number> {
     case "digest": {
       const { opsCommand } = await import("./ops/cli.js");
       return opsCommand(cmd, positionals.slice(1), fileURLToPath(import.meta.url), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "evidence": {
+      const { evidenceCommand } = await import("./evidence/cli.js");
+      return evidenceCommand(positionals.slice(1), { runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), json: values.json }, (line) => void process.stdout.write(line + "\n"));
     }
 
     case "monitor": {

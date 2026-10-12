@@ -804,6 +804,70 @@ A watcher's own state on the Watchers page has a **?** too:
 Every record from `GET /api/next` has these as `status` and `help`. Text the Foundry quotes
 (an error message, a step's approval message, a label or code-area name) is shown as it is.
 
+### Evidence of a run
+
+Every run keeps a record of what happened to it in `evidence.jsonl` in its run folder: one line per
+event, in the order they happened. Lines are only added, never changed. Every line carries the
+hash of the line before it and its own hash, so a line that was changed, added, removed or moved
+can be found.
+
+- **Run events:** queued, created, started, stopped (also: waiting for approval), resumed,
+  cancelled, failed, completed.
+- **Step events:** started, given to a model (and the model before it, after a fallback), tried
+  again (after an outage or a usage limit), a tool that was refused, approved or rejected, failed,
+  completed.
+- **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
+  the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
+  of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
+  tokens or keys. Logs are named, not copied.
+- A shell step whose id has the word `test` or `tests` (for example `run_tests`) is recorded as a
+  test run, passed or failed.
+- **It never stops a run.** If the file cannot be written, the live log says so once
+  (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
+  file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
+  gets no manifest.
+- **The manifest.** When a run ends (succeeded, failed or cancelled), `evidence.json` is written in
+  the run folder: the status and times, the flow and the hash of its definition, the number of
+  events and the hash of the last one, the base and final commit, the models, approvals and test
+  results, every log and transcript with its hash, and the pull request when the run was started
+  for one. For a run that changed code, `evidence.diff` holds the diff between the two commits
+  (stored secrets hidden) and the manifest has its hash. The manifest holds no task, output, note
+  or key.
+- **If the manifest cannot be written,** the live log says
+  `! evidence: no manifest was written (…); this run cannot be verified`, and there is no
+  `evidence.json`. The run and its result are not changed.
+- **Resume:** a resumed run adds to the same file. Its manifest and diff are removed while it goes
+  on, and written again when it ends. Runs made before this have no file and work as before; when
+  such a run is resumed it gets events from then on, but no manifest.
+- A step of a user's run cannot write these files.
+
+**Check the evidence of a run.** `scf evidence verify <run-id>` reads the run folder and says
+whether the evidence is still what was written. It needs no server and no network.
+
+```
+$ scf evidence verify 20260131-120000-ab12
+✔ verified · run 20260131-120000-ab12
+  Verified: 8 events in an unbroken chain, 3 files unchanged.
+  events:    8, last hash 5d0c…
+  manifest:  sha256 91f2… (succeeded, written 2026-01-31T12:00:02.600Z)
+```
+
+- It checks, in this order: the manifest; the event file; every line of the chain; that the
+  events end where the manifest says; that the manifest says what the events say; the flow
+  definition in `run.json`; and every log, transcript and diff the manifest names.
+- **Not verified** names the first thing that is wrong, for example
+  `Not verified: evidence.jsonl, line 5: was changed (its hash is not the hash of its content).`
+  or `Not verified: logs/002-run_tests.log was changed.`
+- **A file that is gone:** a log or transcript is needed, so the run is not verified. The diff is
+  optional: the run still verifies, and the line says
+  `1 optional file is no longer there (evidence.diff); that is allowed.` A file that was changed
+  is never allowed.
+- **Nothing to verify:** a run made before evidence existed (`· no evidence`), or a run that has
+  not ended or could not be finalized (`■ not finalized`).
+- **Exit code:** 0 verified, 1 not verified, 2 nothing to verify. `--json` prints the whole result
+  (status, the first failure with its code, every check and every file) for a script.
+  `--runs-dir <dir>` reads another runs folder.
+
 ---
 
 ## 4. Write your own flows
@@ -2527,7 +2591,7 @@ show as "n runs ahead of you", without ids.
   - **After the upgrade,** a flow that relied on an inherited variable such as `JAVA_HOME` or `NVM_DIR` in a user's run needs that name added.
   - **Hidden in output.** The values of the provider key variables named in the config (`api_key_env`) are hidden in logs, live output and API answers. A value shorter than 8 characters is not hidden; the server logs a line when it finds one.
   - **The limit.** The agent's own key is still visible to the agent's shell tool unless the agent program hides it.
-- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log` or `logs/`), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
+- **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log`, `logs/` or the evidence files), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
   - **Settings.** Tick **Allow user runs without the OS sandbox** (`sandbox.user_runs: off`) to run user runs without it. If no sandbox works (not macOS, or `sandbox-exec` fails) and the box is not ticked, a user's run does not start: "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings." The server variable `SCF_USER_SANDBOX=off` (or `FACTORY_USER_SANDBOX=off`) does the same.
   - **Extra read paths.** `sandbox.user_read` in `config.yaml` lists up to 50 paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
 - **The limit.** Agent steps are **not in an operating-system sandbox** yet, and neither are runs with the sandbox switched off. For them, this is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. With `isolate_agents` on, Codex agents skip the account's `~/.codex/config.toml` too (see "Codex and your personal setup"); with it off, or in a step the OS sandbox holds, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
@@ -3670,6 +3734,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf user delete <e-mail>` | Delete an account, its sessions and its stored credentials (not the last admin) |
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
+| `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
