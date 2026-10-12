@@ -59,7 +59,7 @@ export type VerifyStatus =
   | "failed"
   /** There are events in an unbroken chain but no manifest: the run has not ended, or it could not be finalized. */
   | "not-finalized"
-  /** The run has no evidence at all: it was made before evidence existed. */
+  /** The run has no evidence at all: it was made before evidence existed, or a clean-up removed its evidence. */
   | "absent";
 
 export interface VerifyResult {
@@ -114,7 +114,7 @@ export function verifyEvidence(input: VerifyInput): VerifyResult {
 
   // 1. the manifest
   if (input.manifest.state === "absent" && input.events.state === "absent" && !input.incomplete) {
-    return done("absent", "This run has no evidence: it was made before evidence existed. There is nothing to verify.");
+    return done("absent", "This run has no evidence: it was made before evidence existed, or its evidence was removed by a clean-up. There is nothing to verify.");
   }
   if (input.incomplete) return fail("manifest", "incomplete", "the events of this run are not whole: an event could not be written while it ran (evidence.incomplete)");
   if (input.manifest.state === "unreadable") return fail("manifest", "manifest-unreadable", "evidence.json is not a plain file");

@@ -58,6 +58,14 @@ function showDiff(d: unknown): string {
   return blocks([x.stat?.trimEnd(), x.patch?.trimEnd(), x.truncated && "(the changes are too long: the rest is left out)"]);
 }
 
+function showEvidence(d: unknown): string {
+  const x = obj(d);
+  const v = obj(x.verification);
+  const head = `${x.state === "available" ? "evidence" : "no evidence"} · run ${x.runId} · ${v.status ?? "unknown"}`;
+  const files = list(x.artifacts).map((a) => ({ kind: a.kind, path: a.path, bytes: a.bytes, needed: a.required ? "yes" : "no", state: a.state ?? "", sha256: a.sha256 }));
+  return blocks([head, typeof v.explanation === "string" && v.explanation, files.length > 0 && table(files, cols("kind", "path", "bytes", "needed", "state", "sha256"))]);
+}
+
 function showTranscript(d: unknown): string {
   const x = obj(d);
   const lines = list(x.events).map((e) => {
@@ -173,6 +181,7 @@ export const WORK: Cmd[] = [
     } },
   { area: "runs", action: "log", method: "GET", path: "runs/:id/transcript/:n", args: ["id", "n"], show: showTranscript, help: "what the agent said and did in a step; <n> is the step's number in `scf runs show`" },
   { area: "runs", action: "diff", method: "GET", path: "runs/:id/diff", args: ["id"], show: showDiff },
+  { area: "runs", action: "evidence", method: "GET", path: "runs/:id/evidence", args: ["id"], show: showEvidence, help: "the evidence of a run: whether it still verifies, and the files it names with their hashes" },
   { area: "runs", action: "answer", method: "POST", path: "runs/:id/answer", args: ["id", "text"], show: queued("continues with your answer") },
   { area: "runs", action: "approve", method: "POST", path: "runs/:id/approve", args: ["id"], show: queued("continues: approved"), help: "approve a run that waits for a decision",
     flags: { note: { type: "string", help: "a note for the run" } } },

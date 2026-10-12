@@ -5,6 +5,7 @@ import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
+import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
@@ -309,6 +310,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
     return send(res, 200, runDiff(s)), true;
   }
+  if (action === "evidence" && !seg[3] && method === "GET") return send(res, 200, hide(runEvidenceView(s, admin))), true;
   if (action === "transcript" && method === "GET") {
     const n = Number(seg[3]);
     const rec = s.history[n];

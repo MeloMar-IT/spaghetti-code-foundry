@@ -148,21 +148,21 @@ describe("live evidence on a server", () => {
 
   it("gives a user the run of the page with its next-step record, and their part of the queue: nothing of another account", () => {
     const got = liveEvidence(started.ctx, input(ann, "user", { page: "#/runs/run-ann-1" }));
-    expect(got.map((s) => s.ref)).toEqual(["run run-ann-1 · #/runs/run-ann-1", "queue · #/runs"]);
+    expect(got.map((s) => s.ref)).toEqual(["run run-ann-1 · #/runs/run-ann-1", "queue · #/runs", "diagnosis · run run-ann-1 · #/runs/run-ann-1"]);
     expect(got[0]!.excerpt).toContain("status: failed");
     expect(got[0]!.excerpt).toContain("failedStep: tests");
     expect(got[0]!.excerpt).toMatch(/nextStatus: .+/);
     for (const s of got) expect(Date.parse(s.observedAt!)).toBeGreaterThan(Date.now() - 60_000);
     const forged = liveEvidence(started.ctx, input(ann, "user", { page: "#/runs/run-bob-1", kind: "repository", id: bobRepo, entities: [{ kind: "run", id: "run-bob-1" }, { kind: "problem", id: "0123456789abcdef" }] }));
     // her own failed run is offered instead; the named things of Bob are not found
-    expect(forged.map((s) => s.ref)).toEqual(["run run-ann-1 · #/runs/run-ann-1", "queue · #/runs"]);
+    expect(forged.map((s) => s.ref)).toEqual(["run run-ann-1 · #/runs/run-ann-1", "queue · #/runs", "diagnosis · run run-ann-1 · #/runs/run-ann-1"]);
     const all = JSON.stringify([got, forged]);
     for (const hidden of ["run-bob-1", "bobs-flow", bobRepo, "bobco/hidden-thing", SECRET_MODEL, "4.37", bob.user.id, tmp, "health"]) expect(all, hidden).not.toContain(hidden);
   });
 
   it("gives an administrator the health too, keeps the limit, and gives nothing for an account that is gone or claims a role", () => {
     const got = liveEvidence(started.ctx, input(admin, "admin", { page: "#/runs/run-bob-1" }));
-    expect(got.map((s) => s.ref)).toEqual(["run run-bob-1 · #/runs/run-bob-1", "queue · #/runs", "health · #/operations"]);
+    expect(got.map((s) => s.ref)).toEqual(["run run-bob-1 · #/runs/run-bob-1", "queue · #/runs", "health · #/operations", "diagnosis · run run-bob-1 · #/runs/run-bob-1"]);
     const many = liveSnapshots(started.ctx, { id: admin.user.id, role: "admin" }, { context: { page: "#/runs", entities: ["run-ann-1", "run-bob-1"].map((id) => ({ kind: "run" as const, id })) } });
     expect(many.shown.length).toBeLessThanOrEqual(STATE_SOURCES);
     expect(liveEvidence(started.ctx, input(ann, "admin", { page: "#/runs/run-bob-1" })).map((s) => s.ref)).not.toContain("health · #/operations");

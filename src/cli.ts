@@ -37,7 +37,9 @@ Usage:
   scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
-  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run]
+  scf eval help [--live]                         Check Ask SCF against its fixed scenarios; no model is called
+                                                 (--live: ask the model of help.model; each scenario costs a turn)
+  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
@@ -191,9 +193,11 @@ async function main(argv: string[]): Promise<number> {
       source: { type: "string" },
       flows: { type: "string" },
       "older-than": { type: "string" },
+      "evidence-older-than": { type: "string" },
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      live: { type: "boolean" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
@@ -437,7 +441,16 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "eval": {
-      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]");
+      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]\n       scf eval help [--live]");
+      if (arg === "help") {
+        // The scenario evaluation of Ask SCF. Without --live no model is called: every scenario has a fixed answer.
+        const { runHelpEval, stubModel, liveModel, reportText, saveHelpEval } = await import("./server/help-evals.js");
+        const { HELP_SCENARIOS } = await import("./server/help-eval-scenarios.js");
+        const live = values.live === true;
+        const report = await runHelpEval(HELP_SCENARIOS, live ? liveModel(loadConfig()) : stubModel, live ? "configured" : "stub");
+        process.stdout.write(`${reportText(report)}\nreport: ${saveHelpEval(report)}\n`);
+        return report.passed ? 0 : 1;
+      }
       const split = (v?: string) => v?.split(",").map((x) => x.trim()).filter(Boolean);
       const { report, file } = await runEval({
         suitePath: arg,
@@ -462,16 +475,19 @@ async function main(argv: string[]): Promise<number> {
     case "clean": {
       const days = Number(values["older-than"] ?? 7);
       if (!(days >= 0)) throw new Error("--older-than must be a number of days");
+      const evidenceDays = values["evidence-older-than"] === undefined ? undefined : Number(values["evidence-older-than"]);
+      if (evidenceDays !== undefined && !(values["evidence-older-than"]!.trim() !== "" && evidenceDays >= 0)) throw new Error("--evidence-older-than must be a number of days");
       const r = cleanRuns({
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
         olderThanDays: days,
+        evidenceOlderThanDays: evidenceDays,
         purge: values.purge,
         includePaused: values["include-paused"],
         dryRun: values["dry-run"],
       });
       const verb = values["dry-run"] ? "would remove" : "removed";
       process.stdout.write(
-        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB\n` +
+        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""}${r.evidence.length ? ` and the evidence of ${r.evidence.length} run(s)` : ""} · ${r.freedMb} MB\n` +
           (r.planRecordsFailed ? "plan records could not be cleaned (the store is locked or cannot be written) — try again later\n" : "") +
           (r.kept.length ? `kept ${r.kept.length} paused/running run(s) — use --include-paused to clean them too\n` : ""),
       );
