@@ -961,7 +961,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 | `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
-| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. `ask` is the Ask SCF drawer. |
 
 **Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
 - **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
@@ -1291,6 +1291,27 @@ issue text, logs, and the model's answer.
 
 Tests: `tests/help-safety.test.ts` (secret fixtures of every category, hostile texts, the three
 parts of the request, and the fail-closed paths).
+### Ask SCF: the drawer
+
+The interface of Ask SCF is one drawer for both displays (#234). Three files, and the shells only mount it:
+
+| File | What |
+|---|---|
+| `ui/ask-model.js` | The decisions, as pure functions: the page that goes with a question (`pageOf`, `whereOf`, `contextFor`), the suggested questions (`suggestionsFor`), whether Send sends (`sendPlan`), when the conversation is read again (`pollDelay`), what a message looks like (`entryOf`), what is announced (`announce`) and a failed call in plain words (`explainAskError`). No document, no fetch, no timer. |
+| `ui/ask-view.js` | The nodes: the button, the drawer (`role="dialog"`, `aria-modal`, named by its heading), the question form, one message. Every text of a conversation goes in as text. |
+| `ui/ask.js` | `initAsk(role)` asks `GET /api/help/conversations` once; only when `enabled` is true it calls `createAsk`, which puts the button into `#ask-scf` and the drawer at the end of `<body>`. It owns the state, the calls and the timer. |
+
+- **Mounted once per display.** `ui/app.js` calls `initAsk("admin")`, `ui/user/app.js` calls `initAsk("user")`, and not in a preview ("View as user"): the server shows no conversations there, and a 403 in a preview would end the view.
+- **The page is not touched.** The drawer is a sibling of the page, not a route. Opening and closing change no address and draw no page again. While it is open, `#top`, `#skip` and `#content` are `inert`; closing removes that unless the menu of a narrow screen is open.
+- **Opening is free.** `open()` makes no call. Only when a reply was still waited for it reads that conversation again. A question, and the page it is asked on, go out with Send only. The context is `{ page }`: the address without its query, checked against the form the route takes. No `kind` and no `id` yet.
+- **Keyboard.** The focus goes to the question box and comes back to the control that had it (the button when that control is gone). Escape closes; Tab is kept inside with `trapTarget` of `ui/dom.js`. A dialog in `#modal-root` lies over the drawer and gets the keys first.
+- **Status.** `#ask-status` is a polite status line: it says once that Ask SCF is working, and once what came of it. Errors of a call go to `#ask-error` (`role="alert"`).
+- **Reading the answer.** While the drawer is open and the last reply is `pending`, the conversation is read every 1.5 s, after ten reads every 4 s. Four failed reads in a row, or a 404 or 410, end it with a sentence.
+- **Following a turn (#235).** `controlsFor` says which of Stop, Try again, Archive, Take back and Delete are offered; none while a call is on its way (`busy`), so a control cannot be pressed twice. Try again is offered after a stop and after a failure with `failure.retry` true, not after a limit (`entryOf` gives that the kind `limit`). The server keeps the two messages of a retried turn and counts `tries`; `triesNote` shows the count on the one reply. `waitNote` turns the waiting text after 20 s, measured in the tab from the moment it first saw this try.
+- **Late answers.** Every call takes a ticket from `staleGuard` first. Leaving a conversation (a new one, another one, archive, delete) makes all earlier tickets stale, and a result with a stale ticket is not drawn and starts no reading. The two lists (current, archived) are told apart the same way. A change of the page behind does not leave the conversation.
+- **After a reload.** The tab keeps the id of the open conversation in `sessionStorage` (`scf-ask-open`), nothing else. `restorePick` takes it only when the list the server sent at the start still holds it; without one it takes the conversation whose reply is being written. It is read when the drawer opens. A conversation that is gone gives an empty drawer.
+- **History.** `GET /api/help/conversations` (and `?archived=1`) is read each time the list is opened. Delete asks with `confirmDialog` and names the consequence.
+- **Styles.** `ui/css/pages/ask.css`, class names start with `ask-`. The drawer is `--layer-menu` + 1, so a dialog and a toast lie over it. It is the whole width at 767 px and below. It has no transition and no animation.
 
 ### Helper processes
 

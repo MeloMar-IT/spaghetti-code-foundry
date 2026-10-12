@@ -103,6 +103,21 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Fail closed.** When the stored credentials cannot be read or a pattern is broken, a new question is refused (503, "Ask SCF cannot check your question for secrets right now…") and nothing is stored; a waiting turn ends as "not set up" without a model call; a reply that cannot be checked is not kept. A page context that holds a secret is refused (400).
   - **Changed for callers.** The reply's texts are no longer cleaned with the stored credentials alone but with all rules above, so a reply can hold `[removed: …]` marks. No new route.
   - Code in `src/help/guard.ts`; "Secrets and copied text" in chapter 14 of `docs/USER_GUIDE.md`, "Ask SCF: the guard" in `docs/DESIGN.md`. Tests in `tests/help-safety.test.ts`.
+- Ask SCF: history, progress, stop, retry and coming back, in the drawer (#235). Part of #226.
+  - **Following a turn.** Question and reply stand under each other. The drawer says that Ask SCF is working, after 20 seconds that it takes longer than usual, and then what came of it: the answer, "you stopped it", or the fixed sentence of the failure.
+  - **Controls with their consequence.** Stop, Try again, Archive, Take back from the archive and Delete. Each says what it does. Delete asks first. None can be pressed twice: while a call is on its way they are not offered, and Send sends nothing while a reply is written.
+  - **Try again** uses the same two messages and names the try ("This is the second try"). It is not offered after a limit, where it cannot help.
+  - **History and New conversation.** The list of your conversations with their state, the archived ones on request, and an empty conversation at any time.
+  - **Late answers are dropped.** An answer for a conversation you left is not drawn over the one you are in.
+  - **After a reload** the drawer shows the conversation you were in and follows a reply that was being written. The tab keeps only its id. Nothing is asked twice.
+  - Tests in `tests/ui-ask-model.test.ts` and `tests/ui-ask.test.ts`.
+- Ask SCF: a drawer on every page of both displays (#234). Part of #226. Only when `help.enabled` is on; off, no button is shown.
+  - **Where.** An **Ask SCF** button in the top bar of the admin and the user display opens a panel at the right side. It is one implementation (`ui/ask.js`, `ui/ask-model.js`, `ui/ask-view.js`); the two shells only mount it. Not in "View as user".
+  - **Your page stays.** The panel lies over the page and draws nothing of it again: typed text, open parts and the address stay. A started question is kept when you close the panel.
+  - **Nothing is sent by opening.** A question goes out with **Send** (or Ctrl+Enter) only. Under the question box you read what goes with it: the address of the page, and nothing else. A checkbox sends the question alone.
+  - **Suggested questions** fit the page. A suggestion fills the question box; you send it yourself.
+  - **Keyboard and screen reader.** The panel is a named dialog. The focus goes in and comes back, Tab stays inside, Escape closes. A status line says that Ask SCF is working and when the answer is there. Full width on a narrow screen; no motion.
+  - Tests in `tests/ui-ask-model.test.ts` and `tests/ui-ask.test.ts`.
 - Ask SCF: help turns run through the configured provider (#229). Part of #226. **Off by default**: an admin sets `help.enabled: true`.
   - **A turn** is one question. `POST /api/help/conversations` (new) or `…/:id/messages` (next question) stores it, answers 202 and queues the turn; `…/retry` tries a failed or stopped answer again in the same messages, `…/cancel` stops one. On the command line: `scf ask new|more|retry|stop`.
   - **No tools.** A turn is one Claude Code call with no tools, no MCP servers, no permissions and no GitHub token, in an empty temporary folder that is removed afterwards. The answer is checked by the contract: no action, only fixed pages, only sources the server offered (none yet, so replies say "could not check"). Only a Claude Code model can answer; a Codex model gives a plain "not set up" answer.
