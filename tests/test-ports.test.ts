@@ -10,17 +10,8 @@ import { signInAs } from "./helpers/session.js";
 // Files that still pick their own port. A later part moves its files and deletes its lines; the list can only shrink.
 // Part 2: refinement
 const PART_2 = [
-  "tests/refinement-api.test.ts",
-  "tests/refinement-architect.test.ts",
-  "tests/refinement-backlog-api.test.ts",
-  "tests/refinement-draft-api.test.ts",
-  "tests/refinement-impact-api.test.ts",
   "tests/refinement-import-api.test.ts",
-  "tests/refinement-judge-api.test.ts",
-  "tests/refinement-round.test.ts",
   "tests/refinement-source-label-api.test.ts",
-  "tests/refinement-split-api.test.ts",
-  "tests/refinement-talk-api.test.ts",
 ];
 // Part 3: refinement publish
 const PART_3 = [

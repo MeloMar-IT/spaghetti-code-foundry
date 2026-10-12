@@ -4,6 +4,9 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Test ports part 3 — the other refinement API tests use the shared helper (#468). Part 3 of 6 of #465.
+  - **Tests.** `refinement-api`, `refinement-architect`, `refinement-backlog-api`, `refinement-draft-api`, `refinement-impact-api`, `refinement-judge-api`, `refinement-round`, `refinement-split-api` and `refinement-talk-api` start their server with `startTestServer`, so the system picks the port. `refinement-ready-api` already did (#466). They are removed from the allowlist of the guard in `tests/test-ports.test.ts`.
+  - A test that restarts its server signs in again: the new port gives a new session cookie name. No test case removed; no product behaviour, API or config change.
 - Test ports part 1 — a shared free-port helper, and `startServer` gives back its port (#466). Part 1 of 6 of #465.
   - **Server.** `startServer` returns `port`, the port it really listens on. With `port: 0` the system picks a free port, and `url`, the session cookie name (`scf_session_<port>`) and the host check use it. A port other than 0 behaves as before. The CLI still takes `--port` 1-65535.
   - **Tests.** New `tests/helpers/port.ts`: `startTestServer` starts on port 0 and adds `base`; `freePort` returns a port that was free a moment ago (only for a child process that needs `--port`). New `tests/helpers/port-scan.ts` and the guard in `tests/test-ports.test.ts`, which fails on a self-chosen port in `tests/` outside an allowlist. The allowlist can only shrink; parts 2-6 of #465 move the rest.

@@ -5,20 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
 import { architectWorking } from "../src/refinement/architect.js";
 import { END_ON_GITHUB, beginPublishing, endPublishing, refinementsPath } from "../src/refinement/store.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 const HEADINGS = ["What already exists", "Code the idea would touch", "Open issues that overlap", "Rules that apply", "Could not find out"];
 
 let gh: ReturnType<typeof fakeGithub>;
 let tmp: string;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
@@ -26,8 +26,16 @@ const saved: Record<string, string | undefined> = {};
 const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF"];
 
 async function boot() {
-  const opts: ServerOptions = { repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
-  started = await startServer(opts);
+  const opts: Omit<ServerOptions, "port"> = { repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
+  started = await startTestServer(opts);
+  base = started.base;
+}
+
+/** Signs the three accounts in. Also needed after a restart: a new port gives a new cookie name. */
+async function signIn() {
+  admin = await signInAs(base);
+  ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
+  bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
 }
 
 beforeEach(async () => {
@@ -41,9 +49,7 @@ beforeEach(async () => {
   delete process.env.FAKE_BRIEF;
   kc = fakeKeychain();
   await boot();
-  admin = await signInAs(base);
-  ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
-  bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
+  await signIn();
   addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
   addRepo(bob.user.id, { url: "other/thing", method: "github-token", token: TOKEN });
 });
@@ -291,6 +297,7 @@ describe("restart", () => {
     file.sessions[0].architect = { runId: architect.runId, at: done.brief.at };
     writeFileSync(refinementsPath(), JSON.stringify(file));
     await boot();
+    await signIn();
     expect((await get(id)).brief).toMatchObject({ runId: architect.runId });
   });
 
@@ -304,6 +311,7 @@ describe("restart", () => {
     file.sessions[0].updated = "2020-01-01T00:00:00.000Z";
     writeFileSync(refinementsPath(), JSON.stringify(file));
     await boot();
+    await signIn();
     const s = await get(id);
     expect(s.brief).toMatchObject({ runId: architect.runId });
     expect(s.architect.state).toBe("idle");
@@ -322,6 +330,7 @@ describe("restart", () => {
     file.sessions[0].architect = { runId, at: new Date().toISOString() };
     writeFileSync(refinementsPath(), JSON.stringify(file));
     await boot();
+    await signIn();
     expect((await get(id)).architect).toEqual({ state: "failed", kind: "brief", runId, reason: "The server stopped while the architect was reading" });
   });
 });
