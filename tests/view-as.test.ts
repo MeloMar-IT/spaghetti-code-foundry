@@ -4,17 +4,16 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditEntrySchema } from "../src/auth/audit.js";
-import { startServer } from "../src/server/server.js";
 import { VIEW_AS_MS, ViewStore, viewsOf } from "../src/server/view-as.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let runsDir: string;
 let close: () => void;
-let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
+let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let kc: FakeKeychain;
 let saved: string | undefined;
 let now = 1_000_000;
@@ -44,10 +43,9 @@ beforeAll(async () => {
   const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: repo, stdio: "ignore" });
   git("init", "-q");
   git("commit", "-q", "--allow-empty", "-m", "init");
-  ({ close, ctx } = await startServer({
+  ({ close, ctx, base } = await startTestServer({
     repo,
     runsDir,
-    port,
     claudeBin: resolve("tests/fixtures/fake-claude.mjs"),
     watchers: false,
     viewAsClock: () => now,

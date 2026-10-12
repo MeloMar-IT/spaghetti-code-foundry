@@ -6,15 +6,14 @@ import { appReposPath } from "../src/auth/app-repos.js";
 import { auditPath } from "../src/auth/audit.js";
 import { repoAccess } from "../src/auth/repos.js";
 import { clearTokenCache } from "../src/github-app.js";
-import { startServer } from "../src/server/server.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { type FakeGithubApp, fakeGithubApp } from "./helpers/github-app.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 const SENTENCE = "the administrator has not allowed your account to connect this repository through the GitHub App; ask the administrator, or choose another method";
 const realEnv = process.env;
@@ -47,7 +46,7 @@ beforeAll(async () => {
   writeFileSync(wrap, `#!/bin/sh\nexec "${resolve("tests/fixtures/fake-gh.sh")}" "$@"\n`);
   chmodSync(wrap, 0o755);
   Object.assign(process.env, { TMPDIR: scratch, SCF_CONNECT_REMOTE: fg.remote, FACTORY_GH_BIN: wrap });
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} }));
+  ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} }));
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });

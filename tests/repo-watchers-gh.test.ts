@@ -6,9 +6,9 @@ import { addRepo, getRepo, setRepoAuth } from "../src/auth/repos.js";
 import { saveConfig } from "../src/config.js";
 import { removeCredential } from "../src/credentials/store.js";
 import { SIGN_IN_PREFIX } from "../src/queue/gh-identity.js";
-import { startServer } from "../src/server/server.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const tok = (s: string) => ["github", "pat", ""].join("_") + s.repeat(12);
@@ -21,10 +21,9 @@ let home: string;
 let saved: string | undefined;
 let kc: ReturnType<typeof fakeKeychain>;
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let close: () => void;
-let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
+let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let admin: TestSession;
 let ann: TestSession;
 let logs: string[];
@@ -38,7 +37,7 @@ beforeEach(async () => {
   Object.assign(process.env, { GH_TOKEN: "host-token", GITHUB_TOKEN: "host-github", GH_ENTERPRISE_TOKEN: "host-enterprise" });
   logs = [];
   kc = fakeKeychain();
-  ({ close, ctx } = await startServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), port, claudeBin, watcherRetryMs: 50, log: (m) => void logs.push(m) }));
+  ({ close, ctx, base } = await startTestServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, watcherRetryMs: 50, log: (m) => void logs.push(m) }));
   ctx.scheduler.drain();
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });

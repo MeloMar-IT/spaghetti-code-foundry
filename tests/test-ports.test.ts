@@ -27,17 +27,8 @@ const PART_3 = [
 ];
 // Part 4: repositories, watchers, credentials
 const PART_4 = [
-  "tests/app-repos-api.test.ts",
-  "tests/credentials-api.test.ts",
-  "tests/key-vars-api.test.ts",
   "tests/repo-key.test.ts",
-  "tests/repo-watchers-api.test.ts",
-  "tests/repo-watchers-gh.test.ts",
   "tests/repo-watchers-run.test.ts",
-  "tests/repos-admin-api.test.ts",
-  "tests/repos-api.test.ts",
-  "tests/repos-app-api.test.ts",
-  "tests/watcher-move-server.test.ts",
 ];
 // Part 5: accounts and sign-in
 const PART_5 = [
@@ -52,21 +43,17 @@ const PART_5 = [
   "tests/user-cli.test.ts",
   "tests/user-view.test.ts",
   "tests/users-api.test.ts",
-  "tests/view-as.test.ts",
 ];
 // Part 6: server, runs and the rest
 const PART_6 = [
   "tests/browser/seed.ts",
   "tests/home-process.test.ts",
   "tests/monitor-api.test.ts",
-  "tests/monitor-problems-api.test.ts",
   "tests/net-server.test.ts",
-  "tests/permissions.test.ts",
   "tests/run-answer.test.ts",
   "tests/run-archive.test.ts",
   "tests/run-ownership.test.ts",
   "tests/search-api.test.ts",
-  "tests/server.test.ts",
   "tests/skill-cli.test.ts",
   "tests/ui-gallery-server.test.ts",
 ];
