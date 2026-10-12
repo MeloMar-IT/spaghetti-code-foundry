@@ -117,6 +117,11 @@ describe("runs", () => {
     expect((await scf(["runs", "log", walk, "9"])).err).toBe("error: no such step");
     const diff = await scf(["runs", "diff", walk]);
     expect([diff.code, diff.out]).toEqual([0, "no changes"]);
+    const evidence = await scf(["runs", "evidence", walk]);
+    expect(evidence.code).toBe(0);
+    expect(evidence.out).toMatch(new RegExp(`^(no )?evidence · run ${walk} · [a-z-]+\\n\\n`));
+    const none = await scf(["runs", "evidence", "nope"]);
+    expect([none.code, none.err]).toEqual([1, "error: run not found"]);
   });
 
   it("names the owners and the filter values", async () => {

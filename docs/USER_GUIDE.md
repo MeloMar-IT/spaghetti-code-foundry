@@ -864,6 +864,27 @@ can be found.
 - Runs made before evidence existed keep working everywhere; they have no evidence files, and
   `scf evidence verify` says so (`· no evidence`).
 
+**Read the evidence through the API.** `GET /api/runs/:id/evidence` (or `scf runs evidence <run-id>`
+against a server) answers for one run:
+
+- `state`: `available` when the run has a manifest that can be read, else `not_available` with a
+  `reason`. A run made before evidence existed, a run that has not ended and a run whose evidence
+  was removed all answer `not_available` with status 200; the run page and every other call work
+  as before.
+- `verification`: the result of the same check as `scf evidence verify` (`status`, `verified`,
+  `explanation`, the checks, and the first failure when there is one).
+- `manifest`: what `evidence.json` says.
+- `artifacts`: the files the manifest names (the diff last), each with its path inside the run
+  folder, SHA-256, size, whether the evidence needs it, and what the check found (`ok`, `changed`,
+  `missing`, `unreadable`).
+
+The answer never holds the content of a file, a path of the server, a prompt or an output. The
+changes and the transcripts of a run stay behind their own calls and rules
+(`GET /api/runs/:id/diff`, `GET /api/runs/:id/transcript/:n`). An administrator may read the
+evidence of any run. A user may read the evidence of their own runs, without the models, the
+policies and the ids of accounts; any other run answers "run not found", the same as a run that
+does not exist.
+
 **Check the evidence of a run.** `scf evidence verify <run-id>` reads the run folder and says
 whether the evidence is still what was written. It needs no server and no network.
 
@@ -2897,6 +2918,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
+| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policies and account ids); `state` is `not_available` for a run without a manifest |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |

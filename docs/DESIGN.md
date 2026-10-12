@@ -466,6 +466,10 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
 - **Retention.** `cleanRuns` (`src/clean.ts`) removes the evidence of a run it keeps only when
   `evidenceOlderThanDays` is given, and then all four files, manifest first. It never removes a
   log and keeps the evidence, so a kept run is either verifiable or has no evidence.
+- **API.** `GET /api/runs/:id/evidence` (rule `own`, `src/server/evidence-view.ts`) builds its
+  answer from `verifyRunEvidence` and the manifest on each call and never throws; it sends
+  references, not file content, and a user's answer leaves out models, policies and account ids
+  and goes through `hidePaths`. It adds nothing to the engine.
 - **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
   in the run folder. While it is there no start of the run continues the stream and the run gets
   no manifest (#136). Nothing removes it.
