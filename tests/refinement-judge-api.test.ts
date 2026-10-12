@@ -6,26 +6,26 @@ import { addRepo, listRepos, setRepoReady } from "../src/auth/repos.js";
 import { DraftsSchema } from "../src/refinement/draft.js";
 import { END_BAD_FORM, END_READY_CHANGED, endArchitectRun, getSession, refinementsPath } from "../src/refinement/store.js";
 import { TALK_FIRST_LINE, readyOf } from "../src/refinement/talk-text.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 
 let gh: ReturnType<typeof fakeGithub>;
 let tmp: string;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
 const saved: Record<string, string | undefined> = {};
 const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND"];
 
-const serverOptions = (): ServerOptions => ({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
+const serverOptions = (): Omit<ServerOptions, "port"> => ({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
 
 beforeEach(async () => {
   gh = fakeGithub();
@@ -38,7 +38,8 @@ beforeEach(async () => {
   delete process.env.FAKE_BRIEF;
   delete process.env.FAKE_ROUND;
   kc = fakeKeychain();
-  started = await startServer(serverOptions());
+  started = await startTestServer(serverOptions());
+  base = started.base;
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
@@ -443,7 +444,9 @@ describe("a run the session never recorded", () => {
     f.sessions[0].log = f.sessions[0].log.filter((l: any) => !["ready-asked", "architect-judged"].includes(l.what));
     f.sessions[0].updated = "2020-01-01T00:00:00.000Z";
     writeFileSync(refinementsPath(), JSON.stringify(f));
-    started = await startServer(serverOptions());
+    started = await startTestServer(serverOptions());
+    base = started.base;
+    ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" }); // a new port: a new cookie name
     const s = await get(id);
     expect(s.architect.state).toBe("idle");
     expect(itemsOf(s.drafts[0]).small).toMatchObject({ by: "architect", result: "met" });

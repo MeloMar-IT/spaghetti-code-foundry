@@ -4,33 +4,33 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
 import { refinementSweeper } from "../src/server/api-refinement.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { DROP_KEEP_MS, refinementsPath } from "../src/refinement/store.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let saved: string | undefined;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
 let logs: string[];
 
-async function boot(extra: Partial<ServerOptions> = {}) {
-  started = await startServer({
+async function boot(extra: Partial<Omit<ServerOptions, "port">> = {}) {
+  started = await startTestServer({
     repo: tmp,
     runsDir: join(tmp, "runs"),
-    port,
     claudeBin: resolve("tests/fixtures/fake-claude.mjs"),
     watchers: false,
     log: (m) => void logs.push(m),
     refinementSweepMs: 3_600_000,
     ...extra,
   });
+  base = started.base;
 }
 
 beforeEach(async () => {
@@ -195,6 +195,7 @@ describe("keeping and removing", () => {
     started!.close();
     await wait(50);
     await boot({ refinementSweepMs: 50 });
+    ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" }); // a new port: a new cookie name
     const s = await make();
     await call(ann, "POST", `/api/refinement/${s.id}/drop`, {});
     const expire = () => {
