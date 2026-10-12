@@ -41,7 +41,9 @@ const APP_URL = "https://github.com/apps/foundry-app/installations/new";
 const appOptions = (over: object = {}) => ({ methods: ["github-token", "https-token", "ssh-deploy-key", "github-app"], githubApp: { available: true, installUrl: APP_URL }, ...over });
 let hold: { release: (a?: Answer) => void } | undefined;
 let holdNext: boolean;
-let heldGets: (() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
+let runsAnswer: unknown[] = []; // answer of GET /api/runs
+let runsFail = false;
+let heldGets:(() => void)[][]; // each entry holds one upcoming GET; the test fills it, then calls its functions to release
 const realFetch = globalThis.fetch;
 let nextId = 1;
 let keyCount = 0;
@@ -66,11 +68,19 @@ beforeEach(() => {
   methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } };
   methodsFail = false;
   methodsCalls = 0;
+  runsAnswer = [];
+  runsFail = false;
   readyAnswer = undefined;
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET" && url === "/api/repos/methods") {
       methodsCalls++;
       return methodsAnswer && !methodsFail ? reply(methodsAnswer) : reply({ error: "not found" }, 404);
+    }
+    if (init.method === "GET" && url.startsWith("/api/runs")) {
+      if (runsFail) return reply({ error: "x" }, 500);
+      // like the server: the status filter applies before the cap of 200
+      const status = new URL(url, "http://x").searchParams.get("status");
+      return reply((runsAnswer as { status?: string }[]).filter((r) => !status || r.status === status).slice(0, 200));
     }
     if (init.method === "GET" && url.endsWith("/ready")) {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
@@ -274,13 +284,13 @@ describe("the page", () => {
     expect(walk(table).find((e) => e.tag === "caption")!.textContent).toBe("My repositories");
     const [first, second] = walk(table).filter((e) => e.tag === "tr" && e.parent!.tag === "tbody");
     const cells = (tr: FakeElement) => tr.children.filter((c): c is FakeElement => c instanceof FakeElement);
-    expect(cells(first!).map((c) => c.attrs["data-label"])).toEqual(["Repository", "Authentication", "Connection", "Actions"]);
+    expect(cells(first!).map((c) => c.attrs["data-label"])).toEqual(["Repository", "Authentication", "Connection", "Active runs", "Next step", "Actions"]);
     const link = cells(first!)[0]!.children[0] as FakeElement;
     expect(link.tag).toBe("a");
     expect(link.attrs.href).toBe("https://github.com/o/a");
     expect(link.attrs.rel).toContain("noopener");
     expect(link.textContent).toBe("git@github.com:o/a.git");
-    expect(walk(cells(first!)[3]!).some((e) => e.tag === "button")).toBe(true);
+    expect(walk(cells(first!)[5]!).some((e) => e.tag === "button")).toBe(true);
     // an address that is not understood stays plain text
     expect(walk(cells(second!)[0]!).some((e) => e.tag === "a")).toBe(false);
     expect(cells(second!)[0]!.textContent).toBe("https://example.test/x/y");
@@ -297,7 +307,8 @@ describe("the page", () => {
     expect(text.split("Not tested yet")).toHaveLength(3);
     const rowButtons = walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent);
     expect(rowButtons.filter((t) => t !== "+ Add repository")).toEqual(["Test connection", "Change authentication", "Definition of Ready", "Remove", "Test connection", "Change authentication", "Definition of Ready", "Remove"]);
-    for (const tag of ["input", "select", "textarea"]) expect(main().all(tag)).toEqual([]);
+    expect(main().all("input").map((i: FakeElement) => i.attrs["data-focus"])).toEqual(["repos-compact"]);
+    for (const tag of ["select", "textarea"]) expect(main().all(tag)).toEqual([]);
     expect(errLine(main())).toEqual([]);
   });
 
@@ -306,9 +317,10 @@ describe("the page", () => {
     await show();
     const cells = walk(main()).filter((e) => e.tag === "td" && e.textContent.includes("Connected") || e.textContent.includes("Failed") || e.textContent === "Not tested yet");
     expect(cells.length).toBeGreaterThan(0);
-    const pills = byClass(main(), "pill");
-    expect(pills.map((p) => p.textContent)).toEqual(["Connected", "Failed", "Not tested yet"]);
-    expect(pills.map((p) => p.attrs.class)).toEqual(["pill ok", "pill fail", "pill"]);
+    // the failed row comes first, then the untested one
+    const pills = walk(main()).filter((e) => e.tag === "td" && e.attrs["data-label"] === "Connection").flatMap((td) => byClass(td, "pill"));
+    expect(pills.map((p) => p.textContent)).toEqual(["Failed", "Not tested yet", "Connected"]);
+    expect(pills.map((p) => p.attrs.class)).toEqual(["pill fail", "pill", "pill ok"]);
     expect(byClass(main(), "muted").filter((e) => e.textContent.startsWith("tested ")).map((e) => e.textContent)).toEqual(["tested just now", "tested just now"]);
     expect(byClass(main(), "muted").find((e) => e.textContent.startsWith("tested "))!.attrs.title).toBeTruthy();
     expect(byClass(main(), "status").map((e) => [e.attrs.class, e.textContent])).toEqual([
@@ -857,7 +869,7 @@ describe("late answers", () => {
 
 describe("the repository filter", () => {
   const NOT_IN_LIST = "This repository is not in your list. It may have been removed, or you may not have access.";
-  const urls = () => byClass(main(), "mono").map((e) => e.textContent);
+  const urls = () => byClass(main(), "repo-name").map((e) => e.textContent);
   const bars = () => byClass(main(), "filter-bar");
   const setHash = (hash: string) => {
     (globalThis as any).location = { hash };
@@ -871,7 +883,7 @@ describe("the repository filter", () => {
     setup();
     setHash("#/repos?repo=O%2FA");
     await showFiltered("O/A");
-    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(urls()).toEqual(["o/a"]);
     expect(main().textContent).toContain("Repository: O/A");
   });
 
@@ -924,7 +936,7 @@ describe("the repository filter", () => {
     press(button(main(), "Test connection"));
     await flush();
     await flush();
-    expect(urls()).toEqual(["https://github.com/o/a"]);
+    expect(urls()).toEqual(["o/a"]);
     expect(bars()).toHaveLength(1);
     answers.push({ status: 500, error: "Could not clean up." });
     press(button(main(), "Remove"));
@@ -1358,5 +1370,153 @@ describe("the repository context", () => {
     press(button(root(), "Save"));
     await flush();
     expect(a.repos).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("rows with health and the next step (#380)", () => {
+  const cell = (tr: FakeElement, label: string) => walk(tr).find((e) => e.tag === "td" && e.attrs["data-label"] === label)!;
+  const rows = () => walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]);
+  const texts = (el: FakeElement, tag = "button") => walk(el).filter((e) => e.tag === tag).map((b) => b.textContent);
+  const searchBox = () => main().all("input").find((i: FakeElement) => i.attrs.type === "search");
+  const memory = () => {
+    const m = new Map<string, string>();
+    return { m, store: { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v) } };
+  };
+
+  it("shows the short name with the address in the title, and the address without github", async () => {
+    repos = [rec({ github: "o/a" }), rec({ url: "https://example.test/x/y" })];
+    await show();
+    const [a, b] = rows();
+    expect(cell(a!, "Repository").textContent).toBe("o/a");
+    expect(cell(a!, "Repository").attrs.title).toBe("https://github.com/o/a");
+    expect(cell(b!, "Repository").textContent).toBe("https://example.test/x/y");
+  });
+
+  it("counts running and waiting runs, and shows a dash when the runs fail", async () => {
+    repos = [rec({ github: "o/a" })];
+    runsAnswer = [{ status: "running", vars: { github_repo: "o/a" } }, { status: "waiting", vars: { github_repo: "O/A" } }, { status: "succeeded", vars: { github_repo: "o/a" } }];
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("2");
+    runsFail = true;
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("—");
+    expect(errLine(main())).toEqual([]);
+  });
+
+  it("counts an active run that is older than 200 finished runs", async () => {
+    repos = [rec({ github: "o/a" })];
+    const done = Array.from({ length: 250 }, () => ({ status: "succeeded", vars: { github_repo: "o/a" } }));
+    runsAnswer = [...done, { status: "waiting", vars: { github_repo: "o/a" } }];
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("1");
+  });
+
+  it("shows a dash when an answer reaches the cap of 200", async () => {
+    repos = [rec({ github: "o/a" })];
+    runsAnswer = Array.from({ length: 200 }, () => ({ status: "running", vars: { github_repo: "o/b" } }));
+    await show();
+    await flush();
+    expect(cell(rows()[0]!, "Active runs").textContent).toBe("—");
+  });
+
+  it("puts the next action in the Next step cell, once", async () => {
+    repos = [rec({ method: "none" }), rec({ connection: connection(false) }), rec({ connection: connection(true) })];
+    await show();
+    const [none, fail, ok] = rows();
+    expect(byClass(cell(none!, "Next step"), "pill")[0]!.attrs.class).toBe("pill fail");
+    expect(texts(cell(none!, "Next step"))).toEqual(["Change authentication"]);
+    expect(texts(cell(none!, "Actions"))).not.toContain("Change authentication");
+    expect(texts(cell(fail!, "Next step"))).toEqual(["Test again"]);
+    expect(cell(fail!, "Next step").textContent).toContain("The host did not accept the token.");
+    expect(texts(cell(ok!, "Next step"))).toEqual([]);
+    expect(cell(ok!, "Next step").textContent).toBe("Nothing to do");
+    for (const tr of [none!, fail!, ok!]) {
+      const all = texts(tr);
+      expect(new Set(all).size).toBe(all.length);
+    }
+  });
+
+  it("offers the install link for an app that is not installed, else the test button", async () => {
+    const c = connection(false, { checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "The app is not installed." }] });
+    repos = [rec({ method: "github-app", connection: c })];
+    methodsAnswer = appOptions();
+    await show();
+    const next = cell(rows()[0]!, "Next step");
+    expect(walk(next).find((e) => e.tag === "a")!.attrs.href).toBe(APP_URL);
+    expect(texts(cell(rows()[0]!, "Actions"))).toContain("Test again");
+    methodsAnswer = appOptions({ githubApp: { available: true, installUrl: "https://evil.example/x" } });
+    await show();
+    expect(texts(cell(rows()[0]!, "Next step"))).toEqual(["Test again"]);
+  });
+
+  it("draws failed, untested and connected rows in that order with the count", async () => {
+    repos = [rec({ github: "o/c", connection: connection(true) }), rec({ github: "o/u" }), rec({ github: "o/f", connection: connection(false) })];
+    await show();
+    expect(rows().map((r) => cell(r, "Repository").textContent)).toEqual(["o/f", "o/u", "o/c"]);
+    expect(main().textContent).toContain("2 repositories need attention.");
+  });
+
+  it("shows the text filter from 8 repositories and narrows without a new load", async () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => rec({ github: `o/r${i}`, url: `https://github.com/o/r${i}` }));
+    repos = many(7);
+    await show();
+    expect(searchBox()).toBeUndefined();
+    repos = many(8);
+    await show();
+    const input = searchBox()!;
+    const before = gets;
+    (input as any).value = "o/r3";
+    input.fire("input", {});
+    expect(rows().map((r) => cell(r, "Repository").textContent)).toEqual(["o/r3"]);
+    expect(gets).toBe(before);
+    (input as any).value = "nothing";
+    input.fire("input", {});
+    expect(rows()).toHaveLength(0);
+    expect(main().textContent).toContain("No repository matches the filter.");
+    expect(searchBox()).toBe(input);
+  });
+
+  it("draws 50 repositories in one table box", async () => {
+    repos = Array.from({ length: 50 }, (_, i) => rec({ github: `o/r${i}`, url: `https://github.com/o/r${i}` }));
+    await show();
+    expect(rows()).toHaveLength(50);
+    expect(byClass(main(), "table-box")).toHaveLength(1);
+  });
+
+  it("remembers Compact rows", async () => {
+    const { m, store } = memory();
+    repos = [rec()];
+    await ui.renderRepos(main(), { admin: false, store });
+    const box = () => main().all("input").find((i: FakeElement) => i.attrs["data-focus"] === "repos-compact")!;
+    const tableClass = () => walk(main()).find((e) => e.tag === "table")!.attrs.class;
+    expect(tableClass()).toBe("table cards");
+    (box() as any).checked = true;
+    box().fire("change", { currentTarget: box() });
+    expect(tableClass()).toBe("table cards compact");
+    expect(m.get("scf.repos.compact")).toBe("1");
+    await ui.renderRepos(main(), { admin: false, store });
+    expect(tableClass()).toBe("table cards compact");
+    (box() as any).checked = false;
+    box().fire("change", { currentTarget: box() });
+    expect(m.get("scf.repos.compact")).toBe("0");
+  });
+
+  it("shows no button and no secret in read-only mode", async () => {
+    const c = connection(false, { checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "No." }] });
+    repos = [rec({ connection: connection(false), token: TOKEN }), rec({ method: "github-app", connection: c })];
+    methodsAnswer = appOptions();
+    await ui.renderRepos(main(), { admin: false, readOnly: true });
+    expect(walk(main()).filter((e) => e.tag === "button").map((b) => b.textContent)).toEqual([]);
+    expect(walk(main()).filter((e) => e.tag === "a" && e.attrs.href === APP_URL)).toEqual([]);
+    expect(main().textContent).toContain("Last test failed");
+    expect(main().textContent).not.toContain(TOKEN);
+  });
+
+  it("lets a long name wrap inside its cell", () => {
+    const css = readFileSync(new URL("../ui/css/components.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.table td\.repo-name\s*\{[^}]*max-width[^}]*overflow-wrap:\s*anywhere/);
   });
 });

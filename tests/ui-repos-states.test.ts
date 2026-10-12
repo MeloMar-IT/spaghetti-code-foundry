@@ -56,6 +56,7 @@ beforeEach(() => {
       const f = methodsGets.shift();
       return f ? failed(f) : reply({ methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } });
     }
+    if (init.method === "GET" && url.startsWith("/api/runs")) return reply([]);
     if (init.method === "GET") {
       const f = repoGets.shift();
       const wait = gate;

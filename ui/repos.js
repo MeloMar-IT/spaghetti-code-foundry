@@ -3,6 +3,8 @@ import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
 import { confirmDialog, fieldFor, h, modal, mount, showError, table, timeAgo, toast } from "./dom.js";
 import { onWish, takeWish } from "./palette-data.js";
+import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
+import { safeStore } from "./shell.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 
 /**
@@ -336,6 +338,8 @@ export async function readyView(repo) {
     h("small", {}, ready.isDefault ? "The default list." : "Set by your administrator.")));
 }
 
+const RUNS_CAP = 200; // GET /api/runs returns at most this many runs
+
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
 // The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
@@ -359,16 +363,37 @@ export function focusRepoRow(main, id) {
 }
 
 /** The My repositories page. `notice` ({ text, retryId }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo } = {}) {
+export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo, store = safeStore() } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
   // the filters live in the state, so a reload keeps them and a removed filter stays removed
-  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {} };
+  const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {},
+    runs: undefined, text: "", compact: readCompact(store) }; // runs: undefined while loading, null when they could not be loaded
   const live = () => mine === generation && onPage();
   const fetchAll = async (n) => {
     const [repos, methods] = await Promise.all([api.repos(), api.repoMethods().then((options) => ({ options }), () => ({ failed: true }))]);
     if (n !== seq) return;
     Object.assign(state, { repos, options: methods.options, methodsFailed: !!methods.failed, at: new Date(), stale: false });
+  };
+  const fillRuns = (td, repo) => {
+    td.textContent = state.runs ? String(activeRuns(state.runs, repo)) : state.runs === null ? "—" : "…";
+    if (state.runs === null) td.setAttribute("title", "The runs could not be loaded.");
+    else td.removeAttribute("title");
+  };
+  // The runs load on their own: the page never waits for them, and a failed call only shows "—".
+  const loadRuns = (n) => {
+    // running and waiting runs are asked for by status, so the server's cap of 200 runs does not hide an old active run;
+    // an answer that is itself at the cap may be cut, so it counts as unknown
+    Promise.all(["running", "waiting"].map((s) => api.runsWithStatus(s)))
+      .then(([a, b]) => (Array.isArray(a) && Array.isArray(b) && a.length < RUNS_CAP && b.length < RUNS_CAP ? [...a, ...b] : null), () => null)
+      .then((runs) => {
+      if (n !== seq || !live()) return;
+      state.runs = runs;
+      for (const td of main.querySelectorAll("td[data-runs]")) {
+        const repo = state.repos.find((r) => r.id === td.getAttribute("data-runs"));
+        if (repo) fillRuns(td, repo);
+      }
+    });
   };
   const reload = async (next) => {
     state.notice = next;
@@ -378,9 +403,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     } catch {
       if (n === seq) state.stale = true; // the list on screen stays
     }
-    if (n === seq && live()) draw();
+    if (n === seq && live()) {
+      draw();
+      loadRuns(n);
+    }
   };
-  const load = async () => {
+  const load= async () => {
     mount(main, head(false), loadingState("Loading your repositories", { rows: 3, shape: "table" }));
     const n = ++seq;
     try {
@@ -389,9 +417,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       if (n !== seq || !live()) return;
       return mount(main, head(false), loadFailed(e, { what: "Your repositories could not be loaded.", denied: "You are not allowed to see these repositories.", onRetry: load }));
     }
-    if (n === seq && live()) draw();
+    if (n === seq && live()) {
+      draw();
+      loadRuns(n);
+    }
   };
-  const head = (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
+  const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
     h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
     h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
   const remove = async (id, again = false) => {
@@ -472,18 +503,32 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     const testError = state.testErrors.get(repo.id);
     const failed = !!testError || (repo.connection && !repo.connection.ok);
     const webUrl = repoWebUrl(repo.url);
+    const att = repoAttention(repo, { admin, options: state.options });
+    const name = repoName(repo);
+    const testBtn = h("button", { class: "small", onClick: (e) => test(e, repo) }, failed ? "Test again" : "Test connection");
+    const authBtn = h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
+      await repoDialog({ admin, options: state.options, repo });
+      reload();
+    } }, "Change authentication");
+    const link = att.action === "install" ? installLink(state.options) : null;
+    // the one next action sits in the Next step cell and is left out of the Actions cell
+    const promoted = att.action === "auth" ? authBtn : att.action === "test" || att.action === "install" ? (link ?? testBtn) : null;
+    const runs = h("td", { "data-runs": repo.id });
+    fillRuns(runs, repo);
     return h("tr", { "data-repo": repo.id },
-      h("td", { class: "mono" }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, repo.url) : repo.url),
+      h("td", { class: "mono repo-name", title: repo.url }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, name) : name),
       h("td", {}, methodLabel(repo, admin),
         repo.method === "ssh-deploy-key" && repo.publicKey ? keyBlock(repo) : null,
-        repo.method === "github-app" ? appBlock() : null),
+        repo.method === "github-app" && !link ? appBlock() : null),
       connectionCell(repo, { error: testError }),
+      runs,
+      h("td", { class: "next-step" },
+        h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text),
+        att.detail ? h("div", { class: "muted", title: att.detail }, att.detail) : null,
+        !readOnly && promoted ? h("div", {}, promoted) : null),
       readOnly ? h("td", {}) : h("td", {},
-        h("button", { class: "small", onClick: (e) => test(e, repo) }, failed ? "Test again" : "Test connection"), " ",
-        h("button", { class: "small", "data-focus": `auth-${repo.id}`, onClick: async () => {
-          await repoDialog({ admin, options: state.options, repo });
-          reload();
-        } }, "Change authentication"), " ",
+        promoted === testBtn ? null : [testBtn, " "],
+        promoted === authBtn ? null : [authBtn, " "],
         h("button", { class: "small", onClick: (e) => whileBusy(e.currentTarget, () => readyView(repo)) }, "Definition of Ready"), " ",
         repo.method === "ssh-deploy-key" ? [h("button", { class: "small", onClick: (e) => newKey(e, repo) }, "Generate a new key"), " "] : null,
         h("button", { class: "small danger", onClick: async (e) => {
@@ -505,7 +550,27 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const draw = () => {
     const canAdd = !readOnly && !state.methodsFailed;
     const pending = needsDeployKey(state.repos);
-    const shown = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const inContext = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
+    const ctx = { admin, options: state.options };
+    const showFilter = state.repos.length >= FILTER_FROM;
+    if (!showFilter) state.text = "";
+    // only this part is drawn again while typing, so the search box keeps its caret
+    const results = h("div", {});
+    const drawResults = () => {
+      const shown = sortByAttention(inContext.filter((r) => matchesText(r, state.text)), ctx);
+      mount(results,
+        shown.length
+          ? table(["Repository", "Authentication", "Connection", "Active runs", "Next step", h("span", { class: "sr-only" }, "Actions")], shown.map(row),
+            { cards: true, caption: "My repositories", class: state.compact ? "compact" : undefined })
+          : inContext.length ? h("div", { class: "empty" }, "No repository matches the filter.")
+          : state.filters.repo ? filterGone({ onClear: clear })
+          : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
+    };
+    drawResults();
+    const filterInput = showFilter
+      ? h("input", { type: "search", "aria-label": "Filter repositories", placeholder: "Filter by address", "data-focus": "repos-filter", value: state.text,
+        onInput: () => { state.text = filterInput.value; drawResults(); } })
+      : null;
     mount(main,
       head(canAdd),
       filterBar(state.filters, { onRemove: clear, onClear: clear }),
@@ -521,10 +586,15 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
           const btn = e.currentTarget;
           return whileBusy(btn, () => remove(state.notice.retryId, true));
         } }, "Try again")] : null) : null,
-      shown.length
-        ? table(["Repository", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")], shown.map(row), { cards: true, caption: "My repositories" })
-        : state.filters.repo ? filterGone({ onClear: clear })
-        : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
+      inContext.length
+        ? h("div", { class: "row" },
+          h("p", { class: "muted flush", "data-attention": String(attentionCount(inContext, ctx)) }, attentionSummary(attentionCount(inContext, ctx))),
+          h("span", { class: "spacer" }),
+          filterInput,
+          h("label", {}, h("input", { type: "checkbox", "data-focus": "repos-compact", checked: state.compact,
+            onChange: (e) => { state.compact = e.currentTarget.checked; writeCompact(store, state.compact); drawResults(); } }), " Compact rows"))
+        : null,
+      results);
   };
   // The palette's repository result: a wish that came before this page, or one for the page as it is.
   unwish();
