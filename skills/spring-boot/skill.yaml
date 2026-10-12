@@ -1,0 +1,23 @@
+id: spring-boot
+version: 1.0.0
+category: platform
+capabilities: [spring-boot-configuration, spring-boot-web, spring-boot-transactions, spring-boot-observability, spring-boot-test-slices]
+# Metadata only: ranking comes from the spring-boot entry of SKILL_RULES in src/skills/candidate-rules.ts.
+detectors:
+  - type: content
+    glob: "**/pom.xml"
+    contains: "org.springframework.boot"
+  - type: content
+    glob: "**/build.gradle"
+    contains: "org.springframework.boot"
+  - type: content
+    glob: "**/build.gradle.kts"
+    contains: "org.springframework.boot"
+  - type: content
+    glob: "**/*.java"
+    contains: "import org.springframework.boot."
+dependencies:
+  - id: java
+    min_version: 1.0.0
+roles: [coder, reviewer]
+risk: low
