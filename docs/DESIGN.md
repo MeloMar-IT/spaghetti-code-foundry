@@ -457,6 +457,15 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
 - **Not followed, not waited for.** The file is opened without following a link and without
   waiting for a pipe, and only a plain file is used. The OS sandbox of a user's run denies writes
   to both evidence files.
+- **Privacy.** `append` hides stored secrets in the texts of an event with the redactor of
+  `credentials/redact.ts` (`secretRedactor`, one `stat` while the store is unchanged) and checks
+  the finished line once more; a store that cannot be read, or a line that would still hold a
+  secret, stops the stream like any other problem. `finalizeRunEvidence` checks the whole stream
+  and the manifest text the same way and writes no manifest otherwise. There is no second
+  redaction system.
+- **Retention.** `cleanRuns` (`src/clean.ts`) removes the evidence of a run it keeps only when
+  `evidenceOlderThanDays` is given, and then all four files, manifest first. It never removes a
+  log and keeps the evidence, so a kept run is either verifiable or has no evidence.
 - **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
   in the run folder. While it is there no start of the run continues the stream and the run gets
   no manifest (#136). Nothing removes it.

@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Evidence privacy and retention (#140): stored secrets are hidden in every evidence event before it is written, and the events and the manifest are checked for stored secrets before `evidence.json` is written; when the check cannot be done or finds a secret, the run gets no manifest. `scf clean --evidence-older-than <days>` (`evidenceOlderThanDays` in `POST /api/clean`) removes the evidence files of cleaned runs that ended at least that many days ago and keeps the run; without the option clean-up works as before. A run without evidence is reported as "no evidence" (made before evidence existed, or removed by a clean-up).
 - AI help safety 2 — authorization, retention, audit and usage limits for Ask SCF (#243). Part of #226.
   - **Who may ask.** New settings under `help`: `audience` (`everyone`, or `admins`), `disabled_accounts` (account ids that may not ask) and `keep_days` (default 90, as before). An account that may not ask gets 403 with a plain sentence; an account over its daily questions, or whose help turns of today cost as much as its own daily budget, gets 429. Nothing is stored and no provider is called.
   - **Audit.** New audit actions `help-ask`, `help-delete` and `help-export`: the account, the conversation id, the result and the id of the turn. Never a question, an answer or a title. The Audit page lists them in its action filter.

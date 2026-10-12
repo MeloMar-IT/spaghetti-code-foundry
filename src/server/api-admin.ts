@@ -78,9 +78,12 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const body = await readJson(req);
     const days = Number(body.olderThanDays ?? 7);
     if (!(days >= 0)) throw new HttpError(400, "olderThanDays must be >= 0");
+    const evidenceDays = body.evidenceOlderThanDays;
+    if (evidenceDays !== undefined && !(typeof evidenceDays === "number" && evidenceDays >= 0)) throw new HttpError(400, "evidenceOlderThanDays must be a number >= 0");
     return send(res, 200, cleanRuns({
       runsDir: opts.runsDir,
       olderThanDays: days,
+      evidenceOlderThanDays: evidenceDays,
       purge: body.purge === true,
       includePaused: body.includePaused === true,
       dryRun: body.dryRun !== false,

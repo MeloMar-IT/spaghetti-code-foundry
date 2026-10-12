@@ -841,6 +841,29 @@ can be found.
   such a run is resumed it gets events from then on, but no manifest.
 - A step of a user's run cannot write these files.
 
+**Privacy and how long evidence is kept.**
+
+- Stored secrets (the saved credentials and key variables) are hidden in every event before it is
+  written, with the same filter as for logs. Events hold no prompt, no output and no tool
+  arguments. If the stored credentials cannot be read, the evidence of the run stops (see "It
+  never stops a run") and the run gets no manifest.
+- Before the manifest is written, the events and the manifest are checked for stored secrets once
+  more. If one is found (for example a secret that was saved while the run was going), no
+  manifest is written and the live log says why.
+- `evidence.diff` holds the code the run changed, with stored secrets hidden. Treat it like the
+  workspace: whoever can read the run folder can read that code.
+- Evidence is kept as long as its run. A normal clean-up removes only workspaces, so the logs the
+  evidence needs stay and the run can still be verified. `scf clean --purge` removes the run with
+  its evidence.
+- To remove evidence earlier than the run, add `--evidence-older-than <days>` to `scf clean`
+  (`evidenceOlderThanDays` in `POST /api/clean`). It applies to the runs the clean-up handles
+  (see `--older-than`) that ended at least that many days ago. All evidence files of such a run
+  go together (`evidence.json`, `evidence.diff`, `evidence.jsonl`, `evidence.incomplete`); the
+  run, its logs and its page stay. `scf evidence verify` then says `· no evidence`. Without the
+  option nothing changes.
+- Runs made before evidence existed keep working everywhere; they have no evidence files, and
+  `scf evidence verify` says so (`· no evidence`).
+
 **Check the evidence of a run.** `scf evidence verify <run-id>` reads the run folder and says
 whether the evidence is still what was written. It needs no server and no network.
 
@@ -862,7 +885,7 @@ $ scf evidence verify 20260131-120000-ab12
   optional: the run still verifies, and the line says
   `1 optional file is no longer there (evidence.diff); that is allowed.` A file that was changed
   is never allowed.
-- **Nothing to verify:** a run made before evidence existed (`· no evidence`), or a run that has
+- **Nothing to verify:** a run made before evidence existed or whose evidence a clean-up removed (`· no evidence`), or a run that has
   not ended or could not be finalized (`■ not finalized`).
 - **Exit code:** 0 verified, 1 not verified, 2 nothing to verify. `--json` prints the whole result
   (status, the first failure with its code, every check and every file) for a script.
@@ -3730,7 +3753,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
 | `scf eval <suite.yaml> [--flows a,b] [--models …]` | Run an eval suite |
-| `scf clean [--older-than 7] [--purge] [--dry-run]` | Remove old run workspaces. With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
+| `scf clean [--older-than 7] [--purge] [--dry-run] [--evidence-older-than days]` | Remove old run workspaces. With `--evidence-older-than` it also removes the evidence of the cleaned runs that ended at least that many days ago ([Evidence of a run](#evidence-of-a-run)). With `--purge` it also removes plan records (see below) older than the larger of 90 days and `--older-than` |
 | `scf user create [--admin] [--name n] [--email e]` | Create an account. The first one needs `--admin`. Name and e-mail are asked for on a terminal |
 | `scf user list` | List accounts with the last sign-in; `no password yet` for an account that has not set one (never shows passwords, hashes or links) |
 | `scf user role <e-mail> admin\|user` | Change the role of an account (not the last admin); counts from the next call |

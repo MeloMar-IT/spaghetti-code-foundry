@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, ftruncateSync, lstatSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { ZodError } from "zod";
+import { secretRedactor, type Redactor } from "../credentials/redact.js";
 import { appendLiveLog } from "../engine/state.js";
 import { canonicalJson, eventHash } from "./canonical.js";
 import { readEvidenceChain, splitEvidenceLines } from "./chain.js";
@@ -16,6 +17,9 @@ import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE 
  * of the run) and the stream stops for good: a mark (`evidence.incomplete`) is left in the run folder, and no later
  * start of the run continues the stream. So a stream is whole up to its last line or it has stopped; it never goes on
  * after a hole, and a run whose stream stopped never gets a manifest.
+ *
+ * Stored secrets are hidden in every event before it is written (the same filter as for logs: credentials/redact.ts).
+ * When that filter cannot be used, the stream stops as after any other problem.
  */
 
 /** True when the stream of this run stopped after a problem (see EVIDENCE_INCOMPLETE_FILE). */
@@ -49,6 +53,23 @@ export const evidenceEventId = (seq: number): string => `ev-${String(seq).padSta
 const SAFE = (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 class StreamProblem extends Error {}
+
+/** The redactor for the stored secrets. A store that cannot be read is a problem of the stream: nothing is written unchecked. */
+function redactorOrProblem(): Redactor {
+  try {
+    return secretRedactor();
+  } catch {
+    throw new StreamProblem("the stored credentials cannot be read, so an event cannot be checked for secrets");
+  }
+}
+
+/** The value with every stored secret hidden in its texts (not in the names of its fields). */
+function redactValue(r: Redactor, value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return r.redact(value);
+  if (depth > 32 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => redactValue(r, v, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValue(r, v, depth + 1)]));
+}
 
 /** The bytes of a plain file; undefined when there is none. Throws for a link, a pipe or a folder. */
 export function readPlainBytes(path: string): Buffer | undefined {
@@ -149,10 +170,15 @@ export class EvidenceStream {
         if (!st.isFile()) throw new StreamProblem("evidence.jsonl is not a plain file");
         // Another process may have written since (a resume from the command line): what is on disk decides.
         if (st.size !== this.size) this.load(fd, st.size);
+        // Stored secrets are hidden before anything is written. The envelope (ids, numbers, the time) is made here.
+        const redactor = redactorOrProblem();
+        if (!redactor.empty) body = redactValue(redactor, body) as EvidenceEventBody;
         const unhashed = EvidenceEventSchema.parse({ ...body, version: EVIDENCE_EVENT_VERSION, id: evidenceEventId(this.next), seq: this.next, runId: this.runId, time });
         // the hash is taken over the event as it is written: the last line's hash is in it as prevHash
         const event = EvidenceEventSchema.parse({ ...unhashed, prevHash: this.last, hash: eventHash({ ...unhashed, prevHash: this.last }) });
-        this.write(fd, `${canonicalJson(event)}\n`);
+        const line = canonicalJson(event);
+        if (!redactor.empty && redactor.find(line).length) throw new StreamProblem("an event would hold a stored secret");
+        this.write(fd, `${line}\n`);
         this.next++;
         this.last = event.hash!;
         return event;

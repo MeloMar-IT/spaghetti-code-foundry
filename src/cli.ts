@@ -37,7 +37,7 @@ Usage:
   scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
-  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run]
+  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
@@ -191,6 +191,7 @@ async function main(argv: string[]): Promise<number> {
       source: { type: "string" },
       flows: { type: "string" },
       "older-than": { type: "string" },
+      "evidence-older-than": { type: "string" },
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
@@ -462,16 +463,19 @@ async function main(argv: string[]): Promise<number> {
     case "clean": {
       const days = Number(values["older-than"] ?? 7);
       if (!(days >= 0)) throw new Error("--older-than must be a number of days");
+      const evidenceDays = values["evidence-older-than"] === undefined ? undefined : Number(values["evidence-older-than"]);
+      if (evidenceDays !== undefined && !(values["evidence-older-than"]!.trim() !== "" && evidenceDays >= 0)) throw new Error("--evidence-older-than must be a number of days");
       const r = cleanRuns({
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
         olderThanDays: days,
+        evidenceOlderThanDays: evidenceDays,
         purge: values.purge,
         includePaused: values["include-paused"],
         dryRun: values["dry-run"],
       });
       const verb = values["dry-run"] ? "would remove" : "removed";
       process.stdout.write(
-        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB\n` +
+        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""}${r.evidence.length ? ` and the evidence of ${r.evidence.length} run(s)` : ""} · ${r.freedMb} MB\n` +
           (r.planRecordsFailed ? "plan records could not be cleaned (the store is locked or cannot be written) — try again later\n" : "") +
           (r.kept.length ? `kept ${r.kept.length} paused/running run(s) — use --include-paused to clean them too\n` : ""),
       );

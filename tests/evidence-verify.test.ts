@@ -314,7 +314,7 @@ describe("scf evidence verify", () => {
 
   it("exits 2 when there is nothing to verify yet", () => {
     const runDir = writeEvidenceFixture(runsDir, "old");
-    expect(call(["verify", ID])).toEqual({ code: 2, out: [`· no evidence · run ${ID}`, "  This run has no evidence: it was made before evidence existed. There is nothing to verify."] });
+    expect(call(["verify", ID])).toEqual({ code: 2, out: [`· no evidence · run ${ID}`, "  This run has no evidence: it was made before evidence existed, or its evidence was removed by a clean-up. There is nothing to verify."] });
     writeFileSync(join(runDir, "evidence.jsonl"), fixtureChain().lines.slice(0, 3).map((l) => `${l}\n`).join(""));
     const waiting = call(["verify", ID]);
     expect(waiting.code).toBe(2);

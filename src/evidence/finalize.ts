@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { redactText } from "../credentials/redact.js";
+import { redactText, secretRedactor, type Redactor } from "../credentials/redact.js";
 import { cleanEnv, SAFE_OPTIONS } from "../engine/diff.js";
 import { appendLiveLog, type RunSummary } from "../engine/state.js";
 import { canonicalHash, canonicalJson } from "./canonical.js";
@@ -20,6 +20,9 @@ import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE, RUN_E
  * manifest except for `finalizedAt`, the one field that depends on when it was written.
  * A manifest is there only for the end the run is at now: a resume removes it, and a finalization that fails removes
  * it too, so a run without a manifest is never a verified one.
+ *
+ * Privacy: the events and the manifest are checked for stored secrets before the manifest is written, and the diff is
+ * written with them hidden. A check that cannot be done, or one that finds a secret, means no manifest.
  */
 
 const STATUS_OF = { "run.completed": "succeeded", "run.failed": "failed", "run.cancelled": "cancelled" } as const;
@@ -165,6 +168,15 @@ export function dropRunEvidence(runDir: string): void {
   }
 }
 
+/** The redactor for the stored secrets; a store that cannot be read blocks the finalization. */
+function finalRedactor(): Redactor {
+  try {
+    return secretRedactor();
+  } catch {
+    throw new NotFinalizable("the stored credentials cannot be read, so the evidence cannot be checked for secrets");
+  }
+}
+
 export type Finalized =
   | { state: "written"; evidence: RunEvidence }
   /** No manifest: the run has not ended, or it could not be finalized (`reason`). */
@@ -189,7 +201,11 @@ export function finalizeRunEvidence(run: RunSummary, o: FinalizeOptions = {}): F
     if (evidenceIncomplete(run.runDir)) throw new NotFinalizable("the evidence of this run stopped earlier", true);
     const bytes = readPlainBytes(join(run.runDir, EVIDENCE_EVENTS_FILE));
     if (!bytes) throw new NotFinalizable("the run has no event stream", true);
-    const { lines, tail } = splitEvidenceLines(bytes.toString("utf8"));
+    const eventsText = bytes.toString("utf8");
+    // A secret that was saved after an event was written is not hidden in it: such a stream gets no manifest.
+    const redactor = finalRedactor();
+    if (redactor.find(eventsText).length) throw new NotFinalizable("the event stream holds a stored secret");
+    const { lines, tail } = splitEvidenceLines(eventsText);
     if (tail !== "") throw new NotFinalizable("the event stream ends in a line that was cut off");
     const chain = readEvidenceChain(lines, run.runId);
     if (!chain.ok) throw new NotFinalizable(`the event stream is not an unbroken chain (${chain.message})`);
@@ -204,7 +220,9 @@ export function finalizeRunEvidence(run: RunSummary, o: FinalizeOptions = {}): F
     const finalizedAt = new Date(Math.max(now, Date.parse(first.finishedAt))).toISOString();
     const checked = RunEvidenceSchema.safeParse({ ...first, finalizedAt, ...(diff ? { diff } : {}) });
     if (!checked.success) throw new NotFinalizable(`the manifest would not be valid (${[...new Set(checked.error.issues.map((i) => i.path.map(String).join(".") || "(root)"))].slice(0, 5).join(", ")})`);
-    writeWhole(file, `${JSON.stringify(checked.data, null, 2)}\n`);
+    const text = `${JSON.stringify(checked.data, null, 2)}\n`;
+    if (redactor.find(text).length) throw new NotFinalizable("the manifest would hold a stored secret");
+    writeWhole(file, text);
     return { state: "written", evidence: checked.data };
   } catch (e) {
     dropRunEvidence(run.runDir);
