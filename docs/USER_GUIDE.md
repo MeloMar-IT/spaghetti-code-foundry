@@ -4736,6 +4736,35 @@ and nothing from the internet. No AI model is used to search.
   `GET /api/help/usage` (`scf ask usage` shows the version, the number of sections and the
   problems); the other document still answers.
 
+### Answers from the current state
+
+For a question about your work ("why does my run wait?", "why did it fail?") the server also
+hands over what it observes at that moment. It takes these records from the same places the
+pages read them, with your permissions:
+
+- the things the page you ask on names: a run with its next-step record (who must act, why it
+  waits, what to do), a repository with its last connection check, a refinement session; for an
+  administrator also a board issue and a finding of the monitor;
+- your part of the queue (an administrator: the whole queue);
+- when the page names no run of yours: your two newest runs that wait or failed;
+- for an administrator: the health of the server.
+
+At most 5 such records go with one question. Each one is a source of the kind "current state".
+Its place names the kind and id of the thing and the page to open, for example
+`run <id> · #/runs/<id>`, and it carries the time the server observed it. Nothing of another
+account is taken, also when the page context names it.
+
+**Facts, conclusions and suggestions are kept apart.** The explanation of such a reply says
+"Observed:" for what a record shows, "So:" for what Ask SCF concludes, and "You could:" for what
+it suggests.
+
+**Old or contradictory records are shown.** A record with a fact that is known to be old (a
+connection check older than a day, a finding that is gone) has "(may be out of date)" in its
+title. When two records disagree (a finished run that still stands in the queue; a run that
+works while its next step waits for a person; a board status that differs from the run's), the
+server adds the source "The sources disagree: the state is uncertain", which names both sides.
+A reply that rests on such a source is never shown as confirmed: at most "likely".
+
 ### The page context
 
 So that you can ask "what is happening here?" without copying an id, a question can carry a

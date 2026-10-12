@@ -1301,6 +1301,30 @@ network, no dependency.
   reasons are logged and kept (`rebuilt`, `rebuiltBecause`). Missing documents are `problems`.
   `GET /api/help/usage` shows this as `documentation`.
 
+### Ask SCF: live evidence
+
+`src/server/help-evidence.ts` (#233) makes the `state` sources of a turn. It holds no business
+rule: every fact is a field of a snapshot of the help context service (`help-context.ts`), which
+reads through the permission table and the API's readers. The run snapshot now carries the
+next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` and `userRecord`).
+
+- **Which snapshots** (`liveSnapshots`): the things of the page context (looked up again for the
+  account as it is now), a user's two newest waiting or failed runs when the page names none,
+  the queue, and for an admin the health. At most `STATE_SOURCES` (5). The queue entry of each
+  run is read for the comparison only.
+- **As a source** (`sourceOf`): id `state-<kind>-<hash>`, kind `state`, the label as title, the
+  ref `<kind> <id> · <page>`, `observedAt`, and the fields as lines (at most 800 characters),
+  with what is not available and what may be out of date. A snapshot with a stale field gives a
+  source with `uncertain: true`.
+- **Disagreement** (`conflictsOf`, `conflictSource`): three fixed comparisons (finished run in
+  the queue; running run whose next step waits for a person; board status against the run's).
+  A disagreement adds the source `state-conflict`, also `uncertain`.
+- **In the turn**: `Source.uncertain` never leaves the server. `prepareTurn` strips it and lists
+  the ids in `Prepared.uncertain`; after `checkReply`, a "confirmed" reply that cites one of them
+  is stored as "likely". The prompt asks for "Observed:", "So:" and "You could:" in the
+  explanation, and for saying that the state is uncertain when a source says so.
+- `helpTurnsOf` offers the state sources first, then the documentation sections.
+
 ### Ask SCF: the guard
 
 `src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.

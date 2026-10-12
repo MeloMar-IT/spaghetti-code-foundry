@@ -8,10 +8,11 @@ import { sessionFor } from "./api-refinement.js";
 import { checkedRun } from "./api-runs.js";
 import { boardFor } from "./board.js";
 import { health } from "./health.js";
-import { allNext, ownQueue, queueWithNext } from "./next.js";
+import type { NextStep } from "../next-step.js";
+import { allNext, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
 import type { ApiContext } from "./server.js";
-import { userRun } from "./user-view.js";
+import { userRecord, userRun } from "./user-view.js";
 
 /**
  * The help context service of Ask SCF: what the server itself knows about a thing, for one account, as a small
@@ -130,10 +131,19 @@ const ADAPTERS: Record<SnapshotKind, Adapter> = {
     if (!s) return undefined;
     const v = userRun(s);
     const failed = [...v.history].reverse().find((h) => !h.ok);
+    // the next-step record of the run, as `GET /api/runs/:id` gives it: for a user without another account's run and without a folder
+    let next: NextStep | undefined;
+    try {
+      const rec = nextFor(ctx, undefined, user.role !== "admin")(s);
+      next = user.role === "admin" ? rec : userRecord(ownRecord(rec, (rid) => ctx.scheduler.ownerOf(rid) === user.id));
+    } catch {
+      next = undefined;
+    }
     return make("run", id, `a run of the flow ${v.flow}`, {
       flow: v.flow, status: v.status, startedAt: v.startedAt, finishedAt: v.finishedAt, branch: v.branch, repository: v.vars.github_repo, issue: v.vars.issue,
       stepsDone: v.history.length, nextStep: v.state.next, waitingAt: v.waiting?.stepId, waitingFor: v.waiting?.message, waitingSince: v.waiting?.since,
       failedStep: failed?.id, failedWhy: failed?.error, archivedAt: v.archivedAt,
+      nextStatus: next?.status, nextWho: next?.who, nextWhy: next?.why, nextAction: next?.action, nextUntil: next?.until,
     }, ["cost", "model", "setup", "owner", "log", "transcripts", "folders", "task"], guard);
   },
 

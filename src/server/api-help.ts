@@ -26,6 +26,7 @@ import {
 } from "../help/store.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import { snapshotResolver } from "./help-context.js";
+import { liveEvidence } from "./help-evidence.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -70,8 +71,8 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   let s = services.get(ctx);
   if (!s) {
     const docs = helpDocsOf(ctx);
-    // the documentation of the install is the evidence of a product question: only sections of the asker's role
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), evidence: (input) => docs.sources(input.question, input.role) });
+    // the evidence of a turn: what the server observes now for this account, then the fitting sections of the installed documentation
+    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), evidence: (input) => [...liveEvidence(ctx, input, { patterns: ctx.config().help.sensitive_patterns ?? [] }), ...docs.sources(input.question, input.role)] });
     services.set(ctx, s);
   }
   return s;
