@@ -9,8 +9,9 @@ import { StoreError } from "../src/auth/store.js";
 import { deleteUser } from "../src/auth/users.js";
 import { CANNOT_READ, makeRedactor } from "../src/credentials/redact.js";
 import { csvCell, csvLine, redactedCsvLine } from "../src/server/http.js";
-import { startServer } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 // The audit API: read with filters, export as CSV (#96).
@@ -194,19 +195,12 @@ describe("the audit API", () => {
     mkdirSync(repo);
     process.env.FACTORY_HOME = join(tmp, "home");
     const logs: string[] = [];
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
-        open.push({ tmp, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } });
-        const base = `http://127.0.0.1:${port}`;
-        const admin = await signInAs(base);
-        const user = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
-        return { base, tmp, logs, admin, user };
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir: join(tmp, "runs"), claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
+    open.push({ tmp, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } });
+    const base = started.base;
+    const admin = await signInAs(base);
+    const user = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
+    return { base, tmp, logs, admin, user };
   }
   const get = async (s: Srv, path: string, who: TestSession | null = s.admin) => {
     const r = await fetch(s.base + path, { headers: who ? who.headers() : {} });
@@ -382,7 +376,7 @@ describe("the clean-up in the server", () => {
   const live: (() => void)[] = [];
   afterAll(() => live.forEach((c) => c()));
 
-  async function start(extra: Partial<Parameters<typeof startServer>[0]> = {}, seed?: (home: string) => void) {
+  async function start(extra: Partial<Omit<ServerOptions, "port">> = {}, seed?: (home: string) => void) {
     const tmp = mkdtempSync(join(tmpdir(), "audit-purge-api-"));
     const repo = join(tmp, "repo");
     mkdirSync(repo);
@@ -390,23 +384,16 @@ describe("the clean-up in the server", () => {
     process.env.FACTORY_HOME = home;
     seed?.(home);
     const logs: string[] = [];
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000, ...extra });
-        let closed = false;
-        const close = () => {
-          if (closed) return;
-          closed = true;
-          started.close();
-          rmSync(tmp, { recursive: true, force: true });
-        };
-        live.push(close);
-        return { base: `http://127.0.0.1:${port}`, tmp, logs, close };
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir: join(tmp, "runs"), claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000, ...extra });
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      started.close();
+      rmSync(tmp, { recursive: true, force: true });
+    };
+    live.push(close);
+    return { base: started.base, tmp, logs, close };
   }
   const put = (base: string, s: TestSession, body: unknown) =>
     fetch(`${base}/api/config`, { method: "PUT", headers: { ...s.headers("PUT"), "content-type": "application/json" }, body: JSON.stringify(body) });

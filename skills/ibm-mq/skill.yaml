@@ -1,0 +1,7 @@
+id: ibm-mq
+version: 1.0.0
+category: interface
+# No "mq", "jms" or "queue" here: a generic word in a task must not name this skill.
+capabilities: [ibm-mq-jms, mqi, mqmd, mqsc, websphere-mq]
+roles: [coder, reviewer]
+risk: low

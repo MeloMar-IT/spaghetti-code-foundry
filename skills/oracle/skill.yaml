@@ -1,0 +1,13 @@
+id: oracle
+version: 1.0.0
+category: database
+capabilities: [oracle, plsql, pl-sql, oracle-jdbc, oracle-migrations]
+# Metadata only: ranking comes from the "oracle" rules in src/skills/integration-rules.ts.
+detectors:
+  - type: file
+    glob: "**/*.pks"
+  - type: file
+    glob: "**/*.pkb"
+  - type: file
+    glob: "**/tnsnames.ora"
+roles: [coder, reviewer]

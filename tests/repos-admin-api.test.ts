@@ -6,12 +6,11 @@ import { auditPath } from "../src/auth/audit.js";
 import { addRepo } from "../src/auth/repos.js";
 import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { setStatus } from "../src/auth/users.js";
-import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 const TOKEN2 = ["github", "pat", ""].join("_") + "Qq7".repeat(12);
 const UNKNOWN = "00000000-0000-4000-8000-000000000000";
@@ -31,7 +30,7 @@ beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "repos-admin-api-"));
   process.env.FACTORY_HOME = join(tmp, "home");
   kc = fakeKeychain();
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
+  ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });

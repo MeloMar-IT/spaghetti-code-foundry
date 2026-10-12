@@ -4,22 +4,22 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
 import { refinementsPath } from "../src/refinement/store.js";
-import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let saved: string | undefined;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
 
 const boot = async () => {
-  started = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => undefined, refinementSweepMs: 3_600_000 });
+  started = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => undefined, refinementSweepMs: 3_600_000 });
+  base = started.base;
 };
 
 beforeEach(async () => {

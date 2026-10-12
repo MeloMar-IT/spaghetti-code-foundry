@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { listRunBriefs, setRunArchived } from "../src/engine/state.js";
-import { startServer } from "../src/server/server.js";
+import type { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const savedHome = process.env.FACTORY_HOME;
@@ -176,18 +177,10 @@ describe("archive routes", () => {
     execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo, stdio: "ignore" });
     process.env.FACTORY_HOME = join(tmp, "home");
     runsDir = join(tmp, "runs");
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir, port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} });
-        baseUrl = `http://127.0.0.1:${port}`;
-        scheduler = started.ctx.scheduler;
-        close = started.close;
-        break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} });
+    baseUrl = started.base;
+    scheduler = started.ctx.scheduler;
+    close = started.close;
     admin = await signInAs(baseUrl);
     ann = await signInAs(baseUrl, { name: "Ann", email: "ann@example.com", role: "user" });
     bob = await signInAs(baseUrl, { name: "Bob", email: "bob@example.com", role: "user" });

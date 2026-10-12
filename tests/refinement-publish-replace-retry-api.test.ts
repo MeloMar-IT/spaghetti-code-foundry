@@ -8,19 +8,19 @@ import { replaceMarker } from "../src/refinement/dependants.js";
 import { LOG_LIMIT, refinementsPath } from "../src/refinement/store.js";
 import { hasOwnComment } from "../src/server/api-refinement-replace.js";
 import { HttpError } from "../src/server/http.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 
 let gh: ReturnType<typeof fakeGithub>;
 let tmp: string;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let ann: TestSession;
 /** Every hold of a test is released in afterEach, and the session file is put back there too. */
 let releases: (() => void)[] = [];
@@ -33,8 +33,9 @@ beforeEach(async () => {
   process.env.FACTORY_HOME = join(tmp, "home");
   process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
   kc = fakeKeychain();
-  const opts: ServerOptions = { repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000, openIssuePages: 1 };
-  started = await startServer(opts);
+  const opts: Omit<ServerOptions, "port"> = { repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000, openIssuePages: 1 };
+  started = await startTestServer(opts);
+  base = started.base;
   await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });

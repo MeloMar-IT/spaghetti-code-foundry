@@ -2870,7 +2870,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`. The five built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
+   More fields: `detectors`, `connectors`, `tool_profile`. The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -3108,7 +3108,11 @@ skills:
 ```
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
+- **Spring Boot is not guessed from Java.** The built-in `spring-boot` skill needs a Spring Boot dependency in a build file, or sources that import `org.springframework.boot`, in a module the work touches. Plain Java, plain Spring and other modules of the same repository do not get it, unless the issue names Spring Boot. It depends on the `java` skill, so `java` is loaded with it (and counts towards the limits).
 - **TypeScript is not guessed from JavaScript.** The built-in `typescript` skill needs TypeScript sources (plus `tsconfig.json` or a `typescript` dependency as extra evidence). Work that touches only JavaScript files does not get it, unless the issue names TypeScript or `tsconfig`.
+- **Node.js is not guessed from TypeScript or JavaScript.** The built-in `nodejs` skill needs evidence of the Node.js runtime in the module the work touches: `engines.node`, `@types/node` or a server package (such as `express` or `fastify`) in `package.json`, or an import of a Node.js built-in module. A browser-only package does not get it.
+- **Kafka is not guessed from the word "events".** The built-in `kafka` skill needs a Kafka client or schema registry dependency, a Kafka import, or a `kafka*.properties` or `kafka*.yaml` file in the modules the work touches, or an issue that names Kafka. Documentation or code that only mentions events, messages or queues does not get it. The skill is guidance only: it names no connector and gives no access to a cluster. It counts as high risk, so a run that needs it and cannot load it stops; see [Missing and conflicting skills](#missing-and-conflicting-skills).
+- **Oracle is not guessed from SQL.** The built-in `oracle` skill needs a sign of Oracle in the repository: an Oracle driver in a build file, an `oracle.jdbc` import, PL/SQL package files (`.pks`, `.pkb`) or `tnsnames.ora`. Plain `.sql` files, another database or SQL words in the issue do not bring it in; an issue that names Oracle or PL/SQL does. The skill is text only: it gives an agent no database access and holds no credentials.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
 - **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.

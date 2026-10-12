@@ -6,9 +6,9 @@ import { listAllRepos } from "../src/auth/repos.js";
 import { createUser } from "../src/auth/users.js";
 import { STATUS_MARKER } from "../src/github.js";
 import { listRepoWatchers } from "../src/repos/watchers.js";
-import { startServer } from "../src/server/server.js";
 import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, TEST_PASSWORD, type TestSession } from "./helpers/session.js";
 
 let gh: ReturnType<typeof fakeGithub>;
@@ -17,10 +17,9 @@ let home: string;
 let saved: string | undefined;
 let kc: ReturnType<typeof fakeKeychain>;
 let close: (() => void) | undefined;
-let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
+let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let logs: string[];
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 
 beforeEach(() => {
   gh = fakeGithub();
@@ -44,7 +43,7 @@ afterEach(async () => {
 });
 
 const start = async () => {
-  ({ close, ctx } = await startServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), port, claudeBin, watcherRetryMs: 50, log: (m) => void logs.push(m) }));
+  ({ close, ctx, base } = await startTestServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, watcherRetryMs: 50, log: (m) => void logs.push(m) }));
   ctx.scheduler.drain();
 };
 const makeAdmin = () => createUser({ name: "Test Admin", email: "admin@example.com", password: TEST_PASSWORD, role: "admin" });

@@ -120,6 +120,16 @@ describe("negative cases", () => {
   });
 });
 
+describe("kafka schema registry clients", () => {
+  it("an npm schema registry client is Kafka evidence", () => {
+    for (const name of ["@kafkajs/confluent-schema-registry", "@confluentinc/schemaregistry"]) {
+      const c = run({ "package.json": pkg({ [name]: "3.0.0" }) });
+      expect(c.map((x) => [x.capability, x.score])).toEqual([["kafka", 40]]);
+      expect(c[0]!.evidence.map((e) => e.name)).toEqual([name]);
+    }
+  });
+});
+
 describe("kafka and ibm mq are distinct", () => {
   it("separates them", () => {
     expect(caps(run({ "go.mod": "module x\n\nrequire github.com/IBM/sarama v1.0.0\n" }))).toEqual(["kafka"]);

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createUser, hasAdmin } from "../src/auth/users.js";
 import { CSP } from "../src/server/net.js";
 import { startServer } from "../src/server/server.js";
+import { freePort, startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
 interface Reply { status: number; headers: Record<string, string | string[] | undefined>; body: string }
@@ -48,27 +49,24 @@ async function boot(config: Record<string, unknown> | string | undefined, opts: 
   if (typeof config === "string") writeFileSync(join(home, "config.yaml"), config);
   else if (config) writeFileSync(join(home, "config.yaml"), JSON.stringify(config));
   if (opts.admin !== false) await createUser({ name: "Admin", email: "admin@example.com", password: TEST_PASSWORD, role: "admin" });
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const s = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), port, watchers: false });
-      const close = () => {
-        s.close();
-        rmSync(tmp, { recursive: true, force: true });
-      };
-      closers.push(close);
-      const bind = opts.bind ?? "127.0.0.1";
-      return {
-        port, home, url: s.url, close,
-        call: (method, path, headers = {}, body, host) => raw(bind, port, method, path, { host: host ?? `localhost:${port}`, ...headers }, body),
-      };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) {
-        rmSync(tmp, { recursive: true, force: true });
-        throw e;
-      }
-    }
+  let s: Awaited<ReturnType<typeof startTestServer>>;
+  try {
+    s = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false });
+  } catch (e) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw e;
   }
+  const close = () => {
+    s.close();
+    rmSync(tmp, { recursive: true, force: true });
+  };
+  closers.push(close);
+  const bind = opts.bind ?? "127.0.0.1";
+  const port = s.port;
+  return {
+    port, home, url: s.url, close,
+    call: (method, path, headers = {}, body, host) => raw(bind, port, method, path, { host: host ?? `localhost:${port}`, ...headers }, body),
+  };
 }
 
 const credentials = { email: "admin@example.com", password: TEST_PASSWORD };
@@ -231,7 +229,7 @@ describe("refusing to listen", () => {
     const job = JSON.stringify({ jobs: [{ id: "j1", status: "queued" }] });
     writeFileSync(queue, job);
     const logs: string[] = [];
-    const port = 20000 + Math.floor(Math.random() * 20000);
+    const port = await freePort();
     await expect(startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, log: (m) => logs.push(m) })).rejects.toThrow(/scf user create --admin/);
     expect(logs.join("\n")).toContain("scf user create --admin");
     await expect(raw("127.0.0.1", port, "GET", "/", { host: `localhost:${port}` })).rejects.toThrow();

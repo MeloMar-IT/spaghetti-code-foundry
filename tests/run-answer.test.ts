@@ -9,8 +9,9 @@ import { ANSWERS_HEADING, TASK_MAX_BYTES, answerRoom, taskWithAnswers } from "..
 import { parseFlow } from "../src/flow/load.js";
 import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { Scheduler } from "../src/queue/scheduler.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions, startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -318,7 +319,7 @@ afterAll(() => {
   else process.env.FACTORY_HOME = savedHome;
 });
 
-async function boot(extra: Partial<ServerOptions> = {}): Promise<Srv> {
+async function boot(extra: Partial<Omit<ServerOptions, "port">> = {}): Promise<Srv> {
   const tmp = mkdtempSync(join(tmpdir(), "run-answer-srv-"));
   const repo = join(tmp, "repo");
   mkdirSync(repo);
@@ -327,17 +328,10 @@ async function boot(extra: Partial<ServerOptions> = {}): Promise<Srv> {
   git("commit", "-q", "--allow-empty", "-m", "init");
   process.env.FACTORY_HOME = join(tmp, "home");
   const runsDir = join(tmp, "runs");
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ repo, runsDir, port, claudeBin, watchers: false, log: (m: string) => logs.push(m), ...extra });
-      const s: Srv = { base: `http://127.0.0.1:${port}`, tmp, runsDir, repo, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
-      open.push(s);
-      return s;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+  const started = await startTestServer({ repo, runsDir, claudeBin, watchers: false, log: (m: string) => logs.push(m), ...extra });
+  const s: Srv = { base: started.base, tmp, runsDir, repo, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
+  open.push(s);
+  return s;
 }
 const logs: string[] = [];
 

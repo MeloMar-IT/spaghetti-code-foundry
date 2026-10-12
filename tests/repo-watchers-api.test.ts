@@ -6,20 +6,19 @@ import { randomUUID } from "node:crypto";
 import { addRepo, removeRepo, reposPath } from "../src/auth/repos.js";
 import { saveConfig } from "../src/config.js";
 import { OWNER_BLOCKED, addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
-import { startServer } from "../src/server/server.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 const UNKNOWN = "00000000-0000-4000-8000-000000000000";
 const INTERNAL = "the repository list is not working; see the server log";
 let tmp: string;
 let close: () => void;
-let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
+let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let kc: FakeKeychain;
 let kg: FakeKeygen;
 let gh: ReturnType<typeof fakeGithub>;
@@ -37,8 +36,8 @@ beforeAll(async () => {
   mkdirSync(process.env.FACTORY_HOME, { recursive: true });
   kc = fakeKeychain();
   kg = fakeKeygen();
-  const started = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) });
-  ({ close, ctx } = started);
+  const started = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) });
+  ({ close, ctx, base } = started);
   ctx.scheduler.drain(); // runs stay queued
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });

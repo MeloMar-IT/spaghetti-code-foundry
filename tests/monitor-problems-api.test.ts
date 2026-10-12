@@ -8,8 +8,7 @@ import { fakeGithub } from "./helpers/fake-github.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let close: () => void;
 let session: TestSession;
@@ -49,8 +48,8 @@ const withTarget = async (fn: () => Promise<void>) => {
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "monitor-problems-"));
   process.env.FACTORY_HOME = home();
-  const { startServer } = await import("../src/server/server.js");
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs") }));
+  const { startTestServer } = await import("./helpers/port.js");
+  ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs") }));
   session = await signInAs(base);
   const cfg = (await (await call("GET", "/api/config")).json()) as { watchers: unknown[] };
   expect((await call("PUT", "/api/config", { ...cfg, watchers: [{ id: "mon", source: "monitor", every: "1h" }] })).status).toBe(200);

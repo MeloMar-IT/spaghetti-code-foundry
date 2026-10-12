@@ -6,8 +6,9 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditPath } from "../src/auth/audit.js";
 import { getUser, listUsers, setStatus, usersPath } from "../src/auth/users.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions, startServer } from "../src/server/server.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -65,7 +66,7 @@ describe("users API", () => {
     for (const s of open) s.close();
   });
 
-  async function boot(extra: Partial<ServerOptions> = {}): Promise<Srv> {
+  async function boot(extra: Partial<Omit<ServerOptions, "port">> = {}): Promise<Srv> {
     const tmp = mkdtempSync(join(tmpdir(), "users-api-"));
     const home = join(tmp, "home");
     const repo = join(tmp, "repo");
@@ -75,17 +76,10 @@ describe("users API", () => {
     git("commit", "-q", "--allow-empty", "-m", "init");
     process.env.FACTORY_HOME = home;
     const logs: string[] = [];
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000, ...extra });
-        const s: Srv = { tmp, home, runsDir: join(tmp, "runs"), logs, base: `http://127.0.0.1:${port}`, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
-        open.push(s);
-        return s;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir: join(tmp, "runs"), claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000, ...extra });
+    const s: Srv = { tmp, home, runsDir: join(tmp, "runs"), logs, base: started.base, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
+    open.push(s);
+    return s;
   }
 
   /** Calls the API and keeps every answer text, to check later that nothing leaked. */
