@@ -2870,7 +2870,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`. The six built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `rest-openapi`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
+   More fields: `detectors`, `connectors`, `tool_profile`. The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
