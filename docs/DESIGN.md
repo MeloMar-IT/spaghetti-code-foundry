@@ -473,7 +473,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
-| `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
+| `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.

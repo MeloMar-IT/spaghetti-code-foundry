@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Fix: self-update runs the tests of a new commit up to 3 times when they fail, 20 minutes apart (#480). The Health line says which try it is and when the next one runs. After the third failure the record and the Health line name the failing tests (at most 20 are kept, redacted and cleaned; the Health line shows 3). A newer commit on main is tried at once. Build and install failures still fail after one try.
+  - **Record.** `self-update.json` gets `retry` (`commit`, `tries`, `at`) while the wait runs; `failed` gets `tries` and `tests` for a test failure. Both are optional, so old records load. A `retry.at` that is not a time counts as due now.
+  - **Restart.** The wait survives a server restart. The Health line shows the minutes left; the Foundry does not stage before the time is over.
+  - **Code.** New `src/self-update-tests.ts` (`failingTests`); `src/self-update.ts` (`TEST_TRIES`, `retryWaitMs` and `now` for tests, reason `retry_wait`); tests `tests/self-update-retry.test.ts`, `tests/self-update-tests.test.ts`, and the shared helpers in `tests/helpers/self-update.ts`. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - A command line for the running Foundry: every call of the server's API is a command, `scf <area> <action> … [--json]`. 159 commands in 18 areas (`runs`, `turn`, `board`, `find`, `repos`, `refine`, `flows`, `blocks`, `settings`, `providers`, `monitor`, `users`, `admin`, `audit`, `account`, `secrets`, `watchers`, `server`).
   - **Sign-in.** `scf login`, `scf logout`, `scf whoami`. The same accounts and sessions as the web interface; no server change. The session is kept in `cli-session.json` in the data folder (mode 600); the password is asked without echo and never stored.
   - **Every command.** `--json`, `--data '{…}'` / `--data @file.json`, `--server`, `--as` (reading as a user, for an admin with a running view), `--help`. `scf <area>` lists the commands of an area. Exit code 4: not signed in or not allowed.
