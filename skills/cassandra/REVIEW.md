@@ -1,0 +1,12 @@
+# Cassandra review checks
+
+- Does every query in the request path give the whole partition key, with clustering columns restricted in order? Is `ALLOW FILTERING`, a new secondary index or a materialized view used to avoid designing a table? `ALLOW FILTERING` is acceptable only inside one bounded partition named in full, or in a paged one-off job outside the request path, with a comment that says why.
+- Hot partitions: does a new or changed partition key have few values or one dominant value (a status, a type, a boolean, a date alone, one large tenant)?
+- Unbounded partitions: can a partition grow for ever (events per device, messages per chat) with no time bucket or shard in the key? Is the expected size of a partition stated for a new table?
+- Tombstones: does the change write `null`, replace whole collections, delete row by row, or use a table as a queue? Do rows with a TTL sit in partitions that are also read for ever? Was `gc_grace_seconds`, compaction or replication changed unasked?
+- Consistency: is the level chosen on purpose and do read and write levels overlap where a read must see the write? Was a level lowered to hide a timeout? Is `ALL`, `ANY` or a datacenter name, contact point or replication factor written into code or CQL? Is a read-modify-write done without a lightweight transaction, or one used where it is not needed?
+- Statements: are they prepared once and bound (no CQL built from input), with named columns, and one session for the application? Is a large read paged, and a paging token from a client treated as untrusted?
+- Batches and retries: is a batch used for speed, large, or unlogged across partitions? Is anything not idempotent (counter, list append, lightweight transaction, server-side `now()`) retried or marked idempotent?
+- Migration rollout: is the change additive, one statement at a time, run by the repository's migration tool and not by every instance at start? Does it work while old and new versions run together (schema first, write both, backfill, switch reads, drop later)? Does it change a type or a primary key, re-add a dropped column name, or `DROP`/`TRUNCATE` without the task asking?
+- Are the queries tested against a real Cassandra where the repository can, including more than one page, and without sleeps?
+- Does the change connect to a real cluster or assume a topology? Leave language, framework and other database checks to their own skills.

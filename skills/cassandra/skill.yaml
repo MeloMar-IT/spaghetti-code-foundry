@@ -1,0 +1,10 @@
+id: cassandra
+version: 1.0.0
+category: database
+capabilities: [cassandra-data-model, cassandra-driver, cassandra-schema, cassandra-consistency, cql]
+# Metadata only: ranking comes from the cassandra rules in src/skills/integration-rules.ts.
+detectors:
+  - type: file
+    glob: "**/*.cql"
+roles: [coder, reviewer]
+risk: low
