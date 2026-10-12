@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { readRegular } from "../src/skills/package.js";
 import {
+  isUtcTime,
   matchRelease,
   readRelease,
   RELEASE_FILE,
@@ -55,6 +56,14 @@ describe("release manifest schema", () => {
     for (const t of ["2026-01-01T00:00:00", "2026-13-40T00:00:00Z", "2026-02-29T00:00:00Z", "2026-02-30T00:00:00Z", "2026-04-31T00:00:00Z", "2026-01-01T24:00:00Z"]) {
       expect(ok(manifest({ createdAt: t })), t).toBe(false);
     }
+  });
+});
+
+describe("isUtcTime", () => {
+  it("accepts a real UTC time and refuses the rest", () => {
+    expect(isUtcTime("2026-01-31T12:00:00Z")).toBe(true);
+    expect(isUtcTime("2026-01-31T12:00:00.123Z")).toBe(true);
+    for (const t of ["2026-02-30T00:00:00Z", "yesterday", "2026-01-01T00:00:00", ""]) expect(isUtcTime(t)).toBe(false);
   });
 });
 
