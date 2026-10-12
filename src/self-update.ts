@@ -4,7 +4,7 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
-import { failingTests } from "./self-update-tests.js";
+import { failingTests, slotStep } from "./self-update-tests.js";
 import {
   branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, updateFile, updateState,
   type FailStage, type UpdateStep,
@@ -32,6 +32,7 @@ export interface UpdaterOptions {
   beforeExit: () => void;
   log: (m: string) => void;
   // for tests:
+  slot?: { waitSec?: number; slots?: number; pollMs?: number } | false;
   dir?: string;
   file?: string;
   steps?: UpdateStep[];
@@ -343,7 +344,11 @@ export class SelfUpdater {
       for (const name of ["install", "build", "test"] as const) {
         const step = this.steps.find((s) => s.name === name);
         if (!step) continue;
-        const r = await runStep(step, this.stageDir());
+        // the tests wait for a test slot, like the tests of stories; the tool is the running version's
+        const run = name === "test" && this.o.slot !== false
+          ? slotStep(step, { tool: join(this.dir, "tools", "test-slot"), slotsDir: join(dirname(this.file), "test-slots"), ...this.o.slot })
+          : step;
+        const r = await runStep(run, this.stageDir());
         if (r.killed || this.stopped) return "stopped";
         if (!r.ok) return fail(name, r.output);
       }

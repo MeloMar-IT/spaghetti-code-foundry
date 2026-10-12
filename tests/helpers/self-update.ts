@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { SelfUpdater, type UpdaterOptions } from "../../src/self-update.js";
 import { loadUpdateState, type UpdateStep } from "../../src/self-update-state.js";
 
@@ -14,6 +14,8 @@ export const V1: Record<string, string> = {
   "install.sh": "[ -e break-install ] && exit 1\nexit 0\n",
   "build.sh": '[ -e break-build ] && { echo "build broke"; exit 1; }\nmkdir -p dist && cp app.txt dist/app.js\n',
   "test.sh": "exit 0\n",
+  // the updater runs the tests through the running version's test slot tool
+  "tools/test-slot": readFileSync(resolve("tools/test-slot"), "utf8"),
 };
 export const STEPS: UpdateStep[] = [
   { name: "install", cmd: "sh", args: ["install.sh"] },
@@ -92,6 +94,7 @@ export function updater(f: Fx, over: Partial<UpdaterOptions> = {}) {
     originRepo: () => "acme/foundry",
     guarded: true,
     exit: (c) => t.exits.push(c),
+    slot: { waitSec: 0, pollMs: 50 },
     ...over,
   });
   return Object.assign(t, { u });
