@@ -191,6 +191,10 @@ describe("determinism", () => {
     const a = normalizeSkill(ORIGIN, ext(files));
     const b = normalizeSkill(ORIGIN, { root: "skills/x", files: [...ext(files).files].reverse() });
     expect(b).toEqual(a);
+    if (!a.ok || !b.ok) throw new Error("expected normalized skills");
+    expect(b.skill.identity).toEqual(a.skill.identity);
+    expect(a.skill.identity).toMatchObject({ id: a.skill.package.id, digest: a.skill.package.digest, name: "a", version: "2.0.0", versionDeclared: true });
+    expect(good({ "SKILL.md": md("a") }).identity.versionDeclared).toBe(false);
     expect(canonicalJson(JSON.parse(JSON.stringify(b)))).toBe(canonicalJson(JSON.parse(JSON.stringify(a))));
   });
   it("gives the same import result for any order of files and skills", () => {
@@ -200,6 +204,8 @@ describe("determinism", () => {
     const x = normalizeImport(p);
     const y = normalizeImport(rev);
     expect(y).toEqual(x);
+    expect(y.skills.map((s) => s.identity)).toEqual(x.skills.map((s) => s.identity));
+    expect(x.report.normalized.map((n) => n.fingerprint)).toEqual(x.skills.map((s) => s.identity.fingerprint));
     expect(canonicalJson(y.report)).toBe(canonicalJson(x.report));
     expect(x.skills.map((s) => s.package.id)).toEqual([...x.skills.map((s) => s.package.id)].sort());
   });
@@ -214,6 +220,9 @@ describe("determinism", () => {
     const b = good({ "SKILL.md": md("a", "requires: {bun: '1', node: '18'}\ndependencies: [y, x@1.0]\ntags: pdf, forms\n") });
     expect(semantic(b)).toEqual(semantic(a));
     expect(b.package.digest).not.toBe(a.package.digest);
+    // tags and dependencies are kept as written by the canonical JSON, so the fingerprint differs too.
+    expect(b.identity.digest).not.toBe(a.identity.digest);
+    expect(b.identity.fingerprint).not.toBe(a.identity.fingerprint);
     expect(b.package.digest).toBe(skillDigest([{ path: "SKILL.md", content: Buffer.from(md("a", "requires: {bun: '1', node: '18'}\ndependencies: [y, x@1.0]\ntags: pdf, forms\n")) }]));
   });
   it("uses no clock, locale or host data", () => {
@@ -467,6 +476,7 @@ describe("shadowing", () => {
     const a = normalizeImport(prep({ "skills/a/SKILL.md": md("same") }));
     const b = normalizeImport(prep({ "skills/a/SKILL.md": md("same") }, { repositoryKey: "github.com/other/skills" }));
     expect(a.skills[0]!.package.id).not.toBe(b.skills[0]!.package.id);
+    expect(a.skills[0]!.identity.upstream).not.toBe(b.skills[0]!.identity.upstream);
     const c = normalizeImport(prep({ "skills/a/SKILL.md": md("same") }, { id: "other" }));
     expect(c.skills[0]!.package.id).not.toBe(a.skills[0]!.package.id);
   });
