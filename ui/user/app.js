@@ -25,7 +25,7 @@ let stopPalette = null;
 let context = null;
 
 // The switcher changes the address through this: a navigation, or only the address (drawn again or not).
-function go(hash, { replace = false, draw = true } = {}) {
+function contextGo(hash, { replace = false, draw = true } = {}) {
   if (!replace) {
     if (hash !== location.hash) location.hash = hash;
     return;
@@ -51,6 +51,8 @@ async function route() {
   const scoped = to.redirected || page.hash !== hash ? null : context?.scoped(to.hash);
   if (scoped) { history.replaceState(null, "", scoped); to = resolve("user", scoped); }
   showPage("user", to);
+  // Filters change the address without a navigation; with a repository context, clearing the repository writes repo=all.
+  const go = (next) => history.replaceState(null, "", context ? context.keep(next) : next);
   // Each call draws into its own box, so a slow page that finishes after a hash change cannot touch the current one.
   const box = h("div", {});
   mount(main, box);
@@ -58,10 +60,10 @@ async function route() {
   try {
     if (page.section === "home") done = await renderHome(box, { readOnly });
     else if (page.section === "start") done = await renderStart(box, { readOnly });
-    else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query });
-    else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query });
+    else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });
+    else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query, go });
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
-    else done = await renderMyRuns(box, { readOnly, query: to.query });
+    else done = await renderMyRuns(box, { readOnly, query: to.query, go });
   } catch (e) {
     if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
     return;
@@ -92,7 +94,7 @@ const view = beginView(as, me, {
 readOnly = view.readOnly;
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
-if (view.ready) context = initContext("user", me, { readOnly, go });
+if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });
 // Only now: before the role is known or the context has loaded, a hash change must not draw a page.
 // The first draw below uses the latest address.
 await context?.ready;

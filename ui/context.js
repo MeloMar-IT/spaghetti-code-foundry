@@ -6,7 +6,7 @@ import { api } from "./api.js";
 import { switcherView } from "./context-view.js";
 import { mount, toast } from "./dom.js";
 import { ALL_REPOS, parseQuery, resolve } from "./ia.js";
-import { sameRepo, withQuery } from "./filters.js";
+import { refreshContextOffer, sameRepo, setContextOffer, splitHash, withQuery } from "./filters.js";
 
 export const MAX_RECENTS = 5;
 export const ALL_LABEL = "All repositories";
@@ -144,6 +144,41 @@ export function chosenHash(role, hash, ctx) {
   return withQuery(to.page.path, { repo: name || ALL_REPOS, ...owner });
 }
 
+/**
+ * The address after Clear filters or removing the repository chip: with an active context, a page that follows it and
+ * has no repository in its address gets `repo=all` (`owner` kept), so the next navigation does not put the context back.
+ * Anything else is returned unchanged.
+ */
+export function clearedHash(role, hash, ctx) {
+  if (!ctx?.active || typeof hash !== "string") return hash;
+  const to = resolve(role, hash);
+  if (to.redirected || !to.page.scope || to.page.nav === "detail") return hash;
+  if (parseQuery(splitHash(hash).query).repo) return hash; // resolve() drops repo=all, so the raw query is read
+  return withQuery(to.page.path, { repo: ALL_REPOS, ...(to.query.owner ? { owner: to.query.owner } : {}) });
+}
+
+/**
+ * What the filter bar offers as "Use as my context": { repo, label } (repo is "" for All), or null. `list` is
+ * [{ name, own }] from repoList. `shownRepo` names the repository the page really shows when the address does not
+ * (the classic Board shows the first one).
+ */
+export function offerFor(role, hash, ctx, list, shownRepo) {
+  if (!ctx?.active || typeof hash !== "string") return null;
+  const to = resolve(role, hash);
+  if (to.redirected || !to.page.scope) return null;
+  const shown = shownRepo !== undefined ? shownRepo : to.page.id === "board-repo" ? to.arg : to.query.repo ?? "";
+  const mine = nameOf(ctx);
+  if (!shown) {
+    if (!mine) return null;
+    if (to.page.id === "repos" && ctx.own !== true) return null;
+    return { repo: "", label: ALL_LABEL };
+  }
+  const item = (Array.isArray(list) ? list : []).find((i) => sameRepo(i.name, shown));
+  if (!item || sameRepo(item.name, mine)) return null;
+  if (to.page.id === "repos" && !item.own) return null;
+  return { repo: item.name, label: `Repository: ${item.name}` };
+}
+
 /** The repositories to choose from: [{ name, own }], sorted by name. Rows without `github` are left out. */
 export function repoList(rows) {
   const by = new Map();
@@ -225,6 +260,8 @@ let live = null;
 /**
  * The live repository context of this page: loads the list, owns the store state and the switcher in `#context`.
  * Returns { ready, scoped, keep, current, refresh, stop }. `ready` never rejects. Only one context is live.
+ * `keep(hash)` is `clearedHash` for the live context (filter changes go through it); the live context also registers
+ * the "Use as my context" offer with ui/filters.js.
  */
 export function initContext(role, me, { readOnly = false, go = () => {}, a = api, where = () => location.hash, notify = (text) => toast(text), store = contextStore(me?.id, readOnly ? null : undefined) } = {}) {
   live?.stop();
@@ -301,8 +338,26 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
       text = "";
     }
     draw();
+    refreshContextOffer(); // an offer on the page may name a repository that went
     if (gone.repo) notify(goneText(gone.repo));
     return { ok: true, gone: gone.repo };
+  };
+
+  // The offer for the page now, worked out when a bar is drawn: a click makes the shown repository the context.
+  const offer = (shownRepo) => {
+    const o = offerFor(role, where(), current(), list, shownRepo);
+    return o && {
+      label: o.label,
+      onUse: () => {
+        // The list may have changed since the offer was drawn: a repository that is gone is not stored again.
+        if (stopped || (o.repo && !list.some((i) => sameRepo(i.name, o.repo)))) return;
+        state = store.choose(o.repo);
+        open = false;
+        text = "";
+        draw();
+        focusTrigger();
+      },
+    };
   };
 
   const refresh = async () => {
@@ -335,6 +390,7 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
       text = "";
       focusTrigger();
       draw();
+      refreshContextOffer(); // a bar already on the page may no longer have an offer
       const to = chosenHash(role, where(), current());
       if (to) go(to);
     },
@@ -352,7 +408,7 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
   const ctx = {
     ready: load().then(() => {}, () => {}),
     scoped: (hash) => scopedHash(role, hash, current()),
-    keep: (hash) => hash,
+    keep: (hash) => clearedHash(role, hash, current()),
     current,
     refresh,
     stop() {
@@ -362,10 +418,14 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
       view?.cleanup();
       if (view && view.node.parentNode === box) box.replaceChildren(); // the box may belong to a newer context now
       view = null;
-      if (live === ctx) live = null;
+      if (live === ctx) {
+        live = null;
+        setContextOffer(null);
+      }
     },
   };
   live = ctx;
+  setContextOffer((arg) => offer(arg?.repo));
   return ctx;
 }
 

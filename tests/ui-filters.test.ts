@@ -91,6 +91,76 @@ describe("splitHash, sameRepo, without", () => {
   });
 });
 
+describe("the context offer", () => {
+  afterEach(() => f.setContextOffer(null));
+  const offer = (onUse = vi.fn()) => ({ label: "All repositories", onUse });
+  const texts = (bar: FakeElement) => bar.all("button").map((b) => b.textContent);
+
+  it("contextOffer is null by default, takes an object or a function, and null when the function throws", () => {
+    expect(f.contextOffer()).toBeNull();
+    const o = offer();
+    f.setContextOffer(o);
+    expect(f.contextOffer()).toBe(o);
+    f.setContextOffer((arg: unknown) => ({ ...o, label: JSON.stringify(arg) }));
+    expect(f.contextOffer({ repo: "x/y" }).label).toBe('{"repo":"x/y"}');
+    f.setContextOffer(() => { throw new Error("no"); });
+    expect(f.contextOffer()).toBeNull();
+  });
+
+  it("with no chips the bar names the scope and has no Clear filters", () => {
+    f.setContextOffer(offer());
+    const bar = f.filterBar({}, {}) as FakeElement;
+    expect(bar.textContent).toContain("All repositories");
+    expect(texts(bar)).toEqual(["Use as my context"]);
+    expect(bar.all("button")[0]!.attrs["data-focus"]).toBe("filter-context");
+  });
+
+  it("with an owner chip: the chip, Clear filters, the scope and the button, in that order; no scope text with a repository chip", () => {
+    f.setContextOffer(offer());
+    const bar = f.filterBar({ owner: "u1" }, {}) as FakeElement;
+    expect(texts(bar)).toEqual(["×", "Clear filters", "Use as my context"]);
+    expect(bar.textContent.indexOf("Owner: u1")).toBeLessThan(bar.textContent.indexOf("All repositories"));
+    expect(f.filterBar({ repo: "a/b" }, {}).textContent).not.toContain("All repositories");
+  });
+
+  it("a click calls onUse once and hides the button; the bar goes too when it had no chips", () => {
+    const onUse = vi.fn();
+    f.setContextOffer(offer(onUse));
+    const bare = f.filterBar({}, {}) as FakeElement;
+    const [scope] = bare.all("span");
+    click(button(bare, "Use as my context"));
+    expect(onUse).toHaveBeenCalledOnce();
+    expect(button(bare, "Use as my context").hidden).toBe(true);
+    expect(scope!.hidden).toBe(true);
+    expect(bare.hidden).toBe(true);
+    const chips = f.filterBar({ owner: "u1" }, {}) as FakeElement;
+    click(button(chips, "Use as my context"));
+    expect(button(chips, "Use as my context").hidden).toBe(true);
+    expect(chips.hidden).toBeFalsy();
+  });
+
+  it("onContext: null shows no offer; an explicit offer wins over the registered one", () => {
+    f.setContextOffer(offer());
+    expect(f.filterBar({}, { onContext: null })).toBeNull();
+    expect(texts(f.filterBar({ owner: "u1" }, { onContext: null }))).toEqual(["×", "Clear filters"]);
+    const mine = { label: "Repository: x/y", onUse: vi.fn() };
+    const bar = f.filterBar({}, { onContext: mine }) as FakeElement;
+    expect(bar.textContent).toContain("Repository: x/y");
+    click(button(bar, "Use as my context"));
+    expect(mine.onUse).toHaveBeenCalledOnce();
+  });
+
+  it("refreshContextOffer hides the offer of a bar on the page once the source has none", () => {
+    f.setContextOffer(offer());
+    const bar = f.filterBar({ owner: "u1" }, {}) as FakeElement;
+    f.refreshContextOffer();
+    expect(button(bar, "Use as my context").hidden).toBeFalsy();
+    f.setContextOffer(() => null);
+    f.refreshContextOffer();
+    expect(button(bar, "Use as my context").hidden).toBe(true);
+  });
+});
+
 describe("filterBar and filterEmpty", () => {
   it("is null without a filter", () => expect(f.filterBar({}, {})).toBeNull());
 
@@ -197,8 +267,8 @@ describe("the routers", () => {
     expect(app).toContain("renderRefinement(main, { admin: true, id: arg, query: to.query, go })");
     expect(app).toContain("renderRepos(main, { admin: true, query: to.query, go })");
     const user = readFileSync("ui/user/app.js", "utf8");
-    expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query })");
-    expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query })");
+    expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go })");
+    expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query, go })");
   });
 
   it("the admin router passes the query and a way to write the address", async () => {

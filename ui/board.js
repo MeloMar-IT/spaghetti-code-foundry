@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount } from "./dom.js";
-import { defaultGo, filterBar, filterEmpty, withQuery } from "./filters.js";
+import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, withQuery } from "./filters.js";
+import { ALL_REPOS } from "./ia.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { whereLink } from "./next.js";
 import { fieldFocused, ownerLabel } from "./runs.js";
@@ -11,8 +12,8 @@ import { boardPage } from "./templates.js";
 
 export const boardHash = (repo) => `#/board/${encodeURIComponent(repo)}`;
 
-/** The wanted repository, else the first, else undefined. */
-export const pickRepo = (data, wanted) => data?.repos?.find((r) => r.repo === wanted) ?? data?.repos?.[0];
+/** The wanted repository (ignoring case); undefined when it is not there. Without a wanted one, the first, else undefined. */
+export const pickRepo = (data, wanted) => (wanted ? data?.repos?.find((r) => sameRepo(r.repo, wanted)) : data?.repos?.[0]);
 
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 
@@ -82,16 +83,22 @@ export function boardView(data, wanted, { highlight, owner = "", column, onOwner
   const filter = h("select", { class: "small-select", title: "Show the cards of one account", "aria-label": "Show the cards of one account", "data-focus": "owner-filter", onChange: (e) => onOwner?.(e.target.value) },
     h("option", { value: "" }, "All owners"),
     owners.map((o) => h("option", { value: o.id, selected: o.id === owner }, `${o.name} (${o.cards})`)));
-  const repoPart = repos.length > 1
+  const gone = Boolean(wanted) && Boolean(data) && !picked;
+  const repoPart = repos.length > 1 || (gone && repos.length)
     ? repos.map((r) => h("a", { class: r.repo === picked?.repo ? "btn primary" : "btn", href: withQuery(boardHash(r.repo), owner ? { owner } : {}), "data-focus": `repo-${r.repo}` }, r.repo))
     : picked ? h("span", { class: "muted" }, picked.repo) : null;
   const page = (top, columns) => [boardPage({ title: "Board", actions: [repoPart, filter], filters: top, columns })];
   const filters = owner ? { owner } : {};
   const labels = { owner: owners.find((o) => o.id === owner)?.name || owner };
   const clearOwner = () => onOwner?.("");
-  const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner });
+  // Without a wanted repository the Board shows the first one: the offer is for that one, and none when there is none.
+  const scope = wanted ? {} : picked ? { shown: picked.repo } : { onContext: null };
+  const bar = filterBar(filters, { labels, onRemove: clearOwner, onClear: clearOwner, ...scope });
   const none = () => filterEmpty("cards", filters, { labels, onClear: clearOwner });
-  if (!picked) return page(bar, owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null);
+  if (!picked) {
+    const toAll = () => { globalThis.location.hash = withQuery("#/board", { repo: ALL_REPOS, ...(owner ? { owner } : {}) }); };
+    return page(bar, gone ? filterGone({ onClear: toAll }) : owner ? none() : data?.empty ? h("div", { class: "empty" }, data.empty) : null);
+  }
 
   const target = highlight == null ? undefined : all.find((c) => c.issue === highlight);
   const lit = target ? new Set([target.issue, ...target.chain]) : null;
