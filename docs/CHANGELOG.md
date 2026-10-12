@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Large log and diff browser checks test what the page draws (#476). Part 2 of 5 of #372.
+  - **Three repairs.** The large-seed log now has `LONG_TAIL` on line 5,000, so a kept line is long; the large-log check waits until the visible log holds its 2,000 kept lines and ends with line 5,000, then opens the Logs tab and times it; the large-diff check waits for 1,500 drawn lines, then clicks "more" and waits for 2,000.
+  - **Measured.** `LARGE_LOG_MS` is now the time to a visible, capped log (2,000 kept lines, last line "line 5000 of the large log", note "3000 earlier lines are not shown"): median 567 ms, under the 3,000 ms limit, so its `KNOWN` entry is removed. `LARGE_DIFF_MS` measures 614 ms against its 1,000 ms limit.
+  - **Not done.** The "UI quality 6 - draw a long live log in one step" follow-up is dropped with that entry, since its budget now passes. Budget limits are unchanged; only the `LARGE_LOG_MS` reason text names the new median.
+  - **Tests.** `tests/browser-seed.test.ts` (the last log line is over 600 characters), `responsive.spec.ts` (log and diff stay in their own box), and `performance.spec.ts` (a harness case for the log readiness check). `Ready` in `tests/browser/perf.ts` gained `visible` and `last`. No product code or config change.
 - Skills.sh metadata discovery without automatic trust (#213). Part of #196.
   - **Command.** `scf skills discover [<export-file> [<file>]]` reads a saved Skills.sh export (no scraping, no site calls), resolves each GitHub https repository to its current `HEAD` commit with `git ls-remote`, and stores it as a `proposed` candidate in `<data folder>/skill-source-candidates.json`. It prints `PROPOSED`, `KNOWN` (already in `skill-sources.yaml`, any status), `UNRESOLVED` and `PROBLEM` lines. With no operand it lists the stored candidates.
   - **No trust.** The command never writes the allowlist, the lock, the quarantine or releases. Trust, licence, popularity and safety claims from the export are not copied; credential-like entries are dropped. It is optional: runs never read the list.

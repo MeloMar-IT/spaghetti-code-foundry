@@ -123,7 +123,9 @@ describe("the large seed", () => {
     const run = loadRun(runsDir, "big-0001")!;
     expect(run.owner).toBe("owner-1");
     expect(["succeeded", "failed", "cancelled"]).toContain(run.status);
-    expect(readLiveLog(join(runsDir, "ui-big-log"))).toHaveLength(5000);
+    const lines = readLiveLog(join(runsDir, "ui-big-log"));
+    expect(lines).toHaveLength(5000);
+    expect(lines.at(-1)?.length ?? 0).toBeGreaterThan(600);
     expect(loadRun(runsDir, "ui-big-diff")!.baseSha).toMatch(/^[0-9a-f]{40}$/);
   });
 });
