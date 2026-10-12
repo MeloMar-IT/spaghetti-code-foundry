@@ -74,6 +74,7 @@ describe("user router", () => {
     "/auth.js": { ...real.auth, enterDisplay: async () => ({ id: "u1" }) },
     "/dom.js": real.dom,
     "/ia.js": real.ia,
+    "/runs-filter.js": real.runsFilter,
     "/refinement.js": never,
     "/repos.js": never,
     "/repo-view.js": never,
@@ -157,6 +158,17 @@ describe("user router", () => {
     await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns }, "/context.js": contextStub({ scoped }) }));
     expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/runs?repo=a%2Fb");
     expect(renderMyRuns.mock.calls[0]![1].query).toEqual({ repo: "a/b" });
+  });
+
+  it("gives My runs the filter of the address, without the owner", async () => {
+    setup("#/runs?q=x&owner=u1&status=failed");
+    const renderMyRuns = vi.fn();
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns } }));
+    const opts = renderMyRuns.mock.calls[0]![1];
+    expect(opts.filter).toEqual(real.runsFilter.parseFilter(g.location.hash));
+    expect(opts.filter.q).toBe("x");
+    expect(opts.filter.status).toBe("failed");
+    expect(opts.alive()).toBe(true);
   });
 
   it("does not scope an address that was replaced", async () => {

@@ -143,7 +143,7 @@ describe("My runs states", () => {
 
   it("keeps the filtered empty state", async () => {
     const { list, stop } = await open({ query: { repo: "no/pe" } });
-    expect(list.textContent).toContain("No runs match Repository: no/pe.");
+    expect(list.textContent).toContain("No runs match your search and filters.");
     stop();
   });
 

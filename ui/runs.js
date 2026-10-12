@@ -104,6 +104,20 @@ const selectFocused = (box) => {
 };
 
 /**
+ * Asks the runs of a filter. The server matches a repository by its exact spelling: every spelling in `names` (see
+ * canonRepos) is asked and the answers are merged (newest first, at most RUNS_CAP). `ask` takes the query and returns the runs.
+ */
+export async function askRuns(ask, f, names) {
+  const now = Date.now();
+  if (!names.length) return ask(filterQuery({ ...f, repo: "" }, now));
+  const lists = await Promise.all(names.map((repo) => ask(filterQuery({ ...f, repo }, now))));
+  if (lists.length === 1) return lists[0];
+  const seen = new Set();
+  const merged = lists.flatMap((l) => (Array.isArray(l) ? l : [])).filter((r) => !seen.has(r.runId) && seen.add(r.runId));
+  return merged.sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)).slice(0, RUNS_CAP);
+}
+
+/**
  * Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that.
  * `filter` is the full filter of the address (see ./runs-filter.js); without it the filter is built from `query`. `go` writes
  * a changed address. `alive` tells whether the page is still the one on screen: no request starts after it says no.
@@ -145,18 +159,6 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     empty: slots.empty.el,
   });
 
-  // The server matches a repository by its exact spelling: every spelling of the list that is this repository is asked,
-  // and the answers are merged (newest first, at most RUNS_CAP).
-  const askRuns = async (f, names) => {
-    const now = Date.now();
-    if (!names.length) return api.runs(filterQuery({ ...f, repo: "" }, now));
-    const lists = await Promise.all(names.map((repo) => api.runs(filterQuery({ ...f, repo }, now))));
-    if (lists.length === 1) return lists[0];
-    const seen = new Set();
-    const merged = lists.flatMap((l) => (Array.isArray(l) ? l : [])).filter((r) => !seen.has(r.runId) && seen.add(r.runId));
-    return merged.sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)).slice(0, RUNS_CAP);
-  };
-
   // Asks the server. Undefined when a newer request started meanwhile or the page was left: nothing is asked then.
   const fetchAll = async () => {
     if (gone()) return undefined;
@@ -170,7 +172,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
       if (mine !== gen || gone()) return undefined;
       const f = filter;
       const canon = values.ok ? canonRepos(f.repo, values.value?.repos) : [];
-      const runs = await askRuns(f, canon);
+      const runs = await askRuns((q) => api.runs(q), f, canon);
       return mine === gen && !gone() ? { filter, runs, queue, owners, values, canon } : undefined;
     } catch (e) {
       if (mine !== gen || closed) return undefined;

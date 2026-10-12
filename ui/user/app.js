@@ -2,6 +2,7 @@ import { initContext } from "/context.js";
 import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { resolve } from "/ia.js";
+import { parseFilter } from "/runs-filter.js";
 import { renderRefinement } from "/refinement.js";
 import { renderRepo } from "/repo-view.js";
 import { renderRepos } from "/repos.js";
@@ -65,7 +66,7 @@ async function route() {
     else if (page.section === "repos" && page.id) done = await renderRepo(box, { id: page.id, admin: false, readOnly, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "repos") done = await renderRepos(box, { admin: false, readOnly, query: to.query, go });
     else if (page.id) done = renderMyRun(box, page.id, { readOnly });
-    else done = await renderMyRuns(box, { readOnly, query: to.query, go });
+    else done = await renderMyRuns(box, { readOnly, query: to.query, go, filter: parseFilter(to.hash), alive: () => mine === generation && !stopped });
   } catch (e) {
     if (mine === generation && !stopped) mount(box, errorState(explainError(e, { what: "This page could not be loaded." }), { onRetry: route }));
     return;
