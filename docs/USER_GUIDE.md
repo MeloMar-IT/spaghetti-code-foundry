@@ -1983,8 +1983,10 @@ command: the live event stream of a run, which never ends.
 #### Helper processes
 
 Five small processes that run beside the Foundry, each started by macOS by itself once installed.
-They read the data folder; each writes only in its own folder there. None needs the server, and
-the server does not need them. Every one has the same commands:
+They read the data folder and write their results in their own folder there. Two of them also set
+something outside it: the governor and the limits helper each keep their cap on the runs at once in
+a file of their own in `governor/caps/`, and the governor writes `test-slots/cap`. None needs the
+server, and the server does not need them. Every one has the same commands:
 
 ```bash
 scf governor install    # also: flaky, limits, blockage, digest
@@ -1992,6 +1994,9 @@ scf governor run        # one check now
 scf governor report     # the last result
 scf governor status     # uninstall removes it and what it set
 ```
+
+`status` says "installed" only when macOS really runs the helper. "Installed but not loaded" means
+the file is there and nothing runs: run `install` again.
 
 | Helper | Runs | What it does |
 |---|---|---|
@@ -2001,19 +2006,45 @@ scf governor status     # uninstall removes it and what it set
 | `blockage` | every hour | Finds the stories that hold up the most others, and says when run slots are empty. |
 | `digest` | daily at 07:30 | One short report: what was done, what failed, what waits for you. |
 
+**Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
+at once for a while. The lowest cap that still holds counts, never below 1 and never above the
+configured number. A cap holds back new runs only: work that runs is never stopped, and a run that
+already started and is resumed (after a restart, an answer or a pause) is not held back, because it
+may hold the turn to merge that others wait for. A new run that waits only for a cap is marked so in
+the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
+that stands still.
+
 **The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
-per core, or under memory pressure, it allows one run fewer per check, down to half the configured
-number (at least 2). Work that runs is never stopped; only new runs wait. A run that already started and is resumed (after a restart, an answer or a pause) is not held back, because it may hold the turn to merge that others wait for. After five calm checks
-in a row (1.5 per core or less) it allows one more, until the configured number is back. Above 4
-per core, or under critical memory pressure, only one test run works at a time. Every change is a
-line in `governor/changes.log`. The limits end by themselves four minutes after the last check, so
-a governor that stops can never hold the Foundry down. `scf governor reset` takes them away at once.
+per core, or under critical memory pressure, it allows one run fewer per check, down to half the
+configured number (at least 2). Memory pressure "warning" counts only together with a load above 1.5
+per core: macOS reports it for hours on a full but idle machine. After five calm checks in a row
+(1.5 per core or less) it allows one more, until the configured number is back. In between (a load
+between 1.5 and 2.5, or a memory warning without load) nothing moves at first, but after 15 checks
+in a row without overload it allows one more as well, so a cap does not stay for hours on a machine
+that is only a little busy. Above 4 per core, or under critical memory pressure, only one test run
+works at a time. Every change is a line in `governor/changes.log`. Its limits end by themselves
+four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
+remembers — so a governor that stops can never hold the Foundry down, and the first check after the
+machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
+asks for a test slot like every test run, but waits five minutes at most.
 
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
-different stories in the last 7 days: one story can break its own test, several cannot. The report
-names a likely cause when the log shows one (a port in use, a time limit, a full disk). With
-`scf flaky auto on` it makes one bug story per test file through the GitHub sign-in of this
-machine, at most 2 per check and never twice for the same file. Off by default.
+different stories of one repository in the last 7 days: one story can break its own test, several
+cannot. A run without an issue is not a story. Where it can see them:
+
+- A test that failed in a test log (Vitest and Gradle output).
+- A test that failed and passed when the flow ran the tests once more: the flows keep the first log
+  as `tests.first.log` for that.
+- A test that Vitest retried by itself — only when the test command uses `--reporter=verbose`.
+  Vitest's default reporter prints nothing for a test that passed on a retry.
+
+The report names a likely cause when the error of that test shows one (a port in use, a time
+limit, a full disk), and says whether the test was also seen to pass. With `scf flaky auto on` it
+makes one bug story per test file and repository through the GitHub sign-in of this machine, at
+most 2 per check and never twice for the same file. A story is made only when at least one listed
+test of the file was also seen to pass in those 7 days (on a retry, on the second run, or named as
+passed in a verbose log); a test that never passes is broken, not unreliable, and stays in the
+report only. Off by default.
 
 **Usage limits.** The weekly limits are not published, so the forecast needs one reading from you:
 
@@ -2021,20 +2052,29 @@ machine, at most 2 per check and never twice for the same file. Off by default.
 scf limits set claude 34 2026-10-19T23:00     # 34% used now; the week resets then (local time)
 ```
 
-From the tokens used since the reset and that share it works out the size of the week, and from
-the pace of the last 24 hours when the limit is reached. It is an estimate: it holds while the mix
-of work stays about the same, and a reading below 5% is too coarse. With `scf limits auto on` it
-lowers the runs at once so that the limit lasts until the reset. Off by default.
+A reset without a time zone is local time, also a date alone (midnight). A reset more than 7 days
+ahead is refused. From the tokens used since the reset and that share it works out the size of the
+week, and from the pace of the last 24 hours when the limit is reached. It is an estimate: it holds
+while the mix of work stays about the same, and a reading below 5% is too coarse. With
+`scf limits auto on` it lowers the runs at once so that the limit lasts until the reset — down to 1
+if needed, lower than the governor goes. It works from the number of runs that are allowed at that
+moment, lowers its cap as far as needed in one check, and raises it by one per check at most. The
+cap ends by itself two hours after the last check. Off by default.
 
 **What holds work up.** It follows two kinds of waiting: a story that stepped aside for files
-another run holds, and a story that waits for one it depends on. The report lists the stories at
-the root, the number they hold up through the chain, and their state. It says so when run slots
-are empty while stories wait.
+another run holds, and a story that waits for one it depends on (from the service log of the last
+6 hours, until the log shows that the story started or ended). The report lists the stories at
+the root, the number they hold up through the chain, and their state; stories are named with their
+repository. Stories that wait for each other in a circle are listed first, as one entry: that never
+ends by itself. A run that says "running" while its process is gone is shown as interrupted. The
+report says so when run slots are empty while stories wait.
 
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
-stories, failed (with the reason) and in progress; what waits for you is listed however old it is.
-Below that come a few lines from the other helpers and the analyst. It is `digest/report.md`, and
-one file per day; a desktop notification gives the counts.
+stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
+and so are runs that were interrupted (they say "running", but their process is gone). Below that
+come a few lines from the other helpers and the analyst; a result of a helper that is older than
+26 hours is left out. It is `digest/report.md`, and one file per day, named by the local date; a
+desktop notification gives the counts.
 
 #### Self-update
 

@@ -54,14 +54,42 @@ function bootout(host: ServiceHost, name: string) {
   }
 }
 
-export function installJob(job: Job, cliPath: string, host: ServiceHost = macHost()): string {
+/** Waits without giving the processor away to other work of this process: the install command has nothing else to do. */
+const sleepSync = (ms: number) => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * Loads a login agent whose old copy was just booted out. launchd answers `bootout` before the old job is gone,
+ * and a `bootstrap` in that moment fails with "Input/output error": so wait until `print` no longer finds the job
+ * (5 seconds at most), then try `bootstrap` up to three times. Throws the last error.
+ */
+export function loadAgent(host: ServiceHost, label: string, path: string, pause: (ms: number) => void = sleepSync) {
+  for (let i = 0; i < 25; i++) {
+    try {
+      host.launchctl(["print", `${host.domain}/${label}`]);
+    } catch {
+      break; // gone
+    }
+    pause(200);
+  }
+  for (let attempt = 1; ; attempt++) {
+    try {
+      host.launchctl(["bootstrap", host.domain, path]);
+      return;
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      pause(1000);
+    }
+  }
+}
+
+export function installJob(job: Job, cliPath: string, host: ServiceHost = macHost(), pause?: (ms: number) => void): string {
   if (host.platform !== "darwin") throw new Error(`scf ${job.name} install supports macOS (launchd) only; elsewhere run \`scf ${job.name} run\` from cron`);
   mkdirSync(host.agentsDir, { recursive: true });
   mkdirSync(jobDir(job.name), { recursive: true });
   const path = plistPath(host, job.name);
   bootout(host, job.name);
   host.writeFile(path, jobPlist(job, { cliPath, logFile: join(jobDir(job.name), `${job.name}.log`), home: process.env.SCF_HOME ?? process.env.FACTORY_HOME }));
-  host.launchctl(["bootstrap", host.domain, path]);
+  loadAgent(host, labelOf(job.name), path, pause);
   const when = job.daily ? `every day at ${String(job.daily.hour).padStart(2, "0")}:${String(job.daily.minute).padStart(2, "0")}` : `every ${describe(job.everySec ?? 3600)}`;
   return `installed ${path}\n  runs ${when}`;
 }
@@ -74,7 +102,25 @@ export function uninstallJob(name: string, host: ServiceHost = macHost()): strin
   return `${name} removed`;
 }
 
-export const jobInstalled = (name: string, host: ServiceHost = macHost()) => existsSync(plistPath(host, name));
+/**
+ * "loaded": launchd has the job and runs it. "not loaded": its file is there but launchd does not have it (an
+ * install that failed half way) — nothing runs. Where launchd cannot be asked (not macOS, no launchctl) the file decides.
+ */
+export function jobState(name: string, host: ServiceHost = macHost()): "loaded" | "not loaded" | "not installed" {
+  const file = existsSync(plistPath(host, name));
+  if (host.platform === "darwin") {
+    try {
+      host.launchctl(["print", `${host.domain}/${labelOf(name)}`]);
+      return "loaded";
+    } catch (e) {
+      // launchctl ran and said no (it ends with a number); anything else: it could not be asked
+      if (typeof (e as { status?: unknown }).status === "number") return file ? "not loaded" : "not installed";
+    }
+  }
+  return file ? "loaded" : "not installed";
+}
+
+export const jobInstalled = (name: string, host: ServiceHost = macHost()) => jobState(name, host) === "loaded";
 
 function describe(sec: number): string {
   return sec % 3600 === 0 ? `${sec / 3600} hour${sec === 3600 ? "" : "s"}` : `${Math.round(sec / 60)} minute${sec === 60 ? "" : "s"}`;

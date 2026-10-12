@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -52,5 +52,41 @@ describe("tools/test-slot", () => {
     const r = spawnSync(tool, [d, "sh", "-c", "echo free"], { env: env({ FACTORY_VAR_TEST_SLOTS: "0" }), encoding: "utf8" });
     expect(r.stdout).toContain("free");
     expect(existsSync(d)).toBe(false);
+  });
+
+  /** Slot 1 is held by a live process (this one); with a cap of 1 a second test run has to wait. */
+  const held = () => {
+    const d = dir();
+    mkdirSync(join(d, "slot-1"));
+    writeFileSync(join(d, "slot-1", "pid"), String(process.pid));
+    return d;
+  };
+
+  it("ignores a cap file that was not written for 4 minutes: a governor that stopped cannot hold tests to one at a time", () => {
+    const d = held();
+    writeFileSync(join(d, "cap"), "1");
+    const capped = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "2", FACTORY_TEST_SLOT_WAIT_SEC: "0" }), encoding: "utf8" });
+    expect(capped.stdout).toContain("running anyway");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(join(d, "cap"), old, old);
+    const free = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "2", FACTORY_TEST_SLOT_WAIT_SEC: "0" }), encoding: "utf8" });
+    expect(free.stdout).toBe("ran\n");
+    expect(readdirSync(d).sort()).toEqual(["cap", "slot-1"]); // it took slot 2 and gave it back
+  });
+
+  it("reads the cap again while it waits: when the cap goes, a waiting test run takes the second slot", async () => {
+    const d = held();
+    writeFileSync(join(d, "cap"), "1");
+    let out = "";
+    const c = spawn(tool, [d, "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "2" }) });
+    c.stdout.on("data", (b) => (out += String(b)));
+    const done = new Promise<number>((r) => c.on("exit", (code) => r(code ?? 1)));
+    for (let i = 0; i < 200 && !out.includes("waiting for a free slot"); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(out).toContain("1 test run(s) are already working");
+    rmSync(join(d, "cap"));
+    expect(await done).toBe(0);
+    expect(out).toContain("got a slot after");
+    expect(out).toContain("ran");
+    expect(existsSync(join(d, "slot-1"))).toBe(true); // the other holder keeps its slot
   });
 });

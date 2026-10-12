@@ -421,22 +421,36 @@ describe("gitflow pipeline", () => {
     expect(comment).not.toMatch(/^SKILL_REQUEST:/m);
   });
 
-  it("the daily release does not queue for a test slot", async () => {
+  it("the daily release waits a short time for a test slot, then runs anyway", async () => {
     issues(5);
     await watcher().tick();
     await settle();
-    // both slots are held by a live process (this one); a queueing step would wait here
+    // both slots are held by a live process (this one)
     for (const n of [1, 2]) {
       mkdirSync(join(gh.tmp, "test-slots", `slot-${n}`), { recursive: true });
       writeFileSync(join(gh.tmp, "test-slots", `slot-${n}`, "pid"), String(process.pid));
     }
     const flow = loadFlow("release-daily", gh.tmp).flow;
-    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
-    expect(r.status).toBe("succeeded");
-    const verify = r.history.find((h) => h.id === "verify")!;
-    expect(verify.output).toContain("CHECKS: yes");
-    expect(verify.output).not.toContain("waiting for a free slot");
-    expect(verify.durationMs).toBeLessThan(20_000);
+    // the step waits five minutes at most and keeps a value that is set: a short one here
+    const script = JSON.stringify(flow.steps.find((s) => s.id === "verify"));
+    expect(script).toContain('FACTORY_TEST_SLOT_WAIT_SEC=\\"${FACTORY_TEST_SLOT_WAIT_SEC:-300}\\"');
+    expect(script).not.toContain("FACTORY_VAR_TEST_SLOTS=0");
+    process.env.FACTORY_TEST_SLOT_WAIT_SEC = "1";
+    process.env.FACTORY_TEST_SLOT_POLL_MS = "100";
+    try {
+      const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+      expect(r.status).toBe("succeeded");
+      const verify = r.history.find((h) => h.id === "verify")!;
+      expect(verify.output).toContain("CHECKS: yes");
+      // it asked for a slot (so it is counted when one is free, and the governor's limit holds for it) and went on without one
+      const log = readFileSync(join(r.runDir, "tests.log"), "utf8");
+      expect(log).toContain("waiting for a free slot");
+      expect(log).toContain("no free slot after 1 s — running anyway");
+      expect(verify.durationMs).toBeLessThan(20_000);
+    } finally {
+      delete process.env.FACTORY_TEST_SLOT_WAIT_SEC;
+      delete process.env.FACTORY_TEST_SLOT_POLL_MS;
+    }
   });
 
   it("opens one release pull request develop → main that closes the merged issues", async () => {

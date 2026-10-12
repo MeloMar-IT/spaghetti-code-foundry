@@ -293,6 +293,8 @@ describe("queue not moving", () => {
     expect(find("queue-stalled", { queue: q([job({ waitingFor: "a0" })], 1), lastStart: old })).toEqual([]);
     expect(find("queue-stalled", { queue: q([job({ limit: "per_day" })]), lastStart: old })).toEqual([]);
     expect(find("queue-stalled", { queue: q([job({ limit: "concurrent" })]), lastStart: old })).toEqual([]);
+    // a helper's cap (machine load, usage limits) holds new runs back on purpose
+    expect(find("queue-stalled", { queue: q([job({ capped: true }), job({ runId: "q3", capped: true })], 1, 6), lastStart: old })).toEqual([]);
     const mixed = find("queue-stalled", { queue: q([job({ limit: "per_day" }), job({ runId: "q2" })]), lastStart: old });
     expect(mixed[0]).toMatchObject({ evidence: { counts: { queued: 1 } } });
     expect(find("queue-stalled", { queue: q([job()]), lastStart: ago(MIN) })).toEqual([]);

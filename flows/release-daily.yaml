@@ -41,7 +41,7 @@ steps:
     type: shell
     description: Full tests and build on develop
     run: |-
-      export FACTORY_VAR_TEST_SLOTS=0
+      export FACTORY_TEST_SLOT_WAIT_SEC="${FACTORY_TEST_SLOT_WAIT_SEC:-300}"
       cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes
       "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no
