@@ -265,7 +265,7 @@ describe("the routers", () => {
     const app = readFileSync("ui/app.js", "utf8");
     expect(app).toContain("renderAllRepos(main, { query: to.query, go })");
     expect(app).toContain("renderRefinement(main, { admin: true, id: arg, query: to.query, go })");
-    expect(app).toContain("renderRepos(main, { admin: true, query: to.query, go })");
+    expect(app).toContain("renderRepos(box, { admin: true, query: to.query, go })");
     const user = readFileSync("ui/user/app.js", "utf8");
     expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go })");
     expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query, go })");

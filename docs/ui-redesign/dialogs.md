@@ -59,10 +59,10 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/refinement-new.js` | New refinement session | New session and Refine an existing issue on `#/refinement`; Refine an idea first and Refine an existing issue on `#/start` | repository, kind (an idea or an existing issue), then title (optional) and idea, or issue number; with no repository it shows a link to `#/repos` | Start session | `modal` |
 | `ui/refinement.js` | Rename session | Rename on the session page | title | Save | `modal` |
 | `ui/repos.js` | Add repository | Add repository on `#/repos` | address; method list from `methodsFor` (varies with admin and GitHub App); fields change with the method | Add | `modal` (`repoDialog`) |
-| `ui/repos.js` | Change authentication | Change button on a row | method; fields change with the method | Save | `modal` (`repoDialog` with `repo`) |
-| `ui/repos.js` | Definition of Ready | Button on a row of `#/repos` | none (read-only list) | none; the ✕ closes it | `modal` |
-| `ui/repos.js` | Remove repository | Remove on a row | none | Remove | `confirmDialog` (`ui/dom.js`) |
-| `ui/repos.js` | Generate a new key | Generate a new key on a deploy-key row | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |
+| `ui/repos.js` | Change authentication | Next step on a row, or Connection on `#/repos/:id` | method; fields change with the method | Save | `modal` (`repoDialog` with `repo`) |
+| `ui/repos.js` | Definition of Ready | Overview on `#/repos/:id` | none (read-only list) | none; the ✕ closes it | `modal` |
+| `ui/repos.js` | Remove repository | Dangerous actions on `#/repos/:id` | none | Remove | `confirmDialog` (`ui/dom.js`) |
+| `ui/repos.js` | Generate a new key | Dangerous actions on `#/repos/:id` (deploy key only) | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |
 | `ui/turn-act.js` | Show questions | Button on a Your turn item with questions | answer per question; Accept all recommendations; Use recommendation | Post answers | `openDetail` |
 | `ui/turn-act.js` | Show plan | Button on an item that waits for plan approval | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Show split | Button on an item that waits for split approval | notes | Approve or Reject | `openDetail` |

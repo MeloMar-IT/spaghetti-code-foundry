@@ -75,6 +75,7 @@ describe("user router", () => {
     "/ia.js": real.ia,
     "/refinement.js": never,
     "/repos.js": never,
+    "/repo-view.js": never,
     "/user/runs.js": never,
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
@@ -235,6 +236,20 @@ describe("user router", () => {
     }
   });
 
+  it("draws one repository on #/repos/<id> and the list on #/repos", async () => {
+    const renderRepos = vi.fn();
+    const renderRepo = vi.fn();
+    setup("#/repos/r1");
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns: vi.fn() }, "/repos.js": { renderRepos }, "/repo-view.js": { renderRepo } }));
+    await vi.waitFor(() => expect(renderRepo).toHaveBeenCalledTimes(1));
+    expect(renderRepo.mock.calls[0]![1]).toMatchObject({ id: "r1", admin: false });
+    expect(renderRepos).not.toHaveBeenCalled();
+    setup("#/repos");
+    await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns: vi.fn() }, "/repos.js": { renderRepos }, "/repo-view.js": { renderRepo } }));
+    await vi.waitFor(() => expect(renderRepos).toHaveBeenCalledTimes(1));
+    expect(renderRepo).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the generation check", () => {
     const src = readFileSync("ui/user/app.js", "utf8");
     expect(src).toContain("mine === generation && !stopped");
@@ -246,7 +261,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -457,7 +472,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,
@@ -526,6 +541,18 @@ describe("support levels", () => {
     await load("#/settings", 360, { "./admin.js": { renderSettings } });
     await vi.waitFor(() => expect(renderSettings).toHaveBeenCalledTimes(1));
     expect(renderSettings.mock.calls[0]![1].readOnly).toBe(true);
+  });
+
+  it("draws one repository on #/repos/<id> and the list on #/repos", async () => {
+    const renderRepo = page();
+    const renderRepos = page();
+    await load("#/repos/r1", 1024, { "./repo-view.js": { renderRepo }, "./repos.js": { renderRepos } });
+    await vi.waitFor(() => expect(renderRepo).toHaveBeenCalledTimes(1));
+    expect(renderRepo.mock.calls[0]![1]).toMatchObject({ id: "r1", admin: true });
+    expect(renderRepos).not.toHaveBeenCalled();
+    await load("#/repos", 1024, { "./repo-view.js": { renderRepo }, "./repos.js": { renderRepos } });
+    await vi.waitFor(() => expect(renderRepos).toHaveBeenCalledTimes(1));
+    expect(renderRepo).toHaveBeenCalledTimes(1);
   });
 
   it("shows the notice only on Dashboard, Credentials and Audit", async () => {

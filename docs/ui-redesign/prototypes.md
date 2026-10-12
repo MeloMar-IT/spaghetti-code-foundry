@@ -80,6 +80,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/runs` | both | Runs (`runs.html`) | yes | |
 | `#/runs/:id` | both | Run (`run.html`) | yes | |
 | `#/repos` | both | Repositories, scope Mine (`repositories.html`) | yes | |
+| `#/repos/:id` | both | One repository, in sections | yes | Not prototyped |
 | `#/all-repos` | admin | Repositories, scope All | yes | |
 | `#/credentials` | admin | Repositories, Credentials column and settings panel | yes | |
 | `#/maintenance` | admin | Administration, Maintenance (title only) | yes | |
@@ -99,6 +100,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `/user/#/runs` | user | Runs | yes | |
 | `/user/#/runs/:id` | user | Run | yes | |
 | `/user/#/repos` | user | Repositories | yes | |
+| `/user/#/repos/:id` | user | One repository, in sections | yes | Not prototyped |
 | `/user/#/refinement` | user | Refinement in the nav | yes | Not prototyped |
 | `/user/#/refinement/:id` | user | Session page | yes | Not prototyped |
 | `/` (no hash) | admin | Home | yes | Nothing waiting: Home, empty state (was Flows) |
