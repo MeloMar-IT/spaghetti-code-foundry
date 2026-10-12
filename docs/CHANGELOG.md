@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Tool isolation 1 — versioned tool profile and adapter capability contracts (#146). Part of #133. New `src/tool-profile/`: types, zod schemas, version numbers and pure helpers only. No agent is started differently, and no flow or setting changes.
+  - **`ToolProfile`**: `version`, `profile` (`id` and `version`) and `grants`. A grant names a kind (`files`, `shell`, `git`, `github`, `web`, `mcp`, `builtin`), its operations and its targets, and declares data classification, credential, timeout, concurrency, output cap and approval; a `shell` grant also declares its sandbox. Kinds, operations and every value are closed lists. What no grant names is refused.
+  - **`checkToolCall`** answers `allow`, `require_approval` or `deny` for one kind, operation and target, with the policy reason codes `tool.not-allowed`, `repository.not-allowed` and `approval.required`.
+  - **Hash and reference.** `toolProfileSha256` is the hash of the canonical form; `toolProfileRef` gives the `id`, `version` and `sha256` a run keeps. Nothing writes it to a run yet.
+  - **Least privilege.** `toolProfileExcess` and `isAtMostAsPermissive` compare two profiles; `resolveToolProfile` gives what several profiles all allow, under the strictest condition of any.
+  - **`AdapterCapabilities`** says per kind which controls an agent program can hold, and which sandbox levels. `unenforceable(profile, capabilities)` lists what it cannot hold. The records for Claude Code and Codex are in `adapters.ts`: Codex cannot allow tools, commands or paths one by one.
+  - **Flows of today.** `legacyToolProfile` turns the tool settings of an agent step into a generated profile and reports the rules it cannot express.
+  - **Skills.** `tool_profile` in `skill.yaml` is unchanged: it is what a skill needs. `skillCapabilitiesOf` and `meetsSkillToolProfile` compare it with a `ToolProfile`.
+  - Tests in `tests/tool-profile.test.ts`. `docs/DESIGN.md` updated.
 - Policy 1 — versioned policy contracts (#141). Part of #133. New `src/policy/`: types, zod schemas, version numbers and pure helpers only. Nothing in the engine asks a policy yet, and no safeguard is changed.
   - **`PolicyPack`**: `version` (of the format), `policy` (`id` and `version` of the contents, the pair evidence already carries), `mode` (`observe` or `enforce`), ordered `rules` and a `defaultOutcome` (`allow` or `deny`). A rule has an `id`, the `boundaries` it is about, `when` conditions, an `outcome` and a `reasonCode`.
   - **`PolicyInput`**: `version`, `boundary` (one of eight moments of a run), `runId` and `facts`: a closed list of short values such as repository, branch, changed paths, secrets found, output size, time, costs, sandbox, owner role and credential. No free text.
