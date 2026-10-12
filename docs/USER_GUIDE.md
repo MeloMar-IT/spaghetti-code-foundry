@@ -2870,7 +2870,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`. The five built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `small-changes`) are examples.
+   More fields: `detectors`, `connectors`, `tool_profile`. The six built-in packages in `skills/` (`typescript`, `java`, `rest-openapi`, `integration-testing`, `oracle`, `small-changes`) are examples.
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -3109,6 +3109,7 @@ skills:
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
 - **TypeScript is not guessed from JavaScript.** The built-in `typescript` skill needs TypeScript sources (plus `tsconfig.json` or a `typescript` dependency as extra evidence). Work that touches only JavaScript files does not get it, unless the issue names TypeScript or `tsconfig`.
+- **Oracle is not guessed from SQL.** The built-in `oracle` skill needs a sign of Oracle in the repository: an Oracle driver in a build file, an `oracle.jdbc` import, PL/SQL package files (`.pks`, `.pkb`) or `tnsnames.ora`. Plain `.sql` files, another database or SQL words in the issue do not bring it in; an issue that names Oracle or PL/SQL does. The skill is text only: it gives an agent no database access and holds no credentials.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
 - **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.
