@@ -300,7 +300,7 @@ const JOURNEYS: Journey[] = [
       void m.repos.repoDialog({ admin: role === "admin" });
       await flush();
       const modal = s.byId.get("modal-root")!;
-      press(modal, "Add repository");
+      press(modal, "Next");
       await flush();
       expect(serious(s.body)).toEqual([]);
       expect(modal.all("input").some((i) => i.attrs["aria-invalid"] === "true")).toBe(true);

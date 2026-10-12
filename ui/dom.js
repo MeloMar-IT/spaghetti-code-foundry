@@ -197,18 +197,25 @@ export function modal(title, build, { busy = () => false } = {}) {
     const opener = document.activeElement;
     const titleId = `modal-title-${++modalSeq}`;
     let closed = false;
+    let backdrop = null;
+    // "mine": the root still holds this dialog. Other content may have taken it over.
+    const mine = () => !!backdrop && backdrop.parentNode === root;
     const close = (v) => {
       // A dialog can finish its work after Escape closed it: a second call must not touch a newer dialog.
       if (closed) return;
       closed = true;
-      root.replaceChildren();
       document.removeEventListener("keydown", onKey);
-      opener?.focus?.();
+      if (mine()) {
+        root.replaceChildren();
+        opener?.focus?.();
+      }
       resolve(v);
     };
     // `busy()`: a request is in flight, so Escape, ✕ and the backdrop do nothing until it is answered.
     const dismiss = () => (busy() ? undefined : close(undefined));
     const onKey = (e) => {
+      // A dialog that lost the root has no box to trap in: it ends at the first key, busy or not.
+      if (!mine()) return close(undefined);
       if (e.key === "Escape") return dismiss();
       if (e.key !== "Tab") return;
       const to = trapTarget(tabStops(box), document.activeElement, e.shiftKey);
@@ -221,7 +228,8 @@ export function modal(title, build, { busy = () => false } = {}) {
     const box = h("div", { class: "modal", role: "dialog", "aria-labelledby": titleId, "aria-modal": "true", tabindex: "-1" },
       h("div", { class: "modal-head" }, h("h2", { id: titleId }, title), h("button", { class: "icon", onClick: dismiss, "aria-label": "Close" }, glyph("✕"))),
       build(close));
-    mount(root, h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box));
+    backdrop = h("div", { class: "backdrop", onMousedown: (e) => e.target === e.currentTarget && dismiss() }, box);
+    mount(root, backdrop);
     (box.querySelector("textarea, input") ?? box).focus();
   });
 }

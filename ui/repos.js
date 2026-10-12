@@ -1,11 +1,14 @@
 import { api } from "./api.js";
 import { reposChanged } from "./context.js";
 import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
-import { confirmDialog, fieldFor, h, modal, mount, showError, table, timeAgo, toast } from "./dom.js";
+import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
+import { repoDialog } from "./repo-connect.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
 import { safeStore } from "./shell.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
+
+export { repoDialog };
 
 /**
  * The ways to sign in to a repository. A later method (the GitHub App) is another entry:
@@ -56,7 +59,7 @@ export const METHODS = [
     help: [
       "The Foundry signs in as the GitHub App the administrator set up. You need no personal token.",
       "First install the app on this repository with the link below (choose Only select repositories and pick this one).",
-      "Then save here, and press Test connection.",
+      "Then save here. The connection is tested right after you save.",
     ],
   },
   {
@@ -89,7 +92,7 @@ export function repoWebUrl(url) {
   return m && m[1] !== "." && m[1] !== ".." && m[2] !== "." && m[2] !== ".." ? `https://github.com/${m[1]}/${m[2]}` : "";
 }
 
-const appAvailable =(options) => options?.githubApp?.available === true;
+export const appAvailable = (options) => options?.githubApp?.available === true;
 
 /** The link to install the app, or null. */
 export const installLink = (options) => {
@@ -160,7 +163,7 @@ const connectionCell = (repo, extra = {}) => {
     connectionProblem(repo, extra));
 };
 
-const methodOf = (methods, id) => methods.find((m) => m.id === id) ?? { id, fields: [] };
+export const methodOf = (methods, id) => methods.find((m) => m.id === id) ?? { id, fields: [] };
 
 /** What is missing in the input, or "" when it can be sent. */
 export const repoProblem = (x) => repoProblemAt(x).text;
@@ -174,14 +177,6 @@ export function repoProblemAt({ url, method, values = {}, needUrl = true, needSe
   }
   return { text: "", field: undefined };
 }
-
-// Which control a server sentence is about (src/auth/repo-url.ts, src/server/api-repos.ts). The URL entry covers address errors and a duplicate, not quota ("at most N repositories").
-const REPO_PAIRS = [
-  [/GitHub App|may choose|authentication|method/i, "method"],
-  [/address|host name|\bport\b|\bpath\b|transport|ssh form|you have that repository|^the repository (?:must|is empty)|repository is written/i, "url"],
-  [/user name/i, "username"],
-  [/token/i, "token"],
-];
 
 /** The request body: only the fields of the chosen method, trimmed; an empty secret is left out. */
 export function repoBody({ url, method, values = {}, withUrl = true, methods = METHODS }) {
@@ -215,106 +210,6 @@ export function loadFailed(e, { what, denied, back, onRetry }) {
 
 /** The deploy-key repositories whose connection does not work yet (the follow-up after adding one). */
 export const needsDeployKey = (repos) => repos.filter((r) => r.method === "ssh-deploy-key" && r.publicKey && !r.connection?.ok);
-
-/**
- * Asks for the URL (when adding) and the method. Resolves once the dialog is closed and any request that
- * was started has finished; the caller then loads the list again. Resolves with the record the server made
- * when a repository was added (undefined otherwise).
- */
-export function repoDialog({ admin = false, options, methods = methodsFor(admin, options), repo } = {}) {
-  let pending = null;
-  let created;
-  let closed = false;
-  const shown = modal(repo ? "Change authentication" : "Add repository", (close) => {
-    const HTTPS_EXAMPLE = "https://github.com/owner/name";
-    const SSH_EXAMPLE = "git@github.com:owner/name.git";
-    const urlInput = repo ? null : h("input", { name: "url", class: "mono", placeholder: HTTPS_EXAMPLE, autocomplete: "off" });
-    const initial = methods.some((m) => m.id === repo?.method) ? repo.method : methods[0].id;
-    const select = h("select", { name: "method" }, methods.map((m) => h("option", { value: m.id }, m.label)));
-    select.value = initial;
-    const values = repo ? { ...repo } : {};
-    delete values.token;
-    // the address of the record is not a field value; the SSH address input starts empty
-    delete values.url;
-    let els = {};
-    const area = h("div", { class: "stack" });
-    const err = h("p", { class: "status bad flush", role: "alert" });
-    const controls = () => ({ ...(urlInput ? { url: urlInput } : {}), ...els, method: select });
-    const fail = (m, key) => showError(err, m, { fields: Object.values(controls()), field: controls()[key ?? fieldFor(m, REPO_PAIRS)] });
-    const draw = () => {
-      const m = methodOf(methods, select.value);
-      els = {};
-      if (urlInput) urlInput.setAttribute("placeholder", m.ssh ? SSH_EXAMPLE : HTTPS_EXAMPLE);
-      // a method whose address form differs from the stored one needs the other form of the address
-      const toSsh = repo && m.ssh && !isSshUrl(repo.url);
-      const toHttps = repo && m.https && isSshUrl(repo.url);
-      if (toSsh || toHttps) {
-        els.url = h("input", { name: "url", class: "mono", placeholder: toSsh ? SSH_EXAMPLE : HTTPS_EXAMPLE, autocomplete: "off", value: values.url ?? "" });
-      }
-      mount(area,
-        h("div", { class: "field" }, (m.help ?? []).map((t) => h("small", {}, t)), m.app ? installLink(options) : null),
-        els.url ? h("label", { class: "field" }, h("span", {}, toSsh ? "SSH address" : "HTTPS address"), els.url) : null,
-        m.fields.map((f) => {
-          const attrs = { name: f.key, autocomplete: f.secret ? "new-password" : "off" };
-          els[f.key] = f.multiline
-            ? h("textarea", { ...attrs, rows: 5, class: "mono" })
-            : h("input", { ...attrs, type: f.secret ? "password" : "text", value: f.secret ? "" : values[f.key] ?? "" });
-          return h("label", { class: "field" }, h("span", {}, f.label), els[f.key]);
-        }));
-    };
-    const read = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value]));
-    select.addEventListener("change", () => {
-      // keep what was typed in plain fields; a secret is not carried over to another method
-      for (const [k, v] of Object.entries(read())) if (!methods.some((m) => m.fields.some((f) => f.key === k && f.secret))) values[k] = v;
-      draw();
-      fail("");
-    });
-    draw();
-
-    let busy = false;
-    const run = () => {
-      if (busy) return;
-      const method = select.value;
-      const v = read();
-      const withUrl = !repo || !!els.url;
-      const input = { url: els.url ? v.url : urlInput?.value, method, values: v, methods };
-      const needSecret = !repo || method !== repo.method;
-      const problem = repoProblemAt({ ...input, needUrl: withUrl, needSecret });
-      if (problem.text) return void fail(problem.text, problem.field);
-      const body = repoBody({ ...input, withUrl });
-      if (repo) {
-        const same = method === repo.method && Object.entries(body).every(([k, x]) => k === "method" || (k !== "token" && x === repo[k]));
-        if (same) return close(true);
-      }
-      busy = true;
-      save.disabled = true;
-      fail("");
-      pending = (async () => {
-        try {
-          if (repo) await api.setRepoAuth(repo.id, body);
-          else created = await api.addRepo(body);
-        } catch (e) {
-          busy = false;
-          if (closed) return toast(plainError(e), "error");
-          fail(plainError(e));
-          save.disabled = false;
-          return;
-        }
-        if (!repo) void reposChanged();
-        toast(repo ? "Authentication changed" : "Repository added");
-        if (!closed) close(true);
-      })();
-    };
-    const save = h("button", { class: "primary", onClick: run }, repo ? "Save" : "Add repository");
-    return h("div", { class: "stack" },
-      repo ? h("p", { class: "mono" }, repo.url) : h("label", { class: "field" }, h("span", {}, "Repository URL"), urlInput),
-      h("label", { class: "field" }, h("span", {}, "Authentication"), select),
-      options && !appAvailable(options) ? h("small", {}, "GitHub App is not available: the administrator has not set up the app (Settings → GitHub App).") : null,
-      area, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
-  });
-  shown.then(() => { closed = true; });
-  return shown.then(() => pending).then(() => created);
-}
 
 async function whileBusy(btn, fn) {
   btn.disabled = true;

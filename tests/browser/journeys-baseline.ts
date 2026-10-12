@@ -27,7 +27,7 @@ export const REDESIGN: Record<TaskId, Counts> = {
   1: { nav: 2, clicks: 4, fields: 1 },
   2: { nav: 1, clicks: 2, fields: 0 },
   3: { nav: 2, clicks: 2, fields: 0 },
-  4: { nav: 2, clicks: 4, fields: 2 },
+  4: { nav: 2, clicks: 5, fields: 2 },
   5: { nav: 3, clicks: 5, fields: 2 },
 };
 

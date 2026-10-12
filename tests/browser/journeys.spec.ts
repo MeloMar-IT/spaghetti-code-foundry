@@ -103,10 +103,12 @@ test.describe("the five tasks", () => {
         await j.click(page.getByRole("button", { name: "+ Add repository" }), { opens: "dialog" });
         const dialog = page.getByRole("dialog");
         await j.fill(dialog.locator('input[name="url"]'), "https://github.com/example/new-app");
-        const token = dialog.locator('input[name="token"]');
-        await j.click(token);
-        await j.fill(token, TOKEN);
+        await j.click(dialog.getByRole("button", { name: "Next" }));
+        // Next puts the focus on the token: no click on it
+        await j.fill(dialog.locator('input[name="token"]'), TOKEN);
         await j.click(dialog.getByRole("button", { name: "Add repository" }));
+        // the dialog tests the connection by itself; Done comes when the test has answered
+        await j.click(dialog.getByRole("button", { name: "Done" }));
         await expect(page.locator("#toast")).toContainText("Repository added");
         await expect(page.locator("#main")).toContainText("example/new-app");
         added = "example/new-app";

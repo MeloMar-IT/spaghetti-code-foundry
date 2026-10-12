@@ -443,11 +443,29 @@ describe("repositories", () => {
     void m.repos.repoDialog({ admin: true });
     await dialogUp();
     noViolations(modalRoot());
+    named(modalRoot(), "url").value = "https://github.com/acme/app";
+    press(button(modalRoot(), "Next"));
+    noViolations(modalRoot());
     modalRoot().replaceChildren();
     void m.repos.repoDialog({ admin: true, repo: { id: "r1", url: "https://github.com/acme/app", method: "https-token", username: "bob" } });
     await dialogUp();
     noViolations(modalRoot());
     expect(named(modalRoot(), "token").value).toBe("");
+    named(modalRoot(), "username").value = "ann";
+    press(button(modalRoot(), "Continue"));
+    expect(named(modalRoot(), "replace")).toBeDefined();
+    noViolations(modalRoot());
+    modalRoot().replaceChildren();
+    // the read-back after a save
+    routes["POST /api/repos"] = { id: "r2", url: "https://github.com/acme/new", method: "ssh-deploy-key", publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc" };
+    routes["POST /api/repos/r2/test"] = { ok: false, at: new Date().toISOString(), checks: [{ check: "clone", ok: false, code: "x", message: "Not yet." }] };
+    void m.repos.repoDialog({ admin: true });
+    await dialogUp();
+    named(modalRoot(), "url").value = "git@github.com:acme/new.git";
+    press(button(modalRoot(), "Next"));
+    press(button(modalRoot(), "Add repository"));
+    await vi.waitFor(() => expect(button(modalRoot(), "Done")).toBeDefined());
+    noViolations(modalRoot());
     modalRoot().replaceChildren();
     routes["GET /api/repos/r1/ready"] = { items: [{ id: "value", text: "the value is clear" }], isDefault: true };
     void m.repos.readyView({ id: "r1", url: "https://github.com/acme/app" });
@@ -457,25 +475,30 @@ describe("repositories", () => {
   it("an empty URL marks the URL; the server's sentences mark the URL", async () => {
     void m.repos.repoDialog({ admin: true });
     await dialogUp();
-    press(button(modalRoot(), "Add repository"));
+    press(button(modalRoot(), "Next"));
     expect(alerts(modalRoot())[0]!.textContent).toBe("Fill in the repository URL.");
     expect(invalid(modalRoot())).toEqual([named(modalRoot(), "url")]);
     expect(doc().activeElement).toBe(named(modalRoot(), "url"));
     named(modalRoot(), "url").value = "https://bad_host/acme/app";
+    press(button(modalRoot(), "Next"));
     named(modalRoot(), "method").value = "github-token";
     named(modalRoot(), "method").fire("change");
     named(modalRoot(), "token").value = "t";
     for (const message of ["the host name is not valid", "you have that repository already", 'the path must be "name/name…" without empty parts', 'the "git" transport is not allowed']) {
       fail("POST", "/api/repos", 400, message);
       press(button(modalRoot(), "Add repository"));
+      // an address error shows on the address view
       await vi.waitFor(() => expect(alerts(modalRoot())[0]!.textContent).toBe(message));
       expect(invalid(modalRoot())).toEqual([named(modalRoot(), "url")]);
+      press(button(modalRoot(), "Next"));
+      named(modalRoot(), "token").value = "t";
     }
   });
   it("a missing token marks the token; a server error about the user name marks it; the app errors mark the method", async () => {
     void m.repos.repoDialog({ admin: true });
     await dialogUp();
     named(modalRoot(), "url").value = "https://github.com/acme/app";
+    press(button(modalRoot(), "Next"));
     named(modalRoot(), "method").value = "https-token";
     named(modalRoot(), "method").fire("change");
     named(modalRoot(), "username").value = "bob";
@@ -496,6 +519,7 @@ describe("repositories", () => {
     void m.repos.repoDialog({ admin: true });
     await dialogUp();
     named(modalRoot(), "url").value = "https://github.com/acme/app";
+    press(button(modalRoot(), "Next"));
     named(modalRoot(), "method").value = "none";
     named(modalRoot(), "method").fire("change");
     for (const message of ["at most 50 repositories", "the repository list is not working"]) {
