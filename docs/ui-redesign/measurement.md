@@ -102,7 +102,7 @@ Every row at 1440, 1280, 768 and 390. The guide images cover 1440 only: `tests/b
 
 ## The five tasks
 
-Fixture and variants are in `journeys.md`. Viewport 1440×900. Counts are copied from there.
+Fixture and variants are in `journeys.md`. Viewport 1440×900. Counts are copied from there. Task 1 runs on the large seed server (the `note` flow is the only flow listed), not the default seed; its counts are unchanged.
 
 | # | Task | Role and start | End state that counts as done | Nav steps | Clicks | Fields |
 |---|---|---|---|---|---|---|

@@ -2,8 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runDiff } from "../src/engine/diff.js";
 import { listRunIds, loadRun, readLiveLog } from "../src/engine/state.js";
-import { largeFromEnv, seedLarge, startSeeded, type Seeded } from "./browser/seed.js";
+import { largeFromEnv, seedLarge, seedStress, startSeeded, STRESS_REPO, type Seeded } from "./browser/seed.js";
 import { WIDTHS, usesDrawer } from "./browser/widths.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
@@ -43,6 +44,8 @@ describe("the seeded server", () => {
 
   it("has no large data unless asked", async () => {
     expect(s.large).toBeUndefined();
+    expect(s.noteFlow).toBeUndefined();
+    expect(s.stress).toBeUndefined();
     const ids = list((await get(s, admin, "/api/runs")).json, "runs").map((x) => x.runId as string);
     expect(ids.filter((id) => id.startsWith("big-") || id.startsWith("ui-big-"))).toEqual([]);
   });
@@ -77,9 +80,11 @@ describe("the seeded server", () => {
 describe("the seeded server with large data", () => {
   let s: Seeded;
   let admin: TestSession;
+  let user: TestSession;
   beforeAll(async () => {
     s = await startSeeded({ large: true });
     admin = await signInAs(s.url, { create: false });
+    user = await signInAs(s.url, { name: "Ann", email: "ann@example.com", role: "user", create: false });
   });
   afterAll(async () => {
     await s?.close();
@@ -87,6 +92,35 @@ describe("the seeded server with large data", () => {
 
   it("says what it seeded", () => {
     expect(s.large).toEqual({ runs: 500, logRun: "ui-big-log", diffRun: "ui-big-diff" });
+    expect(s.noteFlow).toBe("note");
+    expect(s.stress).toEqual({ statusRun: "ui-stress-status", diffRun: "ui-stress-diff", repo: STRESS_REPO });
+  });
+
+  it("lists the note flow for a user", async () => {
+    const r = await get(s, user, "/api/flows?published=1");
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.json)).toBe(true);
+    const note = (r.json as any[]).find((f) => f.name === "note");
+    expect(note?.usesTask).toBe(true);
+  });
+
+  it("a note run waits with the task in its diff and NOTE_WAITING in its log", async () => {
+    const task = "Seed note task 4711";
+    const post = async (path: string, body: unknown) =>
+      fetch(s.url + path, { method: "POST", headers: { "content-type": "application/json", ...user.headers("POST") }, body: JSON.stringify(body) });
+    const started = await post("/api/runs", { flow: "note", task });
+    expect(started.status).toBe(201);
+    const { runId } = (await started.json()) as { runId: string };
+    try {
+      await expect.poll(async () => (await get(s, user, `/api/runs/${runId}`)).json.status, { timeout: 20_000 }).toBe("waiting");
+      const diff = await get(s, user, `/api/runs/${runId}/diff`);
+      expect(String(diff.json.patch)).toContain("note.txt");
+      expect(String(diff.json.patch)).toContain(task);
+      const runDir = (await get(s, admin, `/api/runs/${runId}`)).json.runDir as string;
+      expect(readLiveLog(runDir).join("\n")).toContain("NOTE_WAITING");
+    } finally {
+      await post(`/api/runs/${runId}/cancel`, {});
+    }
   });
 
   it("lists 200 runs, newest ids first", async () => {
@@ -127,6 +161,23 @@ describe("the large seed", () => {
     expect(lines).toHaveLength(5000);
     expect(lines.at(-1)?.length ?? 0).toBeGreaterThan(600);
     expect(loadRun(runsDir, "ui-big-diff")!.baseSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("writes the stress runs", () => {
+    expect(seedStress(runsDir, dir, "owner-1", "/repo")).toEqual({ statusRun: "ui-stress-status", diffRun: "ui-stress-diff", repo: STRESS_REPO });
+    expect(listRunIds(runsDir)).toHaveLength(504);
+    expect(STRESS_REPO).toHaveLength(100);
+    const failed = loadRun(runsDir, "ui-stress-status");
+    if (!failed) throw new Error("the status run is missing");
+    expect(failed.status).toBe("failed");
+    expect(failed.reason).toHaveLength(2000);
+    expect(failed.vars.github_repo).toBe(STRESS_REPO);
+    const diffRun = loadRun(runsDir, "ui-stress-diff");
+    if (!diffRun) throw new Error("the diff run is missing");
+    expect(diffRun.workdir?.endsWith("stress-work")).toBe(true);
+    const added = runDiff(diffRun).patch.split("\n").filter((l) => /^\+(?!\+\+)/.test(l));
+    expect(added.length).toBeGreaterThan(0);
+    for (const l of added) expect(l.length).toBeGreaterThanOrEqual(400);
   });
 });
 
