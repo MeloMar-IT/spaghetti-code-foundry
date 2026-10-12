@@ -50,7 +50,7 @@ describe("scf ask", () => {
     expect(off.err).toContain("Ask SCF is switched off on this Foundry.");
     expect((await ask(["more", id, "And then?"])).err).toContain("switched off");
     expect((await ask(["retry", id])).code).not.toBe(0);
-    expect((await ask(["stop", id])).out).toContain("no answer is being written");
+    expect((await ask(["stop", id])).err).toContain("no answer is being written");
     const usage = await w.scf(["ask", "usage"]);
     expect(usage.code).toBe(0);
     expect(usage.out).toContain("enabled");
