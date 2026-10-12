@@ -10,9 +10,10 @@ import { Scheduler } from "../src/queue/scheduler.js";
 import { createSessionFromIssue, getSession } from "../src/refinement/store.js";
 import { Watcher } from "../src/queue/watcher.js";
 import { addRepoWatcher, removeWatchersOfRepos, repoWatchersPath } from "../src/repos/watchers.js";
-import { startServer } from "../src/server/server.js";
+import type { startServer } from "../src/server/server.js";
 import { claudeBin, fakeGithub, oldFlowFor } from "./helpers/fake-github.js";
 import { fakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
@@ -101,8 +102,7 @@ describe("a Watcher of a repository", () => {
 });
 
 describe("watchers of two repositories", () => {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const base = `http://127.0.0.1:${port}`;
+  let base: string;
   let close: () => void;
   let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
   let admin: TestSession;
@@ -110,7 +110,7 @@ describe("watchers of two repositories", () => {
   let logs: string[];
   let kc: ReturnType<typeof fakeKeychain>;
   const begin = async () => {
-    ({ close, ctx } = await startServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), port, claudeBin, watcherRetryMs: 50, accountSweepMs: 50, log: (m) => void logs.push(m) }));
+    ({ close, ctx, base } = await startTestServer({ repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, watcherRetryMs: 50, accountSweepMs: 50, log: (m) => void logs.push(m) }));
   };
   /** Stops the server and starts it again on the same data folder. */
   const restart = async () => {

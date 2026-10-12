@@ -8,8 +8,9 @@ import { addCredential } from "../src/credentials/store.js";
 import { createSession, refinementsPath } from "../src/refinement/store.js";
 import { forgetHistory } from "../src/server/next.js";
 import { forgetBoard, searchFor, type SearchAnswer, type SearchType } from "../src/server/search.js";
-import { startServer } from "../src/server/server.js";
+import type { startServer } from "../src/server/server.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const WALK = `name: walk
@@ -67,19 +68,8 @@ beforeAll(async () => {
   git("init", "-q");
   git("commit", "-q", "--allow-empty", "-m", "init");
   process.env.FACTORY_HOME = home;
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ repo, runsDir, port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} });
-      ctx = started.ctx;
-      ctx.diagLog = (m: string) => void diag.push(m);
-      base = `http://127.0.0.1:${port}`;
-      close = started.close;
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+  ({ ctx, base, close } = await startTestServer({ repo, runsDir, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {} }));
+  ctx.diagLog = (m: string) => void diag.push(m);
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isGalleryPath } from "../src/server/http.js";
 import { CSP } from "../src/server/net.js";
-import { startServer } from "../src/server/server.js";
+import { freePort, startTestServer } from "./helpers/port.js";
 
 // The gallery (ui/gallery/) is served only with `dev`: #326.
 
@@ -28,9 +28,6 @@ function get(port: number, path: string): Promise<Reply> {
   });
 }
 
-// Other test files pick from 20000-40000 without a retry; stay out of their range so this file cannot make them collide.
-const randomPort = () => 40500 + Math.floor(Math.random() * 8000);
-
 let tmp: string;
 let saved: string | undefined;
 const servers: Srv[] = [];
@@ -38,17 +35,10 @@ let on: Srv;
 let off: Srv;
 
 async function boot(dev: boolean): Promise<Srv> {
-  for (let i = 0; ; i++) {
-    const port = randomPort();
-    try {
-      const s = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, watchers: false, dev, log: () => {} });
-      const srv = { port, close: () => s.close() };
-      servers.push(srv);
-      return srv;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i > 8) throw e;
-    }
-  }
+  const s = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), watchers: false, dev, log: () => {} });
+  const srv = { port: s.port, close: () => s.close() };
+  servers.push(srv);
+  return srv;
 }
 
 beforeAll(async () => {
@@ -121,7 +111,7 @@ describe("the commands pass --dev to the server", () => {
   /** Starts `scf <args>` unsupervised, waits for its banner and returns the status of /gallery/. */
   async function galleryStatus(args: string[]): Promise<number> {
     if (!existsSync(CLI)) throw new Error("dist/cli.js is missing — run `npm run build` first");
-    const port = randomPort();
+    const port = await freePort();
     const repo = join(tmp, "cli-repo");
     mkdirSync(repo, { recursive: true });
     const env = { ...process.env, FACTORY_HOME: join(tmp, "cli-home"), FACTORY_NO_SUPERVISE: "1", FACTORY_NO_OPEN: "1", FACTORY_NO_NOTIFY: "1" };
