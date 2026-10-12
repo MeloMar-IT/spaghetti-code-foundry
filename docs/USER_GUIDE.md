@@ -1200,6 +1200,7 @@ For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h
 
 Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository in **My runs**, without the watcher's name.
 
+- **From the repository.** The heading of each repository group is a link to the repository view (`#/repos/<id>`). Its **Watchers** section lists the watchers of that repository, with **+ Add watcher** and, per watcher, **Enable** or **Disable**, **Edit** and **Delete** (**Delete** asks first). If the server refuses a change, its sentence is shown.
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
@@ -2708,12 +2709,19 @@ Errors from the server show in the dialog in plain words. A failed removal shows
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
 has no per-repository settings. An admin sets them on the **Repositories** page.
 
-**The Repositories page (admin).** `#/all-repos` is the admin page **Repositories**; a user never gets it.
-It lists the repositories of all accounts with the owner (name and e-mail, and "blocked" for a blocked
-owner), the URL, the authentication method and the connection status ("Not tested yet" until the owner tests it). Three calls, all admin only: `GET /api/admin/repos`, `PUT /api/admin/repos/<id>/settings` and
+**The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`) and
+**All** (`#/all-repos`); a user never gets **All**. **All** lists the repositories of all accounts with the
+Owner column (name and e-mail, "blocked" for a blocked owner, "Unknown account" when the account is gone), the
+URL, the authentication method and the connection status ("Not tested yet" until the owner tests it). Rows with
+a problem come first, then by owner and address. Besides the usual states, a row can say "Not on the app list"
+or "Watcher problem". The next step offers **Test connection**, and **Open** shows the repository. There is no
+**+ Add repository** on **All**. Settings, Definition of Ready, Transfer and the watchers are on the repository
+view (`#/repos/<id>`): the sections **Branches**, **Run settings** and **Watchers**, and **Transfer** under
+Dangerous actions. For a repository of another account you cannot change the authentication, remove it or
+generate a new key; only the owner can. Three calls, all admin only: `GET /api/admin/repos`, `PUT /api/admin/repos/<id>/settings` and
 `POST /api/admin/repos/<id>/transfer {"email": …}`.
 
-- **Settings** per repository: the test command (one line, up to 500 characters), the docs to update (up to
+- **Settings** per repository (**Edit** in the sections Branches and Run settings): the test command (one line, up to 500 characters), the docs to update (up to
   50 paths, no leading `/`, `~` or `-`, no `..`), the protected branches (up to 50 patterns), and the names of
   the main and the develop branch. Input is checked on the server: lengths, no control characters. Branch names
   follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*` matches any text and
@@ -2727,7 +2735,7 @@ owner), the URL, the authentication method and the connection status ("Not teste
   acceptance criterion can be checked; it is small enough to build in one go; there are no open questions; it
   says what is out of scope; it contains no implementation plan. The default items also have a fixed `rule`
   key that later parts use to pick the check; an item an admin adds has none.
-  - **Admin:** the **Definition of Ready** button on a repository row opens a dialog: reword, add, remove,
+  - **Admin:** **Edit Definition of Ready** in the section Run settings of the repository view opens a dialog: reword, add, remove,
     move up or down, add a removed default item back, **Back to the default**, Save. The API is
     `PUT /api/admin/repos/<id>/ready {"items": [{"id"?, "text"}]}`; `{"items": null}` or the unchanged default
     list stores nothing. Limits: 1 to 20 items, each 1 to 200 characters on one line, no control characters, no
@@ -4459,7 +4467,7 @@ When the task has the part "The person's own way", the first way works out that 
 
 ### Refinement for admins
 
-- **Definition of Ready per repository.** Press **Definition of Ready** on the repository's row (Administration → All repositories). Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
+- **Definition of Ready per repository.** Open the repository (Repositories → **All** → **Open**) and press **Edit Definition of Ready** in the section Run settings. Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
 - **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
 - **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
 

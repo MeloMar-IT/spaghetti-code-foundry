@@ -39,9 +39,9 @@ const authButton = (ctx, focus) =>
 
 function nextAction(ctx) {
   const { att, readOnly, options, repo } = ctx;
-  if (!att.action) return "Nothing to do";
+  if (!att.action) return att.level === "ok" ? "Nothing to do" : (att.detail ?? att.text);
   if (readOnly) return att.text;
-  if (att.action === "auth") return authButton(ctx, `next-${repo.id}`);
+  if (att.action === "auth") return ctx.foreign ? att.text : authButton(ctx, `next-${repo.id}`);
   if (att.action === "install") return installLink(options) ?? testButton(ctx, `next-${repo.id}`);
   return testButton(ctx, `next-${repo.id}`);
 }
@@ -84,7 +84,7 @@ function connection(ctx) {
         c ? [" ", h("span", { class: "muted", title: new Date(c.at).toLocaleString() }, `tested ${timeAgo(c.at)}`)] : null),
       connectionLines(repo, { all: true }).map((l) => h("div", { class: l.ok ? "status ok" : "status bad" }, l.text)),
       ctx.testError ? h("div", { class: "status bad" }, ctx.testError) : null),
-    readOnly ? null : h("div", { class: "row" }, testButton(ctx), authButton(ctx, `auth-${repo.id}`)),
+    readOnly ? null : h("div", { class: "row" }, testButton(ctx), ctx.foreign ? null : authButton(ctx, `auth-${repo.id}`)),
   ];
 }
 
@@ -94,6 +94,7 @@ function danger(ctx) {
   if (readOnly) {
     return h("p", { class: "muted" }, deployKey ? "Generate a new key and Remove are not available in a read-only view." : "Remove is not available in a read-only view.");
   }
+  if (ctx.foreign) return h("p", { class: "muted" }, "Only the owner can remove this repository or generate a new key.");
   return h("div", { class: "row" },
     deployKey ? h("button", { class: "danger", "data-action": "newKey", onClick: ctx.act.newKey }, "Generate a new key") : null,
     h("button", { class: "danger", "data-action": "remove", onClick: ctx.act.remove }, "Remove"));
@@ -106,20 +107,25 @@ export const SECTIONS = [
   { id: "danger", title: "Dangerous actions", tone: "fail", show: () => true, draw: danger },
 ];
 
+/** Where the record comes from: the signed-in account's own repositories. */
+const OWN = { load: async (id) => ({ repo: (await api.repos()).find((r) => r.id === id) ?? null }) };
+
 /**
  * The view of one repository (`#/repos/:id`). `onName` gets the name once loaded; `nav` changes the address.
- * Returns a cleanup.
+ * `source.load(id)` resolves { repo, foreign?, extra?, back? } (`foreign`: another account's repository, so only what an
+ * admin may do there is offered; `back`: { label, href }); the source may also have `foreign(repo)`, `back(repo)` and `keep` (record keys that the answer of the
+ * authentication call, which lacks them, must not drop). `attention` says what needs attention. Returns a cleanup.
  */
-export async function renderRepo(main, { id, admin = false, readOnly = false, onName, nav = (hash) => { location.hash = hash; }, sections = SECTIONS } = {}) {
+export async function renderRepo(main, { id, admin = false, readOnly = false, onName, nav = (hash) => { location.hash = hash; }, sections = SECTIONS, source = OWN, attention = repoAttention } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch draws
-  const state = { repo: null, options: undefined, at: null, stale: false, notice: null, testError: undefined, runs: undefined, pending: null };
+  const state = { repo: null, extra: undefined, options: undefined, at: null, stale: false, notice: null, testError: undefined, runs: undefined, pending: null };
   const live = () => mine === generation && onRepo(id);
 
   const fetchAll = async (n) => {
-    const [repos, methods] = await Promise.all([api.repos(), api.repoMethods().then((options) => ({ options }), () => ({}))]);
+    const [loaded, methods] = await Promise.all([source.load(id), api.repoMethods().then((options) => ({ options }), () => ({}))]);
     if (n !== seq) return;
-    Object.assign(state, { repo: repos.find((r) => r.id === id) ?? null, options: methods.options, at: new Date(), stale: false });
+    Object.assign(state, { repo: loaded.repo ?? null, extra: loaded.extra, foreign: loaded.foreign, back: loaded.back, options: methods.options, at: new Date(), stale: false });
   };
   const loadRuns = (n) => {
     loadActiveRuns().then((runs) => {
@@ -176,7 +182,8 @@ export async function renderRepo(main, { id, admin = false, readOnly = false, on
     ready: once("ready", () => readyView(state.repo)),
     newKey: once("newKey", (e) => newKey(e.currentTarget, state.repo, ({ repo, error }) => {
       state.notice = error ? { text: error } : null;
-      if (repo) state.repo = repo;
+      // the answer is the public record: keep the admin fields it lacks
+      if (repo) state.repo = { ...Object.fromEntries((source.keep ?? []).filter((k) => k in state.repo).map((k) => [k, state.repo[k]])), ...repo };
       return reload();
     })),
     remove: once("remove", (e) => doRemove(e.currentTarget, false)),
@@ -192,10 +199,13 @@ export async function renderRepo(main, { id, admin = false, readOnly = false, on
   const draw = () => {
     const repo = state.repo;
     if (!repo) return mount(main, notFound());
-    const att = repoAttention(repo, { admin, options: state.options });
-    const ctx = { repo, admin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act };
+    const foreign = !!(state.foreign ?? source.foreign?.(repo));
+    const asAdmin = foreign ? repo.account?.role === "admin" : admin;
+    const att = attention(repo, { admin: asAdmin, options: state.options });
+    const setRepo = (row) => { if (row?.id === state.repo?.id) state.repo = row; };
+    const ctx = { repo, admin: asAdmin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act, foreign, extra: state.extra, reload, once, setRepo };
     mount(main,
-      pageHeader({ title: repoName(repo), back: BACK, meta: [pill(att)] }),
+      pageHeader({ title: repoName(repo), back: state.back ?? source.back?.(repo) ?? BACK, meta: [pill(att)] }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
       state.notice ? h("p", { class: "status bad", role: "alert" }, state.notice.text,
         state.notice.retry && !readOnly ? [" ", h("button", { class: "small", "data-action": "remove", onClick: retry }, "Try again")] : null) : null,

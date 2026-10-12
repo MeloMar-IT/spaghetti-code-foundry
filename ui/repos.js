@@ -355,15 +355,23 @@ export function fillRuns(el, runs, repo) {
 
 // Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
 let generation = 0;
-// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
+// The wish handler of the newest load of the list (Mine or All): a reload replaces it, leaving the page removes its own.
 let unwish = () => {};
-const onPage = () => {
+const onPage = (page) => {
   if (typeof location === "undefined") return true;
   try {
-    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === "repos";
+    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === page;
   } catch {
     return false;
   }
+};
+
+/** The scope of the list for everyone: the repositories of the signed-in account. */
+export const MINE = {
+  id: "mine", page: "repos", title: "My repositories", hint: "The repositories you work in, and how the Foundry signs in to them",
+  caption: "My repositories", loading: "Loading your repositories", failed: "Your repositories could not be loaded.",
+  denied: "You are not allowed to see these repositories.", empty: "No repositories yet. Add the repository you work in.",
+  own: true, load: () => api.repos(),
 };
 
 /** Gives the row of repository `id` the focus and scrolls it into view; nothing happens when it is not listed. */
@@ -375,16 +383,20 @@ export function focusRepoRow(main, id) {
   row.focus();
 }
 
-/** The My repositories page. `notice` ({ text }) is a message kept from the last removal. Returns a cleanup. */
-export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo, store = safeStore() } = {}) {
+/**
+ * The repositories page. `scope` says what to list (MINE, or the admin scope of all accounts); `switcher` draws the Mine / All switch.
+ * `notice` ({ text }) is a message kept from the last removal. Returns a cleanup.
+ */
+export async function renderRepos(main, { admin = false, notice, readOnly = false, query = {}, go = defaultGo, store = safeStore(), scope = MINE, switcher = false } = {}) {
   const mine = ++generation;
   let seq = 0; // only the newest fetch of this page draws
   // the filters live in the state, so a reload keeps them and a removed filter stays removed
   const state = { repos: [], options: undefined, methodsFailed: false, at: null, stale: false, notice, testErrors: new Map(), filters: query.repo ? { repo: query.repo } : {},
     runs: undefined, text: "", compact: readCompact(store) }; // runs: undefined while loading, null when they could not be loaded
-  const live = () => mine === generation && onPage();
+  const live = () => mine === generation && onPage(scope.page);
+  const attention = scope.attention ?? repoAttention;
   const fetchAll = async (n) => {
-    const [repos, methods] = await Promise.all([api.repos(), api.repoMethods().then((options) => ({ options }), () => ({ failed: true }))]);
+    const [repos, methods] = await Promise.all([scope.load(),api.repoMethods().then((options) => ({ options }), () => ({ failed: true }))]);
     if (n !== seq) return;
     Object.assign(state, { repos, options: methods.options, methodsFailed: !!methods.failed, at: new Date(), stale: false });
   };
@@ -413,21 +425,24 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     }
   };
   const load= async () => {
-    mount(main, head(false), loadingState("Loading your repositories", { rows: 3, shape: "table" }));
+    mount(main, head(false), loadingState(scope.loading, { rows: 3, shape: "table" }));
     const n = ++seq;
     try {
       await fetchAll(n);
     } catch (e) {
       if (n !== seq || !live()) return;
-      return mount(main, head(false), loadFailed(e, { what: "Your repositories could not be loaded.", denied: "You are not allowed to see these repositories.", onRetry: load }));
+      return mount(main, head(false), loadFailed(e, { what: scope.failed, denied: scope.denied, back: scope.back, onRetry: load }));
     }
     if (n === seq && live()) {
       draw();
       loadRuns(n);
     }
   };
-  const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, "My repositories"),
-    h("span", { class: "muted" }, "The repositories you work in, and how the Foundry signs in to them"),
+  const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, scope.title),
+    h("span", { class: "muted" }, scope.hint),
+    switcher ? h("nav", { class: "seg scope-switch", "aria-label": "Which repositories" },
+      h("a", { href: "#/repos", "aria-current": scope.id === "mine" ? "page" : null }, "Mine"),
+      h("a", { href: "#/all-repos", "aria-current": scope.id === "all" ? "page" : null }, "All")) : null,
     h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
   const add = async () => {
     const created = await repoDialog({ admin, options: state.options });
@@ -438,7 +453,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     const testError = state.testErrors.get(repo.id);
     const failed = !!testError || (repo.connection && !repo.connection.ok);
     const webUrl = repoWebUrl(repo.url);
-    const att = repoAttention(repo, { admin, options: state.options });
+    const att = attention(repo, { admin, options: state.options });
     const name = repoName(repo);
     const testBtn = h("button", { class: "small", onClick: (e) => {
       state.testErrors.delete(repo.id);
@@ -453,13 +468,15 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       reload();
     } }, "Change authentication");
     const link = att.action === "install" ? installLink(state.options) : null;
-    // the one next action sits in the Next step cell and is left out of the Actions cell
-    const promoted = att.action === "auth" ? authBtn : att.action === "test" || att.action === "install" ? (link ?? testBtn) : null;
+    const testing = att.action === "test" || att.action === "install";
+    // the one next action sits in the Next step cell and is left out of the Actions cell; other accounts' rows only offer the test
+    const promoted = !scope.own ? (testing ? testBtn : null) : att.action === "auth" ? authBtn : testing ? (link ?? testBtn) : null;
     const runs = h("td", { "data-runs": repo.id });
     fillRuns(runs, state.runs, repo);
     return h("tr", { "data-repo": repo.id },
       h("td", { class: "mono repo-name", title: repo.url }, webUrl ? h("a", { class: "repo-link", href: webUrl, target: "_blank", rel: "noopener noreferrer" }, name) : name),
-      h("td", {}, methodLabel(repo, admin)),
+      scope.ownerCell ? h("td", {}, scope.ownerCell(repo)) : null,
+      h("td", {}, methodLabel(repo, scope.asAdmin ? scope.asAdmin(repo) : admin)),
       connectionCell(repo, { error: testError }),
       runs,
       h("td", { class: "next-step" },
@@ -470,13 +487,13 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   };
   const setFilters = (next) => {
     state.filters = next;
-    go(withQuery("#/repos", next));
+    go(withQuery("#/" + scope.page, next));
     draw();
   };
   const clear = () => setFilters({});
   const draw = () => {
-    const canAdd = !readOnly && !state.methodsFailed;
-    const pending = needsDeployKey(state.repos);
+    const canAdd = scope.own && !readOnly && !state.methodsFailed;
+    const pending = scope.own ? needsDeployKey(state.repos) : [];
     const inContext = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
     const ctx = { admin, options: state.options };
     const showFilter = state.repos.length >= FILTER_FROM;
@@ -484,14 +501,15 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     // only this part is drawn again while typing, so the search box keeps its caret
     const results = h("div", {});
     const drawResults = () => {
-      const shown = sortByAttention(inContext.filter((r) => matchesText(r, state.text)), ctx);
+      const matching = inContext.filter((r) => matchesText(r, state.text));
+      const shown = sortByAttention(scope.sort ? scope.sort(matching) : matching, ctx, attention);
       mount(results,
         shown.length
-          ? table(["Repository", "Authentication", "Connection", "Active runs", "Next step", h("span", { class: "sr-only" }, "Actions")], shown.map(row),
-            { cards: true, caption: "My repositories", class: state.compact ? "compact" : undefined })
+          ? table(["Repository", scope.ownerCell ? "Owner" : null, "Authentication", "Connection", "Active runs", "Next step", h("span", { class: "sr-only" }, "Actions")].filter(Boolean), shown.map(row),
+            { cards: true, caption: scope.caption, class: state.compact ? "compact" : undefined })
           : inContext.length ? h("div", { class: "empty" }, "No repository matches the filter.")
           : state.filters.repo ? filterGone({ onClear: clear })
-          : h("div", { class: "empty" }, "No repositories yet. Add the repository you work in.", canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
+          : h("div", { class: "empty" }, scope.empty, canAdd ? h("div", {}, h("button", { class: "primary", "data-focus": "add-empty", onClick: add }, "+ Add repository")) : null));
     };
     drawResults();
     const filterInput = showFilter
@@ -502,7 +520,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       head(canAdd),
       filterBar(state.filters, { onRemove: clear, onClear: clear }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: () => reload(state.notice) }) : null,
-      state.methodsFailed && !readOnly
+      scope.own && state.methodsFailed && !readOnly
         ? banner("warn", "The sign-in methods could not be loaded. You cannot add a repository now.", [{ label: "Retry", onClick: () => reload(state.notice) }])
         : null,
       pending.length
@@ -511,7 +529,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
       state.notice ? h("p", { class: "status bad", role: "alert" }, state.notice.text) : null,
       inContext.length
         ? h("div", { class: "row" },
-          h("p", { class: "muted flush", "data-attention": String(attentionCount(inContext, ctx)) }, attentionSummary(attentionCount(inContext, ctx))),
+          h("p", { class: "muted flush", "data-attention": String(attentionCount(inContext, ctx, attention)) }, attentionSummary(attentionCount(inContext, ctx, attention))),
           h("span", { class: "spacer" }),
           filterInput,
           h("label", {}, h("input", { type: "checkbox", "data-focus": "repos-compact", checked: state.compact,
@@ -521,11 +539,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   };
   // The palette's repository result: a wish that came before this page, or one for the page as it is.
   unwish();
-  unwish = onWish("repos", (w) => focusRepoRow(main, w?.repo));
+  const off = onWish(scope.page, (w) => focusRepoRow(main, w?.repo));
+  unwish = off;
   await load();
-  if (live()) focusRepoRow(main, takeWish("repos")?.repo);
+  if (live()) focusRepoRow(main, takeWish(scope.page)?.repo);
   return () => {
     if (generation === mine) generation++;
-    unwish();
+    off();
   };
 }

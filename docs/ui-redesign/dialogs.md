@@ -17,9 +17,11 @@ The call-site count is only where to start. One site can serve several dialogs; 
 |---|---|---|---|---|---|
 | `ui/views.js` | Save view | Save view in the filter bar of Runs, Board, Refinement and My runs | name (1–40 characters) | Save | `modal` |
 | `ui/views.js` | Manage views | Manage views in the row of saved views | new name (rename), none (move, delete with an inline confirmation) | Done | `modal` |
-| `ui/admin-repos.js` | Repository settings | Settings button on a row of `#/all-repos` | test command, docs, protected branches, main branch, develop branch | Save | `modal` |
-| `ui/admin-repos.js` | Definition of Ready | Button on a row of `#/all-repos` | checklist items | Save | `modal` |
-| `ui/admin-repos.js` | Transfer repository | Transfer button on a row | new owner e-mail | Transfer | `modal` |
+| `ui/admin-repos.js` | Repository settings | Edit in Branches or Run settings on `#/repos/:id` (`ui/repo-admin-sections.js`); Branches shows the branch fields, Run settings the test command and docs | main branch, develop branch, protected branches / test command, docs | Save | `modal` |
+| `ui/admin-repos.js` | Definition of Ready | Edit Definition of Ready in Run settings on `#/repos/:id` | checklist items | Save | `modal` |
+| `ui/admin-repos.js` | Transfer repository | Transfer in Dangerous actions on `#/repos/:id` | new owner e-mail | Transfer | `modal` |
+| `ui/watcher-form.js` | Add a watcher / Edit a watcher | + Add watcher or Edit in Watchers on `#/repos/:id` (this repository only) | as the dialog on `#/watchers` | Save watcher | `modal` (`repoWatcherDialog`) |
+| `ui/repo-admin-sections.js` | Delete watcher | Delete on a watcher in Watchers on `#/repos/:id` | none | Delete watcher | `confirmDialog` |
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
 | `ui/operations.js` | Cancel this run | Cancel run in the Health card of the Overview | none | Cancel the run | `confirmDialog` (`ui/health.js`) |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
