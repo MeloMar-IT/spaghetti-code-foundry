@@ -8,6 +8,7 @@ import { sessionFor } from "./api-refinement.js";
 import { checkedRun } from "./api-runs.js";
 import { boardFor } from "./board.js";
 import { health } from "./health.js";
+import type { RunSummary } from "../engine/state.js";
 import type { NextStep } from "../next-step.js";
 import { allNext, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
@@ -117,6 +118,25 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_MS = 86_400_000;
 const old = (iso: string | undefined, ms = DAY_MS) => iso !== undefined && Date.now() - Date.parse(iso) > ms;
 
+/**
+ * A run and its next-step record, as `GET /api/runs/:id` gives them to this account: every run for an admin, their
+ * own for a user, and for a user the record without another account's run and without a folder. Undefined for a run
+ * that does not exist or is not theirs. `user` is the account as it is now (`currentAccount`).
+ */
+export function runWithNext(ctx: ApiContext, user: User, id: string): { run: RunSummary; next?: NextStep } | undefined {
+  if (!RUN_ID.test(id) || !allowed(ctx, user, ["runs", id])) return undefined;
+  const s = checkedRun(ctx.scheduler, id, user.role === "admin" ? undefined : user.id);
+  if (!s) return undefined;
+  let next: NextStep | undefined;
+  try {
+    const rec = nextFor(ctx, undefined, user.role !== "admin")(s);
+    next = user.role === "admin" ? rec : userRecord(ownRecord(rec, (rid) => ctx.scheduler.ownerOf(rid) === user.id));
+  } catch {
+    next = undefined;
+  }
+  return { run: s, next };
+}
+
 type Adapter = (ctx: ApiContext, user: User, id: string, guard: GuardOptions) => Snapshot | undefined;
 
 /**
@@ -126,19 +146,11 @@ const ADAPTERS: Record<SnapshotKind, Adapter> = {
   // GET /api/runs/:id — every run for an admin, their own for a user. The user's view of the run is used for both
   // roles: no cost, no model, no setup, no folder.
   run: (ctx, user, id, guard) => {
-    if (!RUN_ID.test(id) || !allowed(ctx, user, ["runs", id])) return undefined;
-    const s = checkedRun(ctx.scheduler, id, user.role === "admin" ? undefined : user.id);
-    if (!s) return undefined;
-    const v = userRun(s);
+    const found = runWithNext(ctx, user, id);
+    if (!found) return undefined;
+    const { next } = found;
+    const v = userRun(found.run);
     const failed = [...v.history].reverse().find((h) => !h.ok);
-    // the next-step record of the run, as `GET /api/runs/:id` gives it: for a user without another account's run and without a folder
-    let next: NextStep | undefined;
-    try {
-      const rec = nextFor(ctx, undefined, user.role !== "admin")(s);
-      next = user.role === "admin" ? rec : userRecord(ownRecord(rec, (rid) => ctx.scheduler.ownerOf(rid) === user.id));
-    } catch {
-      next = undefined;
-    }
     return make("run", id, `a run of the flow ${v.flow}`, {
       flow: v.flow, status: v.status, startedAt: v.startedAt, finishedAt: v.finishedAt, branch: v.branch, repository: v.vars.github_repo, issue: v.vars.issue,
       stepsDone: v.history.length, nextStep: v.state.next, waitingAt: v.waiting?.stepId, waitingFor: v.waiting?.message, waitingSince: v.waiting?.since,

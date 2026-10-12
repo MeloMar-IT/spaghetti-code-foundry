@@ -5,7 +5,7 @@ import { claudeProviderEnv, isAuthError, isQuotaError, specOf, toTarget, type Ta
 import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
-import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole } from "./contract.js";
+import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
 import {
@@ -247,6 +247,11 @@ export function classifyFailure(r: Pick<ClaudeRunResult, "error" | "output">): F
   return "provider";
 }
 
+/** A reply that rests on a source the server marked as old or in disagreement (`Prepared.uncertain`) is "likely" at most, whatever the model said. */
+export function doubted(reply: Reply, uncertain: readonly string[]): Reply {
+  return reply.certainty === "confirmed" && reply.evidence.some((e) => uncertain.includes(e.id)) ? { ...reply, certainty: "likely" } : reply;
+}
+
 /** The JSON object in a model's answer: the text from the first `{` to the last `}`. Undefined when there is none. */
 export function jsonOf(output: string): unknown {
   const from = output.indexOf("{");
@@ -300,6 +305,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- Say only what you can support. Point at a source only by an id from `sources`; when `sources` is empty, point at none.",
     "- A source of the kind `state` is what the server observed at the time in `observedAt`. In the explanation keep three things apart, in this order and with these words: \"Observed:\" what a source shows, \"So:\" what you conclude from it, \"You could:\" what you suggest.",
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
+    "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",
@@ -603,7 +609,7 @@ export class HelpTurns {
     if (seen.removed.length) this.deps.log?.(`help: secrets were taken out of a reply (${seen.removed.join(", ")})`);
     if (checked.dropped.length) this.deps.log?.(`help: ${checked.dropped.length} part(s) of a reply were left out`);
     // a reply that rests on a source the server marked as old or in disagreement is not "confirmed", whatever the model said
-    const reply = checked.reply.certainty === "confirmed" && checked.reply.evidence.some((e) => ready.uncertain.includes(e.id)) ? { ...checked.reply, certainty: "likely" as const } : checked.reply;
+    const reply = doubted(checked.reply, ready.uncertain);
     try {
       finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed);
     } catch {

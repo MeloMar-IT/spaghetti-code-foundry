@@ -1338,6 +1338,40 @@ next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` a
   explanation, and for saying that the state is uncertain when a source says so.
 - `helpTurnsOf` offers the state sources first, then the documentation sections.
 
+### Ask SCF: diagnoses
+
+`src/server/help-diagnosis.ts` (#237) adds, to the `state` sources of a turn, what the product
+itself says is wrong. It holds no diagnosis rule. A cause is one of three things: the
+`failure` of the run's next-step record (`failureSummary` in `failure.ts`: `classifyFailure`
+plus the table of `errors.ts`), the `why` of a next-step record (`next-step.ts`,
+`server/next.ts`; for a queued run, a board issue and a health problem it is the field the
+snapshot already holds), or nothing.
+
+- **Reading** (`diagnosisSources`): for the shown snapshots, in order, at most `DIAGNOSES` (2).
+  For a run the next-step record is read through `runWithNext` of `help-context.ts`, the same
+  permission check and reader as the run snapshot (the snapshot adapter now uses it too), for
+  the account as it is now. The run's reason goes through `explainError` for the role. Nothing
+  else is read: no log, no transcript, no step output.
+- **The diagnosis** (`diagnose`, pure): symptom, cause (optional), `confirmed`, supporting and
+  missing evidence, the next check. A failed run whose explanation is `NOT_EXPLAINED` or "no
+  reason was saved" has no cause, and the next check is the `todo` of `explainError`. A
+  failure note of a model (`byModel`), a snapshot with a stale field and a question whose
+  sources disagree give `confirmed: false`. A repository whose check failed and a monitor
+  finding have no cause: the snapshot holds none. Kinds with nothing to explain give none.
+- **As a source** (`diagnosisSource`): id `diagnosis-<kind>-<hash>`, kind `state`, title
+  "Diagnosis of …", ref `diagnosis · <ref of the snapshot>`, the snapshot's `observedAt`, and
+  five labelled lines within `DIAGNOSIS_MAX` (800). Each text is made one line, passes
+  `guardExcerpt` on its own and is cut, so a record's text cannot add a labelled line; a text
+  that reads like an order is dropped and named under the missing evidence. Without a confirmed
+  cause the source is `uncertain`, so the existing rule of the turn makes a "confirmed" reply
+  that cites it "likely".
+- **In the turn**: one more rule in the prompt: build a "why does it not work" answer on the
+  diagnosis, name the five parts, and never make up a cause or a detail no source holds.
+  `liveEvidence` returns the disagreement, the snapshots, then the diagnoses. With the limit
+  of 10 sources per turn, at least 2 documentation sections remain.
+
+Tests: `tests/help-diagnosis.test.ts`.
+
 ### Ask SCF: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
@@ -1419,6 +1453,33 @@ The interface of Ask SCF is one drawer for both displays (#234). Three files, an
   - **Trust has five states** (`trustOf`): `confirmed`, `low` (likely, or unsure with sources), `missing` (no source of the kind `NEEDS` names for the question, whatever certainty the reply claims), `conflict` (two sources with the same kind and place and different titles) and `limit`. Each has its own sign, name and border. The contract has no field for a contradiction, so `conflict` is derived from the sources; a later story may replace that by a field of the server.
   - **Cards never act.** `cardsOf` marks each card `read-only` or `changes-state`, as `PART_RULES` of the contract does. An action is drawn as a suggestion without any control; running one is #240.
 - **Styles.** `ui/css/pages/ask.css`, class names start with `ask-`. The drawer is `--layer-menu` + 1, so a dialog and a toast lie over it. It is the whole width at 767 px and below. It has no transition and no animation.
+
+### Ask SCF: scenario evaluations
+
+`src/server/help-evals.ts` and `src/server/help-eval-scenarios.ts` (#244) prove the promises of
+Ask SCF on fixed inputs. A scenario is a question, a role, optionally a page context with the
+things the account can see, the sources the server would offer, the answer of a stubbed
+provider, and what must hold.
+
+- **The path** (`runScenario`): `resolveContext` → `prepareTurn` → `turnPrompt` → the model
+  (a function) → `jsonOf` → `checkReply` → `doubted` (the rule of the turn service, now an
+  exported function of `turn.ts`). Nothing is stored; the guard uses the scenario's own
+  patterns and no stored credentials.
+- **The sources** are made by `sourceOf`, `conflictSource`, `diagnose` and `diagnosisSource`,
+  so a scenario offers what a server offers.
+- **Checks** (`CHECKS`): `secret-leak` and `permission-leak` (a text the scenario names is in
+  the prompt or in the kept reply), `unsafe-action`, `citation`, `grounding` (the certainty is no
+  higher than the cited sources allow; with the stub it is also exactly the expected one), `withheld`, `refusal`, `usefulness`,
+  `context-size` (`PROMPT_BUDGET`), `told`, and `sent` / `contract` when no reply is kept.
+- **The verdict** (`runHelpEval`, `THRESHOLDS`): the zero-tolerance numbers, the rates, and
+  with the stub any failed scenario. `blocking` says in fixed words what blocks a release.
+- **The report** (`reportText`, `saveHelpEval`): ids, counts and fixed sentences only; the
+  file goes to `evals/help/` (mode 0600), which `listEvalReports` does not read.
+- **Providers**: `stubModel` in `npm test`; `liveModel` (the options of a turn: no tools, no
+  MCP servers, no GitHub token, an empty folder, the cost limit of a turn) only behind
+  `scf eval help --live`.
+
+Tests: `tests/help-evals.test.ts`.
 
 ### Helper processes
 
