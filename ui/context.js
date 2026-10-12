@@ -7,6 +7,7 @@ import { switcherView } from "./context-view.js";
 import { mount, toast } from "./dom.js";
 import { ALL_REPOS, parseQuery, resolve } from "./ia.js";
 import { refreshContextOffer, sameRepo, setContextOffer, splitHash, withQuery } from "./filters.js";
+import { filterHash, parseFilter } from "./runs-filter.js";
 import { setViewAccount } from "./views.js";
 
 export const MAX_RECENTS = 5;
@@ -142,6 +143,7 @@ export function chosenHash(role, hash, ctx) {
   const name = nameOf(ctx);
   if (to.page.id === "board" || to.page.id === "board-repo") return name ? withQuery(boardOf(name), owner) : withQuery("#/board", { repo: ALL_REPOS, ...owner });
   if (to.page.id === "repos" && ctx?.own !== true) return withQuery("#/repos", { repo: ALL_REPOS, ...owner });
+  if (to.page.id === "runs") return filterHash({ ...parseFilter(hash), repo: name }, { allRepos: true });
   return withQuery(to.page.path, { repo: name || ALL_REPOS, ...owner });
 }
 
@@ -155,6 +157,7 @@ export function clearedHash(role, hash, ctx) {
   const to = resolve(role, hash);
   if (to.redirected || !to.page.scope || to.page.nav === "detail") return hash;
   if (parseQuery(splitHash(hash).query).repo) return hash; // resolve() drops repo=all, so the raw query is read
+  if (to.page.id === "runs") return filterHash({ ...parseFilter(hash), repo: "" }, { allRepos: true });
   return withQuery(to.page.path, { repo: ALL_REPOS, ...(to.query.owner ? { owner: to.query.owner } : {}) });
 }
 

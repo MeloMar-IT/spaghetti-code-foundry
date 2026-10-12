@@ -14,6 +14,7 @@ beforeAll(async () => {
     ia: await import("../ui/ia.js" as string),
     auth: await import("../ui/auth.js" as string),
     viewport: await import("../ui/viewport.js" as string),
+    runsFilter: await import("../ui/runs-filter.js" as string),
   };
 });
 afterAll(() => restore());
@@ -277,6 +278,7 @@ describe("admin router", () => {
       "./icons.js": { flowNameMark: () => "" },
       "./work.js": never,
       "./home-admin.js": never,
+      "./runs-filter.js": real.runsFilter,
       "./health.js": { loadHealth: vi.fn(), startHealth: vi.fn() },
       "./since.js": { startSince: vi.fn() },
       "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
@@ -468,6 +470,7 @@ describe("support levels", () => {
     "./icons.js": { flowNameMark: () => "" },
     "./work.js": never,
     "./home-admin.js": never,
+    "./runs-filter.js": real.runsFilter,
     "./health.js": { loadHealth: vi.fn(), startHealth: vi.fn() },
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },

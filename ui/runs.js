@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { h, mount, timeAgo, toast } from "./dom.js";
-import { defaultGo, filterBar, filterEmpty, sameRepo, withQuery, without } from "./filters.js";
+import { defaultGo, filterBar, filterEmpty, sameRepo } from "./filters.js";
 import { pageViews } from "./views.js";
 import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { STEP_TYPES } from "./step-types.js";
@@ -14,7 +14,9 @@ import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, ru
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
-import { renderSections, runSections } from "./runs-list.js";
+import { renderSections, runSections, sectionOf } from "./runs-list.js";
+import { noMatch, runsBar } from "./runs-bar.js";
+import { canonRepos, countText, emptyFilter, filterHash, filterOf, filterQuery, isActive, isServerActive, jobMatches, serverKey } from "./runs-filter.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
 export { failedStepIndex, stepEntry } from "./run-timeline.js";
@@ -27,6 +29,7 @@ const CLOCK_MS = 60_000;
 /** The server sends at most this many runs, so a repository filter searches only those. */
 export const RUNS_CAP = 200;
 export const CAP_NOTE = "Only the newest 200 runs are searched.";
+export const MATCH_NOTE = "Only the newest 200 matches are shown.";
 const GONE = "deleted user";
 /** The server's owner name as the list shows it: "deleted user" for an account that is gone, "" for no owner. */
 export const ownerLabel = (name) => (name === "deleted account" ? GONE : name ?? "");
@@ -94,17 +97,30 @@ export function stepRow(s) {
   return [h("dt", {}, s.status === "running" ? "Current step" : "Resumes at step"), h("dd", {}, id, h("span", { class: "muted" }, ` — ${about}`))];
 }
 
-/** Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that. `query` holds the filters of the address; `go` writes a changed address. */
-export async function renderRunsList(main, { admin = true, query = {}, go = defaultGo, views = pageViews("runs") } = {}) {
+/** True when a select has the focus inside `box`: the page does not redraw under the reader's hands. */
+const selectFocused = (box) => {
+  const el = document.activeElement;
+  return Boolean(el && box.contains(el) && el.localName === "select");
+};
+
+/**
+ * Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that.
+ * `filter` is the full filter of the address (see ./runs-filter.js); without it the filter is built from `query`. `go` writes
+ * a changed address. `alive` tells whether the page is still the one on screen: no request starts after it says no.
+ */
+export async function renderRunsList(main, { admin = true, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs") } = {}) {
   let closed = false;
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let forcing = false;
   let data = null;
   let live;
-  // A user gets their own runs and queue; the owner filter and its options are for admins.
-  let filters = { ...(query.repo ? { repo: query.repo } : {}), ...(admin && query.owner ? { owner: query.owner } : {}) };
-  const wanted = () => (admin ? filters.owner ?? "" : "");
+  // A user gets their own runs and queue, filtered by repository only; the filter bar and its options are for admins.
+  const first = start ?? filterOf(query);
+  let filter = admin ? { ...emptyFilter(), ...first } : { ...emptyFilter(), repo: first.repo ?? "" };
+  let shown = null; // { filter, data }: what the page shows now
   const refresh = () => live.refresh();
+  const gone = () => closed || !alive();
+  const bar = admin ? runsBar({ admin, onChange: (next) => apply(next) }) : null;
 
   const slot = h("div");
   const states = runsLiveStates({
@@ -114,7 +130,7 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   mount(main, collectionPage({ title: "Runs", list: slot }));
   const sections = h("div", { class: "run-sections" });
   const part1 = () => ({ el: h("div"), key: null });
-  const slots = { owner: part1(), filter: part1(), owners: part1(), cap: part1(), queue: part1(), empty: part1() };
+  const slots = { filter: part1(), owners: part1(), cap: part1(), queue: part1(), empty: part1() };
   const patch = (s, key, make) => {
     if (s.key === key) return;
     s.key = key;
@@ -122,82 +138,120 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   };
   const page = collectionPage({
     title: "Runs",
-    actions: [slots.owner.el, h("span", { class: "spacer" }), states.note, h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")],
+    actions: [h("span", { class: "spacer" }), states.note, h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")],
     notices: states.alert,
-    filters: slots.filter.el,
+    filters: [bar?.el, slots.filter.el],
     list: [slots.owners.el, slots.cap.el, slots.queue.el, sections],
     empty: slots.empty.el,
   });
 
-  // Asks the server (owner filter included). Undefined when a newer request started meanwhile: that one is the answer.
+  // The server matches a repository by its exact spelling: every spelling of the list that is this repository is asked,
+  // and the answers are merged (newest first, at most RUNS_CAP).
+  const askRuns = async (f, names) => {
+    const now = Date.now();
+    if (!names.length) return api.runs(filterQuery({ ...f, repo: "" }, now));
+    const lists = await Promise.all(names.map((repo) => api.runs(filterQuery({ ...f, repo }, now))));
+    if (lists.length === 1) return lists[0];
+    const seen = new Set();
+    const merged = lists.flatMap((l) => (Array.isArray(l) ? l : [])).filter((r) => !seen.has(r.runId) && seen.add(r.runId));
+    return merged.sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0)).slice(0, RUNS_CAP);
+  };
+
+  // Asks the server. Undefined when a newer request started meanwhile or the page was left: nothing is asked then.
   const fetchAll = async () => {
+    if (gone()) return undefined;
     const mine = ++gen;
-    const owner = wanted();
     try {
-      const [runs, queue, owners] = await Promise.all([api.runs(owner), part(api.queue()), admin ? part(api.runOwners()) : null]);
-      return mine === gen ? { runs, queue, owners } : undefined;
+      if (!admin) {
+        const [runs, queue] = await Promise.all([api.runs(), part(api.queue())]);
+        return mine === gen && !closed ? { filter, runs, queue, owners: null, values: null, canon: [] } : undefined;
+      }
+      const [values, owners, queue] = await Promise.all([part(api.runFilters()), part(api.runOwners()), part(api.queue())]);
+      if (mine !== gen || gone()) return undefined;
+      const f = filter;
+      const canon = values.ok ? canonRepos(f.repo, values.value?.repos) : [];
+      const runs = await askRuns(f, canon);
+      return mine === gen && !gone() ? { filter, runs, queue, owners, values, canon } : undefined;
     } catch (e) {
-      if (mine !== gen) return undefined;
+      if (mine !== gen || closed) return undefined;
       throw e;
     }
   };
-  let switching = null; // an owner change whose answer has not been drawn yet
+  // The reader changed what the server is asked and the answer is not drawn yet.
+  const pending = () => Boolean(shown) && serverKey(filter) !== serverKey(shown.filter);
+  const showNow = (d) => {
+    forcing = true;
+    try { live.show(d); } finally { forcing = false; }
+  };
+  // If the server cannot answer, the address, the bar and the list go back to the last filter that was drawn. Only the
+  // newest request fails (an overtaken one is dropped), so this never goes back to a filter that was never drawn.
   const rollback = (e) => {
-    const s = switching;
-    switching = null;
-    if (closed || !s || filters !== s.next) return;
-    filters = s.before;
-    go(withQuery("#/runs", filters));
-    if (data) render();
+    if (closed || !shown || JSON.stringify(filter) === JSON.stringify(shown.filter)) return;
+    filter = shown.filter;
+    go(filterHash(filter));
+    bar?.sync(filter);
+    data = shown.data;
+    render();
     toast(e?.message || "Could not load the runs.", "error");
   };
-  // A change of the repository only filters what is here; a change of the owner asks the server again and draws at once.
-  const setFilters = (next) => {
-    const reload = (next.owner ?? "") !== (filters.owner ?? "");
-    const before = filters;
-    filters = next;
-    go(withQuery("#/runs", filters));
-    if (!reload) return render();
-    // If the server cannot answer, the address and the filters go back to what the page still shows. A request that a
-    // newer one overtook (a tick) hands this over: that request's failure rolls back too.
-    switching = { before, next };
-    fetchAll().then((d) => {
-      if (closed || !d) return;
-      switching = null;
-      forcing = true;
-      try { live.show(d); } finally { forcing = false; }
-    }, rollback);
+  // Every change of the filter: the address and the bar follow at once; a change of what the server is asked loads again.
+  const apply = (next) => {
+    if (closed || JSON.stringify(next) === JSON.stringify(filter)) return;
+    const reload = admin && serverKey(next) !== serverKey(filter);
+    filter = next;
+    go(filterHash(filter));
+    bar?.sync(filter);
+    if (!reload) {
+      if (!pending() && shown) showNow({ ...shown.data, filter });
+      return;
+    }
+    fetchAll().then((d) => { if (!closed && d) showNow(d); }, rollback);
   };
-  const clear = () => setFilters({});
+  const clear = () => apply(emptyFilter());
 
-  const render = () => {
+  function render() {
     if (closed) return;
     const { runs } = data;
+    const f = data.filter;
     const queue = data.queue.ok ? data.queue.value : null;
-    const owners = data.owners?.ok ? data.owners.value : null;
-    const keep = (e) => !filters.repo || sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, filters.repo);
-    const labels = { owner: ownerLabel(owners?.find((o) => o.id === filters.owner)?.name) || filters.owner };
-    const note = filters.repo && runs.length >= RUNS_CAP ? CAP_NOTE : null;
+    const owners = data.owners?.ok && Array.isArray(data.owners.value) ? data.owners.value : null;
+    const ownerName = owners?.find((o) => o.id === f.owner)?.name; // queued jobs carry the name, not the id
+    const browserRepo = Boolean(f.repo) && !data.canon?.length; // the server does not know this repository: filter here
+    const now = Date.now();
+    const keep = (e) => {
+      if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
+      if (admin && !e.run && !jobMatches(e.job, f, { ownerName, now })) return false;
+      if (f.needs && sectionOf(e) !== "needs") return false;
+      return !f.view || sectionOf(e) === f.view;
+    };
+    const labels = { owner: ownerLabel(ownerName) || f.owner };
+    const note = runs.length >= RUNS_CAP ? (browserRepo ? CAP_NOTE : isServerActive(f) ? MATCH_NOTE : null) : null;
+    // What a saved view stores: repository and owner only.
+    const vf = { ...(f.repo ? { repo: f.repo } : {}), ...(f.owner ? { owner: f.owner } : {}) };
     // Saved views: the owner ids come from the owner list the page already loads (unknown when it failed).
-    const vp = views?.parts(filters, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { slots.empty.key = null; if (!closed && data) render(); } }) ?? {};
+    const vp = views?.parts(vf, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { slots.empty.key = null; if (!closed && data) render(); } }) ?? {};
     const stale = Boolean(vp.stale); // an out-of-date saved view is open: the empty state, even when the server still sent rows
     const secs = stale ? [] : runSections(runs, queue?.pending ?? [], keep);
     const found = secs.length > 0;
 
     // The page is built once; each part changes only when its own content does, so the list keeps its nodes and the focus.
     if (page.parentNode !== main) mount(main, page);
-    patch(slots.owner, JSON.stringify([owners, filters.owner]), () => (admin && owners ? h("select", { class: "small-select", title: "Show the runs of one account", "aria-label": "Show the runs of one account", "data-focus": "owner-filter", onChange: (e) => setFilters(e.target.value ? { ...filters, owner: e.target.value } : without(filters, "owner")) },
-      h("option", { value: "" }, "All owners"),
-      owners.map((o) => h("option", { value: o.id, selected: o.id === filters.owner }, `${ownerLabel(o.name)} (${o.runs})`))) : null));
-    mount(slots.filter.el, filterBar(filters, { labels, onRemove: (key) => setFilters(without(filters, key)), onClear: clear, row: vp.row, onSave: vp.onSave }));
+    if (bar) {
+      const values = (key) => (data.values?.ok && Array.isArray(data.values.value?.[key]) ? data.values.value[key] : []);
+      bar.setValues({ repos: values("repos"), flows: values("flows"), owners });
+      bar.sync(filter);
+      bar.say(isActive(f) && !stale ? countText(secs.reduce((n, s) => n + s.entries.length, 0)) : "");
+    }
+    // The bar holds the filters of the admin list; this part keeps the saved views, "Save view" and the context offer.
+    mount(slots.filter.el, filterBar(admin ? {} : vf, { labels, onRemove: (key) => apply({ ...filter, [key]: "" }), onClear: clear, row: vp.row, onSave: vp.onSave }));
     patch(slots.owners, JSON.stringify(admin && data.owners && !data.owners.ok ? data.owners : 0), () => (admin && data.owners && !data.owners.ok ? partNote("the owners", data.owners, { onRetry: refresh, focus: "owners-retry", safe: "The runs are shown, without the owner filter." }) : null));
     patch(slots.cap, JSON.stringify([found, note]), () => (note && found ? h("p", { class: "muted" }, note) : null));
     patch(slots.queue, JSON.stringify(data.queue.ok ? 0 : data.queue), () => (data.queue.ok ? null : partNote("the queue", data.queue, { onRetry: refresh, focus: "queue-retry", safe: "The runs are shown, without the queue." })));
-    patch(slots.empty, JSON.stringify([filters, labels, stale, found, note]), () => (stale ? filterEmpty("runs", filters, { labels, onClear: clear, onDelete: vp.onDelete })
-      : found ? null : filters.repo || filters.owner ? filterEmpty("runs", filters, { labels, note, onClear: clear }) : noRuns()));
+    patch(slots.empty, JSON.stringify([f, labels, stale, found, note]), () => (stale ? filterEmpty("runs", vf, { labels, onClear: clear, onDelete: vp.onDelete })
+      : found ? null : admin && isActive(f) ? noMatch({ onClear: clear, note }) : !admin && f.repo ? filterEmpty("runs", vf, { labels, note, onClear: clear }) : noRuns()));
     sections.hidden = !found;
     renderSections(sections, secs, { admin, onRemove, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } });
-  };
+  }
 
   // Remove a queued run from its row; nothing is drawn or said after the page was left.
   const onRemove = async (job) => {
@@ -211,20 +265,22 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
     refresh();
   };
 
-  // A select or text field has the focus, or a dialog is open: the answer waits. The owner change the reader just made is drawn at once.
-  const isHeld = () => !forcing && (fieldFocused(main) || dialogOpen());
+  // A select has the focus, or a dialog is open: the answer waits. A filter change the reader just made is drawn at once.
+  const isHeld = () => !forcing && !pending() && (selectFocused(main) || dialogOpen());
   live = poller({
     load: async () => {
       try {
-        const d = await fetchAll();
-        if (d) switching = null;
-        return d;
+        return await fetchAll();
       } catch (e) {
         rollback(e);
         throw e;
       }
     },
-    draw: (next) => { data = next; keepScroll(main, render); },
+    draw: (next) => {
+      data = serverKey(next.filter) === serverKey(filter) ? { ...next, filter } : next;
+      shown = { filter: data.filter, data };
+      keepScroll(main, render);
+    },
     every: REFRESH_MS,
     onState: states.onState,
     hold: isHeld,
@@ -232,6 +288,8 @@ export async function renderRunsList(main, { admin = true, query = {}, go = defa
   await live.ready;
   return () => {
     closed = true;
+    gen++; // an answer or a second phase still on its way is dropped
+    bar?.stop();
     live.stop();
   };
 }

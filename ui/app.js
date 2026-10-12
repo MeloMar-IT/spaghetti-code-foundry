@@ -30,6 +30,7 @@ import { renderWork } from "./work.js";
 import { loadHealth, startHealth } from "./health.js";
 import { startSince } from "./since.js";
 import { renderAdminHome } from "./home-admin.js";
+import { parseFilter } from "./runs-filter.js";
 import { startBadge, startHash } from "./turn.js";
 import { BREAKPOINTS, levelNotice, mediaFor, supportLevel } from "./viewport.js";
 
@@ -224,7 +225,7 @@ async function route() {
       // The list draws into its own box, so a slow answer that comes after a hash change cannot touch the next page.
       const box = h("div", {});
       mount(main, box);
-      const done = await renderRunsList(box, { admin: true, query: to.query, go });
+      const done = await renderRunsList(box, { admin: true, query: to.query, go, filter: parseFilter(hash), alive: () => mine === routeGen });
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }

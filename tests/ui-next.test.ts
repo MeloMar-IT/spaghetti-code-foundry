@@ -567,11 +567,11 @@ describe("the Runs pages for a user", () => {
     try {
       const main = connected();
       const stop = await runs.renderRunsList(main);
-      expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue", "/api/run-owners"]));
+      expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue", "/api/run-owners", "/api/run-filters"]));
       expect(main.textContent).not.toContain("running ·");
       const owners = main.all("li").map((li) => li.all("div").filter((d) => d.attrs["data-label"] === "Owner").map((d) => d.textContent));
       expect(owners.flat()).toEqual(["Ann", "deleted user", ""]);
-      const select = main.all("select")[0]!;
+      const select = main.all("select").find((s) => s.attrs["data-focus"] === "owner-filter")!;
       expect(select.all("option").map((o) => o.textContent)).toEqual(["All owners", "Ann (3)", "Bob (1)", "deleted user (1)"]);
       asked.length = 0;
       select.fire("change", { target: { value: "u2" } });
@@ -592,9 +592,9 @@ describe("the Runs pages for a user", () => {
     try {
       const main = connected();
       const stop = await runs.renderRunsList(main);
-      main.all("select")[0]!.fire("change", { target: { value: "u1" } });
+      main.all("select").find((s) => s.attrs["data-focus"] === "owner-filter")!.fire("change", { target: { value: "u1" } });
       await vi.advanceTimersByTimeAsync(0);
-      expect(main.textContent).toContain("No runs match Owner: Ann.");
+      expect(main.textContent).toContain("No runs match your search and filters.");
       stop();
     } finally {
       delete answers["/api/run-owners"];

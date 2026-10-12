@@ -112,7 +112,7 @@ describe("Runs list states", () => {
     const { main, stop } = await open();
     expect(main.all("li")).toHaveLength(2);
     expect(main.textContent).not.toContain("running ·"); // the count is in the Queued heading, and only with a queued run
-    expect(main.all("select")).toHaveLength(1);
+    expect(main.all("select")).toHaveLength(5); // repository, flow, status, time and owner
     expect(main.textContent).toContain("Updated ");
     expect(main.textContent).not.toContain("refreshes every");
     stop();
@@ -181,10 +181,10 @@ describe("Runs list states", () => {
     answers["/api/runs?owner=u2"] = [RUN("r2", { task: "Bob's task", ownerName: "Bob" })];
     const { main, stop } = await open();
     named(main, "owner-filter").focus();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } });
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } });
     await flush();
     expect(main.textContent).toContain("Bob's task");
-    expect(main.textContent).toContain("Owner: Bob");
+    expect(named(main, "owner-filter").value).toBe("u2");
     stop();
   });
 
@@ -193,12 +193,12 @@ describe("Runs list states", () => {
     answers["/api/runs?owner=u2"] = [RUN("r2", { task: "Bob's task" })];
     const { main, stop } = await open();
     const release = gateOn();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } }); // slow
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } }); // slow
     await flush();
     const quick = gate;
     gate = null; // the next request is not slow
     good([RUN("r1", { task: "Fresh task" })]);
-    main.all("select")[0]!.fire("change", { target: { value: "" } });
+    named(main, "owner-filter").fire("change", { target: { value: "" } });
     await flush();
     expect(main.textContent).toContain("Fresh task");
     gate = quick;
@@ -215,7 +215,7 @@ describe("Runs list states", () => {
     const go = vi.fn();
     const { main, stop } = await open({ go });
     const release = gateOn();
-    main.all("select")[0]!.fire("change", { target: { value: "u2" } }); // slow
+    named(main, "owner-filter").fire("change", { target: { value: "u2" } }); // slow
     await flush();
     fails["/api/runs"] = 500;
     await tick(30_000); // the tick overtakes it and fails
@@ -328,10 +328,10 @@ describe("Runs list states", () => {
     fails["/api/run-owners"] = 500;
     const { main, stop } = await open({ query: { owner: "u2" } });
     expect(main.all("li").length).toBeGreaterThan(0);
-    expect(main.all("select")).toHaveLength(0);
+    expect(named(main, "owner-filter").hidden).toBe(true);
     expect(main.textContent).toContain("Could not load the owners.");
     expect(find(main, "owners-retry")).toBeDefined();
-    expect(main.textContent).toContain("Owner: u2");
+    expect(named(main, "owner-filter").value).toBe("u2");
     stop();
   });
 
@@ -386,8 +386,8 @@ describe("Runs list page frame", () => {
     const bar = withClass(page, "page-head")[0]!;
     expect(bar.attrs.class).toBe("toolbar page-head");
     const after = bar.children.slice(1) as FakeElement[];
-    expect(after[0]!.all("select")[0]!.attrs["data-focus"]).toBe("owner-filter");
-    expect(after[1]!.attrs.class).toBe("spacer");
+    expect(after[0]!.attrs.class).toBe("spacer");
+    expect(named(withClass(page, "page-filters")[0]!, "owner-filter")).toBeDefined();
     expect(after[after.length - 1]!.attrs["data-focus"]).toBe("refresh");
     expect(bar.textContent).not.toContain("running ·");
     expect(withClass(page, "page-list")[0]!.all("li").length).toBeGreaterThan(0);

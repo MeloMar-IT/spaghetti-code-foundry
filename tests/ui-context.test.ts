@@ -25,9 +25,9 @@ const mem = (opts: { getThrows?: boolean; setThrows?: boolean } = {}) => {
 const EMPTY = { repo: "", favourites: [], recents: [] };
 
 describe("the module", () => {
-  it("imports only api.js, context-view.js, dom.js, filters.js, ia.js and views.js", () => {
+  it("imports only api.js, context-view.js, dom.js, filters.js, ia.js, runs-filter.js and views.js", () => {
     const src = readFileSync("ui/context.js", "utf8");
-    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./api.js", "./context-view.js", "./dom.js", "./filters.js", "./ia.js", "./views.js"]);
+    expect([...src.matchAll(/^import .* from "([^"]+)";/gm)].map((m) => m[1]).sort()).toEqual(["./api.js", "./context-view.js", "./dom.js", "./filters.js", "./ia.js", "./runs-filter.js", "./views.js"]);
   });
 });
 
