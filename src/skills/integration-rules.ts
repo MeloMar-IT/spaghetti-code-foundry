@@ -26,7 +26,7 @@ export interface FileRule { capability: IntegrationCapability; schema: string; w
 /** Compact form: "dep:x" only dependencies, "imp:x" only imports, otherwise both; a trailing "?" marks a weak signal. */
 const T: Record<IntegrationCapability, Partial<Record<Ecosystem, string>>> = {
   kafka: {
-    npm: "kafkajs node-rdkafka @confluentinc/kafka-javascript",
+    npm: "kafkajs node-rdkafka @confluentinc/kafka-javascript @kafkajs/confluent-schema-registry @confluentinc/schemaregistry",
     python: "confluent-kafka aiokafka dep:kafka-python imp:kafka",
     go: "github.com/segmentio/kafka-go github.com/ibm/sarama github.com/shopify/sarama github.com/confluentinc/confluent-kafka-go github.com/twmb/franz-go",
     jvm: "dep:org.apache.kafka:* dep:org.springframework.kafka:* dep:io.confluent:kafka-* dep:io.projectreactor.kafka:* imp:org.apache.kafka imp:org.springframework.kafka imp:io.confluent.kafka imp:reactor.kafka",
