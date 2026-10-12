@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Named personal views for lists and boards (#353). Part 4 of 4 of #255.
+  - **`ui/views.js` (new).** `viewStore(accountId, store)` keeps `{ v: 1, views: [{ id, page, name, filters }] }` under `scf.views.<accountId>` in `localStorage` (`list`, `add`, `rename`, `move`, `remove`). Names are 1–40 characters, trimmed, unique per page; at most 20 per account. `filters` goes through `parseQuery`/`formatQuery`. Garbage is read as no views and replaced on the next save; unreadable storage refuses writes and leaves the bytes alone. Also `viewsRow`, `manageViewsDialog` and `isStale(view, { repos, owners })`. It never calls the API.
+  - **Pages.** Runs, Board, the redesigned Work page, Refinement and My runs show the row and **Save view**; `filterBar` takes `onSave` and `row`, `filterEmpty` and `filterGone` take `onDelete`. Each page takes a `views` option; a "view as user" preview has none.
+  - **Stale views.** A view whose repository is not in the account's list, or whose owner is not among the run owners, is marked "out of date" and opens the empty state with **Clear filters** and **Delete this view**. The Board loads owners from `/api/run-owners` (admin only); if unknown, no view is marked for its owner.
+  - **`ui/context.js`** adds `account()`. `docs/USER_GUIDE.md` ("Saved views") and `docs/ui-redesign/dialogs.md` updated. No server change.
 - Repository context 4 — the Work page follows the address (#446). Part 4 of 4 of #352.
   - **Address first.** `renderWork(main, arg, { user, query, go })` keeps `repo` and `owner` in local variables set from `#/board/<name>?owner=<id>`. A saved repository or owner is ignored on load, also one that conflicts with the address. The repository matches the poll answer without regard to case; the address is not rewritten.
   - **Changes.** The repository select writes `#/board/<name>` or `#/board` and keeps `owner`; the owner select writes `?owner=`; **Clear filters** writes `#/board`. All go through `go`, so through `context.keep`. The page no longer adds `repo=all` itself.

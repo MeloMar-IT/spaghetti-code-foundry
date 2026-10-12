@@ -1,5 +1,6 @@
 import { api, keepPage } from "./api.js";
 import { defaultGo, filterBar, filterEmpty, filterGone, sameRepo, splitHash, withQuery } from "./filters.js";
+import { pageViews } from "./views.js";
 import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { draftSection, unsaved } from "./refinement-draft.js";
@@ -114,7 +115,7 @@ function renameDialog(session, onRenamed) {
 }
 
 /** The Refinement pages: the list (no `id`) and one session. Returns a cleanup. */
-export async function renderRefinement(main, { admin = false, id, readOnly = false, quiet = false, query = {}, go = defaultGo, view } = {}) {
+export async function renderRefinement(main, { admin = false, id, readOnly = false, quiet = false, query = {}, go = defaultGo, view, views = pageViews("refinement") } = {}) {
   // one state for the page and its reloads, so a filter removed while a reload runs stays removed (a session page has none)
   view ??= { filters: !id && query.repo ? { repo: query.repo } : {} };
   // In a preview the server answers as the viewed user (`mine: true`); every button hangs on `mine`, so it is turned off here.
@@ -127,7 +128,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   let reloadList; // the list reads itself again in place; a session draws itself again, without a skeleton so the focus stays
   const reload = (loud = false) => {
     if (reloadList) return reloadList();
-    return renderRefinement(main, { admin, id, readOnly, query: view.filters, go, view, quiet: !loud }).then((c) => {
+    return renderRefinement(main, { admin, id, readOnly, query: view.filters, go, view, views, quiet: !loud }).then((c) => {
       reloaded = c;
     }, (e) => toast(errorText(e), "error"));
   };
@@ -440,11 +441,15 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
     const inRepo = filters.repo ? all.filter((s) => sameRepo(s.repo, filters.repo)) : all;
     const shown = inRepo.filter((s) => (s.state === "dropped") === showDropped);
     const known = !filters.repo || inRepo.length > 0 || repos.some((r) => sameRepo(r, filters.repo));
-    mount(head, toolbar(true), filterBar(filters, { onRemove: clear, onClear: clear }));
-    mount(body, shown.length
+    const vp = views?.parts(filters, { redraw: () => { if (current() && last) drawList(); } }) ?? {};
+    mount(head, toolbar(true), filterBar(filters, { onRemove: clear, onClear: clear, row: vp.row, onSave: vp.onSave }));
+    // An out-of-date saved view is open: the empty state, even when matching sessions are still listed.
+    mount(body, vp.stale
+      ? (known ? filterEmpty("refinement sessions", filters, { onClear: clear, onDelete: vp.onDelete }) : filterGone({ onClear: clear, onDelete: vp.onDelete }))
+      : shown.length
       ? table(["Title", "Repository", "State", "Last change", admin ? "Owner" : null], shown.map(row), { cards: true, caption: showDropped ? "Dropped sessions" : "Refinement sessions" })
-      : !known ? filterGone({ onClear: clear })
-        : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear })
+      : !known ? filterGone({ onClear: clear, onDelete: vp.onDelete })
+        : filters.repo ? filterEmpty(showDropped ? "dropped sessions" : "refinement sessions", filters, { onClear: clear, onDelete: vp.onDelete })
           : emptyState(showDropped ? "No dropped sessions." : "No refinement sessions yet. Start one with a rough idea."));
   };
   /** Reads the list. `first`: nothing is shown yet (or the person pressed Retry), so a failure replaces the page; later a failure keeps the rows and says so. */

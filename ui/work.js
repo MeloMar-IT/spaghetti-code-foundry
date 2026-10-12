@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount, tabStops, toast, trapTarget } from "./dom.js";
-import { NOT_IN_LIST, contextOffer, defaultGo, sameRepo, watchContextOffer, withQuery } from "./filters.js";
+import { NOT_IN_LIST, contextOffer, defaultGo, filterEmpty, sameRepo, watchContextOffer, withQuery } from "./filters.js";
+import { pageViews } from "./views.js";
 import { workBoard } from "./work-board.js";
 import { displayMenu } from "./work-display.js";
 import { listView, refreshAges } from "./work-list.js";
@@ -24,6 +25,10 @@ const repoGone = (data, prefs) => !!prefs.repo && !!data && !(data.repos ?? []).
 
 /** The count line, the list or an empty state: returns nodes. */
 export function workBody(data, prefs, handlers) {
+  // An out-of-date saved view is open (handlers.views, from ui/views.js): the empty state with both actions, even when stories are still listed.
+  if (handlers.views?.stale) {
+    return [filterEmpty("stories", { ...(prefs.repo ? { repo: prefs.repo } : {}), ...(prefs.owner ? { owner: prefs.owner } : {}) }, { onClear: () => handlers.onClear(), onDelete: handlers.views.onDelete, focus: "work" })];
+  }
   if (repoGone(data, prefs)) {
     return [h("div", { class: "empty" }, h("p", {}, NOT_IN_LIST),
       h("button", { type: "button", "data-focus": "work-all", onClick: () => handlers.onChange({ repo: "" }) }, "Show all repositories"))];
@@ -50,7 +55,10 @@ export function workView(data, prefs, handlers) {
   const body = h("div", { class: "work-body" }, workBody(data, prefs, handlers));
   const offer = contextOffer({ repo: prefs.repo });
   // An empty board keeps the scope controls when a repository or owner is chosen, or a context is offered.
-  if (!items.length && data?.empty && !isFiltered(prefs) && !offer) return [h("div", { class: "toolbar work-bar" }, h("h1", {}, "Work")), body];
+  const row = handlers.views?.row ?? null;
+  const top = (...nodes) => [row, ...nodes].filter(Boolean);
+  const save = handlers.views?.onSave ? h("button", { type: "button", class: "small", "data-focus": "work-save", onClick: () => handlers.views.onSave() }, "Save view") : null;
+  if (!items.length && data?.empty && !isFiltered(prefs) && !offer) return top(h("div", { class: "toolbar work-bar" }, h("h1", {}, "Work"), save), body);
   const f = facets(items, data);
   const withAll = (all, list) => [{ id: "", name: all }, ...list.map((c) => ({ id: c.id, name: `${c.name} (${c.count})` }))];
   const repos = withAll("All repositories", f.repos);
@@ -69,6 +77,7 @@ export function workView(data, prefs, handlers) {
     pick("work-repo", "Show one repository", prefs.repo, repos, (repo) => onChange({ repo })),
     pick("work-owner", "Show the stories of one account", prefs.owner, owners, (owner) => onChange({ owner })),
     useButton,
+    save,
     pick("work-who", "Show the stories by who has the next move", prefs.who, withAll("Any next move", f.who), (who) => onChange({ who })),
     columnsOf(data).map((c) => h("button", {
       class: status.has(c.id) ? "small primary" : "small", "data-focus": `work-status-${c.id}`, "aria-pressed": status.has(c.id) ? "true" : "false",
@@ -84,11 +93,11 @@ export function workView(data, prefs, handlers) {
         "aria-pressed": prefs.layout === id ? "true" : "false", onClick: () => onChange({ layout: id }),
       }, id === "board" ? "Board" : "List"))),
     displayMenu(prefs, onChange, { open: handlers.menuOpen, onToggle: handlers.onMenu }));
-  return [toolbar, body];
+  return top(toolbar, body);
 }
 
 /** Opens the page and returns at once a function that closes it. */
-export function renderWork(main, wantedRepo, { user, store, now, query = {}, media = mediaFor("compact"), go = defaultGo } = {}) {
+export function renderWork(main, wantedRepo, { user, store, now, query = {}, media = mediaFor("compact"), go = defaultGo, views = pageViews("board"), loadOwners = () => api.runOwners() } = {}) {
   let closed = false;
   let data;
   let last;
@@ -108,6 +117,16 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
   let prefs = { ...loadPrefs(user, store), repo: "", owner: "" };
   const shown = () => ({ ...prefs, repo: data?.repos?.find((r) => sameRepo(r.repo, repo))?.repo ?? repo, owner });
   const heading = h("div", { class: "toolbar" }, h("h1", {}, "Work"));
+  // The run owners (as on the Runs page), read once and only when there are saved views. Unknown when it fails:
+  // no view is then marked out of date because of its owner.
+  let ownerIds = null;
+  if (views) {
+    Promise.resolve().then(loadOwners).then((list) => {
+      if (closed || !Array.isArray(list)) return;
+      ownerIds = list.map((o) => o?.id).filter((id) => typeof id === "string");
+      if (data) draw();
+    }, () => {});
+  }
 
   // The address follows the repository and owner. `go` runs the router's context.keep, which adds repo=all when needed.
   const writeAddress = () => {
@@ -207,6 +226,7 @@ export function renderWork(main, wantedRepo, { user, store, now, query = {}, med
   }
 
   function draw() {
+    handlers.views = views?.parts({ ...(repo ? { repo } : {}), ...(owner ? { owner } : {}) }, { owners: ownerIds, redraw: () => { if (!closed && data) draw(); } });
     const nodes = workView(data, shown(), handlers);
     bodyEl = nodes[nodes.length - 1];
     slot = h("div", { id: PANEL_ID, class: "work-panel-slot" }, panelNodes());

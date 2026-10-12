@@ -7,6 +7,7 @@ import { switcherView } from "./context-view.js";
 import { mount, toast } from "./dom.js";
 import { ALL_REPOS, parseQuery, resolve } from "./ia.js";
 import { refreshContextOffer, sameRepo, setContextOffer, splitHash, withQuery } from "./filters.js";
+import { setViewAccount } from "./views.js";
 
 export const MAX_RECENTS = 5;
 export const ALL_LABEL = "All repositories";
@@ -259,7 +260,8 @@ let live = null;
 
 /**
  * The live repository context of this page: loads the list, owns the store state and the switcher in `#context`.
- * Returns { ready, scoped, keep, current, refresh, stop }. `ready` never rejects. Only one context is live.
+ * Returns { ready, scoped, keep, current, account, refresh, stop }. `account()` is { id, readOnly, repos } (repos is
+ * null until the list is loaded); the live context registers it with ui/views.js for the saved views. `ready` never rejects. Only one context is live.
  * `keep(hash)` is `clearedHash` for the live context (filter changes go through it); the live context also registers
  * the "Use as my context" offer with ui/filters.js.
  */
@@ -410,6 +412,7 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
     scoped: (hash) => scopedHash(role, hash, current()),
     keep: (hash) => clearedHash(role, hash, current()),
     current,
+    account: () => ({ id: me?.id ?? "", readOnly, repos: loaded && !stopped ? list.map((i) => i.name) : null }),
     refresh,
     stop() {
       if (stopped) return;
@@ -421,11 +424,13 @@ export function initContext(role, me, { readOnly = false, go = () => {}, a = api
       if (live === ctx) {
         live = null;
         setContextOffer(null);
+        setViewAccount(null);
       }
     },
   };
   live = ctx;
   setContextOffer((arg) => offer(arg?.repo));
+  setViewAccount(ctx.account);
   return ctx;
 }
 

@@ -15,6 +15,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 
 | File | Dialog | Opened by | Fields | Primary action | Helper |
 |---|---|---|---|---|---|
+| `ui/views.js` | Save view | Save view in the filter bar of Runs, Board, Refinement and My runs | name (1–40 characters) | Save | `modal` |
+| `ui/views.js` | Manage views | Manage views in the row of saved views | new name (rename), none (move, delete with an inline confirmation) | Done | `modal` |
 | `ui/admin-repos.js` | Repository settings | Settings button on a row of `#/all-repos` | test command, docs, protected branches, main branch, develop branch | Save | `modal` |
 | `ui/admin-repos.js` | Definition of Ready | Button on a row of `#/all-repos` | checklist items | Save | `modal` |
 | `ui/admin-repos.js` | Transfer repository | Transfer button on a row | new owner e-mail | Transfer | `modal` |
