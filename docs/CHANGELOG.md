@@ -4,6 +4,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Test ports part 5 — the tests that retried on a taken port use the shared helper (#470). Part 5 of 6 of #465.
+  - **Tests.** 13 test files (accounts, audit, limits, monitor, network, password links, runs, users) start their server with `startTestServer` and no longer pick a port or retry on `EADDRINUSE`. `tests/net-server.test.ts` uses `freePort` for the one port that must stay closed. These files are gone from the allowlist of the guard in `tests/test-ports.test.ts`. No test case removed; no product behaviour, API or config change.
 - Test ports part 1 — a shared free-port helper, and `startServer` gives back its port (#466). Part 1 of 6 of #465.
   - **Server.** `startServer` returns `port`, the port it really listens on. With `port: 0` the system picks a free port, and `url`, the session cookie name (`scf_session_<port>`) and the host check use it. A port other than 0 behaves as before. The CLI still takes `--port` 1-65535.
   - **Tests.** New `tests/helpers/port.ts`: `startTestServer` starts on port 0 and adds `base`; `freePort` returns a port that was free a moment ago (only for a child process that needs `--port`). New `tests/helpers/port-scan.ts` and the guard in `tests/test-ports.test.ts`, which fails on a self-chosen port in `tests/` outside an allowlist. The allowlist can only shrink; parts 2-6 of #465 move the rest.

@@ -50,30 +50,17 @@ const PART_4 = [
 ];
 // Part 5: accounts and sign-in
 const PART_5 = [
-  "tests/account-work.test.ts",
-  "tests/audit-actions.test.ts",
-  "tests/audit-api.test.ts",
   "tests/auth.test.ts",
-  "tests/limits-api.test.ts",
   "tests/password-change.test.ts",
-  "tests/password-link.test.ts",
-  "tests/password-link-seams.test.ts",
   "tests/user-cli.test.ts",
-  "tests/user-view.test.ts",
-  "tests/users-api.test.ts",
   "tests/view-as.test.ts",
 ];
 // Part 6: server, runs and the rest
 const PART_6 = [
   "tests/browser/seed.ts",
   "tests/home-process.test.ts",
-  "tests/monitor-api.test.ts",
   "tests/monitor-problems-api.test.ts",
-  "tests/net-server.test.ts",
   "tests/permissions.test.ts",
-  "tests/run-answer.test.ts",
-  "tests/run-archive.test.ts",
-  "tests/run-ownership.test.ts",
   "tests/search-api.test.ts",
   "tests/server.test.ts",
   "tests/skill-cli.test.ts",

@@ -47,7 +47,7 @@ const { addSession, readSessions, sessionId } = await import("../src/auth/sessio
 const { changePassword, checkSignIn, createUser, createUserWithLink, getUser, newPasswordLink, redeemPasswordLink, resetPassword, usersPath } = await import(
   "../src/auth/users.js"
 );
-const { startServer } = await import("../src/server/server.js");
+const { startTestServer } = await import("./helpers/port.js");
 
 const PW = "test-password-12345";
 const PW2 = "test-other-password-678";
@@ -170,15 +170,8 @@ describe("audit line fails after the change", () => {
 async function boot() {
   const logs: string[] = [];
   const opts = { repo: home, runsDir: join(home, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m: string) => void logs.push(m), signInClock: () => 1_800_000_000_000 };
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ ...opts, port });
-      return { base: `http://127.0.0.1:${port}`, logs, close: started.close };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+  const started = await startTestServer(opts);
+  return { base: started.base, logs, close: started.close };
 }
 type Srv = Awaited<ReturnType<typeof boot>>;
 const post = (s: Srv, path: string, body: unknown, headers: Record<string, string> = {}) =>

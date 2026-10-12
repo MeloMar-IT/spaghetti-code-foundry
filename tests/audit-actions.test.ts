@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuditEntrySchema, auditPath } from "../src/auth/audit.js";
-import { startServer } from "../src/server/server.js";
+import type { startServer } from "../src/server/server.js";
 import { viewsOf } from "../src/server/view-as.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 // Every action a signed-in person takes in the web interface writes one line to audit.jsonl (#95).
@@ -60,17 +61,10 @@ describe("audit log: actions in the web interface", () => {
     git("commit", "-q", "--allow-empty", "-m", "init");
     process.env.FACTORY_HOME = join(tmp, "home");
     const logs: string[] = [];
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
-        const s: Srv = { tmp, repo, logs, base: `http://127.0.0.1:${port}`, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
-        open.push(s);
-        return s;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    const started = await startTestServer({ repo, runsDir: join(tmp, "runs"), claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
+    const s: Srv = { tmp, repo, logs, base: started.base, ctx: started.ctx, close: () => { started.close(); rmSync(tmp, { recursive: true, force: true }); } };
+    open.push(s);
+    return s;
   }
 
   const call = async (s: Srv, who: TestSession, method: string, path: string, body?: unknown) => {
