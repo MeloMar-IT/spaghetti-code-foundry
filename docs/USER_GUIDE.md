@@ -2460,6 +2460,9 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
+| `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
+| `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
+| `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
 | `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
@@ -2969,6 +2972,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
+| `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
@@ -4707,6 +4711,64 @@ and `scf ask stop <id>` stops one that is being written. Calls: `POST /api/help/
 A turn sees your question, the page you asked it on, and the last three answered questions of the
 same conversation. It sees nothing of other conversations or other accounts.
 
+### Answers from the documentation
+
+For every question the server looks in the documentation that came with this install: this
+guide (`docs/USER_GUIDE.md`) and, for administrators, the flow reference
+(`docs/FLOW_AUTHORING.md`). No other file is read: not a document of a repository you work on,
+and nothing from the internet. No AI model is used to search.
+
+- **How a section is found.** The documents are cut into sections by their headings. A section
+  fits when your question shares a word with its headings, or two words with its text. Rare
+  words weigh more, and a word in a heading weighs three times. The same question gives the same
+  sections. At most 4 sections are handed over, each with an excerpt of at most 1,200 characters.
+- **What you see.** A source of a reply names the document, the heading and the version, for
+  example `docs/USER_GUIDE.md#the-page-context (SCF 0.1.0)`. A reply can name only sections that
+  were handed over for that question.
+- **When the documentation has no answer**, no section is handed over, and the reply says that
+  Ask SCF could not check it (see "Sources, and how sure it is"). It is then a guess.
+- **Your role counts.** A user gets sections of the chapters for users only (1, 2, 3, 10, 12 and
+  14). The chapters about settings, models, costs, watchers and self-repair, and the flow
+  reference, are for administrators.
+- **A section can be held back.** An excerpt passes the same check as all copied text (see
+  "Secrets and copied text"). A section that quotes a sentence which reads like an order to the
+  AI model is not handed over, also when it only describes such a sentence.
+- **The index follows the install.** The index is built when the first question comes and keeps
+  the version of the Foundry and a hash of each document. Before every question it is compared
+  with the files. After an update, or when a document changed, it is built again and the server
+  log says why. A document that is missing is reported under `documentation` in
+  `GET /api/help/usage` (`scf ask usage` shows the version, the number of sections and the
+  problems); the other document still answers.
+
+### Answers from the current state
+
+For a question about your work ("why does my run wait?", "why did it fail?") the server also
+hands over what it observes at that moment. It takes these records from the same places the
+pages read them, with your permissions:
+
+- the things the page you ask on names: a run with its next-step record (who must act, why it
+  waits, what to do), a repository with its last connection check, a refinement session; for an
+  administrator also a board issue and a finding of the monitor;
+- your part of the queue (an administrator: the whole queue);
+- when the page names no run of yours: your two newest runs that wait or failed;
+- for an administrator: the health of the server.
+
+At most 5 such records go with one question. Each one is a source of the kind "current state".
+Its place names the kind and id of the thing and the page to open, for example
+`run <id> · #/runs/<id>`, and it carries the time the server observed it. Nothing of another
+account is taken, also when the page context names it.
+
+**Facts, conclusions and suggestions are kept apart.** The explanation of such a reply says
+"Observed:" for what a record shows, "So:" for what Ask SCF concludes, and "You could:" for what
+it suggests.
+
+**Old or contradictory records are shown.** A record with a fact that is known to be old (a
+connection check older than a day, a finding that is gone) has "(may be out of date)" in its
+title. When two records disagree (a finished run that still stands in the queue; a run that
+works while its next step waits for a person; a board status that differs from the run's), the
+server adds the source "The sources disagree: the state is uncertain", which names both sides.
+A reply that rests on such a source is never shown as confirmed: at most "likely".
+
 ### The page context
 
 So that you can ask "what is happening here?" without copying an id, a question can carry a
@@ -4735,8 +4797,23 @@ thing with the rule of the API call that reads it: a run only when it is yours (
 administrator). A thing that does not exist and a thing of another account give the same result:
 it is left out, and only counted. An address that is no page of your role (an old link, a page of
 the administrators) counts as no page. The model is told only what was found; the marked text is
-handed over as copied text (see "Secrets and copied text"). In this version only runs are looked
-up; other kinds are counted as not found.
+handed over as copied text (see "Secrets and copied text").
+
+What can be found, and by which rule:
+
+| Thing | Who finds it |
+|---|---|
+| A run | its owner; an administrator finds every run |
+| A repository | its owner (under My repositories); an administrator finds every repository |
+| A refinement session | its owner; an administrator finds every session |
+| The queue, or a queued run | you: your own queued runs and how many are ahead; an administrator: the whole queue |
+| An issue on the board | an administrator only |
+| A problem (a finding of the monitor) | an administrator only |
+
+For each found thing the server keeps a small snapshot of plain facts (for a run: the flow, the
+status, the times, the step it waits at or failed at). A snapshot never holds a cost, a model
+name, a folder, a setting of the administrator, an owner, or the text of a talk; this is the
+same for an administrator. A kind that is not in the table is not found.
 
 **Look before you send.** `POST /api/help/context` with the envelope as its body
 (`scf ask context '#/runs/<id>' --selection "…"`) answers what would be taken: the envelope as it
@@ -4848,6 +4925,45 @@ conversations. The server log gets one line in fixed words for a failed turn, fo
 `help: a turn failed (provider)`, never the question or the answer. When secrets were removed it
 says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
 value.
+
+### Who may ask, what is kept, and what is logged
+
+**Who may ask.** When Ask SCF is on, these settings of `help` in `config.yaml` decide, and the
+account is read again at every question:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `audience` | not set: everyone | `admins`: only administrators may ask |
+| `disabled_accounts` | none | account ids that may not ask, whatever their role |
+| `turns_per_user_per_day` | 30 | questions one account may start per day |
+| `keep_days` | 90 | days an untouched conversation is kept |
+
+An account that may not ask gets 403 and reads:
+"Ask SCF is not switched on for your account. Ask an administrator of this Foundry." An account that used its questions of the day, or whose
+help turns of today cost as much as its own daily budget (**Users**, limits; not with
+`cost_limits: false`), reads the limit sentence (429). In both cases nothing is stored and no
+AI provider is called. An account that may not ask can still read, export and delete its
+conversations. Each account has one turn at a time, and a page context holds at most 4,000
+characters: these two are fixed.
+
+**Export.** `GET /api/help/export` (`scf ask export --json`) gives all your conversations with
+their messages as one JSON document, also the archived ones, not the deleted ones. It is your
+own only, for an administrator too. Secrets were taken out before anything was stored, so the
+export holds none.
+
+**Deletion and retention.** You delete a conversation yourself (its texts are gone at once). A
+conversation that is not changed for `keep_days` days is deleted the same way; a lower number
+applies to the stored conversations at the next read. When an account is deleted, all its
+conversations and its usage numbers per day are removed with it; nothing of them is left in
+`help.json`. The audit lines stay for as long as the audit log keeps them: ids and results,
+no text. There is no legal hold: nothing keeps a conversation longer than these
+rules, and no administrator can read or export another account's conversations. If you must
+keep one, export it first.
+
+**What the audit log holds.** The lines `help-ask`, `help-delete` and `help-export` (see "The
+audit log") name the account, the conversation id, the result and the id of the turn. That id is
+the id of the reply in the conversation, so a line can be matched to it by its owner. No line
+holds a question, an answer, a title or a page context.
 
 ### What you never see as a user
 

@@ -253,14 +253,20 @@ export function refinementSweeper(log: (msg: string) => void): () => void {
 }
 
 /** Refinement sessions: a person sees and changes their own; an admin sees all and may also drop. */
+/** The session when the account may see it: its owner, or an admin. Undefined for another account's session and for one that does not exist. */
+export function sessionFor(user: Pick<User, "id" | "role">, id: string): Session | undefined {
+  const s = getSession(id);
+  return s && (s.owner === user.id || user.role === "admin") ? s : undefined;
+}
+
 export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "refinement") return false;
   const actor = { id: user.id, admin: user.role === "admin" };
   const admin = actor.admin;
   /** The session when the caller may see it. */
   const find = (id: string) => {
-    const s = getSession(id);
-    if (!s || (s.owner !== user.id && !admin)) throw new HttpError(404, NOT_FOUND);
+    const s = sessionFor(user, id);
+    if (!s) throw new HttpError(404, NOT_FOUND);
     return s;
   };
   if (seg.length === 1 && method === "GET") {

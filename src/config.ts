@@ -330,6 +330,12 @@ export const ConfigSchema = z
     help: z
       .object({
         enabled: z.boolean().default(false),
+        /** Who may ask when Ask SCF is on: every account (also without the setting), or administrators only. */
+        audience: z.enum(["everyone", "admins"]).optional(),
+        /** Accounts (by id) that may not ask, whatever their role. They keep reading, exporting and deleting their conversations. */
+        disabled_accounts: z.array(z.uuid()).max(1000).optional(),
+        /** A conversation that is not changed for this many days is deleted; without it 90. A lower number deletes older ones at once. */
+        keep_days: z.number().int().min(1).max(3650).optional(),
         /** Model spec for a help turn; without it `default_model`. Only a Claude Code target can answer: it is the one that runs with no tools at all. */
         model: z.string().optional(),
         /** A turn that takes longer is stopped. */

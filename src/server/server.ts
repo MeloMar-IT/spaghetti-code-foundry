@@ -246,7 +246,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
   // Ask SCF: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
-  const helpSweep = helpSweeper(log);
+  const helpSweep = helpSweeper(log, () => ctx.config().help.keep_days);
   helpSweep();
   const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
   auditSweep();
