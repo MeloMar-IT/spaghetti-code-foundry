@@ -76,6 +76,15 @@ describe("sinceOf and filterQuery", () => {
     expect(rf.filterQuery(full, now)).toEqual({ q: "boom", repo: "acme/app", flow: "build", status: "failed", since: rf.sinceOf("7d", now), owner: "u1" });
     expect(rf.filterQuery({ ...rf.emptyFilter(), needs: true, view: "needs" }, now)).toEqual({});
   });
+  it("asks for the archived runs in the Archived view only, with the other keys", () => {
+    expect(rf.filterQuery({ ...rf.emptyFilter(), view: "archived" }, now)).toEqual({ archived: "1" });
+    expect(rf.filterQuery({ ...rf.emptyFilter(), q: "x", repo: "a/b", view: "archived" }, now)).toEqual({ q: "x", repo: "a/b", archived: "1" });
+    expect(rf.filterQuery({ ...rf.emptyFilter(), view: "failed" }, now)).toEqual({});
+  });
+  it("keeps view=archived in the address", () => {
+    expect(rf.parseFilter("#/runs?view=archived").view).toBe("archived");
+    expect(rf.filterHash({ view: "archived" })).toBe("#/runs?view=archived");
+  });
 });
 
 describe("canonRepos and serverKey", () => {
@@ -90,6 +99,10 @@ describe("canonRepos and serverKey", () => {
     expect(rf.serverKey({ ...full, needs: false, view: "" })).toBe(rf.serverKey(full));
     expect(rf.serverKey({ ...full, q: "other" })).not.toBe(rf.serverKey(full));
   });
+  it("changes when the view goes to or from Archived, not between other views", () => {
+    expect(rf.serverKey({ ...full, view: "archived" })).not.toBe(rf.serverKey({ ...full, view: "" }));
+    expect(rf.serverKey({ ...full, view: "failed" })).toBe(rf.serverKey({ ...full, view: "" }));
+  });
 });
 
 describe("jobMatches", () => {
@@ -98,6 +111,7 @@ describe("jobMatches", () => {
   const ok = (f: object, o: object = { now }) => rf.jobMatches(job, { ...rf.emptyFilter(), ...f }, o);
   it("matches with no filter and with each key alone", () => {
     expect(ok({})).toBe(true);
+    expect(ok({ view: "archived" })).toBe(false); // an archived run has no queued job
     expect(ok({ repo: "acme/app" })).toBe(true);
     expect(ok({ repo: "other/x" })).toBe(false);
     expect(ok({ flow: "build" })).toBe(true);

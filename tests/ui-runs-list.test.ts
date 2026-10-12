@@ -256,6 +256,128 @@ describe("renderSections", () => {
   });
 });
 
+describe("archivedSections", () => {
+  it("lists the runs newest first, applies keep and gives [] when empty", () => {
+    const all = [run("a", { startedAt: "2026-10-01T09:00:00Z" }), run("b", { startedAt: "2026-10-01T11:00:00Z" }), run("c", { startedAt: "2026-10-01T10:00:00Z" })];
+    const secs = rl.archivedSections(all);
+    expect(secs).toHaveLength(1);
+    expect(secs[0].id).toBe("archived");
+    expect(secs[0].entries.map((e: any) => e.run.runId)).toEqual(["b", "c", "a"]);
+    expect(secs[0].entries.every((e: any) => e.job === null)).toBe(true);
+    expect(rl.archivedSections(all, (e: any) => e.run.runId !== "b")[0].entries).toHaveLength(2);
+    expect(rl.archivedSections(all, () => false)).toEqual([]);
+    expect(rl.archivedSections(undefined)).toEqual([]);
+  });
+});
+
+describe("the checkboxes", () => {
+  const draw = (b: FakeElement, secs: any, opts: any = {}) => rl.renderSections(b, secs, opts);
+  const picker = (on: string[] = []) => {
+    const set = new Set(on);
+    return { set, has: (id: string) => set.has(id), toggle: vi.fn((id: string, v: boolean) => { if (v) set.add(id); else set.delete(id); }) };
+  };
+  const boxes = (b: FakeElement) => b.all("input").filter((i) => i.attrs.class === "run-select" && !i.attrs["data-focus"]!.startsWith("select-all"));
+  const mixed = () => rl.runSections([
+    run("n1", { next: rec("You", "approval") }), run("r1"), run("f1", { status: "failed" }), run("c1", { status: "succeeded" }),
+  ], [job("q1")]);
+
+  it("are on Failed and Completed runs only, with the run in the label", () => {
+    const b = box();
+    const ids = draw(b, mixed(), { select: picker() });
+    expect(ids.sort()).toEqual(["c1", "f1"]);
+    expect(boxes(b).map((i) => i.attrs["data-focus"]).sort()).toEqual(["select-c1", "select-f1"]);
+    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run flow-f1 o/r#7");
+    const bare = box();
+    expect(draw(bare, mixed())).toEqual([]);
+    expect(boxes(bare)).toHaveLength(0);
+  });
+
+  it("fall back to the run id when there is no work", () => {
+    const b = box();
+    draw(b, rl.runSections([run("f1", { status: "failed", vars: {} })], []), { select: picker() });
+    expect(boxes(b)[0]!.attrs["aria-label"]).toBe("Select run flow-f1 f1");
+  });
+
+  it("are on the Archived section", () => {
+    const b = box();
+    const ids = draw(b, rl.archivedSections([run("a1", { status: "succeeded" }), run("a2", { status: "running" })]), { select: picker() });
+    expect(heads(b)).toEqual(["Archived (2)"]);
+    expect(ids.sort()).toEqual(["a1", "a2"]);
+    expect(boxes(b)).toHaveLength(2);
+  });
+
+  it("follow the selection on a reused row and rebuild the row when select goes on or off", () => {
+    const b = box();
+    const secs = () => rl.runSections([run("f1", { status: "failed" })], []);
+    const sel = picker();
+    draw(b, secs(), { select: sel });
+    const first = boxes(b)[0]!;
+    const card = items(b)[0]!;
+    sel.set.add("f1");
+    draw(b, secs(), { select: sel });
+    expect(items(b)[0]).toBe(card);
+    expect(boxes(b)[0]).toBe(first);
+    expect(first.checked).toBe(true);
+    draw(b, secs(), {});
+    expect(items(b)[0]).not.toBe(card);
+    expect(boxes(b)).toHaveLength(0);
+    draw(b, secs(), { select: sel });
+    expect(boxes(b)).toHaveLength(1);
+  });
+
+  it("call toggle on a change", () => {
+    const b = box();
+    const sel = picker();
+    draw(b, mixed(), { select: sel });
+    const one = named(b, "select-f1");
+    one.checked = true;
+    one.fire("change", { target: one });
+    expect(sel.toggle).toHaveBeenLastCalledWith("f1", true);
+    one.checked = false;
+    one.fire("change", { target: one });
+    expect(sel.toggle).toHaveBeenLastCalledWith("f1", false);
+  });
+
+  it("return every id of the Completed section, shown or not, and Select all covers the shown rows only", () => {
+    const b = box();
+    const all = Array.from({ length: 12 }, (_, i) => run(`c${String(i).padStart(2, "0")}`, { status: "succeeded", startedAt: `2026-10-01T10:${String(59 - i).padStart(2, "0")}:00Z` }));
+    const sel = picker();
+    const secs = () => rl.runSections(all, []);
+    expect(draw(b, secs(), { select: sel })).toHaveLength(12);
+    expect(boxes(b)).toHaveLength(10);
+    const allBox = named(b, "select-all-completed");
+    expect(allBox.attrs["aria-label"]).toBe("Select all runs in Completed");
+    allBox.fire("change", { target: allBox });
+    expect(sel.set.size).toBe(10);
+    expect(sel.set.has("c11")).toBe(false);
+    expect(allBox.checked).toBe(true);
+    expect(boxes(b).every((i) => i.checked)).toBe(true);
+    allBox.fire("change", { target: allBox });
+    expect(sel.set.size).toBe(0);
+    expect(allBox.checked).toBe(false);
+    expect(boxes(b).some((i) => i.checked)).toBe(false);
+    named(b, "more-completed").click();
+    expect(boxes(b)).toHaveLength(12);
+  });
+
+  it("keep Select all in step with single boxes and hide it in other sections", () => {
+    const b = box();
+    const sel = picker();
+    draw(b, mixed(), { select: sel });
+    const allBox = named(b, "select-all-failed");
+    expect(allBox.parent!.hidden).toBe(false);
+    expect(allBox.checked).toBe(false);
+    const one = named(b, "select-f1");
+    one.checked = true;
+    one.fire("change", { target: one });
+    expect(allBox.checked).toBe(true);
+    one.checked = false;
+    one.fire("change", { target: one });
+    expect(allBox.checked).toBe(false);
+    for (const id of ["needs", "running", "queued"]) expect(b.all("section").find((s) => s.all("h2")[0]!.textContent!.toLowerCase().startsWith(id))!.all("label").every((l) => l.hidden)).toBe(true);
+  });
+});
+
 describe("the pages", () => {
   const realFetch = globalThis.fetch;
   let answers: Record<string, any>;
