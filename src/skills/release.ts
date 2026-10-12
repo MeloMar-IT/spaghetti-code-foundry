@@ -30,11 +30,12 @@ const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 /** A real UTC calendar time: a date that JavaScript would roll over (30 February) is refused. */
-const createdAt = z.string().refine((s) => {
+export function isUtcTime(s: string): boolean {
   if (!CREATED_RE.test(s)) return false;
   const d = new Date(s);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === s.slice(0, 19);
-}, "must be a UTC time like 2026-01-31T12:00:00Z");
+}
+const createdAt = z.string().refine(isUtcTime, "must be a UTC time like 2026-01-31T12:00:00Z");
 
 export const ReleaseManifestSchema = z
   .object({
