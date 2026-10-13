@@ -73,8 +73,10 @@ export function protectedBranchEnv(patterns: string[], secretScan = false): Reco
 export const HOTFIX_FLOW = "issue-gitflow";
 export const HOTFIX_PUSH_STEP = "push_main";
 
-const canonical = (v: unknown): string =>
-  JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+/** Compares flows by everything that runs; var_info only describes variables for forms, so it does not count. */
+const canonical = (flow: Flow): string => stringifySorted(Object.fromEntries(Object.entries(flow).filter(([k]) => k !== "var_info")));
+const stringifySorted = (v: unknown): string =>
+  JSON.stringify(v,(_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 
 let shipped: string | undefined;
 function shippedGitflow(): string | undefined {

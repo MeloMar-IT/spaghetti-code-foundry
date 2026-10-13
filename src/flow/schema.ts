@@ -55,6 +55,59 @@ export const PublishSchema = z
 export type Publish = z.infer<typeof PublishSchema>;
 export type PublishVar = z.infer<typeof PublishVarSchema>;
 
+export const VAR_KINDS = ["number", "yes_no", "text", "list", "choice"] as const;
+export const LIST_SEPARATORS = ["comma", "space", "line"] as const;
+
+/** How one variable shows in a form. Runs are not checked against it. */
+export const VarInfoSchema = z
+  .object({
+    ...shown,
+    kind: z.enum(VAR_KINDS).default("text"),
+    min: z.number().optional(),
+    max: z.number().optional(),
+    choices: z.array(varValue).min(1).max(50).optional(),
+    separator: z.enum(LIST_SEPARATORS).optional(),
+    /** The run sets this variable itself (github_repo, issue): no form shows it. */
+    set_by_run: z.boolean().optional(),
+  })
+  .strict();
+export type VarInfo = z.infer<typeof VarInfoSchema>;
+
+/** What is wrong with one entry and the variable's default; [] when it fits. `field` is the key to report on; without it the problem is about the default. */
+export function varInfoProblems(info: VarInfo, value: string): { field?: string; message: string }[] {
+  const out: { field?: string; message: string }[] = [];
+  const kind = info.kind;
+  if (kind !== "number") {
+    if (info.min !== undefined) out.push({ field: "min", message: `min is only for kind number, not ${kind}` });
+    if (info.max !== undefined) out.push({ field: "max", message: `max is only for kind number, not ${kind}` });
+  }
+  if (kind !== "choice" && info.choices !== undefined) out.push({ field: "choices", message: `choices are only for kind choice, not ${kind}` });
+  if (kind !== "list" && info.separator !== undefined) out.push({ field: "separator", message: `separator is only for kind list, not ${kind}` });
+  if (kind === "number") {
+    if (info.min !== undefined && info.max !== undefined && info.min > info.max) out.push({ field: "min", message: "min must not be above max" });
+    // Exponent notation too: YAML 0.0000001 becomes the string "1e-7".
+    const n = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(value) ? Number(value) : NaN;
+    if (!Number.isFinite(n)) out.push({ message: `the default "${value}" is not a number` });
+    else {
+      if (info.min !== undefined && n < info.min) out.push({ message: `the default ${value} is below min ${info.min}` });
+      if (info.max !== undefined && n > info.max) out.push({ message: `the default ${value} is above max ${info.max}` });
+    }
+  } else if (kind === "yes_no") {
+    if (value !== "yes" && value !== "no") out.push({ message: `the default "${value}" must be yes or no` });
+  } else if (kind === "choice") {
+    if (!info.choices?.length) out.push({ field: "choices", message: "kind choice needs choices" });
+    else {
+      const seen = new Set<string>();
+      for (const c of info.choices) {
+        if (seen.has(c)) out.push({ field: "choices", message: `duplicate choice "${c}"` });
+        seen.add(c);
+      }
+      if (!seen.has(value)) out.push({ message: `the default "${value}" is not one of the choices` });
+    }
+  }
+  return out;
+}
+
 const baseStep = {
   id: stepId,
   description: z.string().optional(),
@@ -291,6 +344,8 @@ export const FlowSchema = z
     /** How the flow gets its skills. Absent: planned. */
     skills: FlowSkillsSchema.optional(),
     vars: varsRecord.default({}),
+    /** Optional description of the variables for forms; runs are not checked against it. */
+    var_info: z.record(z.string(), VarInfoSchema).optional(),
     publish: PublishSchema.optional(),
     steps: z.array(StepSchema).min(1),
   })
@@ -317,6 +372,15 @@ export const FlowSchema = z
       }
     });
     checkStepRefs(flow.steps, ids, (path, message) => ctx.addIssue({ code: "custom", path, message }));
+    for (const [key, info] of Object.entries(flow.var_info ?? {})) {
+      if (!Object.hasOwn(flow.vars, key)) {
+        ctx.addIssue({ code: "custom", path: ["var_info", key], message: `unknown variable "${key}"` });
+        continue;
+      }
+      for (const p of varInfoProblems(info, flow.vars[key]!)) {
+        ctx.addIssue({ code: "custom", path: p.field ? ["var_info", key, p.field] : ["vars", key], message: p.message });
+      }
+    }
     for (const [key, spec] of Object.entries(flow.publish?.vars ?? {})) {
       const path = ["publish", "vars", key];
       if (!Object.hasOwn(flow.vars, key)) ctx.addIssue({ code: "custom", path, message: `unknown variable "${key}"` });

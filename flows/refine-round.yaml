@@ -22,6 +22,15 @@ vars:
   ask: round
   field: ""
   items: ""
+var_info:
+  github_repo:
+    set_by_run: true
+  ask:
+    set_by_run: true
+  field:
+    set_by_run: true
+  items:
+    set_by_run: true
 steps:
   - id: clone
     type: shell

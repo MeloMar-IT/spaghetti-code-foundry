@@ -33,6 +33,8 @@ describe("locate", () => {
     expect(fp.locate(["defaults", "timeout_sec"])).toEqual({ stepIndex: null, field: "timeout_sec", section: "defaults" });
     expect(fp.locate(["limits", "max_cost_usd"]).section).toBe("limits");
     expect(fp.locate(["vars", "x"])).toEqual({ stepIndex: null, field: "x", section: "vars" });
+    expect(fp.locate(["var_info", "x"])).toEqual({ stepIndex: null, field: "x", section: "vars" });
+    expect(fp.locate(["var_info", "x", "min"])).toEqual({ stepIndex: null, field: "x", section: "vars" });
     expect(fp.locate(["publish", "vars", "x"])).toEqual({ stepIndex: null, field: null, section: "publish" });
     expect(fp.locate(["publish", "vars", "x", "label"]).field).toBe("vars.x.label");
     expect(fp.locate(["name"])).toEqual({ stepIndex: null, field: "name", section: "flow" });

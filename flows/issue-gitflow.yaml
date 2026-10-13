@@ -80,6 +80,117 @@ vars:
   test_slots: "2"
   hotfix_labels: bug
   hotfix_prefix: hotfix/
+var_info:
+  github_repo:
+    set_by_run: true
+  issue:
+    set_by_run: true
+  test_cmd:
+    label: Test command
+    help: Use auto to find the command from the project files, or type the command that builds and tests the project.
+    kind: text
+  develop_branch:
+    label: Develop branch
+    help: The branch that feature branches are merged into.
+    kind: text
+  main_branch:
+    label: Main branch
+    help: The branch that releases go to.
+    kind: text
+  feature_prefix:
+    label: Feature branch prefix
+    help: Feature branches start with this text, followed by the issue.
+    kind: text
+  forbidden_paths:
+    label: Forbidden paths
+    help: Paths the agents must not change. Separate paths with spaces.
+    kind: list
+    separator: space
+  docs_required:
+    label: Required docs
+    help: Files that must be updated with every change. Separate files with spaces.
+    kind: list
+    separator: space
+  union_merge_files:
+    label: Union-merge files
+    help: Files where merges keep both sides, such as a changelog. Separate files with spaces.
+    kind: list
+    separator: space
+  agent_env:
+    label: Agent environment
+    help: Environment variables for the agent steps, as KEY=value, one per line. A semicolon also separates them.
+    kind: list
+    separator: line
+  risk_threshold:
+    label: Risk threshold
+    help: A plan with a risk score above this number waits for a person to approve it. 0 to 100.
+    kind: number
+    min: 0
+    max: 100
+  review_plan_label:
+    label: Review-plan label
+    help: "An issue with this label always waits for a person to approve its plan. Empty: no such label."
+    kind: text
+  auto_split_max_risk:
+    label: Auto-split risk limit
+    help: A plan above the threshold but not above this score is split into smaller issues instead of waiting for a person. 0 to 100.
+    kind: number
+    min: 0
+    max: 100
+  trigger_label:
+    label: Trigger label
+    help: "The label that starts the flow on an issue. Empty: the watcher decides."
+    kind: text
+  max_files:
+    label: Most files per issue
+    help: A plan that changes more files than this is split instead of built.
+    kind: number
+    min: 1
+  max_code_lines:
+    label: Most code lines per issue
+    help: A plan with more lines of new or changed production code than this is split instead of built.
+    kind: number
+    min: 1
+  delete_merged_branches:
+    label: Delete merged branches
+    help: Delete the feature branch after it is merged.
+    kind: yes_no
+  close_when_merged:
+    label: Close issue when merged
+    help: Close the issue when its branch is merged.
+    kind: yes_no
+  revise_above_risk:
+    label: Revise above risk
+    help: A plan with a risk score above this number is revised after Codex has reviewed it. 0 to 100.
+    kind: number
+    min: 0
+    max: 100
+  review_twice_above_risk:
+    label: Review twice above risk
+    help: Use off, or a risk score from 0 to 100. A plan above that score gets a second review.
+    kind: text
+  reuse_test_results:
+    label: Reuse test results
+    help: Skip a test run when the same code was already tested.
+    kind: yes_no
+  quick_test_cmd:
+    label: Quick test command
+    help: "A faster command for the checks between steps. Empty: use the test command."
+    kind: text
+  test_slots:
+    label: Parallel test runs
+    help: How many test runs may run at the same time on this machine.
+    kind: number
+    min: 0
+  hotfix_labels:
+    label: Hotfix labels
+    help: Issues with one of these labels are built as hotfixes. Separate labels with commas.
+    kind: list
+    separator: comma
+  hotfix_prefix:
+    label: Hotfix branch prefix
+    help: Hotfix branches start with this text, followed by the issue.
+    kind: text
 steps:
   - id: pull_ticket
     type: shell

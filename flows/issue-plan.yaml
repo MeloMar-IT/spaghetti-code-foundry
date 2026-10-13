@@ -22,6 +22,24 @@ vars:
   code_label: Factory_code
   ready_label: Factory_ready
   forbidden_paths: ""
+var_info:
+  github_repo:
+    set_by_run: true
+  issue:
+    set_by_run: true
+  code_label:
+    label: Code label
+    help: The label you add to an issue to have it coded.
+    kind: text
+  ready_label:
+    label: Ready label
+    help: The label the flow adds when an issue is coded and ready for review.
+    kind: text
+  forbidden_paths:
+    label: Forbidden paths
+    help: Paths the agents must not change. Separate paths with spaces.
+    kind: list
+    separator: space
 steps:
   - id: pull_ticket
     type: shell

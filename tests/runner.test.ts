@@ -305,6 +305,13 @@ describe("effectiveVars and frozen variables", () => {
     expect(effectiveVars(flow, repo, { a: "given" })).toEqual({ a: "given", b: "folder", c: "flow" });
   });
 
+  it("does not check values against var_info: given and folder values that do not fit pass unchanged", async () => {
+    const { effectiveVars } = await import("../src/engine/runner.js");
+    folderConfig("  n: lots\n  c: nope\n");
+    const flow = flowOf("inplace", "vars:\n  n: '5'\n  y: 'yes'\n  c: a\n  other: x\nvar_info:\n  n: {kind: number, min: 0, max: 10}\n  y: {kind: yes_no}\n  c: {kind: choice, choices: [a, b]}\n");
+    expect(effectiveVars(flow, repo, { y: "maybe", extra: "1" })).toEqual({ n: "lots", y: "maybe", c: "nope", other: "x", extra: "1" });
+  });
+
   it("ignores the folder config for an empty workspace", async () => {
     const { effectiveVars } = await import("../src/engine/runner.js");
     folderConfig("  a: folder\n");

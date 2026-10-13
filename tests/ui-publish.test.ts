@@ -116,6 +116,33 @@ describe("movePublishVar", () => {
   });
 });
 
+describe("moveVarInfo", () => {
+  it("follows a rename and keeps the order", () => {
+    const flow = make({ var_info: { x: { kind: "number" }, y: { kind: "text" } } });
+    editor.moveVarInfo(flow, "x", "z");
+    expect(Object.keys(flow.var_info)).toEqual(["z", "y"]);
+  });
+  it("removes an entry, and the section with the last one", () => {
+    const flow = make({ var_info: { x: { kind: "text" }, y: { kind: "text" } } });
+    editor.moveVarInfo(flow, "x", undefined);
+    expect(Object.keys(flow.var_info)).toEqual(["y"]);
+    editor.moveVarInfo(flow, "y", undefined);
+    expect("var_info" in flow).toBe(false);
+  });
+  it("does nothing without the section or for an unknown name", () => {
+    const flow = make();
+    editor.moveVarInfo(flow, "x", undefined);
+    expect("var_info" in flow).toBe(false);
+    const other = make({ var_info: { x: { kind: "text" } } });
+    editor.moveVarInfo(other, "nope", "z");
+    expect(Object.keys(other.var_info)).toEqual(["x"]);
+  });
+  it("is kept by cleanFlow, with a min of 0", () => {
+    const out = editor.cleanFlow(make({ vars: { n: "1" }, var_info: { n: { kind: "number", min: 0 } } }));
+    expect(out.var_info.n.min).toBe(0);
+  });
+});
+
 describe("cleanFlow", () => {
   it("keeps empty values in vars and in publish defaults", () => {
     const out = editor.cleanFlow(make({ vars: { issue: "" }, publish: { enabled: true, vars: { issue: { mode: "input", default: "" } } } }));
