@@ -1,4 +1,4 @@
-import { expect, request, type Browser, type BrowserContext, type Locator, type Page } from "@playwright/test";
+import { expect, request, type Browser, type BrowserContext, type Locator, type Page, type Request } from "@playwright/test";
 import type { SeedData } from "./seed.js";
 import type { Density, Theme } from "./visual-matrix.js";
 import { VIEW_HEIGHT } from "./widths.js";
@@ -378,6 +378,49 @@ export async function clipped(page: Page, scope: string | Locator, opts: { stric
 /** Makes the visible text under `scope` 1.4 times as long, marks its elements with data-lengthened, and returns how many text nodes it changed. */
 export async function lengthen(page: Page, scope: string): Promise<number> {
   return (await page.locator(scope).evaluateAll(inPage, { op: "lengthen" as const, strict: false })).length;
+}
+
+/** The columns of the board, in order. */
+export const COLUMNS = [
+  ["your_turn", "Your turn"], ["waiting", "Waiting for another story"], ["queued", "Queued"], ["planning", "Planning"], ["coding", "Coding"],
+  ["reviewing", "Reviewing"], ["merging", "Merging"], ["done", "Done"], ["failed", "Failed"],
+] as const;
+
+export interface BoardCard { key: string; issue: number; title: string; column: string; next: { text: string }; after: number[]; chain: number[] }
+
+export const card = (issue: number, title: string, column: string): BoardCard =>
+  ({ key: `acme/app#${issue}`, issue, title, column, next: { text: "A long sentence that tells what happens next with this story, so the card is wide enough to matter." }, after: [], chain: [] });
+
+/** The /api/board answer for one repository (acme/app) with these cards. */
+export const boardJson = (cards: BoardCard[]) =>
+  ({ repos: [{ repo: "acme/app", columns: COLUMNS.map(([id, title]) => ({ id, title, cards: cards.filter((c) => c.column === id) })) }] });
+
+/** The board's own scroll box is not wider than itself: the document check cannot see inside it. */
+export async function expectBoardFits(page: Page): Promise<void> {
+  const { scroll, client } = await page.evaluate(() => {
+    const el = document.querySelector(".board")!;
+    return { scroll: el.scrollWidth, client: el.clientWidth };
+  });
+  expect(scroll, `the board is ${scroll} px wide in a ${client} px box`).toBeLessThanOrEqual(client);
+}
+
+/** Keeps only the `note` flow in the Start work page's flow list (the answer keeps its shape: an array of flows). */
+export async function onlyNote(page: Page): Promise<void> {
+  await page.route((url) => url.pathname === "/api/flows", async (route) => {
+    const response = await route.fetch();
+    const flows: unknown = await response.json();
+    const kept = Array.isArray(flows) ? flows.filter((f: unknown) => typeof f === "object" && f !== null && Reflect.get(f, "name") === "note") : flows;
+    await route.fulfill({ response, json: kept });
+  });
+}
+
+export const isStart = (req: Request): boolean => req.method() === "POST" && new URL(req.url()).pathname === "/api/runs";
+
+/** The run id in the answer to the start request, when there is one. */
+export async function startedId(res: { json(): Promise<unknown> }): Promise<string | undefined> {
+  const body: unknown = await res.json().catch(() => undefined);
+  const id = typeof body === "object" && body !== null ? Reflect.get(body, "runId") : undefined;
+  return typeof id === "string" ? id : undefined;
 }
 
 /** The primary links and actions of a role, from ui/ia.js. */
