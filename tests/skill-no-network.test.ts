@@ -125,3 +125,26 @@ describe("skill code does not reach the network", () => {
     });
   }
 });
+
+describe("the static scanner runs nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
+
+  it("scan.ts imports exactly the reviewed modules", () => {
+    const mods = modulesOf(readFileSync(join(SKILLS, "scan.ts"), "utf8"));
+    expect([...mods].sort()).toEqual(
+      ["node:crypto", "./credential-scan.js", "./import-plan.js", "./normalize.js", "./package.js", "./schema.js", "./scan-rules.js", "./sources.js"].sort(),
+    );
+  });
+  it("scan-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "scan-rules.ts"), "utf8"))).toEqual([]);
+  });
+  for (const f of ["scan.ts", "scan-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      const code = codeLines(text);
+      for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+});

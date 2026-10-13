@@ -1,6 +1,6 @@
 // Credential and endpoint scan for skill packages. The rules below are copied verbatim from `tools/secret-scan`
 // (a script, so it cannot be imported; tests/skill-credential-scan.test.ts keeps the two in step).
-// The result is only ever a rule name: no part of the scanned text is returned.
+// The result is only ever a rule name or a position: no part of the scanned text is returned.
 
 export const CREDENTIAL_RULES: readonly (readonly [string, RegExp])[] = [
   ["private key", /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/],
@@ -64,47 +64,94 @@ function realHost(raw: string): boolean {
 /** A password part of 6 or more characters that is not a placeholder. */
 const realPassword = (v: string) => v.length >= 6 && !placeholder(v);
 
-/** The name of the first rule the text trips, or undefined. Never returns any part of the text. */
-export function credentialProblem(text: string): string | undefined {
+/** One credential or endpoint found in a text: the rule name and where it sits (`text.slice(start, end)`). */
+export interface CredentialHit {
+  rule: string;
+  start: number;
+  end: number;
+}
+
+const KEY_FOOTER = /-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/;
+
+/** Every hit in the existing check order (rule table, then addresses, then Oracle strings); only the first when `firstOnly`. */
+function collect(text: string, firstOnly: boolean): CredentialHit[] {
+  const hits: CredentialHit[] = [];
+  const seen = new Set<string>();
+  /** Records a hit once; true when the search can stop. */
+  const add = (rule: string, start: number, end: number): boolean => {
+    const key = `${rule}:${start}:${end}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      hits.push({ rule, start, end });
+    }
+    return firstOnly;
+  };
+
   for (const [name, re] of GLOBAL_RULES) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(text))) {
       const value = m[1] ?? m[0];
+      let end = m.index + m[0].length;
       if (name === "private key") {
-        const end = m.index + m[0].length;
-        if (!KEY_DATA.test(text.slice(end, end + 300))) continue;
+        // The whole key block: the header to the END line (or the next header, or the end), and at least the first key data.
+        const from = end;
+        const data = KEY_DATA.exec(text.slice(from, from + 300));
+        if (!data) continue;
+        const dataEnd = from + data.index + data[0].length;
+        const next = text.indexOf("-----BEGIN ", from);
+        const stop = next < 0 ? text.length : next;
+        const footer = KEY_FOOTER.exec(text.slice(from, stop));
+        end = Math.max(dataEnd, footer ? from + footer.index + footer[0].length : stop);
       } else if (name === PASSWORD_RULE) {
         const creds = m[0].slice(m[0].indexOf("://") + 3, -1);
         if (placeholder(creds.slice(creds.indexOf(":") + 1))) continue;
       } else if (name === "hard-coded secret") {
         if (placeholder(value) || !/[0-9]/.test(value) || !/[A-Za-z]/.test(value)) continue;
       }
-      return name;
+      if (add(name, m.index, end)) return hits;
     }
   }
 
   ADDRESS.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = ADDRESS.exec(text))) {
+    const start = m.index;
+    const end = m.index + m[0].length;
     ADDRESS.lastIndex = m.index + m[1]!.length + 3; // a URL inside another one is still seen
     const auth = /^[^/?#]*/.exec(m[2]!)![0];
     const at = auth.lastIndexOf("@");
     if (at >= 0) {
       const user = auth.slice(0, at);
       const colon = user.indexOf(":");
-      if (colon >= 0 && realPassword(user.slice(colon + 1))) return PASSWORD_RULE;
+      if (colon >= 0 && realPassword(user.slice(colon + 1))) {
+        if (add(PASSWORD_RULE, start, end)) return hits;
+        continue;
+      }
     }
-    if (ENDPOINT_SCHEMES.has(m[1]!.toLowerCase()) && realHost(hostOf(auth.slice(at + 1)))) return ENDPOINT_RULE;
+    if (ENDPOINT_SCHEMES.has(m[1]!.toLowerCase()) && realHost(hostOf(auth.slice(at + 1))) && add(ENDPOINT_RULE, start, end)) return hits;
   }
 
   ORACLE.lastIndex = 0;
   while ((m = ORACLE.exec(text))) {
+    const start = m.index;
+    const end = m.index + m[0].length;
     const slash = m[1]!.indexOf("/");
-    if (slash >= 0 && realPassword(m[1]!.slice(slash + 1))) return PASSWORD_RULE;
-    if (realHost(hostOf(m[2]!))) return ENDPOINT_RULE;
+    if (slash >= 0 && realPassword(m[1]!.slice(slash + 1))) {
+      if (add(PASSWORD_RULE, start, end)) return hits;
+    } else if (realHost(hostOf(m[2]!)) && add(ENDPOINT_RULE, start, end)) return hits;
   }
-  return undefined;
+  return hits;
+}
+
+/** The name of the first rule the text trips, or undefined. Never returns any part of the text. */
+export function credentialProblem(text: string): string | undefined {
+  return collect(text, true)[0]?.rule;
+}
+
+/** Every credential or endpoint in the text, in check order. Positions only: no part of the text is returned. */
+export function credentialHits(text: string): CredentialHit[] {
+  return collect(text, false);
 }
 
 /** True when the path is a credential file by its name (.env, *.pem, id_rsa, …). */
