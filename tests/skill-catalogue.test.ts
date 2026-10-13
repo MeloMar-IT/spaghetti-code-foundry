@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import {
-  buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, renderSkillCatalogue, type CatalogueOptions,
+  buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, providerEvidence, renderSkillCatalogue, SkillCatalogueSchema, type CatalogueOptions,
 } from "../src/skills/catalogue.js";
 import { discoverSkills, type RegisteredSkill } from "../src/skills/registry.js";
 import { buildRepoProfile } from "../src/skills/repo-profile.js";
@@ -319,5 +319,62 @@ describe("delimiter safety", () => {
     const c = buildSkillCatalogue(many(8, "<".repeat(150)), { limits: { maxTokens: 400 } });
     expect(c.estimatedTokens).toBe(estimateTokens(renderSkillCatalogue(c)));
     expect(c.estimatedTokens).toBeLessThanOrEqual(c.limits.maxTokens);
+  });
+});
+
+describe("provider evidence", () => {
+  const withProvider = (id: string, provider: unknown, over: Parameters<typeof sk>[1] = {}) => {
+    const s = sk(id, over);
+    (s.pkg as unknown as { provider: unknown }).provider = provider;
+    return s;
+  };
+  const full = { name: "confluent", products: [{ name: "confluent-platform", version: "7.6" }, { name: "schema-registry" }], tools: ["confluent-cli"] };
+
+  it("writes the exact line first", () => {
+    const c = buildSkillCatalogue(reg(withProvider("a", full)));
+    expect(c.entries[0]!.evidence).toEqual(["needs provider: confluent (confluent-platform 7.6, schema-registry; tools: confluent-cli)"]);
+  });
+  it("writes name only and tools only", () => {
+    expect(providerEvidence({ name: "acme", products: [], tools: [] })).toBe("needs provider: acme");
+    expect(providerEvidence({ name: "acme", products: [], tools: ["x"] })).toBe("needs provider: acme (tools: x)");
+  });
+  it("shows three items and counts the rest", () => {
+    const p = { name: "acme", products: ["a", "b", "c", "d", "e"].map((name) => ({ name })), tools: [] };
+    expect(providerEvidence(p)).toBe("needs provider: acme (a, b, c, +2 more)");
+  });
+  it("is bounded, still valid, and written without raw angle brackets", () => {
+    const products = Array.from({ length: 16 }, (_, i) => ({ name: `product-${i}`, version: "9".repeat(64) }));
+    const line = providerEvidence({ name: "acme", products, tools: [] });
+    expect(line.length).toBeLessThanOrEqual(100);
+    expect(line.endsWith("…")).toBe(true);
+    const c = buildSkillCatalogue(reg(withProvider("a", { name: "acme", products: [{ name: "p", version: "<b>" }], tools: [] })));
+    expect(SkillCatalogueSchema.safeParse(c).success).toBe(true);
+    expect(renderSkillCatalogue(c)).toContain("\\u003cb>");
+    expect(renderSkillCatalogue(c)).not.toContain("<b>");
+  });
+  it("comes before the task line and keeps two lines", () => {
+    const c = buildSkillCatalogue(reg(withProvider("java", full, { capabilities: ["java"] })), { task: "use java" });
+    const ev = c.entries[0]!.evidence;
+    expect(ev).toHaveLength(2);
+    expect(ev[0]!.startsWith("needs provider: confluent")).toBe(true);
+    expect(ev[1]).toBe("named in the task: java");
+  });
+  it("leaves a portable skill and the ranking unchanged", () => {
+    const plain = buildSkillCatalogue(reg(sk("a"), sk("b")));
+    const mixed = buildSkillCatalogue(reg(withProvider("a", full), sk("b")));
+    expect(ids(mixed)).toEqual(ids(plain));
+    expect(mixed.entries[1]!.evidence).toEqual([]);
+  });
+  it("keeps a configuration with eight pinned skills and the default budget valid", () => {
+    const include = Array.from({ length: 8 }, (_, i) => `skill-${i}`);
+    expect(ConfigSchema.safeParse({ skills: { catalogue: { include } } }).success).toBe(true);
+  });
+  it("keeps the line when a pinned entry is shortened, and fails when it cannot fit", () => {
+    const skills = Array.from({ length: 10 }, (_, i) => withProvider(`s${i}`, full, { description: "d".repeat(150), capabilities: ["x", "y", "z"] }));
+    const include = skills.map((s) => s.id);
+    const c = buildSkillCatalogue(reg(...skills), { include, limits: { maxTokens: 700 } });
+    expect(c.truncated.shortened.length).toBeGreaterThan(0);
+    for (const e of c.entries) expect(e.evidence[0]).toContain("needs provider: confluent");
+    expect(() => buildSkillCatalogue(reg(...skills), { include, limits: { maxTokens: 300 } })).toThrow("pinned skills do not fit the catalogue limits");
   });
 });

@@ -64,6 +64,15 @@ describe("skillsCommand", () => {
     expect(existsSync(lockFile())).toBe(false);
   });
 
+  it("shows the provider name next to a vendor-specific skill only", async () => {
+    const d = pkg(builtin, "vendor-skill");
+    writeFileSync(join(d, "skill.yaml"), "id: vendor-skill\nversion: 1.0.0\nprovider:\n  name: acme\n");
+    pkg(builtin, "portable-skill");
+    const lines = (await sk([])).out.split("\n");
+    expect(lines.find((l) => l.startsWith("vendor-skill"))).toContain(" provider acme");
+    expect(lines.find((l) => l.startsWith("portable-skill"))).not.toContain("provider");
+  });
+
   it("pin --builtin pins, and the list shows it", async () => {
     pkg(builtin, "small-changes");
     expect((await sk(["pin"], { builtin: true })).out).toBe("Pinned small-changes@1.0.0");

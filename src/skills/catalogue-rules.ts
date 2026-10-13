@@ -12,5 +12,8 @@ export const CATALOGUE_DETAIL: Record<CatalogueDetail, { descriptionChars: numbe
   minimal: { descriptionChars: 40, capabilities: 1, evidence: 0 },
 };
 export const CATALOGUE_TEXT = { evidenceChars: 100, pathChars: 60, textTerms: 3, bytesPerToken: 4 } as const;
-/** Worst-case estimated tokens: the header line, and one minimal entry (64-char id, version and capability, 40 four-byte chars). */
+/**
+ * Worst-case estimated tokens: the header line, and one minimal entry (64-char id, version and capability, 40 four-byte chars).
+ * A provider line (#509) is not counted here, so existing configurations stay valid; buildSkillCatalogue checks the real entries.
+ */
 export const CATALOGUE_COST = { header: 45, minimalEntry: 110 } as const;

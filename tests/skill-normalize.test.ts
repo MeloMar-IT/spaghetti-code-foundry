@@ -481,3 +481,81 @@ describe("shadowing", () => {
     expect(c.skills[0]!.package.id).not.toBe(a.skills[0]!.package.id);
   });
 });
+
+describe("provider", () => {
+  const BLOCK = "provider:\n  name: Acme\n  products: [{ name: zeta, version: 2 }, 'alpha@1.5']\n  tools: [b-tool, a-tool]\n";
+  const EXPECTED = { name: "acme", products: [{ name: "alpha", version: "1.5" }, { name: "zeta", version: "2" }], tools: ["a-tool", "b-tool"] };
+  const inFm = (block: string) => ({ "SKILL.md": md("pv", block) });
+
+  it("a skill without a block is portable and keeps schema 1", () => {
+    const s = good({ "SKILL.md": md("pv") });
+    expect(s.provenance.provider).toBeUndefined();
+    expect(s.package.provider).toBeUndefined();
+    expect(s.provenance.schema).toBe(1);
+  });
+  it("reads skill.yaml, sorted, and consumes the key", () => {
+    const s = good(yamlOf("pv", "", BLOCK));
+    expect(s.provenance.provider).toEqual(EXPECTED);
+    expect(s.package.provider).toEqual(EXPECTED);
+    expect(Object.keys(s.provenance.upstream)).not.toContain("manifest.provider");
+    expect(s.provenance.layout).toBe("foundry");
+  });
+  it("reads the frontmatter and the metadata map", () => {
+    const fmSkill = good(inFm("provider: { name: acme }\n"));
+    expect(fmSkill.provenance.provider).toEqual({ name: "acme", products: [], tools: [] });
+    expect(fmSkill.provenance.layout).toBe("extended");
+    const metaSkill = good(inFm("metadata:\n  provider: { name: acme }\n"));
+    expect(metaSkill.provenance.provider?.name).toBe("acme");
+    expect(metaSkill.provenance.layout).toBe("metadata");
+  });
+  it("skill.yaml wins over frontmatter, and frontmatter over metadata", () => {
+    expect(good(yamlOf("pv", "provider: { name: fm }\n", "provider: { name: yml }\n")).provenance.provider?.name).toBe("yml");
+    expect(good(inFm("provider: { name: fm }\nmetadata:\n  provider: { name: meta }\n")).provenance.provider?.name).toBe("fm");
+  });
+  it("reads the lenient forms", () => {
+    expect(good(inFm("provider: Confluent\n")).provenance.provider).toEqual({ name: "confluent", products: [], tools: [] });
+    const p = good(inFm("provider: { name: a, products: ['confluent-platform@7.6', { name: x, version: 7 }], tools: 'b, a' }\n")).provenance.provider;
+    expect(p).toEqual({ name: "a", products: [{ name: "confluent-platform", version: "7.6" }, { name: "x", version: "7" }], tools: ["a", "b"] });
+  });
+  const list = (n: number, f: (i: number) => string) => Array.from({ length: n }, (_, i) => f(i)).join(", ");
+  const slugMsg = "provider: name cannot be made a lower-case slug of 1–64 characters";
+  const bad: [string, string, string][] = [
+    ["a name that is no slug", "provider: { name: '!!!' }\n", slugMsg],
+    ["a number", "provider: 5\n", "provider: must be a map with a name"],
+    ["a list", "provider: [a]\n", "provider: must be a map with a name"],
+    ["null", "provider: null\n", "provider: must be a map with a name"],
+    ["an unknown key", "provider: { name: a, extra: 1 }\n", "provider: has a key that is not name, products or tools"],
+    ["products that are no list", "provider: { name: a, products: x }\n", "provider: products must be a list"],
+    ["a product that is a number", "provider: { name: a, products: [1] }\n", "provider: a product is not text or a map with a name"],
+    ["a product with an unknown key", "provider: { name: a, products: [{ name: p, extra: 1 }] }\n", "provider: a product is not text or a map with a name"],
+    ["a product name", "provider: { name: a, products: ['!!!'] }\n", "provider: a product name is not usable"],
+    ["a version that is no text", "provider: { name: a, products: [{ name: p, version: [1] }] }\n", "provider: a product version must be text"],
+    ["a version that is a fraction", "provider: { name: a, products: [{ name: p, version: 7.6 }] }\n", "provider: a product version must be text"],
+    ["a long version", `provider: { name: a, products: [{ name: p, version: ${"v".repeat(65)} }] }\n`, "provider: a product version is longer than 64 characters"],
+    ["a version with a control character", 'provider: { name: a, products: [{ name: p, version: "1\\n2" }] }\n', "provider: a product version holds control characters"],
+    ["17 products", `provider: { name: a, products: [${list(17, (i) => `p${i}`)}] }\n`, "provider: more than 16 products"],
+    ["a product twice", "provider: { name: a, products: [p, p@1] }\n", "provider: a product is listed twice"],
+    ["tools that are no list", "provider: { name: a, tools: [1] }\n", "provider: tools must be a list of text"],
+    ["products that are null", "provider: { name: a, products: null }\n", "provider: products must be a list"],
+    ["tools that are null", "provider: { name: a, tools: null }\n", "provider: tools must be a list of text"],
+    ["a blank tool", "provider: { name: a, tools: [' '] }\n", "provider: a tool is not a lower-case slug"],
+    ["17 repeated tools", `provider: { name: a, tools: [${list(17, () => "t")}] }\n`, "provider: more than 16 tools"],
+    ["a tool twice", "provider: { name: a, tools: [t, t] }\n", "provider: a tool is listed twice"],
+    ["a tool that is no slug", "provider: { name: a, tools: ['!!!'] }\n", "provider: a tool is not a lower-case slug"],
+    ["17 tools", `provider: { name: a, tools: [${list(17, (i) => `t${i}`)}] }\n`, "provider: more than 16 tools"],
+  ];
+  for (const [label, block, reason] of bad) {
+    it(`rejects ${label}`, () => {
+      expect(reasons(inFm(block))).toContain(reason);
+    });
+  }
+  it("rejects a null instead of letting it hide a lower-priority block", () => {
+    expect(reasons(yamlOf("pv", "provider: { name: fm }\n", "provider: null\n"))).toContain("provider: must be a map with a name");
+    expect(reasons(inFm("provider: null\nmetadata:\n  provider: { name: meta }\n"))).toContain("provider: must be a map with a name");
+  });
+  it("keeps other reasons next to a provider reason", () => {
+    const r = reasons(inFm("provider: 5\nversion: nope\n"));
+    expect(r).toContain("version: cannot be read as a version like 1.2.3");
+    expect(r.some((x) => x.startsWith("provider:"))).toBe(true);
+  });
+});

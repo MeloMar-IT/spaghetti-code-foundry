@@ -353,3 +353,12 @@ describe("compatibility", () => {
     expect(loadRun(runs, "old-run")).toMatchObject({ runId: "old-run", status: "succeeded" });
   });
 });
+
+describe("provider block", () => {
+  it("returns products and tools sorted", () => {
+    const yaml = YAML + "provider:\n  name: acme\n  products: [{ name: zeta, version: '2' }, { name: alpha }]\n  tools: [b-tool, a-tool]\n";
+    const p = parseSkillPackage(replace("skill.yaml", yaml));
+    expect(p.provider).toEqual({ name: "acme", products: [{ name: "alpha" }, { name: "zeta", version: "2" }], tools: ["a-tool", "b-tool"] });
+    expect("provider" in parseSkillPackage(base())).toBe(false);
+  });
+});

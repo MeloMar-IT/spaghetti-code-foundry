@@ -7,7 +7,7 @@ import { byteCmp } from "./import-plan.js";
 import { relateSkills, type SkillIdentity } from "./identity.js";
 import type { NormalizedSkill, SkillProvenance } from "./normalize.js";
 import { canonicalJson } from "./normalize-values.js";
-import type { SkillPackage, SkillRisk, SkillToolProfile } from "./schema.js";
+import type { SkillPackage, SkillProvider, SkillRisk, SkillToolProfile } from "./schema.js";
 import { shownValue, type SkillLibrarySource, type SourceTrustTier } from "./sources.js";
 
 // Classifies collisions between normalized skills and merges candidates with the same content into one entry. Pure: no file
@@ -39,6 +39,8 @@ export interface MemberSettings {
   requiredTools: string[];
   /** Unrecognised `skill.yaml` keys: `manifest.<key>` → canonical JSON. */
   manifest: Record<string, string>;
+  /** The provider block (#509); absent for a portable skill. */
+  provider?: SkillProvider;
 }
 export interface CollisionMember {
   id: string;
@@ -162,6 +164,7 @@ function settingsOf(skill: NormalizedSkill, targets: Readonly<Record<string, str
       };
     })
     .sort((a, b) => byteCmp(a.name, b.name));
+  const provider = provenance.provider ?? pkg.provider;
   const manifest: Record<string, string> = {};
   for (const k of Object.keys(provenance.upstream).sort(byteCmp)) if (k.startsWith("manifest.")) manifest[k] = provenance.upstream[k]!;
   return {
@@ -173,6 +176,7 @@ function settingsOf(skill: NormalizedSkill, targets: Readonly<Record<string, str
     technologies: provenance.technologies.map((t) => ({ ...t })).sort((a, b) => byteCmp(a.name, b.name) || byteCmp(a.version ?? "", b.version ?? "")),
     requiredTools: sorted(provenance.requiredTools),
     manifest,
+    ...(provider ? { provider: { name: provider.name, products: provider.products.map((p) => ({ ...p })).sort((a, b) => byteCmp(a.name, b.name)), tools: sorted(provider.tools) } } : {}),
   };
 }
 

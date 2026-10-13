@@ -29,10 +29,11 @@ export const FIELD_ALIASES = {
   dependencies: ["dependencies", "depends-on"],
   technologies: ["technologies", "requires", "engines"],
   tools: ["tools"],
+  provider: ["provider"],
 } as const;
 
 /** Keys of skill.yaml that are read; the others are kept as provenance. */
-export const MANIFEST_FIELDS = ["version", "capabilities", "dependencies", "category", "tool_profile", "connectors", "risk"] as const;
+export const MANIFEST_FIELDS = ["version", "capabilities", "dependencies", "category", "tool_profile", "connectors", "risk", "provider"] as const;
 
 export const MCP_TOOL_PREFIX = "mcp__";
 
