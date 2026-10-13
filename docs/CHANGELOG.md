@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
+  - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
+  - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".
+  - **States.** `done` (closed, or with a done label), `working`, `waiting`, `your_turn`, `failed` (the run states), `split` (a closed original that has parts) and `dropped` (closed as not planned, without parts). Split and dropped stories are shown but left out of the totals. A story without the watcher's label is `waiting` and counted as "not handed to the Foundry yet".
+  - **Growth.** Stories at the start, stories now and how many were split, as text: "21 at the start, 95 now (16 were split)". "At the start" = the stories that existed when the epic issue's first day ended, counting originals and not their later parts.
+  - **Series and finish.** A per-day series of "stories in the epic" and "stories done", rebuilt from the created and closed dates. A finished epic gives when it finished (the latest close among done, split and dropped stories) and how long it took. A done story without a close date (done by label) leaves the finish time unknown.
+  - **Not used yet.** No route, page or command calls the module yet; the watcher's tracked states come in part 5.
+  - Tests in new `tests/epics-model.test.ts`. No user-visible behaviour changed, so `docs/USER_GUIDE.md` is not changed.
 - Refinement: the architect can be asked in several sessions at once; the runs wait in line.
   - **Before.** While the architect was queued, running or paused for one session, asking in another session of the same account answered 409 ("the architect is reading for another of your sessions"). The person had to come back later.
   - **Now.** The ask is accepted. All architect runs of one account share one scheduler lock (`architectLock` in `src/refinement/architect.ts`), so one works and the others wait in the queue in the order they were asked. One run per session stays (409). A paused run of another session no longer refuses a new one.
