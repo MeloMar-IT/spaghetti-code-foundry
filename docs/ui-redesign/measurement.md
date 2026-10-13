@@ -170,4 +170,18 @@ The eight essential journeys of `tests/browser/essential.spec.ts`, run in Chromi
 | 7 Repositories | pass | pass | pass | pass |
 | 8 Sign out | pass | pass | pass | pass |
 
-The Ask SCF drawer is not covered: it is switched off on the seeded servers, so the spec only checks that `#ask-scf` stays hidden and empty.
+The Ask SCF drawer is not built on the seeded servers: it is switched off there, so the spec only checks that `#ask-scf` stays hidden and empty.
+
+### Stress content at 360 px
+
+The seven items of `tests/browser/stress.spec.ts`, run in Chromium at 360 px as a touch device. The journeys above cover 360, 768, 1024 and 1440 px; these items go further at 360 px only. Filled from a real run. The Ask SCF drawer is not built, so it is not part of this table.
+
+| Content | Result |
+|---|---|
+| 1 Repository name | pass |
+| 2 Text 40 % longer | pass |
+| 3 Status of 2,000 characters | pass |
+| 4 Log of 5,000 lines | pass |
+| 5 Large diff | pass |
+| 6 Board with 30 cards | pass |
+| 7 Tall dialog | pass |
