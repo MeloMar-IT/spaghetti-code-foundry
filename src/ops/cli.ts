@@ -19,9 +19,10 @@ export const JOBS: Record<string, Job> = {
   limits: { name: "limits", everySec: 3600 },
   blockage: { name: "blockage", everySec: 3600 },
   digest: { name: "digest", daily: { hour: 7, minute: 30 } },
+  housekeeping: { name: "housekeeping", everySec: 3 * 3600 },
 };
 
-export const OPS_USAGE = `usage: scf governor|flaky|limits|blockage|digest run        Do one check now
+export const OPS_USAGE = `usage: scf governor|flaky|limits|blockage|digest|housekeeping run   Do one check now
        scf governor|flaky|limits|blockage|digest report     Print the last result
        scf governor|flaky|limits|blockage|digest install    Run it by itself (macOS login agent); uninstall removes it
        scf governor|flaky|limits|blockage|digest status
@@ -196,6 +197,10 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
     }
   };
   const extra = [
+    part("Housekeeping", () => {
+      const h = latest<{ memory?: { fseventsdGb: number; serverGb: number }; warnings?: string[]; cleaned?: { workspaces: number; freedMb: number } }>("housekeeping");
+      return [...(h.warnings ?? []), ...(h.cleaned ? [`the nightly clean-up removed ${h.cleaned.workspaces} old workspaces (${h.cleaned.freedMb} MB)`] : [])];
+    }),
     part("Holds work up", () => (latest<{ blockers: { story: string; holdsUp: string[]; state: string }[] }>("blockage").blockers ?? []).slice(0, 3).map((b) => (b.holdsUp.length ? `${b.story} holds up ${b.holdsUp.length} (${b.state})` : `${b.story} (${b.state})`))),
     part("Usage limits", () => (latest<{ forecasts: { family: string; percentNow?: number; emptyAt?: string }[] }>("limits").forecasts ?? []).filter((f) => f.percentNow !== undefined).map((f) => `${f.family}: about ${f.percentNow}% of the week used${f.emptyAt ? `; at this pace reached ${f.emptyAt.slice(0, 16).replace("T", " ")} UTC, before the reset` : ""}`)),
     part("Models", () => {
@@ -251,7 +256,12 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
     case "run": {
       const now = new Date();
       if (name === "governor") governor(out);
-      else if (name === "flaky") {
+      else if (name === "housekeeping") {
+        const { runHousekeeping, readPs } = await import("./housekeeping.js");
+        const r = runHousekeeping({ dir, runsDir: join(dataDir(), "runs"), now, ps: readPs() });
+        for (const text of r.notify) await sendDesktop({ title: "Foundry housekeeping", message: text });
+        out(`${now.toISOString()} fseventsd ${r.result.memory.fseventsdGb} GB, server ${r.result.memory.serverGb} GB${r.result.cleaned ? `; cleaned ${r.result.cleaned.workspaces} workspaces, ${r.result.cleaned.freedMb} MB` : ""}${r.result.warnings.length ? ` — ${r.result.warnings.length} warning(s)` : ""}`);
+      } else if (name === "flaky") {
         const r = runFlaky({ runsDir: join(dataDir(), "runs"), dir, now, file: ghFile });
         out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
         for (const f of r.filed) out(`  filed: ${f}`);

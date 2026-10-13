@@ -2177,7 +2177,7 @@ a file of their own in `governor/caps/`, and the governor writes `test-slots/cap
 server, and the server does not need them. Every one has the same commands:
 
 ```bash
-scf governor install    # also: flaky, limits, blockage, digest
+scf governor install    # also: flaky, limits, blockage, digest, housekeeping
 scf governor run        # one check now
 scf governor report     # the last result
 scf governor status     # uninstall removes it and what it set
@@ -2193,6 +2193,7 @@ the file is there and nothing runs: run `install` again.
 | `limits` | every hour | Says when the weekly Claude and Codex limits are reached at the current pace. |
 | `blockage` | every hour | Finds the stories that hold up the most others, and says when run slots are empty. |
 | `digest` | daily at 07:30 | One short report: what was done, what failed, what waits for you. |
+| `housekeeping` | every 3 hours | Records the memory of the system's file-change tracker and of the Foundry server, and once a night removes the workspaces of old runs. |
 
 **Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
 at once for a while. The lowest cap that still holds counts, never below 1 and never above the
@@ -2256,6 +2257,16 @@ the root, the number they hold up through the chain, and their state; stories ar
 repository. Stories that wait for each other in a circle are listed first, as one entry: that never
 ends by itself. A run that says "running" while its process is gone is shown as interrupted. The
 report says so when run slots are empty while stories wait.
+
+**Housekeeping.** Every run installs and deletes very many small files, and macOS keeps track of
+every change. On a machine that runs for days, the system's file-change tracker (`fseventsd`) once
+grew to tens of gigabytes this way and left too little memory for the work. So every 3 hours this
+helper writes one line to `housekeeping/memory.log` with the memory of `fseventsd` and of the
+Foundry server. Above 8 GB for the tracker or 6 GB for the server it sends one notification that
+day, and the digest names it. The tracker only shrinks with a restart of the machine. Once a night,
+at the first check after 03:00, it removes the workspaces of runs that ended more than 2 days ago,
+as `scf clean --older-than 2` does: run records, logs and branches stay, and active or paused
+runs are not touched.
 
 **The digest.** For the last 24 hours, from the newest run of each story: done, split into smaller
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,

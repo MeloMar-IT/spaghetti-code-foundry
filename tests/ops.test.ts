@@ -725,3 +725,67 @@ describe("the login agents of the helpers", () => {
     expect(loadCaps().limits).toBeUndefined();
   });
 });
+
+describe("housekeeping", () => {
+  const PS = [
+    "  2097152 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd",
+    "  1048576 /usr/local/bin/node /opt/scf/dist/cli.js serve --port 4777 --repo /opt/scf",
+    "   524288 /usr/local/bin/node /opt/scf/dist/cli.js governor run",
+    "  9999999 /Applications/Other.app/Contents/MacOS/Other --serve",
+    "garbage line",
+  ].join("\n");
+  const at = (hour: number, day = 12) => new Date(2026, 9, day, hour, 0, 0);
+
+  it("reads the memory of the file-change tracker and of the server only", async () => {
+    const { memoryFrom, warningsOf } = await import("../src/ops/housekeeping.js");
+    expect(memoryFrom(PS)).toEqual({ fseventsdGb: 2, serverGb: 1 });
+    expect(memoryFrom("")).toEqual({ fseventsdGb: 0, serverGb: 0 });
+    expect(warningsOf({ fseventsdGb: 7.9, serverGb: 5.9 })).toEqual([]);
+    expect(warningsOf({ fseventsdGb: 56, serverGb: 6 }).map((w) => w.key)).toEqual(["fseventsd", "server"]);
+  });
+
+  it("logs every check, warns once a day, and cleans once a night after three", async () => {
+    const { runHousekeeping } = await import("../src/ops/housekeeping.js");
+    const dir = join(tmp(), "housekeeping");
+    const cleans: number[] = [];
+    const clean = ((o: { olderThanDays: number }) => (cleans.push(o.olderThanDays), { workspaces: ["a", "b"], runs: [], freedMb: 1234.4, kept: [], evidence: [] })) as never;
+    const big = PS.replace("2097152", String(56 * 1_048_576));
+    const run = (now: Date, ps = PS) => runHousekeeping({ dir, runsDir: join(dir, "runs"), now, ps, clean });
+
+    // before three at night: no clean-up
+    expect(run(at(1)).result.cleaned).toBeUndefined();
+    const first = run(at(4), big);
+    expect(first.result.cleaned).toEqual({ workspaces: 2, freedMb: 1234 });
+    expect(first.notify).toHaveLength(1);
+    expect(first.notify[0]).toContain("fseventsd) uses 56 GB");
+    // later the same day: no second clean-up and no second notification, but the warning stays in the report
+    const again = run(at(7), big);
+    expect([again.result.cleaned, again.notify, again.result.warnings.length]).toEqual([undefined, [], 1]);
+    // the next night it cleans again
+    expect(run(at(3, 13)).result.cleaned).toEqual({ workspaces: 2, freedMb: 1234 });
+    expect(cleans).toEqual([2, 2]);
+
+    const log = readFileSync(join(dir, "memory.log"), "utf8").trim().split("\n");
+    expect(log).toHaveLength(4);
+    expect(log[1]).toMatch(/ fseventsd=56GB server=1GB cleaned=2 workspaces, 1234 MB$/);
+    expect(readFileSync(join(dir, "report.md"), "utf8")).toContain("Nothing needs you.");
+    expect(JSON.parse(readFileSync(join(dir, "latest.json"), "utf8")).memory).toEqual({ fseventsdGb: 2, serverGb: 1 });
+  });
+
+  it("a clean-up that fails is tried again at the next check and never stops the record", async () => {
+    const { runHousekeeping } = await import("../src/ops/housekeeping.js");
+    const dir = join(tmp(), "housekeeping");
+    let calls = 0;
+    const clean = (() => {
+      if (++calls === 1) throw new Error("disk");
+      return { workspaces: [], runs: [], freedMb: 0, kept: [], evidence: [] };
+    }) as never;
+    expect(runHousekeeping({ dir, runsDir: dir, now: at(4), ps: PS, clean }).result.cleaned).toBeUndefined();
+    expect(runHousekeeping({ dir, runsDir: dir, now: at(7), ps: PS, clean }).result.cleaned).toEqual({ workspaces: 0, freedMb: 0 });
+  });
+
+  it("is a helper of its own that runs every three hours", async () => {
+    const { JOBS } = await import("../src/ops/cli.js");
+    expect(JOBS.housekeeping).toEqual({ name: "housekeeping", everySec: 10800 });
+  });
+});

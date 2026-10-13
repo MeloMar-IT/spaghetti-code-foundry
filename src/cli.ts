@@ -76,7 +76,7 @@ Usage:
   scf analyst run|report|install|uninstall|status|auto on|off|reset
                                                  Every 6 hours: how each model does per step, and where another level fits;
                                                  with \`auto on\` it tries that level by itself and puts it back when worse
-  scf governor|flaky|limits|blockage|digest run|report|install|uninstall|status
+  scf governor|flaky|limits|blockage|digest|housekeeping run|report|install|uninstall|status
                                                  Helper processes: machine load, unreliable tests, usage limits,
                                                  what holds work up, and a daily digest (see the user guide)
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
@@ -522,6 +522,7 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "governor":
+    case "housekeeping":
     case "flaky":
     case "limits":
     case "blockage":
