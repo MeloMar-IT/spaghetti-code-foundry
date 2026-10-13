@@ -1645,6 +1645,8 @@ watchers:
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
 | `owner` | Only for watchers in `config.yaml`: the e-mail of the account that owns the watcher's runs and may read and approve them. Empty: the first admin. It must be an account. A watcher of a repository uses the repository's owner |
 
+**The issue list.** Each issue watcher check reads the repository's issue list once: open and closed issues, newest first, 100 per GitHub call, at most 2,000 issues (20 calls). Watchers of the same repository share that read. The dependency check uses this list. The Foundry keeps the title, state, labels, links and dependencies of each issue, but no issue text, in the data folder (`issue-lists/`). If the list has more than 2,000 issues, the stored list is marked as cut and older issues are not seen by the dependency check. If the read fails, the check uses the previous way of reading open issues and logs the reason.
+
 **Coding agents run the build themselves.** In the issue flows the coding agent may run the
 project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test`, `cargo`,
 `make`) and read-only git commands — so it can check its own work and, for example, regenerate

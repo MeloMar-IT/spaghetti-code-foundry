@@ -10,6 +10,7 @@ import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS
 import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
+import { freshIssueList } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
@@ -240,6 +241,8 @@ export class Watcher {
   private tickToken = 0;
   /** A check that takes longer is given up, so "Check now" and the next check work again (gh has no timeout). */
   checkTimeoutMs = 10 * 60_000;
+  /** Pages of 100 issues the issue list read takes at most per check. */
+  issueListPages = 20;
   private kickAgain = false;
   private setupDone = false;
   private stopped = false;
@@ -337,10 +340,11 @@ export class Watcher {
     if (this.ticking) return;
     this.ticking = true;
     const token = ++this.tickToken;
+    const checkStartedAt = Date.now();
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        this.asRepo(() => this.check()),
+        this.asRepo(() => this.check(token, checkStartedAt)),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             this.tickToken++; // the check that was given up must not write anything more
@@ -382,10 +386,10 @@ export class Watcher {
   }
 
   /** One check; throws when it fails. */
-  private async check() {
+  private async check(token: number, checkStartedAt: number) {
     parseInterval(this.cfg.every);
     await this.setup();
-    if (this.cfg.source === "issues") await this.tickIssues();
+    if (this.cfg.source === "issues") await this.tickIssues(token, checkStartedAt);
     else if (this.cfg.source === "pr-feedback") await this.tickPrs();
     else if (this.cfg.source === "ci-failures") await this.tickCi();
     else await this.tickSchedule();
@@ -633,12 +637,25 @@ export class Watcher {
     return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run), ...extra }));
   }
 
-  private async tickIssues() {
+  private async tickIssues(mine: number, checkStartedAt: number) {
     // A check that was given up (timeout) must not start runs or store holds next to a newer check.
-    const mine = this.tickToken;
+    // `mine` is the token of the tick itself, so a check whose sign-in or setup outlasted the timeout is already given up here.
     const alive = () => { if (mine !== this.tickToken || this.retired) throw new Error("this check was given up"); };
+    alive();
     const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt"]);
     alive();
+    // All issues, read once per check and shared with the other watchers of this repository; also saved as the issue list file.
+    let everyIssue: Issue[] | undefined; // all issues, for the dependency check
+    const list = await freshIssueList(this.repo, { since: checkStartedAt, pages: this.issueListPages, wanted: () => mine === this.tickToken && !this.retired });
+    alive();
+    if (list.ok) {
+      everyIssue = list.issues.map((i) => ({
+        number: i.number, title: i.title, labels: i.labels.map((l) => ({ name: typeof l === "string" ? l : l.name ?? "" })), state: i.state, body: i.body ?? "",
+      }));
+      if (list.saveError) this.d.log(`[${this.cfg.id}] ! issue list not saved: ${list.saveError}`);
+    } else {
+      this.d.log(`[${this.cfg.id}] ! issue list: ${list.error}`);
+    }
     const whole = issues.length < 100;
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
@@ -649,7 +666,6 @@ export class Watcher {
       for (const i of extra) if (!have.has(i.number)) issues.push(i);
     }
     const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels);
-    let everyIssue: Issue[] | undefined; // all issues, fetched once per tick when a dependency must be checked
     const openDepsOf = async (issue: Issue) => {
       if (!/depends\s+on|blocked\s+by/i.test(issue.body ?? "")) return [];
       everyIssue ??= await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "all", "--limit", "500", "--json", "number,title,labels,state,body"]);

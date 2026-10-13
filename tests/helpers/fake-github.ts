@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { resetIssueListReads } from "../../src/queue/issue-list.js";
 
 export const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 
@@ -96,6 +97,8 @@ export function fakeGithub() {
   // The status comments the Foundry remembers must not leak from one test into the next.
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "status-comments.json"), { force: true });
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "issue-states"), { recursive: true, force: true });
+  rmSync(join(process.env.FACTORY_HOME ?? tmp, "issue-lists"), { recursive: true, force: true });
+  resetIssueListReads();
   Object.assign(process.env, {
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_GH_LOG: ghLog,
