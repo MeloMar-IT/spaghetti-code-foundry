@@ -214,15 +214,20 @@ describe("review", () => {
     expect((await get(id)).architect.state).toBe("idle");
   });
 
-  it("refuses a second run while one is live, also from another session", async () => {
+  it("refuses a second run for the session while one is live; another session waits in line", async () => {
     const { id, did } = await withDraft();
+    // made before the first run starts: its brief read would wait in line behind that run
+    const other = await withDraft();
     process.env.FAKE_GH_SLEEP = "20";
     expect((await review(id, did)).status).toBe(202);
     expect((await review(id, did)).status).toBe(409);
-    const other = await withDraft();
-    expect((await review(other.id, other.did)).status).toBe(409);
+    const waiting = await review(other.id, other.did);
+    expect(waiting.status).toBe(202);
+    expect(waiting.json().architect).toMatchObject({ state: "queued", behind: 1 });
+    started!.ctx.scheduler.cancel(waiting.json().architect.runId);
     started!.ctx.scheduler.cancel((await get(id)).architect.runId);
     await failed(id);
+    await failed(other.id);
   });
 
   it("resumes a paused review with the same call, and refuses another draft", async () => {

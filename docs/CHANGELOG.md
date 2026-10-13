@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement: the architect can be asked in several sessions at once; the runs wait in line.
+  - **Before.** While the architect was queued, running or paused for one session, asking in another session of the same account answered 409 ("the architect is reading for another of your sessions"). The person had to come back later.
+  - **Now.** The ask is accepted. All architect runs of one account share one scheduler lock (`architectLock` in `src/refinement/architect.ts`), so one works and the others wait in the queue in the order they were asked. One run per session stays (409). A paused run of another session no longer refuses a new one.
+  - **Page.** A queued session says how many of the account's other sessions are first (`behind` in the architect's state).
+  - Tests in `tests/architect.test.ts` and `tests/ui-refinement-architect.test.ts`; `docs/USER_GUIDE.md` updated.
 - Skill libraries safety 2b: reviewed exceptions, dispositions and the promotion gate (#473). Part 2 of 3 of #202.
   - **Exception file.** `skill-scan-exceptions.yaml` (`schema: 1`), read by `readScanExceptions` and checked by `parseScanExceptions` in `src/skills/scan-exceptions.ts`. One entry suppresses exactly one finding of one package: `finding`, `skill`, `digest`, `reason`, `owner`, `reviewed` and either `expires` or `review: required`. There are no wildcards. A new upstream version has a new digest, so its exceptions no longer apply.
   - **Limits.** An exception lasts at most 365 days after `reviewed`; `reviewed` must not be in the future. At most 200 entries. A problem names its entry and field, and never repeats a credential-like value. Unknown keys are refused.

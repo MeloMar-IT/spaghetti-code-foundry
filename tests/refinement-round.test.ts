@@ -229,16 +229,17 @@ describe("refusals", () => {
     expect(runIds()).toHaveLength(2);
   });
 
-  it("is refused while a brief read runs, and from another session of the account", async () => {
+  it("is refused while a brief read runs for the session; another session without a brief gets no round", async () => {
     const a = await make();
     const b = await make();
     process.env.FAKE_GH_SLEEP = "1";
     await brief(a);
     await running(a);
-    for (const id of [a, b]) {
-      expect((await round(id)).status).toBe(409);
-      expect((await ask(id, "Why?")).status).toBe(409);
-    }
+    expect((await round(a)).status).toBe(409);
+    expect((await ask(a, "Why?")).status).toBe(409);
+    const other = await round(b);
+    expect(other.status).toBe(409);
+    expect(other.error()).toBe("ask the architect to look at the code first");
     expect(runIds()).toHaveLength(1);
     await idle(a);
   });

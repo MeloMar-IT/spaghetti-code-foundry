@@ -136,7 +136,7 @@ describe("start", () => {
 });
 
 describe("one at a time", () => {
-  it("refuses a second start while it runs, and in another session of the account; another account can start", async () => {
+  it("refuses a second start for the same session while it runs; another session of the account waits in line; another account can start", async () => {
     process.env.FAKE_GH_SLEEP = "1";
     const a = await make();
     const b = await make();
@@ -145,12 +145,16 @@ describe("one at a time", () => {
     const s = await until(a, (x) => x.architect.state === "running");
     expect(s.architect.doing).toBe("Clone the repository into repo/ and check out develop (or the default branch)");
     expect((await ask(a)).status).toBe(409);
+    const second = await ask(b);
+    expect(second.status).toBe(202);
+    expect(second.json().architect).toMatchObject({ state: "queued", behind: 1 });
     expect((await ask(b)).status).toBe(409);
     expect((await ask(c, bob)).status).toBe(202);
     await idle(a);
     await idle(c, bob);
-    expect((await ask(b)).status).toBe(202);
-    await idle(b);
+    // the waiting read started by itself and ends with a brief
+    const done = await idle(b);
+    expect(done.brief).toBeTruthy();
   });
 
   it("refuses a second start while queued, and tells the queue which session it is for", async () => {
@@ -170,13 +174,11 @@ describe("one at a time", () => {
   it("refuses generic resume, approve and reject for architect runs and queues nothing", async () => {
     process.env.FAKE_GH_SLEEP = "1";
     const a = await make();
-    const b = await make();
     const { architect } = (await ask(a)).json();
     await until(a, (x) => x.architect.state === "running");
     for (const who of [ann, admin]) {
       for (const action of ["resume", "approve", "reject"]) expect((await call(who, "POST", `/api/runs/${architect.runId}/${action}`, {})).status).toBe(409);
     }
-    expect((await ask(b)).status).toBe(409);
     await idle(a);
     expect(readdirSync(join(tmp, "runs"))).toEqual([architect.runId]);
   });
@@ -237,8 +239,6 @@ describe("paused", () => {
     const s = await paused(id);
     expect(s.architect).toMatchObject({ runId: first, reason: "The usage limit was reached; ask again later" });
     expect(JSON.stringify(s.architect)).not.toMatch(/\$|claude|opus|model/i);
-    const other = await make();
-    expect((await ask(other)).status).toBe(409); // a paused read holds the account
     expect((await call(ann, "POST", `/api/runs/${first}/resume`, {})).status).toBe(409);
     const r = await ask(id);
     expect(r.status).toBe(202);

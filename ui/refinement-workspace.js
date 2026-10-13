@@ -61,11 +61,17 @@ export function activityText(doing, kind = "brief") {
 const QUEUED_DETAIL = { brief: "Then it reads the code.", round: "Then it writes its questions.", question: "Then it answers your question.", suggest: "Then it writes a suggestion.", review: "Then it reviews your draft.", impact: "Then it looks at what your draft touches.", ready: "Then it judges what code could not decide.", split: "Then it looks for ways to split your draft." };
 const RUNNING_TEXT = { brief: "The architect is at work.", round: "The architect is writing its questions.", question: "The architect is answering your question.", suggest: "The architect is writing a suggestion.", review: "The architect is reviewing your draft.", impact: "The architect is looking at what your draft touches.", ready: "The architect is judging the readiness of your draft.", split: "The architect is looking for ways to split your draft." };
 
+/** Why a queued run waits when other sessions of the account are first; "" when none are. */
+function behindText(n) {
+  if (!Number.isInteger(n) || n < 1) return "";
+  return n === 1 ? "It first finishes for another of your sessions. " : `It first finishes for ${n} of your other sessions. `;
+}
+
 /** What the architect is doing, in words: { busy, bad, text, detail }. An unknown or missing state is idle. */
 export function architectStatus(a) {
   const state = a?.state;
   const kind = kindOf(a);
-  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: QUEUED_DETAIL[kind] };
+  if (state === "queued") return { busy: true, text: "The architect is waiting for its turn.", detail: `${behindText(a.behind)}${QUEUED_DETAIL[kind]}` };
   if (state === "running") return { busy: true, text: RUNNING_TEXT[kind], detail: activityText(a.doing, kind) };
   if (state === "paused") return { busy: false, text: "The architect paused.", detail: sentence(text(a.reason)) };
   if (state === "failed") return { busy: false, bad: true, text: "The architect could not finish.", detail: sentence(text(a.reason)) };
