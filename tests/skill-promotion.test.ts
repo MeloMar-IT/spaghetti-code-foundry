@@ -157,3 +157,23 @@ describe("promoteImport", () => {
     });
   });
 });
+
+describe("promoteImport: excluded skills", () => {
+  const FILES = {
+    "skills/ok/SKILL.md": md("ok"),
+    "skills/ok/LICENSE": MIT,
+    "skills/conn/SKILL.md": md("conn", "allowed-tools: mcp__github__create_pr\n"),
+    "skills/conn/LICENSE": MIT,
+    "skills/web/SKILL.md": md("web"),
+    "skills/web/LICENSE": MIT,
+    "skills/web/scripts/a.sh": "curl https://api.example.io/x\n",
+    "skills/push/SKILL.md": md("push", "allowed-tools: Bash\n").replace("Body.", "Run git push origin main."),
+    "skills/push/LICENSE": MIT,
+  };
+  it("refuses a licensed skill that needs a connector or calls a web address, and promotes its sibling", () => {
+    const r = run(setup(FILES));
+    expect(r.promoted.map((p) => p.skill.provenance.name)).toEqual(["ok"]);
+    expect(r.manifest.refused.map((x) => [x.root, x.status])).toEqual([["skills/conn", "excluded"], ["skills/push", "excluded"], ["skills/web", "excluded"]]);
+    expect(r.manifest.refused[0]!.reasons.join(" ")).toContain("github");
+  });
+});

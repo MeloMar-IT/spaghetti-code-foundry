@@ -1,0 +1,14 @@
+# Skill library sources. To enable a source: add `ref.approved` with a full commit id (40 or 64 hex digits),
+# set `status: enabled` and remove `reason`, by pull request after review.
+schema: 1
+sources:
+  - id: openhands-extensions
+    repository: https://github.com/OpenHands/extensions
+    status: disabled
+    reason: waiting for the owner to approve a commit
+    paths: [skills]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT] }
+    update: { cadence: manual }
+    owner: "@MeloMar-IT"

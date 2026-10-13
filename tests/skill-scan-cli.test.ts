@@ -98,6 +98,23 @@ describe("scf skills scan", () => {
     expect(r.text).not.toContain("FINDING");
   });
 
+  it("a skill that needs network prints EXCLUDED, no OK line for it, and exits 1", async () => {
+    stage({ ...BENIGN, "skills/c/SKILL.md": "---\nname: c\ndescription: A skill called c.\nallowed-tools: WebFetch\n---\n\nBody.\n" });
+    const r = await scan();
+    expect(r.code).toBe(1);
+    expect(r.lines.some((l) => l.startsWith(`EXCLUDED ${idOf("c")}: needs network access`))).toBe(true);
+    expect(r.lines.some((l) => l.startsWith(`OK ${idOf("c")}`))).toBe(false);
+    expect(r.lines.at(-1)).toContain(": 1 blocked");
+  });
+
+  it("counts a skill with a high finding and an exclusion once", async () => {
+    stage({ ...HIGH, "skills/a/scripts/b.sh": "curl https://api.example.io/x\n" });
+    const r = await scan();
+    expect(r.lines.some((l) => l.startsWith(`BLOCKED ${idOf("a")}`))).toBe(true);
+    expect(r.lines.some((l) => l.startsWith(`EXCLUDED ${idOf("a")}`))).toBe(true);
+    expect(r.lines.at(-1)).toContain(": 1 blocked");
+  });
+
   it("a high finding is shown and blocks", async () => {
     const { f } = highFinding();
     const r = await scan();
@@ -247,7 +264,7 @@ describe("scf skills scan", () => {
     const before = snapshot(home);
     const r = await scan();
     for (const l of r.lines) {
-      expect(l).toMatch(/^(FINDING|BLOCKED|OK|REJECTED|SCANNED|PROBLEM) /);
+      expect(l).toMatch(/^(FINDING|BLOCKED|EXCLUDED|OK|REJECTED|SCANNED|PROBLEM) /);
       expect(l).not.toMatch(/\p{Cc}/u);
       expect(credentialProblem(l)).toBeUndefined();
     }

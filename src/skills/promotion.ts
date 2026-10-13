@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { byteCmp, SkillImportError, type ImportRecord } from "./import-plan.js";
+import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { evaluateLicence, type LicenceEvidence, type LicenceFileRecord, type LicenceStatus } from "./licence.js";
 import type { NormalizedSkill } from "./normalize.js";
 import { isUtcTime } from "./release.js";
@@ -7,7 +8,8 @@ import type { SkillFile } from "./schema.js";
 import { shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Decides, per skill of a normalized import, whether it may be promoted: its licence must be accepted by the policy of
-// licence.ts. Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
+// licence.ts, and it must not need a live integration, use the network or ship plugin configuration (import-exclusions.ts;
+// such a skill is refused with status "excluded"). Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
 // no clock. Nothing calls it yet; the story that writes approved artifacts must call it and keep `attribution`.
 
 export interface PackageProvenance {
@@ -40,7 +42,7 @@ export interface PromotionManifest {
   /** Sorted by id. */
   packages: PackageProvenance[];
   /** Sorted by root. */
-  refused: { root: string; status: Exclude<LicenceStatus, "allowed">; reasons: string[] }[];
+  refused: { root: string; status: Exclude<LicenceStatus, "allowed"> | "excluded"; reasons: string[] }[];
 }
 export interface PromotedPackage {
   skill: NormalizedSkill;
@@ -92,6 +94,11 @@ export function promoteImport(input: {
   const refused: PromotionManifest["refused"] = [];
   for (const skill of skills) {
     const p = skill.provenance;
+    const excluded = importExclusions(skill);
+    if (excluded.length > 0) {
+      refused.push({ root: shownValue(p.root), status: "excluded", reasons: exclusionReasons(excluded) });
+      continue;
+    }
     const verdict = evaluateLicence({ root: p.root, ...(skill.package.license === undefined ? {} : { declared: skill.package.license }), allow: source.licence.allow, evidence });
     if (verdict.status !== "allowed") {
       refused.push({ root: shownValue(p.root), status: verdict.status, reasons: verdict.reasons });
