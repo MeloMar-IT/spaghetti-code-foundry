@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Epics 3: build order, dependency chains and the critical path (#485). Part 3 of 7 of #408.
+  - **What it does.** New pure module `src/epics/chains.ts`: `buildChains` takes an epic's stories (from `src/epics/model.ts`) and the saved issue records (`IssueRecord`), and returns the build order, the chains as a graph (nodes and "depends on" edges), the outside dependencies, the cycles and the critical path. No server, no GitHub, no files, no clock. The depends-on numbers come from the records; no issue text is read.
+  - **Build order.** A story comes after everything it depends on; ties go to the lower issue number. The order is the same for any input order.
+  - **Graph.** Edges only join stories of the epic. A dependency outside the epic is named (`outside`, with its title when known) and not followed. A done story is a node like any other. Each node has its level (0 = depends on nothing in the epic), and the critical edges and nodes are marked, so the UI can draw the graph without another calculation.
+  - **Critical path.** The longest chain of stories, counting only stories not yet done. `remaining` is how many of them are still to do, and `at` is the first not-done story on the path. Done stories may sit in the middle of the path. An epic with everything done has an empty path.
+  - **Split originals.** A dependency on a split original is followed to its parts (also a part of a part). A part never waits for its own original. A dropped story is ignored.
+  - **Cycles.** A cycle does not hang or throw: its stories are reported in `cycles` and marked with `CYCLE_WORDS` ("depend on each other"), and each of them counts once on the path.
+  - **Not used yet.** No route, page or command calls the module yet.
+  - Tests in new `tests/epics-chains.test.ts`: no dependencies, one chain, a diamond, two chains of equal length, a done story in the middle, a cycle, a split original, and more. No user-visible behaviour changed, so `docs/USER_GUIDE.md` is not changed.
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".
