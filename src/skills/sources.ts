@@ -2,6 +2,7 @@ import { lstatSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { parseRepoUrl, RepoError } from "../auth/repo-url.js";
 import { rangeSatisfied } from "./canonical-facts.js";
+import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
@@ -356,6 +357,9 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
         }
       }
     }
+
+    // connector: a reviewed repository limits what an entry may select
+    if (repositoryKey) for (const m of connectorProblems({ repositoryKey, paths, adapter, trust, licence: { allow } })) err("", m);
 
     // owner
     const owner = text(e.owner, "owner");

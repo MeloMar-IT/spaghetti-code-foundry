@@ -122,6 +122,15 @@ describe("skillsCommand", () => {
     expect(readFileSync(lockFile())).toEqual(before);
   });
 
+  it("connectors lists the connectors and touches nothing", async () => {
+    const r = await sk(["connectors"]);
+    const lines = r.out.split("\n");
+    expect(r.code).toBe(0);
+    expect(lines[0]).toMatch(/^awesome-copilot\s+github\.com\/github\/awesome-copilot skills agent-skills community MIT track main$/);
+    expect(lines.at(-1)).toBe("OK 1 connector");
+    expect(existsSync(lockFile())).toBe(false);
+  });
+
   const refused: [string, string[], Record<string, unknown>][] = [
     ["unpin with --replace", ["unpin", "x@1.0.0"], { replace: true }],
     ["list with --builtin", [], { builtin: true }],
@@ -133,6 +142,8 @@ describe("skillsCommand", () => {
     ["unpin garbage", ["unpin", "garbage"], {}],
     ["pin garbage", ["pin", "garbage", D], {}],
     ["pin a bad digest", ["pin", "x@1.0.0", "sha256:zz"], {}],
+    ["connectors with an operand", ["connectors", "x"], {}],
+    ["connectors with an option", ["connectors"], { replace: true }],
     ["unknown sub-command", ["frobnicate"], {}],
   ];
   for (const [name, positionals, values] of refused) {

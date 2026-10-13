@@ -48,6 +48,7 @@ Usage:
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
+  scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
@@ -228,8 +229,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `scan …`, `assess …` and `evaluate …` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "scan" || arg === "assess" || arg === "evaluate"))) {
+  // `scf skills sources …`, `scan …`, `assess …`, `evaluate …` and `connectors` only read: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "sources" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }

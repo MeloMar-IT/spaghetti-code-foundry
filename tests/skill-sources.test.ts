@@ -294,3 +294,64 @@ describe("scf skills sources check", () => {
     }
   });
 });
+
+describe("connector rules", () => {
+  const ac = (o: Record<string, unknown> = {}) =>
+    valid({ id: "my-copy", repository: "https://github.com/github/awesome-copilot", licence: { allow: ["MIT"] }, ...o });
+
+  it("accepts a source that follows the connector", () => {
+    expect(check(ac())).toEqual([]);
+    expect(check(ac({ paths: ["skills/demo"] }))).toEqual([]);
+  });
+
+  it.each([
+    ["root", { paths: ["."] }],
+    ["agents", { paths: ["agents"] }],
+    ["hooks", { paths: ["hooks"] }],
+    ["workflows", { paths: ["workflows"] }],
+    ["plugins", { paths: ["plugins"] }],
+    ["instructions", { paths: ["instructions"] }],
+    ["trust", { trust: "verified" }],
+    ["licence", { licence: { allow: ["MIT", "Apache-2.0"] } }],
+  ])("refuses a bad %s", (_n, o) => {
+    const ps = check(ac(o));
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.message).toContain("connector awesome-copilot");
+    expect(ps[0]!.where).toBe("sources[0] (my-copy)");
+  });
+
+  it("refuses an unknown adapter", () => {
+    expect(check(ac({ adapter: "custom" })).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["a .git spelling", { repository: "https://github.com/GitHub/Awesome-Copilot.git" }],
+    ["a trailing slash", { repository: "https://github.com/github/awesome-copilot/" }],
+    ["another id", { id: "anything-else" }],
+  ])("matches %s", (_n, o) => {
+    expect(check(ac({ paths: ["agents"], ...o }))).toHaveLength(1);
+  });
+
+  it("applies to a disabled entry", () => {
+    const off = ac({ status: "disabled", reason: "under review", ref: {}, update: { cadence: "manual" }, paths: ["."] });
+    expect(check(off)).toHaveLength(1);
+  });
+
+  it("still needs ref.approved as a commit id", () => {
+    expect(text(check(ac({ ref: { track: "main" } })))).toContain("needs ref.approved");
+    expect(text(check(ac({ ref: { track: "main", approved: "main" } })))).toContain("full commit id");
+  });
+
+  it("leaves other repositories alone", () => {
+    expect(check(valid({ paths: ["."], trust: "verified" }))).toEqual([]);
+  });
+
+  it("is reported by sources check", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-conn-"));
+    writeFileSync(join(d, "list.yaml"), stringify(file(ac({ paths: ["agents"] }))));
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d });
+    expect(code).toBe(1);
+    expect(lines[0]).toMatch(/^PROBLEM sources\[0\] \(my-copy\): connector awesome-copilot: /);
+  });
+});
