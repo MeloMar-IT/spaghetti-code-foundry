@@ -60,7 +60,7 @@ type Reg = Pick<SkillRegistry, "skills" | "byKey">;
 type Risk = (typeof SKILL_RISKS)[number];
 
 /** Do the hyphen-separated words of `term` appear, whole and in order, in `text`? No substring match. */
-function hasTerm(text: string, term: string): boolean {
+export function hasTerm(text: string, term: string): boolean {
   const a = text.split("-");
   const t = term.split("-");
   for (let i = 0; i + t.length <= a.length; i++) if (t.every((w, j) => a[i + j] === w)) return true;

@@ -368,6 +368,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       ? runSkillCatalogue({ workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) })
       : undefined;
   if (catalogue) engine.log(`    · ${catalogue.log}`);
+  if (catalogue?.blocked) {
+    engine.log(`    ! ${catalogue.blocked}`);
+    engine.accessFailed = true;
+    return { ok: false, output: catalogue.blocked, error: catalogue.blocked };
+  }
   const tools = sessionTools({
     stepId: scope.prefix + step.id,
     step,

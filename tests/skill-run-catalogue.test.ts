@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import type { CanonicalCandidate, CanonicalPolicy } from "../src/skills/canonical.js";
 import { estimateTokens } from "../src/skills/catalogue.js";
 import type { CollisionCandidate } from "../src/skills/collisions.js";
 import { normalizeSkill, type NormalizeOrigin } from "../src/skills/normalize.js";
@@ -216,5 +217,66 @@ describe("runSkillCatalogue with skill collisions", () => {
     const r = runWith(skills, { alpha: cand(NOTES, A), beta: cand(NOTES, B, false) });
     expect(ids(r.text)).toEqual(["alpha"]);
     expect(r.log).toContain("2 held back (skill collisions)");
+  });
+});
+
+describe("runSkillCatalogue with canonical selection", () => {
+  const cc = (id: string, o: Partial<CanonicalCandidate> = {}): CanonicalCandidate => ({
+    id, version: "1.0.0", fingerprint: `fp-${id}`, capabilities: ["cap"], category: "general", risk: "low", tier: "scf-curated",
+    status: "approved", failed: [], compatibility: "generic", ...o,
+  });
+  const runCanon = (skills: RegisteredSkill[], cands: Record<string, CanonicalCandidate>, policy: Partial<CanonicalPolicy> = {}, config = cfg()) =>
+    runSkillCatalogue(
+      { workdir: "/work/secret-repo", config, task: "" },
+      { discover: () => reg(...skills), profile: () => profile(), canonical: { policy: { exclusive: ["cap"], highRisk: [], ...policy }, candidate: (s) => cands[s.id] } },
+    );
+  const ids = (text: string) => lines(text).map((l) => l.id as string).sort();
+
+  it("offers only the winner of an exclusive capability", () => {
+    const r = runCanon([sk("a"), sk("b"), sk("free")], { a: cc("a", { tier: "official-vendor" }), b: cc("b") });
+    expect(ids(r.text)).toEqual(["b", "free"]);
+    expect(r.log.endsWith("; 1 not canonical (skill selection)")).toBe(true);
+    expect(r.canonical?.selected).toEqual(["b@1.0.0 fp-b"]);
+    expect(r.blocked).toBeUndefined();
+  });
+
+  it("leaves out a skill that depends on the loser, also through a third skill", () => {
+    const skills = [sk("a"), sk("b"), sk("top", { deps: [{ id: "a" }] }), sk("mid", { deps: [{ id: "a" }] }), sk("far", { deps: [{ id: "mid" }] })];
+    const r = runCanon(skills, { a: cc("a", { tier: "official-vendor" }), b: cc("b") });
+    expect(ids(r.text)).toEqual(["b"]);
+    expect(r.log).toContain("4 not canonical (skill selection)");
+  });
+
+  it("stops when a winner depends on a loser", () => {
+    const r = runCanon([sk("a"), sk("w", { deps: [{ id: "a" }] })], { a: cc("a", { tier: "official-vendor" }), w: cc("w", { tier: "local" }) });
+    expect(r.text).toBe("");
+    expect(r.blocked).toContain('"w" is a canonical skill but needs "a"');
+  });
+
+  it("stops on a high-risk tie and keeps the record", () => {
+    const r = runCanon([sk("a"), sk("b")], { a: cc("a"), b: cc("b") }, { highRisk: ["cap"] });
+    expect(r.text).toBe("");
+    expect(r.record).toBeUndefined();
+    expect(r.blocked).toMatch(/^skills not resolved: .*"cap".*a@1\.0\.0.*b@1\.0\.0.*Pin one/);
+    expect(r.canonical?.resolutions[0]?.conflict).toBe("tie");
+  });
+
+  it("stops when a mandatory skill is not canonical, or fails a gate", () => {
+    const config = cfg({ selection: { include: ["b"] } });
+    expect(runCanon([sk("a"), sk("b")], { a: cc("a", { tier: "local" }), b: cc("b") }, {}, config).blocked).toContain("always loaded");
+    expect(runCanon([sk("a"), sk("b")], { a: cc("a"), b: cc("b", { failed: ["licence"] }) }, {}, config).blocked).toContain("(licence)");
+  });
+
+  it("stops when a mandatory skill depends on a rejected provider", () => {
+    const config = cfg({ selection: { include: ["m"] } });
+    const r = runCanon([sk("a"), sk("b"), sk("m", { deps: [{ id: "a" }] })], { a: cc("a", { tier: "official-vendor" }), b: cc("b"), m: cc("m", { capabilities: [] }) }, {}, config);
+    expect(r.text).toBe("");
+    expect(r.blocked).toContain('"m" is a canonical skill but needs "a"');
+  });
+
+  it("keeps a skill that has no candidate", () => {
+    const r = runCanon([sk("a"), sk("b")], { a: cc("a") });
+    expect(ids(r.text)).toEqual(["a", "b"]);
+    expect(r.log).not.toContain("not canonical");
   });
 });
