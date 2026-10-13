@@ -17,6 +17,7 @@ import {
 import type { ScanDisposition } from "./scan-exceptions.js";
 import type { ScanSeverity } from "./scan-rules.js";
 import { shownValue } from "./sources.js";
+import type { SkillWorkflow } from "./workflow.js";
 
 // Turns the skills of a prepared import (import-plan.ts) into SkillPackage values with source-qualified ids, and reports
 // every skill that cannot be mapped completely. Pure: no file system, no process, no clock. Nothing calls it yet.
@@ -63,6 +64,8 @@ export interface SkillProvenance {
   upstream: Record<string, string>;
   /** Absent in provenance written before #473. */
   safety?: SkillSafety;
+  /** Absent in provenance written before #216. */
+  workflow?: SkillWorkflow;
 }
 export interface NormalizedSkill {
   package: SkillPackage;

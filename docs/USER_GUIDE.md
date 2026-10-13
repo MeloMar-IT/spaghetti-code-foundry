@@ -3413,6 +3413,30 @@ exceptions:
 - **Expiry.** Use `expires` (a date), or `review: required` when the finding must be looked at again. An entry whose date has passed is `expired`, and `review: required` is `review-required`; neither accepts the finding, so the skill stays blocked.
 - **Limits.** At most 200 entries. No wildcards. Unknown keys are refused. Every problem names its entry and field.
 
+#### Assess an import
+
+`scf skills assess <source-id>` prints the workflow report of the staged import of a source: which of its skills fit the Foundry's flows, and which do not and why. It is offline and read-only, like `scan`: nothing is written, loaded or run, and it needs no data folder. It reads the approved commit of the source (`ref.approved` in `skill-sources.yaml`) and the staged import in quarantine. It takes no exception file.
+
+```
+scf skills assess example-skills
+```
+
+```
+CONFLICT <code> <effect> <skill> <path>[:<line>]: <evidence>
+CANDIDATE <skill> (<name>): tools <list>; roles <list>; flows <list>; context <tokens>/<max>
+EXCLUDED <skill> (<name>): <code>, <code>
+ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> excluded with profile <id>
+```
+
+- **Profile.** Only the sources with a workflow profile can be assessed; today that is `github.com/obra/superpowers`. Another source prints `PROBLEM no workflow profile for …` and exits 1. The profile is in `src/skills/workflow-rules.ts` and lists the individual skills that may become candidates, each with its tools, roles, capability, built-in flows and token budget. A skill that is not in the profile is excluded with `not-selected`.
+- **The declaration is the ceiling.** The profile says what a skill may need. Text or metadata in the upstream skill that asks for more (tools, connectors, `allowed-tools`, scripts without a shell, a dependency on another skill, a delivery step, a worktree or subagent assumption) excludes the skill. It never raises the declaration, and nothing is adapted or merged: the upstream text is not changed.
+- **Flows.** A declared flow counts only when one of its Claude steps really receives the skill (role coder, skills selected) and gives every declared tool. A flow with `skills: off` or without such a step is `flow-incompatible`; a skill with no compatible flow is `no-compatible-flow`.
+- **Lines.** `CONFLICT <code> <effect> <skill> <path>[:<line>]: <evidence>` for each finding. The effect is `exclude` (the skill is left out) or `report` (it is shown and does not change the status). Evidence is short and bounded, and a credential-like value is shown as `(hidden)`. At most 50 findings are shown per skill; `CONFLICT omitted report <skill>: and <n> more` says how many were left out. The exclusion codes are counted before the cut, so a hidden finding still excludes.
+- **Candidate or excluded.** `CANDIDATE <id> (<name>): tools …; roles …; flows …; context <tokens>/<max>` for a skill that passes. `EXCLUDED <id> (<name>): <codes>` lists every exclusion code, sorted. A skill that normalization rejects is `EXCLUDED <folder>: not normalized (<reasons>)`.
+- **Codes.** Exclusions: `not-selected`, `assumes-subagents`, `assumes-worktrees`, `assumes-commands`, `own-delivery-flow`, `skips-approval`, `orchestration`, `grants-tools`, `undeclared-tool`, `requires-skill`, `context-over-budget`, `no-compatible-flow`. Reports only: `mentions-skill`, `flow-unknown`, `flow-incompatible`, `extra-files`.
+- **Exit codes.** 0 when the report is printed, even when every skill is excluded: an exclusion is the expected result. 1 for a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, or no workflow profile).
+- **Not done.** Nothing promotes a candidate yet. `workflowBlockers`, `declaredPackage` and `workflowProvenance` in `src/skills/workflow.ts` are for a later promotion step to call. A promoted skill would record its declaration in `SkillProvenance.workflow`.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -4007,6 +4031,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
+| `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

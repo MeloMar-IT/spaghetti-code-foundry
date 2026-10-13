@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const SKILLS = "src/skills";
 const BUILTIN = new Set(["crypto", "fs", "path", "os", "url", "module"]);
 const PACKAGES = new Set(["zod", "yaml"]);
-const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js"]);
+const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
 
 const codeLines = (text: string) => text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 
@@ -154,6 +154,23 @@ describe("the static scanner runs nothing", () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
       const code = codeLines(text);
+      for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+});
+
+describe("the workflow gate runs nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
+  it("workflow-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "workflow-rules.ts"), "utf8"))).toEqual([]);
+  });
+  for (const f of ["workflow.ts", "workflow-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      const code = codeLines(text);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
     });
   }

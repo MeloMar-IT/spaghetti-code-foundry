@@ -8,12 +8,18 @@ import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { credentialProblem } from "./credential-scan.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { flowDir, parseFlow } from "../flow/load.js";
+import type { ImportRecord } from "./import-plan.js";
 import { readStagedImport } from "./import-stage.js";
 import { normalizeImport } from "./normalize.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
-import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE } from "./scan-exceptions.js";
-import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
+import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "./sources.js";
+import { flowSkillSteps } from "./tool-policy.js";
+import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
@@ -24,9 +30,10 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
+       scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [], assess: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -87,39 +94,60 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
 const hidden = (s: string): string => (credentialProblem(s) ? "(hidden)" : s);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array> }
+
 /**
- * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
- * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
+ * Finds the source, checks its approved commit, reads the staged import and proves it matches import.json. Prints a PROBLEM and
+ * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
+ * (it has printed its own PROBLEM).
  */
-function scanImport(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
-  const problem = (text: string) => {
+function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }, between?: () => boolean): StagedImport | undefined {
+  const problem = (text: string): undefined => {
     out(`PROBLEM ${text}`);
-    return 1;
+    return undefined;
   };
   const sources = readSources(resolve(opts.cwd, SOURCES_FILE));
   if (sources.state === "none") return problem("the skill source file does not exist");
   if (sources.state === "invalid") {
     for (const p of sources.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return 1;
+    return undefined;
   }
   const source = sources.manifest.sources.find((s) => s.id === id);
   if (!source) return problem(`unknown source ${shownValue(id)}`);
   const commit = source.ref.approved;
   if (!commit) return problem(`source ${source.id} has no approved commit (ref.approved)`);
-
-  const read = readScanExceptions(resolve(opts.cwd, exceptionsFile ?? SCAN_EXCEPTIONS_FILE), opts.today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return 1;
-  }
-  if (read.state === "none" && exceptionsFile !== undefined) return problem("the exception file does not exist");
-  const exceptions = read.state === "ok" ? read.manifest.exceptions : [];
+  if (between && !between()) return undefined;
 
   const staged = readStagedImport(source.id, commit, { home: opts.home });
   if (staged.state === "none") return problem(`no staged import of ${source.id} at ${commit.slice(0, 12)}; run "scf skills import ${source.id}" first`);
   if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was scanned`);
   const { record, files } = staged;
   if (record.repositoryKey !== source.repositoryKey) return problem("the staged import is from another repository; nothing was scanned");
+  return { source, commit, record, files };
+}
+
+/**
+ * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
+ * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
+ */
+function scanImport(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
+  let exceptions: ScanException[] = [];
+  const readExceptions = (): boolean => {
+    const read = readScanExceptions(resolve(opts.cwd, exceptionsFile ?? SCAN_EXCEPTIONS_FILE), opts.today);
+    if (read.state === "invalid") {
+      for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+      return false;
+    }
+    if (read.state === "none" && exceptionsFile !== undefined) {
+      out("PROBLEM the exception file does not exist");
+      return false;
+    }
+    exceptions = read.state === "ok" ? read.manifest.exceptions : [];
+    return true;
+  };
+  const staged = stagedImport(id, out, opts, readExceptions);
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
 
   // The recorded `rejected` text is left out, so the report holds only what normalization decided itself.
   const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
@@ -152,6 +180,74 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
   for (const r of record.rejected) out(`REJECTED ${hidden(r.root)}: ${r.reasons.map(hidden).join("; ")}`);
   out(`SCANNED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${blocked} blocked`);
   return blocked > 0 ? 1 : 0;
+}
+
+const toolsText = (t: { shell: boolean; network: boolean; filesystem: "none" | "read" | "write" }) => {
+  const list = [t.shell ? "shell" : "", t.network ? "network" : "", t.filesystem === "write" ? "write" : ""].filter(Boolean);
+  return list.length ? list.join(",") : "none";
+};
+
+/** The built-in flows as the workflow gate sees them. A flow that cannot be read is reported and left out. */
+function builtinWorkflowFlows(out: (line: string) => void): { flows: WorkflowFlow[]; problems: number } {
+  const dir = flowDir("builtin", "");
+  const flows: WorkflowFlow[] = [];
+  let problems = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort()) {
+    const name = file.slice(0, -".yaml".length);
+    try {
+      const flow = parseFlow(readFileSync(join(dir, file), "utf8"), file);
+      flows.push({ name, skills: flow.skills?.mode ?? "planned", steps: flowSkillSteps(flow) });
+    } catch {
+      problems++;
+      out(`PROBLEM flow ${shownValue(name)} cannot be read`);
+    }
+  }
+  return { flows, problems };
+}
+
+/**
+ * `scf skills assess`: offline and read-only. Reads the staged import of a source, assesses every skill against the connector
+ * profile of its repository and prints the report. Exclusions are the expected result and exit 0; only a PROBLEM exits 1.
+ */
+function assessImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }): number {
+  const staged = stagedImport(id, out, opts);
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
+  const profile = connectorProfile(source.repositoryKey);
+  if (!profile) {
+    out(`PROBLEM no workflow profile for ${shownValue(source.repositoryKey)}`);
+    return 1;
+  }
+  const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const { flows, problems } = builtinWorkflowFlows(out);
+  const report = assessWorkflows({
+    profile, skills: normalized, flows,
+    skillMd: (s) => files.get(s.provenance.root === "." ? "SKILL.md" : `${s.provenance.root}/SKILL.md`),
+  });
+
+  let candidates = 0;
+  let excluded = 0;
+  for (const a of report.skills) {
+    for (const f of a.findings) out(`CONFLICT ${f.code} ${f.effect} ${a.id} ${f.path}${f.line !== undefined ? `:${f.line}` : ""}: ${f.evidence}`);
+    if (a.omitted > 0) out(`CONFLICT omitted report ${a.id}: and ${a.omitted} more`);
+    if (a.status === "candidate" && a.declaration) {
+      const d = a.declaration;
+      candidates++;
+      out(`CANDIDATE ${a.id} (${shownValue(a.name)}): tools ${toolsText(d.tools)}; roles ${d.roles.join(",")}; flows ${d.flows.join(",")}; context ${d.context.instructions}/${d.context.max}`);
+    } else {
+      excluded++;
+      out(`EXCLUDED ${a.id} (${shownValue(a.name)}): ${a.blockers.join(", ")}`);
+    }
+  }
+  for (const entry of record.skills) {
+    if (normalized.some((s) => s.provenance.root === entry.root)) continue;
+    const label = shownValue(entry.root);
+    const reasons = norm.quarantined.filter((q) => q.root === label).flatMap((q) => q.reasons.map(hidden));
+    excluded++;
+    out(`EXCLUDED ${label}: not normalized (${reasons.join("; ")})`);
+  }
+  out(`ASSESSED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest} with profile ${profile.id}: ${plural(candidates, "candidate")}, ${excluded} excluded`);
+  return problems > 0 ? 1 : 0;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${SKILLS_USAGE}`);
@@ -203,6 +299,12 @@ export async function skillsCommand(
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills scan: the first operand must be a source id");
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
     return scanImport(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today });
+  }
+
+  if (sub === "assess") {
+    if (operands.length !== 1) throw syntax("scf skills assess: expects one source id");
+    if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills assess: the operand must be a source id");
+    return assessImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home });
   }
 
   const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;
