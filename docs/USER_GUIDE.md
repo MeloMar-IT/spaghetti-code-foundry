@@ -3400,6 +3400,26 @@ Each normalized skill has five identity terms. Nothing reads them yet, so they d
 - `other-version`: same repository and name, other version and content.
 - `distinct`: anything else. A skill with the same name in another repository is not linked unless the fingerprints match.
 
+#### Skill collisions
+
+When two or more skills overlap, a collision is reported with one class, one reason and a stable id (`col-` and 16 hex characters). The result is the same for any input order. Nothing reads collisions in a run yet: runs do not build them, so skills are offered as before.
+
+| Class | Reason | When |
+|---|---|---|
+| `exact-mirror` | `mirror.same-artifact` | One repository, the same version and content, through more than one source record. |
+| `exact-mirror` | `mirror.same-content` | The same content from another repository, or under another version. |
+| `exact-mirror` | `mirror.settings-differ` | The same content, but the approved copies differ in `skill.yaml` settings (technologies, required tools, dependencies, risk and so on). |
+| `version-reuse` | `version.reused` | The same skill and version with other content. |
+| `id-conflict` | `id.other-version` | The same skill at another version, with other content. |
+| `id-conflict` | `id.other-upstream` | The same id from another repository, with other content. |
+| `fork` | `fork.declared-upstream` | Other content, with a recorded link to the other repository. |
+| `fork` | `fork.same-name` | Other content under the same name in another repository. |
+| `capability-overlap` | `capability.shared` | Different skills that declare the same capability. The report lists the shared capabilities. |
+
+- **What is merged.** Skills with the same content fingerprint are one entry. The entry keeps the representative skill unchanged, the source of every approved copy, and a count of the copies that are not approved. Skills with different content are never merged.
+- **What is held back.** An entry is held back from the planner when its approved copies are in `version-reuse`, `id-conflict` or `mirror.settings-differ`. An unapproved copy is never offered, and it cannot hold back an approved one. Forks and capability overlaps stay offered, each under its own id.
+- **Limits.** A collision check covers at most 1,000 skills. A larger set is refused.
+
 #### Discover candidate sources from Skills.sh
 
 `scf skills discover [<export-file> [<file>]]` proposes candidate sources from a saved Skills.sh export. It does not call Skills.sh and does not scrape it. Nothing it finds is approved, fetched or staged. You add a source to `skill-sources.yaml` by hand.
