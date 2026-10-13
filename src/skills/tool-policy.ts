@@ -1,6 +1,6 @@
 import type { ClaudeStep } from "../flow/schema.js";
 import { UNRESOLVED_LIMITS } from "./resolve-rules.js";
-import type { SkillPackage, ToolPolicy } from "./schema.js";
+import type { SkillPackage, StepSkillMode, StepSkillRole, ToolPolicy } from "./schema.js";
 
 // Compares what a skill needs (shell, network, write access, connectors) with what a flow or one Claude step gives,
 // under the administrator's skills.tools policy. Pure: no engine imports, the plan gate (`run-plan.ts`) calls it. It decides whether a run may
@@ -138,6 +138,31 @@ export function flowTools(flow: { steps?: unknown[]; defaults?: object; sandbox?
     if (s.filesystem === "write" && caps.filesystem === "read") { caps.filesystem = "write"; caps.sources.filesystem = `flow:step:${raw.id}`; }
   }
   return { sessions, partial, capabilities: caps };
+}
+
+export interface FlowSkillStep { id: string; role: StepSkillRole; mode: StepSkillMode; capabilities: Capabilities }
+
+/** The Claude steps of a flow, each with the role and skill mode it runs with and the tools it gives. */
+export function flowSkillSteps(flow: { steps?: unknown[]; defaults?: object; sandbox?: { claude?: boolean } }, configSandbox?: boolean): FlowSkillStep[] {
+  const defaults = (isObj(flow.defaults) ? flow.defaults : {}) as Record<string, unknown>;
+  const out: FlowSkillStep[] = [];
+  for (const raw of Array.isArray(flow.steps) ? flow.steps : []) {
+    if (!isObj(raw) || typeof raw.id !== "string" || typeof raw.type !== "string") continue;
+    if (raw.type !== "claude" || stepAgent(raw, defaults) !== "claude") continue;
+    const capabilities = sessionTools({
+      stepId: raw.id,
+      step: raw as Pick<ClaudeStep, "permission_mode" | "allowed_tools">,
+      defaults: defaults as { permission_mode?: string; allowed_tools?: string[] },
+      sandbox: { step: raw.sandbox as boolean | undefined, flow: flow.sandbox?.claude, config: configSandbox, boxed: false },
+    }).capabilities;
+    out.push({
+      id: raw.id,
+      role: raw.skill_role === "reviewer" ? "reviewer" : "coder",
+      mode: raw.skills === "catalog" || raw.skills === "off" ? raw.skills : "selected",
+      capabilities,
+    });
+  }
+  return out;
 }
 
 export function skillNeeds(pkg: SkillToolNeed["pkg"]): ToolNeed[] {
