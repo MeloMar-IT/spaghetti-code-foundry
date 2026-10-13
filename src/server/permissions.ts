@@ -25,8 +25,8 @@ const r = (method: string, path: string, user: UserAccess, note: string): Rule =
 
 export const RULES: Rule[] = [
   r("GET", "info", "no", "server settings and today's cost"),
-  r("GET", "config", "no", "read the settings"),
-  r("PUT", "config", "no", "change the settings"),
+  r("GET", "config", "no", "read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file"),
+  r("PUT", "config", "no", "change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked"),
   r("GET", "watchers", "no", "list the watchers"),
   r("POST", "watchers/:id/tick", "no", "run a watcher now"),
   r("GET", "monitor", "no", "whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes"),
