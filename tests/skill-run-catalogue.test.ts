@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { estimateTokens } from "../src/skills/catalogue.js";
+import type { CollisionCandidate } from "../src/skills/collisions.js";
+import { normalizeSkill, type NormalizeOrigin } from "../src/skills/normalize.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
 import { buildRepoProfile } from "../src/skills/repo-profile.js";
 import { catalogueTaskText, runSkillCatalogue, SKILL_CATALOGUE_TAG } from "../src/skills/run-catalogue.js";
@@ -146,5 +148,73 @@ describe("catalogueTaskText", () => {
   it("a skill id named only in the issue text gives a 'named in the task' line", () => {
     const r = run([sk("terraform")], cfg(), catalogueTaskText("", "please update the terraform files"));
     expect(lines(r.text)[0]!.evidence).toEqual(["named in the task: terraform"]);
+  });
+});
+
+describe("runSkillCatalogue with skill collisions", () => {
+  const A: NormalizeOrigin = { source: "lib", repository: "https://github.com/example/skills", repositoryKey: "github.com/example/skills", commit: "a".repeat(40) };
+  const B: NormalizeOrigin = { source: "mir", repository: "https://github.com/other/skills", repositoryKey: "github.com/other/skills", commit: "b".repeat(40) };
+  const NOTES = "---\nname: notes\ndescription: Keeps notes.\nversion: 1.0.0\n---\n\nWrite notes.\n";
+  const cand = (text: string, origin: NormalizeOrigin, approved = true): CollisionCandidate => {
+    const r = normalizeSkill(origin, { root: "skills/notes", files: [{ path: "SKILL.md", content: new Uint8Array(Buffer.from(text)) }] });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return { skill: r.skill, approved, trust: "verified", licencesAllowed: ["MIT"] };
+  };
+  // Same name, same version, other content: a blocking version reuse.
+  const other = (origin: NormalizeOrigin) => cand(NOTES.replace("Write notes.", "Write other notes."), origin);
+  const runWith = (skills: RegisteredSkill[], candidates: Record<string, CollisionCandidate>, config = cfg()) =>
+    runSkillCatalogue({ workdir: "/work/secret-repo", config, task: "" }, { discover: () => reg(...skills), profile: () => profile(), candidate: (s) => candidates[s.id] });
+  const ids = (text: string) => lines(text).map((l) => l.id as string).sort();
+
+  it("offers a mirror once and keeps a skill without a candidate", () => {
+    const r = runWith([sk("alpha"), sk("beta"), sk("legacy")], { alpha: cand(NOTES, A), beta: cand(NOTES, B) });
+    expect(ids(r.text)).toHaveLength(2);
+    expect(ids(r.text)).toContain("legacy");
+    expect(r.log).toContain("1 merged (skill collisions)");
+  });
+
+  it("leaves out skills held back by a blocking collision", () => {
+    const r = runWith([sk("alpha"), sk("beta"), sk("legacy")], { alpha: cand(NOTES, A), beta: other(A) });
+    expect(ids(r.text)).toEqual(["legacy"]);
+    expect(r.log).toContain("2 held back (skill collisions)");
+  });
+
+  it("changes nothing without an effective candidate", () => {
+    const skills = [sk("alpha"), sk("beta"), sk("legacy", { deps: [{ id: "alpha" }] })];
+    const plain = run(skills);
+    expect(runWith(skills, {})).toEqual(plain);
+  });
+
+  it("gives no block when the candidate lookup throws", () => {
+    const r = runSkillCatalogue({ workdir: "/w", config: cfg(), task: "" }, {
+      discover: () => reg(sk("a")), profile: () => profile(), candidate: () => { throw new Error("boom"); },
+    });
+    expect(r.text).toBe("");
+    expect(r.log).toBe("skill catalogue: none (the catalogue could not be built)");
+  });
+
+  it("leaves out a skill that depends on a held-back one", () => {
+    const r = runWith([sk("alpha"), sk("beta"), sk("top", { deps: [{ id: "alpha" }] }), sk("free")], { alpha: cand(NOTES, A), beta: other(A) });
+    expect(ids(r.text)).toEqual(["free"]);
+    expect(r.log).toContain("3 held back (skill collisions)");
+  });
+
+  it("does not take a mandatory skill out", () => {
+    const r = runWith([sk("alpha"), sk("beta")], { alpha: cand(NOTES, A), beta: other(A) }, cfg({ selection: { include: ["alpha"] } }));
+    expect(ids(r.text)).toEqual(["alpha"]);
+  });
+
+  it("counts a dependency on a left-out mirror in the budgets", () => {
+    const skills = [sk("alpha"), sk("beta"), sk("top", { deps: [{ id: "beta" }] })];
+    const candidates = { alpha: cand(NOTES, A), beta: cand(NOTES, B) };
+    expect(ids(runWith(skills, candidates, cfg({ selection: { max_skills: 2 } })).text)).toEqual(["alpha"]);
+    expect(ids(runWith(skills, candidates, cfg({ selection: { max_skills: 3 } })).text)).toEqual(["alpha", "top"]);
+  });
+
+  it("leaves out a skill that depends on an unapproved copy", () => {
+    const skills = [sk("alpha"), sk("beta"), sk("top", { deps: [{ id: "beta" }] })];
+    const r = runWith(skills, { alpha: cand(NOTES, A), beta: cand(NOTES, B, false) });
+    expect(ids(r.text)).toEqual(["alpha"]);
+    expect(r.log).toContain("2 held back (skill collisions)");
   });
 });

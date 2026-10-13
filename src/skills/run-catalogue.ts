@@ -1,7 +1,8 @@
 import type { Config, SkillsConfig } from "../config.js";
 import { buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, renderSkillCatalogue } from "./catalogue.js";
 import { CATALOGUE_SCORING } from "./catalogue-rules.js";
-import { discoverSkills, type RegisteredSkill, type SkillRegistry } from "./registry.js";
+import { dedupeOffered, type CollisionCandidate } from "./collisions.js";
+import { discoverSkills, findSkill, type RegisteredSkill, type SkillRegistry } from "./registry.js";
 import { buildRepoProfile, type RepoProfile } from "./repo-profile.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
 
@@ -25,6 +26,12 @@ export interface RunCatalogueDeps {
   discover?: (skills: SkillsConfig) => Registry;
   /** Default: buildRepoProfile(workdir). */
   profile?: (workdir: string) => RepoProfile;
+  /**
+   * Default: none. Gives a registered skill's provenance as a collision candidate (collisions.ts). A skill that returns one is offered
+   * once per content and is left out while it is unapproved or held back by a blocking collision, and so is every skill that
+   * depends on a held-back one. A skill that returns undefined is offered as it is. No run supplies this yet.
+   */
+  candidate?: (skill: RegisteredSkill) => CollisionCandidate | undefined;
 }
 
 /** The task text and the issue text, joined by a line break and cut to the scoring limit. Used for ranking only. */
@@ -64,10 +71,39 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       if (usable(reg, s)) offered.push(s);
       else if (usable(hypo, hypo.byKey.get(s.key)!)) hidden++;
     }
+    // Skill collisions. A mandatory id is never taken out. A dependency on a mirror that was left out stays as it is in the registry:
+    // the resolver loads it as a dependency and counts it in the budgets, so the offer still matches what a run would load.
+    let pool = offered;
+    let merged = 0;
+    let held = 0;
+    if (deps.candidate) {
+      const d = dedupeOffered(offered, deps.candidate);
+      const mandatory = new Set(opts.include ?? []);
+      const heldNow = new Set(d.heldItems.filter((s) => !mandatory.has(s.id)));
+      const heldIds = new Set([...heldNow].map((s) => s.id));
+      const needsHeld = (root: RegisteredSkill): boolean => {
+        const seen = new Set<string>();
+        const todo = [root];
+        for (let cur = todo.pop(); cur; cur = todo.pop())
+          for (const dep of cur.pkg.dependencies ?? []) {
+            if (seen.has(dep.id)) continue;
+            seen.add(dep.id);
+            if (heldIds.has(dep.id)) return true;
+            const next = findSkill(reg, dep.id);
+            if (next) todo.push(next);
+          }
+        return false;
+      };
+      const kept = new Set(d.kept);
+      const heldAll = new Set(d.heldItems);
+      pool = offered.filter((s) => !heldNow.has(s) && (kept.has(s) || heldAll.has(s)) && !(heldIds.size && needsHeld(s)));
+      merged = d.merged;
+      held = offered.length - pool.length - merged;
+    }
     // Several skills may be requested together: keep only those the resolver admits as one set (conflicts, dependency and count budgets).
-    const together = resolveSkills(reg, offered.map((s) => s.id), opts);
+    const together = resolveSkills(reg, pool.map((s) => s.id), opts);
     const admitted = new Set(together.decisions.filter((d) => d.outcome === "selected").map((d) => d.id));
-    const cat = buildSkillCatalogue({ skills: offered.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills) });
+    const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills) });
     const body = [renderSkillCatalogue(cat)];
     if (cat.entries.length) body.push(`Request at most ${skills.selection.max_skills} skills, and only ids listed above.`);
     const text = `<${SKILL_CATALOGUE_TAG}>\n${body.join("\n")}\n</${SKILL_CATALOGUE_TAG}>`;
@@ -76,7 +112,8 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     const base = cat.entries.length
       ? `skill catalogue: ${cat.entries.length} of ${cat.eligible} skills${left}, about ${record.estimatedTokens} tokens`
       : "skill catalogue: no skills are available";
-    return { text, log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}`, record };
+    const notes = [merged ? `${merged} merged` : "", held ? `${held} held back` : ""].filter(Boolean).join(", ");
+    return { text, log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}`, record };
   } catch {
     return none("the catalogue could not be built");
   }
