@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill provider requirements: visible in skill metadata and selection evidence (#509). Part 1 of 5 of #218.
+  - **Block.** `skill.yaml` takes an optional `provider` block: `name` (a slug), `products` (a list of `{ name, version? }`, at most 16) and `tools` (a list of slugs, at most 16). A skill without it is portable; existing packages load unchanged. `SkillProviderSchema` and `SKILL_PROVIDER_LIMITS` in `src/skills/schema.ts`.
+  - **Imported skills.** The normalizer reads the block from `skill.yaml`, then frontmatter, then `metadata`, and keeps it in `SkillProvenance.provider` (optional; `schema` stays 1). `provider: acme` (the name only) is accepted. A malformed block rejects the skill with a reason (for example "provider: more than 16 products"); a duplicate product or tool is refused too.
+  - **Evidence.** A catalogue entry of a skill with a provider block gets the line `needs provider: <name> (<products>; tools: <tools>)`, for example `needs provider: acme (kafka 3.7; tools: kafka-admin)`. It is cut to 100 characters, and at most three products and three tools are named, then "+N more". The line is kept when an entry is shortened, so a vendor-specific skill is never shown as portable. `providerEvidence` in `src/skills/catalogue.ts`.
+  - **`scf skills`.** A skill with a provider block shows `provider <name>` after its digest.
+  - **Collisions.** `MemberSettings` (`src/skills/collisions.ts`) includes the provider block, so two approved copies that differ in it are `mirror.settings-differ`.
+  - **Text only.** A provider block grants no connector, shell or network access.
+  - **Tests.** Extended `tests/skill-schema.test.ts`, `tests/skill-normalize.test.ts`, `tests/skill-catalogue.test.ts`, `tests/skill-collisions.test.ts`, `tests/skill-package.test.ts` and `tests/skill-cli.test.ts`.
+  - Docs: `docs/USER_GUIDE.md` ("Write a skill", "Skill catalogue", "Skill collisions").
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".

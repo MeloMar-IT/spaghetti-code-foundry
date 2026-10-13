@@ -94,6 +94,28 @@ function duplicates(ctx: z.RefinementCtx, key: string, items: readonly string[])
 
 const dependency = z.object({ id: SkillIdSchema, min_version: SkillVersionSchema.optional() }).strict();
 
+export const SKILL_PROVIDER_LIMITS = { products: 16, tools: 16, versionChars: 64 } as const;
+const providerVersion = z
+  .string()
+  .trim()
+  .min(1)
+  .max(SKILL_PROVIDER_LIMITS.versionChars)
+  .regex(/^[^\u0000-\u001f\u007f-\u009f]*$/, "must not hold control characters");
+
+/** What a skill needs from a vendor. Text only: it grants no connector, shell or network access. */
+export const SkillProviderSchema = z
+  .object({
+    name: slug,
+    products: z.array(z.object({ name: slug, version: providerVersion.optional() }).strict()).max(SKILL_PROVIDER_LIMITS.products).default([]),
+    tools: z.array(slug).max(SKILL_PROVIDER_LIMITS.tools).default([]),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    duplicates(ctx, "products", p.products.map((x) => x.name));
+    duplicates(ctx, "tools", p.tools);
+  });
+export type SkillProvider = z.infer<typeof SkillProviderSchema>;
+
 /** skill.yaml: Foundry's own metadata (a Foundry extension next to the standard SKILL.md). */
 export const SkillManifestSchema = z
   .object({
@@ -108,6 +130,7 @@ export const SkillManifestSchema = z
     connectors: z.array(slug).max(16).default([]),
     tool_profile: SkillToolProfileSchema,
     risk: z.enum(SKILL_RISKS).default("low"),
+    provider: SkillProviderSchema.optional(),
   })
   .strict()
   .superRefine((m, ctx) => {

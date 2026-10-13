@@ -11,8 +11,8 @@ import {
 import { skillDigest, splitFrontmatter } from "./package.js";
 import { skillContextTokens } from "./resolve.js";
 import {
-  SKILL_FOLDERS, SKILL_ID_RE, SKILL_RISKS, SKILL_VERSION_RE, SkillToolProfileSchema,
-  type SkillFile, type SkillFolder, type SkillPackage, type SkillRisk, type SkillToolProfile,
+  SKILL_FOLDERS, SKILL_ID_RE, SKILL_PROVIDER_LIMITS, SKILL_RISKS, SKILL_VERSION_RE, SkillToolProfileSchema,
+  type SkillFile, type SkillFolder, type SkillPackage, type SkillProvider, type SkillRisk, type SkillToolProfile,
 } from "./schema.js";
 import type { ScanDisposition } from "./scan-exceptions.js";
 import type { ScanSeverity } from "./scan-rules.js";
@@ -63,6 +63,8 @@ export interface SkillProvenance {
   upstream: Record<string, string>;
   /** Absent in provenance written before #473. */
   safety?: SkillSafety;
+  /** Absent for a portable skill and in provenance written before #509. */
+  provider?: SkillProvider;
 }
 export interface NormalizedSkill {
   package: SkillPackage;
@@ -233,6 +235,74 @@ function parseTechnologies(v: unknown): { name: string; version?: string }[] | s
   return out.sort((a, b) => byteCmp(a.name, b.name));
 }
 
+const PROVIDER_KEYS = ["name", "products", "tools"];
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** `provider: acme` (the name only) or a map with name, products and tools. A string is the reason when it is not usable. */
+function parseProvider(v: unknown): SkillProvider | string {
+  const slugOf = (x: unknown): string | undefined => {
+    const s = isStr(x) ? slugify(x) : "";
+    return SKILL_ID_RE.test(s) ? s : undefined;
+  };
+  if (isStr(v)) {
+    const name = slugOf(v);
+    return name === undefined ? "provider: name cannot be made a lower-case slug of 1–64 characters" : { name, products: [], tools: [] };
+  }
+  if (!isMap(v)) return "provider: must be a map with a name";
+  if (Object.keys(v).some((k) => !PROVIDER_KEYS.includes(k))) return "provider: has a key that is not name, products or tools";
+  const name = slugOf(v.name);
+  if (name === undefined) return "provider: name cannot be made a lower-case slug of 1–64 characters";
+
+  const products: { name: string; version?: string }[] = [];
+  if (v.products !== undefined) {
+    if (!Array.isArray(v.products)) return "provider: products must be a list";
+    if (v.products.length > SKILL_PROVIDER_LIMITS.products) return `provider: more than ${SKILL_PROVIDER_LIMITS.products} products`;
+    for (const entry of v.products) {
+      let rawName: unknown;
+      let rawVersion: unknown;
+      if (isStr(entry)) {
+        const text = entry.trim();
+        const at = text.indexOf("@", 1);
+        rawName = at < 0 ? text : text.slice(0, at);
+        rawVersion = at < 0 ? undefined : text.slice(at + 1);
+      } else if (isMap(entry) && Object.keys(entry).every((k) => k === "name" || k === "version")) {
+        rawName = entry.name;
+        rawVersion = entry.version;
+      } else return "provider: a product is not text or a map with a name";
+      const productName = slugOf(rawName);
+      if (productName === undefined) return "provider: a product name is not usable";
+      let version: string | undefined;
+      if (rawVersion !== undefined && rawVersion !== null) {
+        const text = typeof rawVersion === "number" && Number.isSafeInteger(rawVersion) && rawVersion >= 0 ? String(rawVersion) : rawVersion;
+        if (!isStr(text)) return "provider: a product version must be text";
+        const trimmed = text.trim();
+        if (trimmed.length > SKILL_PROVIDER_LIMITS.versionChars) return `provider: a product version is longer than ${SKILL_PROVIDER_LIMITS.versionChars} characters`;
+        if (CONTROL_CHARS.test(trimmed)) return "provider: a product version holds control characters";
+        if (trimmed !== "") version = trimmed;
+      }
+      products.push(version === undefined ? { name: productName } : { name: productName, version });
+    }
+  }
+  if (products.length > SKILL_PROVIDER_LIMITS.products) return `provider: more than ${SKILL_PROVIDER_LIMITS.products} products`;
+  if (new Set(products.map((p) => p.name)).size !== products.length) return "provider: a product is listed twice";
+
+  let tools: string[] = [];
+  if (v.tools !== undefined) {
+    // Checked on the raw list: nothing is dropped or merged before the length and the entries are checked.
+    const raw: unknown[] | undefined = isStr(v.tools) ? v.tools.split(",") : Array.isArray(v.tools) ? v.tools : undefined;
+    if (!raw || !raw.every(isStr)) return "provider: tools must be a list of text";
+    if (raw.length > SKILL_PROVIDER_LIMITS.tools) return `provider: more than ${SKILL_PROVIDER_LIMITS.tools} tools`;
+    for (const t of raw as string[]) {
+      const s = SKILL_ID_RE.test(t.trim()) ? t.trim() : slugOf(t);
+      if (s === undefined) return "provider: a tool is not a lower-case slug";
+      tools.push(s);
+    }
+    if (new Set(tools).size !== tools.length) return "provider: a tool is listed twice";
+    tools.sort(byteCmp);
+  }
+  return { name, products: products.sort((a, b) => byteCmp(a.name, b.name)), tools };
+}
+
 const decodeUtf8 = (b: Uint8Array): string | undefined => {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(b);
@@ -317,18 +387,22 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
   const consumed = new Set<string>(STANDARD_KEYS.map((k) => `frontmatter.${k}`));
   let fromExtended = false;
   let fromMetadata = false;
-  const read = (aliases: readonly string[]): unknown => {
+  /** The first source with an alias; an explicit null is kept (`{ value: null }`), absent is undefined. */
+  const readKeyed = (aliases: readonly string[]): { value: unknown } | undefined => {
     for (const [source, doc] of docs) {
       for (const key of aliases) {
         if (!has(doc, key)) continue;
         consumed.add(`${source}.${key}`);
         if (source === "frontmatter" && !(STANDARD_KEYS as readonly string[]).includes(key)) fromExtended = true;
         if (source === "metadata") fromMetadata = true;
-        const v = doc[key];
-        return v === null ? undefined : v;
+        return { value: doc[key] };
       }
     }
     return undefined;
+  };
+  const read = (aliases: readonly string[]): unknown => {
+    const v = readKeyed(aliases)?.value;
+    return v === null ? undefined : v;
   };
 
   // version
@@ -395,6 +469,15 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
     const parsed = parseTechnologies(rawTech);
     if (isStr(parsed)) fail(parsed);
     else technologies = parsed;
+  }
+
+  // provider: an explicit null is refused, so it cannot hide a declaration of a lower source
+  let provider: SkillProvider | undefined;
+  const rawProvider = readKeyed(FIELD_ALIASES.provider);
+  if (rawProvider !== undefined) {
+    const parsed = parseProvider(rawProvider.value);
+    if (isStr(parsed)) fail(parsed);
+    else provider = parsed;
   }
 
   // compatibility, license
@@ -550,6 +633,7 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
   if (compatibility !== undefined) pkg.compatibility = compatibility;
   if (metadata.length) pkg.metadata = Object.fromEntries(metadata.sort((a, b) => byteCmp(a[0], b[0])));
   if (allowedTools !== undefined) pkg.allowedTools = allowedTools;
+  if (provider !== undefined) pkg.provider = provider;
 
   const identity = buildSkillIdentity({
     id: pkg.id,
@@ -585,6 +669,7 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
         entryPoints: { instructions: SKILL_MD, scripts, documents },
         context: { instructions: skillContextTokens(pkg), text: textTokens },
         upstream: sortedUpstream,
+        ...(provider !== undefined ? { provider } : {}),
       },
     },
   };
