@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { fieldFor, h, modal, showError } from "./dom.js";
+import { mergeVars, splitVars, varFields } from "./var-fields.js";
 
 const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
 const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
@@ -106,12 +107,13 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const id = input(w.id, { class: "mono", placeholder: "my-repo", disabled: !!existing });
     const repo = h("select", { name: "repo" }, available.map((r) => h("option", { value: r.id }, `${r.url} — ${r.account?.email ?? "unknown owner"}`)));
     if (available.length) repo.value = available[0].id;
-    const flow = input(w.flow, { class: "mono", list: "watcher-flows" });
+    const flow = input(w.flow, { class: "mono", list: "watcher-flows", onChange: () => void load() });
     const sources = { ...SOURCES, ...(OLD_SOURCES[w.source] ? { [w.source]: OLD_SOURCES[w.source] } : {}) };
     const source = h("select", { name: "source", onChange: () => {
       if (DEFAULT_FLOWS[source.value] && Object.values(DEFAULT_FLOWS).includes(flow.value)) flow.value = DEFAULT_FLOWS[source.value];
       if (source.value === "schedule" && /^\d+(s|m)$/.test(every.value)) every.value = "7d";
       showFor();
+      void load();
     } }, Object.entries(sources).map(([v, label]) => h("option", { value: v }, label)));
     source.value = w.source;
     const task = h("textarea", { rows: 3, placeholder: "What the chore should do each time", value: w.task ?? "" });
@@ -122,21 +124,89 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const label = input(w.label, { class: "mono" });
     const every = input(w.every, { class: "mono", placeholder: "5m" });
     const max = input(String(w.max_per_tick), { type: "number", min: 1 });
-    const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes", value: Object.entries(w.vars ?? {}).map(([k, v]) => `${k}=${v}`).join("\n") });
+    const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes" });
+    const fieldsBox = h("div", { class: "stack" });
+    // The variables as typed so far, whatever the flow describes. The fields and the box show parts of it; values with a line
+    // break (a list) cannot go in the one-line-per-variable box: each gets a text area of its own, named after the variable.
+    let draft = { ...(w.vars ?? {}) };
+    let areas = {};
+    const held = () => Object.fromEntries(Object.entries(areas).map(([k, a]) => [k, a.value]).filter(([, v]) => v !== ""));
+    let stray = [];
+    let shown = null;
+    const fold = () => {
+      const next = held();
+      stray = [];
+      for (const line of vars.value.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        const i = line.indexOf("=");
+        if (i < 1) stray.push(line);
+        else next[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+      return shown ? mergeVars(next, shown.read({ lenient: true }).values) : next;
+    };
+    const render = (info, defaults) => {
+      const { fields: own, rest } = splitVars(draft, info);
+      const multi = Object.entries(rest).filter(([, v]) => v.includes("\n"));
+      areas = Object.fromEntries(multi.map(([k, v]) => [k, h("textarea", { rows: 3, class: "mono", "aria-label": k, value: v })]));
+      vars.value = [...Object.entries(rest).filter(([k]) => !(k in areas)).map(([k, v]) => `${k}=${v}`), ...stray].join("\n");
+      shown = varFields({ info, defaults, values: own });
+      fieldsBox.replaceChildren(...(shown.el ? [shown.el] : []),
+        ...multi.map(([k]) => f(k, areas[k], "Not described by the flow. Empty the box to remove the variable.")));
+    };
+    const flowName = () => {
+      const x = flow.value.trim();
+      return !x || x === "default" ? DEFAULT_FLOWS[source.value] : x;
+    };
+    // The newest load wins. Typing goes on while it runs; what was typed is read when the answer arrives, and Save waits for it.
+    let seq = 0;
+    let loading = null;
+    const load = () => {
+      const mine = ++seq;
+      const name = flowName();
+      const run = (async () => {
+        let r = null;
+        try {
+          r = name && /^[\w-]+$/.test(name) ? await api.flow(name) : null;
+        } catch {
+          r = null;
+        }
+        if (mine !== seq) return;
+        draft = fold();
+        const info = r?.var_info && typeof r.var_info === "object" && !Array.isArray(r.var_info) ? r.var_info : {};
+        render(info, r?.vars ?? {});
+      })();
+      loading = run;
+      void run.finally(() => { if (loading === run) loading = null; });
+      return run;
+    };
+    render({}, {});
     const enabled = check(w.enabled, "Enabled");
     const err = h("p", { class: "status bad flush", role: "alert" });
     const fields = { id, flow, label, exclude, every, max, task, branch, at, timezone: tz, vars };
     const PAIRS = [[/^vars:/, "vars"], ...ID_PAIRS, [/^flow:/, "flow"], [/^label:/, "label"], [/^exclude_labels:/, "exclude"],
       [/^every:/, "every"], [/^max_per_tick:/, "max"], [/^task:/, "task"], [/^branch:/, "branch"], [/^at:/, "at"], [/^timezone:/, "timezone"]];
-    const mark = (m) => showError(err, m, { fields: Object.values(fields), field: fields[fieldFor(m, PAIRS)] });
+    const mark = (m) => {
+      const controls = shown?.controls ?? {};
+      const named = /^vars\.([\w-]+):/.exec(String(m ?? ""))?.[1];
+      showError(err, m, { fields: [...Object.values(fields), ...Object.values(controls)], field: (named && controls[named]) || fields[fieldFor(m, PAIRS)] });
+    };
     const noRepo = !existing && !available.length;
-    const save = h("button", { class: "primary", disabled: noRepo, onClick: () => {
-      if (state.busy || noRepo) return;
+    let waiting = false;
+    const save = h("button", { class: "primary", disabled: noRepo, onClick: async () => {
+      if (state.busy || noRepo || waiting) return;
+      waiting = true;
+      try {
+        while (loading) await loading;
+      } finally {
+        waiting = false;
+      }
+      if (state.busy) return;
       const parsed = parseVars(vars.value);
       if (parsed.error) return void mark(parsed.error);
+      const read = shown.read();
+      if (read.error) return void mark(read.error);
       const body = repoWatcherBody({
         id: id.value, source: source.value, flow: flow.value, label: label.value, exclude: exclude.value, every: every.value, max: max.value,
-        enabled: enabled.el.checked, vars: parsed.vars, task: task.value, branch: branch.value, at: at.value, timezone: tz.value,
+        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value,
       }, !!existing);
       const send = () => (existing ? api.saveRepoWatcher(existing.repoId, existing.id, body) : api.addRepoWatcher(repo.value, body));
       return guarded(state, save, send, close, mark)();
@@ -159,6 +229,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
         : !(repos ?? []).length
           ? h("p", { class: "status bad flush", role: "alert" }, "No repositories yet. ", h("a", { href: "#/repos" }, "Add one under My repositories."))
           : h("p", { class: "status bad flush", role: "alert" }, "No connected repository can have a watcher.");
+    void load();
     return h("div", { class: "stack" },
       h("datalist", { id: "watcher-flows" }, (flows ?? []).map((x) => h("option", { value: x.name }))),
       repoField,
@@ -172,7 +243,8 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       taskField,
       atField,
       h("div", { class: "grid" }, f("Check every", every, "e.g. 5m, 1h — for chores: how often it runs, e.g. 1d, 7d"), f("Max new runs per check", max)),
-      f("Variables for each run", vars, "One name=value per line. github_repo and issue/pr are set automatically."),
+      fieldsBox,
+      f("Variables for each run", vars, "For variables the flow does not describe. One name=value per line. github_repo and issue/pr are set automatically."),
       enabled.row, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   }, { busy: () => state.busy });
 }

@@ -50,12 +50,15 @@ export const flowRoutes: Route = async ({ opts, config, diagLog }, req, res, seg
       if (!listing) throw new HttpError(404, `flow "${name}" not found`);
       const yaml = readFileSync(listing.path, "utf8");
       let var_info: NonNullable<Flow["var_info"]> = {};
+      let vars: Record<string, string> = {};
       try {
-        var_info = parseFlow(yaml, listing.path).var_info ?? {};
+        const parsed = parseFlow(yaml, listing.path);
+        var_info = parsed.var_info ?? {};
+        vars = parsed.vars;
       } catch {
         // A flow that does not parse still opens in the editor, without descriptions.
       }
-      return send(res, 200, { ...listing, yaml, var_info }), true;
+      return send(res, 200, { ...listing, yaml, var_info, vars }), true;
     }
     if (method === "PUT") {
       const body = await readJson(req);

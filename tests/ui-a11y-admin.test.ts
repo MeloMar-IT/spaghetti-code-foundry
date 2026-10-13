@@ -611,9 +611,24 @@ describe("repository administration dialogs", () => {
 describe("watcher dialogs", () => {
   const repos = [repo()];
   const flows = [{ name: "issue-gitflow" }];
+  const described = {
+    var_info: {
+      risk_threshold: { label: "Risk threshold", help: "Highest risk", kind: "number", min: 0, max: 100 },
+      require_approval: { label: "Require approval", kind: "yes_no" },
+      test_cmd: { label: "Test command", kind: "text" },
+      docs_required: { label: "Docs required", kind: "list", separator: "comma" },
+      mode: { label: "Mode", kind: "choice", choices: ["fast", "safe"] },
+      agent_env: { label: "Agent environment", kind: "list", separator: "line" },
+    },
+    vars: { risk_threshold: "75", require_approval: "no", mode: "safe" },
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 5));
   it("have no violations", async () => {
+    routes["GET /api/flows/issue-gitflow"] = described;
     void m.watcherForm.repoWatcherDialog({ repos, flows, existing: null });
     await dialogUp();
+    await flush();
+    expect(controls(modalRoot()).some((c) => c.attrs.placeholder === "75")).toBe(true);
     noViolations(modalRoot());
     for (const b of controls(modalRoot()).filter((c) => c.attrs.type === "checkbox")) expect(b.parent!.tag).toBe("label");
     modalRoot().replaceChildren();
@@ -633,9 +648,11 @@ describe("watcher dialogs", () => {
   it("a bad vars line and the server's sentences mark the field", async () => {
     void m.watcherForm.repoWatcherDialog({ repos, flows, existing: null });
     await dialogUp();
+    await flush();
     const vars = withPlaceholder(modalRoot(), "test_cmd");
     vars.value = "oops";
     press(button(modalRoot(), "Save watcher"));
+    await flush();
     expect(alerts(modalRoot())[0]!.textContent).toBe('vars: "oops" should be name=value');
     expect(invalid(modalRoot())).toEqual([vars]);
     expect(doc().activeElement).toBe(vars);

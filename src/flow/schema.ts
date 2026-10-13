@@ -83,18 +83,8 @@ export function varInfoProblems(info: VarInfo, value: string): { field?: string;
   }
   if (kind !== "choice" && info.choices !== undefined) out.push({ field: "choices", message: `choices are only for kind choice, not ${kind}` });
   if (kind !== "list" && info.separator !== undefined) out.push({ field: "separator", message: `separator is only for kind list, not ${kind}` });
-  if (kind === "number") {
-    if (info.min !== undefined && info.max !== undefined && info.min > info.max) out.push({ field: "min", message: "min must not be above max" });
-    // Exponent notation too: YAML 0.0000001 becomes the string "1e-7".
-    const n = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(value) ? Number(value) : NaN;
-    if (!Number.isFinite(n)) out.push({ message: `the default "${value}" is not a number` });
-    else {
-      if (info.min !== undefined && n < info.min) out.push({ message: `the default ${value} is below min ${info.min}` });
-      if (info.max !== undefined && n > info.max) out.push({ message: `the default ${value} is above max ${info.max}` });
-    }
-  } else if (kind === "yes_no") {
-    if (value !== "yes" && value !== "no") out.push({ message: `the default "${value}" must be yes or no` });
-  } else if (kind === "choice") {
+  if (kind === "number" && info.min !== undefined && info.max !== undefined && info.min > info.max) out.push({ field: "min", message: "min must not be above max" });
+  if (kind === "choice") {
     if (!info.choices?.length) out.push({ field: "choices", message: "kind choice needs choices" });
     else {
       const seen = new Set<string>();
@@ -102,10 +92,27 @@ export function varInfoProblems(info: VarInfo, value: string): { field?: string;
         if (seen.has(c)) out.push({ field: "choices", message: `duplicate choice "${c}"` });
         seen.add(c);
       }
-      if (!seen.has(value)) out.push({ message: `the default "${value}" is not one of the choices` });
     }
   }
+  const problem = varValueProblem(info, value);
+  if (problem) out.push({ message: `the default ${problem}` });
   return out;
+}
+
+/** What is wrong with a value for this kind and range; undefined when it fits. text and list take any text. */
+export function varValueProblem(info: VarInfo, value: string): string | undefined {
+  if (info.kind === "number") {
+    // Exponent notation too: YAML 0.0000001 becomes the string "1e-7".
+    const n = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(value) ? Number(value) : NaN;
+    if (!Number.isFinite(n)) return `"${value}" is not a number`;
+    if (info.min !== undefined && n < info.min) return `${value} is below min ${info.min}`;
+    if (info.max !== undefined && n > info.max) return `${value} is above max ${info.max}`;
+  } else if (info.kind === "yes_no") {
+    if (value !== "yes" && value !== "no") return `"${value}" must be yes or no`;
+  } else if (info.kind === "choice" && info.choices?.length) {
+    if (!info.choices.includes(value)) return `"${value}" is not one of the choices`;
+  }
+  return undefined;
 }
 
 const baseStep = {

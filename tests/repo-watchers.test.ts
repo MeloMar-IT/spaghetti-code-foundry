@@ -61,6 +61,34 @@ describe("the store", () => {
     refused(() => updateRepoWatcher(repo, "w1", { source: "schedule", task: null }), "bad-watcher");
   });
 
+  describe("described variables", () => {
+    const info = { risk_threshold: { kind: "number", min: 0, max: 100 }, run_id: { kind: "number", set_by_run: true } } as const;
+    const describe_ = (seen: unknown[] = []) => (w: unknown) => (seen.push(w), info as never);
+
+    it("refuses an add with the variable named, and accepts undescribed and set-by-run ones", () => {
+      const describe = describe_();
+      const bad = { id: "w1", vars: { risk_threshold: "150" } };
+      refused(() => addRepoWatcher(repo, bad, { describe }), "bad-watcher");
+      expect(() => addRepoWatcher(repo, bad, { describe })).toThrow("vars.risk_threshold: 150 is above max 100");
+      expect(listRepoWatchers()).toEqual([]);
+      addRepoWatcher(repo, { id: "w2", vars: { other: "x", run_id: "abc", risk_threshold: "100" } }, { describe });
+      addRepoWatcher(repo, { id: "w3", vars: { risk_threshold: "abc" } }, { describe: () => undefined });
+      addRepoWatcher(repo, { id: "w4", vars: { risk_threshold: "abc" } }); // no describe: nothing is checked
+    });
+
+    it("checks an update only when it names vars, flow or source, with the merged options", () => {
+      addRepoWatcher(repo, { id: "w1", vars: { risk_threshold: "150" } });
+      const seen: unknown[] = [];
+      const describe = describe_(seen);
+      expect(updateRepoWatcher(repo, "w1", { enabled: false }, { describe }).watcher.enabled).toBe(false);
+      expect(seen).toEqual([]);
+      refused(() => updateRepoWatcher(repo, "w1", { vars: { risk_threshold: "150" } }, { describe }), "bad-watcher");
+      refused(() => updateRepoWatcher(repo, "w1", { flow: "other" }, { describe }), "bad-watcher");
+      expect(seen[1]).toMatchObject({ flow: "other", enabled: false, vars: { risk_threshold: "150" } });
+      expect(updateRepoWatcher(repo, "w1", { vars: { risk_threshold: "50" } }, { describe }).watcher.vars).toEqual({ risk_threshold: "50" });
+    });
+  });
+
   it("removes one watcher, and the watchers of repositories", () => {
     addRepoWatcher(repo, { id: "a" });
     addRepoWatcher(repo, { id: "b" });

@@ -21,6 +21,8 @@ let watchers: any[];
 let sent: { method: string; url: string; body: any }[];
 let answers: Answer[];
 let hold: { release?: () => void; promise?: Promise<void> } | undefined;
+/** What GET /api/flows/<name> answers; a function may wait. A flow not listed answers `[]` (no descriptions). */
+let flowReplies: Record<string, unknown>;
 const realFetch = globalThis.fetch;
 
 const ann = { name: "Ann", email: "ann@example.com", role: "user", status: "active" };
@@ -36,6 +38,7 @@ beforeEach(() => {
   sent = [];
   answers = [];
   hold = undefined;
+  flowReplies = {};
   (globalThis as any).location = { hash: "" };
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
@@ -45,6 +48,11 @@ beforeEach(() => {
     if (init.method === "GET") {
       if (url === "/api/watchers") return reply(watchers);
       if (url === "/api/admin/repos") return reply(repos);
+      const flowName = /^\/api\/flows\/([\w-]+)$/.exec(url)?.[1];
+      if (flowName && flowName in flowReplies) {
+        const r = flowReplies[flowName];
+        return typeof r === "function" ? reply(await r()) : reply(r);
+      }
       return reply([]);
     }
     sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });
@@ -576,6 +584,164 @@ describe("the dialog", () => {
     await flush();
     expect(sent).toEqual([]);
     expect(root().textContent).toContain('vars: "oops" should be name=value');
+  });
+
+  describe("the fields of the flow's variables", () => {
+    const gitflow = {
+      var_info: {
+        risk: { label: "Risk", kind: "number", min: 0, max: 100 },
+        approve: { label: "Approve", kind: "yes_no" },
+        docs: { label: "Docs", kind: "list", separator: "line" },
+        agent_env: { label: "Env", kind: "list", separator: "line" },
+      },
+      vars: { risk: "70", approve: "yes", docs: "", agent_env: "" },
+    };
+    const daily = { var_info: { hours: { label: "Hours", kind: "number" }, agent_env: { kind: "list", separator: "line" }, docs: { kind: "list", separator: "line" } }, vars: { hours: "8", agent_env: "", docs: "" } };
+    const box = () => inputOf(root(), "Variables for each run") as FakeElement;
+    const save = () => press(button(root(), "Save watcher"));
+    const risk = () => inputOf(root(), "Risk");
+    const defer = () => {
+      let release!: (v?: unknown) => void;
+      const wait = new Promise((r) => (release = r));
+      return { wait, release };
+    };
+
+    it("shows a field per described variable, and a stored value in its field and not in the box", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      void open({ existing: stored({ vars: { risk: "50", other: "x" } }) });
+      await flush();
+      expect(risk().value).toBe("50");
+      expect(risk().attrs.placeholder).toBe("70");
+      expect(box().value).toBe("other=x");
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ risk: "50", other: "x" });
+    });
+
+    it("saves only what is not at its default, with the free text lines", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      void open({ existing: stored({ vars: {} }) });
+      await flush();
+      box().value = "other=1";
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ other: "1" });
+    });
+
+    it("changing the source loads the flow of that source and keeps typed values", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      flowReplies["release-daily"] = daily;
+      void open();
+      await flush();
+      risk().value = "20";
+      box().value = "other=1";
+      (field(root(), "source") as FakeElement).value = "schedule";
+      (field(root(), "source") as FakeElement).fire("change");
+      await flush();
+      expect(inputOf(root(), "Hours").attrs.placeholder).toBe("8");
+      expect(walk(root()).some((e) => e.textContent === "Risk")).toBe(false);
+      expect(box().value.split("\n").sort()).toEqual(["other=1", "risk=20"]);
+    });
+
+    it("keeps a list with line breaks whole across flow changes and a failed load", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      flowReplies["release-daily"] = daily;
+      void open({ existing: stored({ vars: { agent_env: "A=1\nB=2" } }) });
+      await flush();
+      (field(root(), "source") as FakeElement).value = "schedule";
+      (field(root(), "source") as FakeElement).fire("change");
+      await flush();
+      flowReplies["release-daily"] = () => Promise.reject(new Error("down"));
+      const flowInput = walk(root()).find((e) => e.attrs.list === "watcher-flows")!;
+      flowInput.fire("change");
+      await flush();
+      expect(box().value).not.toContain("B=2");
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ agent_env: "A=1\nB=2" });
+    });
+
+    it("shows a multiline variable the flow does not describe in a text area of its own, which can be edited or emptied", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      flowReplies["release-daily"] = { var_info: { hours: { kind: "number" } }, vars: { hours: "8" } };
+      void open({ existing: stored({ vars: { agent_env: "A=1\nB=2" } }) });
+      await flush();
+      (field(root(), "source") as FakeElement).value = "schedule";
+      (field(root(), "source") as FakeElement).fire("change");
+      await flush();
+      const area = walk(root()).find((e) => e.tag === "textarea" && e.attrs["aria-label"] === "agent_env")!;
+      expect(area.value).toBe("A=1\nB=2");
+      area.value = "A=1\nB=3";
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ agent_env: "A=1\nB=3" });
+    });
+
+    it("an emptied text area removes the variable", async () => {
+      flowReplies["release-daily"] = { var_info: { hours: { kind: "number" } }, vars: { hours: "8" } };
+      void open({ existing: stored({ vars: { agent_env: "A=1\nB=2" } }) });
+      await flush();
+      const area = walk(root()).find((e) => e.tag === "textarea" && e.attrs["aria-label"] === "agent_env")!;
+      area.value = "";
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({});
+    });
+
+    it("drops an older answer that arrives late", async () => {
+      const slow = defer();
+      flowReplies["issue-gitflow"] = async () => (await slow.wait, gitflow);
+      flowReplies["release-daily"] = daily;
+      void open();
+      (field(root(), "source") as FakeElement).value = "schedule";
+      (field(root(), "source") as FakeElement).fire("change");
+      await flush();
+      slow.release();
+      await flush();
+      expect(walk(root()).some((e) => e.textContent === "Hours")).toBe(true);
+      expect(walk(root()).some((e) => e.textContent === "Risk")).toBe(false);
+    });
+
+    it("keeps what is typed while a load runs, and Save waits for the load", async () => {
+      const slow = defer();
+      flowReplies["issue-gitflow"] = async () => (await slow.wait, gitflow);
+      void open({ existing: stored({ vars: {} }) });
+      box().value = "typed=1";
+      save();
+      await flush();
+      expect(sent).toEqual([]); // waiting for the flow
+      slow.release();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ typed: "1" });
+    });
+
+    it("a failed load leaves the box, and Save still works", async () => {
+      flowReplies["issue-gitflow"] = () => Promise.reject(new Error("down"));
+      void open({ existing: stored({ vars: { risk: "5" } }) });
+      await flush();
+      expect(box().value).toBe("risk=5");
+      save();
+      await flush();
+      expect(sent[0]!.body.vars).toEqual({ risk: "5" });
+    });
+
+    it("the server's sentence for a variable marks its field", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      answers = [{ status: 400, error: "vars.risk: 150 is above max 100" }];
+      void open({ existing: stored({ vars: { risk: "150" } }) });
+      await flush();
+      save();
+      await flush();
+      expect(risk().attrs["aria-invalid"]).toBe("true");
+      expect(root().textContent).toContain("vars.risk: 150 is above max 100");
+    });
+
+    it("shows agent_env as pairs with a note about secrets", async () => {
+      flowReplies["issue-gitflow"] = gitflow;
+      void open();
+      await flush();
+      expect(root().textContent).toContain("May contain secrets");
+    });
   });
 
   describe("the parts that depend on the source", () => {
