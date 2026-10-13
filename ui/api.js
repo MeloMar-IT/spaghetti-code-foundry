@@ -1,4 +1,9 @@
 let csrf = "";
+
+// The version of config.yaml that each answer came from (X-Config-Version), kept by the answer object.
+const configVersions = new WeakMap();
+/** The version of the settings file `data` was read from, or undefined. */
+export const configVersion = (data) => (data && typeof data === "object" ? configVersions.get(data) : undefined);
 /** The CSRF token of the signed-in session; sent with every call that is not a GET. */
 export const setCsrf = (t) => {
   csrf = t || "";
@@ -32,15 +37,18 @@ export const withAs = (url) => (viewAs ? `${url}${url.includes("?") ? "&" : "?"}
  * In a preview every other call is a GET with `as=`, and anything else throws before `fetch`.
  * A 403 there means the view has ended: the user display only makes calls the server allows a user, so no other 403 can happen.
  */
-async function req(method, url, body, stay = false, plain = false) {
+async function req(method, url, body, stay = false, plain = false, extra = undefined) {
   const preview = Boolean(viewAs) && !plain;
   if (preview && method !== "GET") throw Object.assign(new Error(PREVIEW_TEXT), { preview: true });
   if (preview && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
   if (preview) url = withAs(url);
   const headers = body ? { "content-type": "application/json" } : {};
   if (method !== "GET" && csrf) headers["x-csrf-token"] = csrf;
+  if (extra) Object.assign(headers, extra);
   const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const data = await r.json().catch(() => ({}));
+  const v = r.headers?.get?.("x-config-version");
+  if (r.ok && v && data && typeof data === "object") configVersions.set(data, v);
   // the session ended (expired, revoked, password changed): start again at the sign-in page
   if (r.status === 401 && !stay && !keepOnAuthFail() && !url.startsWith("/api/session")) location.reload();
   if (preview && r.status === 403 && !viewEnded) {
@@ -172,7 +180,7 @@ export const api = {
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
-  saveConfig: (config) => req("PUT", "/api/config", config),
+  saveConfig: (config, version = configVersions.get(config)) => req("PUT", "/api/config", config, false, false, version ? { "x-config-version": version } : undefined),
   watchers: () => req("GET", "/api/watchers"),
   monitor: () => req("GET", "/api/monitor"),
   monitorOff: () => req("POST", "/api/monitor/off", {}),

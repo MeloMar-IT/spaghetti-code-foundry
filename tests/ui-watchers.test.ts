@@ -368,6 +368,47 @@ describe("the watcher page", () => {
     expect(configs[0].watchers).toEqual([{ id: "mon", source: "monitor", every: "30m", enabled: true }]);
   });
 
+  it("a stale monitor Save sends the version of the page, not of the read at Save time, and shows the refusal", async () => {
+    watchers = [{ id: "mon", source: "monitor", enabled: true, every: "1h", state: { name: "running" }, status: { id: "mon", lastActions: [] } }];
+    const versions: (string | undefined)[] = [];
+    const get = (globalThis as any).fetch;
+    const stub = (body: unknown, version: string | null, status = 200) => ({ ok: status < 400, status, statusText: "x", headers: { get: (n: string) => (n === "x-config-version" ? version : null) }, json: async () => body });
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (url === "/api/watchers" && init.method === "GET") return stub(watchers, "v1");
+      if (url === "/api/config" && init.method === "GET") return stub({ watchers: [{ id: "mon", source: "monitor", every: "1h", enabled: true }] }, "v2");
+      if (url === "/api/config" && init.method === "PUT") {
+        versions.push(init.headers["x-config-version"]);
+        return stub({ error: "the settings changed since you loaded them — reload first" }, null, 409);
+      }
+      return get(url, init);
+    };
+    const main = await drawDetail("mon");
+    press(button(main, "Edit"));
+    inputOf(root(), "Check every").value = "30m";
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(versions).toEqual(["v1"]);
+    expect(root().textContent).toContain("reload first");
+  });
+
+  it("the monitor's Edit form shows the value of the file, and Save refuses when the file has no such watcher", async () => {
+    watchers = [{ id: "mon", source: "monitor", enabled: true, every: "1h", file: { id: "mon", every: "30m", enabled: true }, state: { name: "running" }, status: { id: "mon", lastActions: [] } }];
+    const puts: unknown[] = [];
+    const get = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      if (url === "/api/config" && init.method === "GET") return { ok: true, status: 200, statusText: "x", json: async () => ({ watchers: [] }) };
+      if (init.method === "PUT") puts.push(init.body);
+      return get(url, init);
+    };
+    const main = await drawDetail("mon");
+    press(button(main, "Edit"));
+    expect(inputOf(root(), "Check every").value).toBe("30m");
+    press(button(root(), "Save watcher"));
+    await flush();
+    expect(root().textContent).toContain('config.yaml has no watcher "mon" any more — reload first');
+    expect(puts).toEqual([]);
+  });
+
   it("shows Error details and Recent activity", async () => {
     watchers = [stored({ status: { id: "w", lastError: "boom", lastActions: ["did a", "did b"] } })];
     const main = await drawDetail("w");

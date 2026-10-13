@@ -43,6 +43,20 @@ describe("req() in ui/api.js", () => {
     expect(del).toMatchObject({ method: "DELETE", url: "/api/session", headers: { "x-csrf-token": "tok" } });
   });
 
+  it("sends the version a config answer came with, for that object only", async () => {
+    const body = { concurrency: 2 };
+    fetchMock.mockImplementation(async () => ({ ok: true, status: 200, statusText: "OK", headers: { get: (n: string) => (n === "x-config-version" ? "v1" : null) }, json: async () => body }));
+    const cfg = await apiMod.api.config();
+    expect(apiMod.configVersion(cfg)).toBe("v1");
+    await apiMod.api.saveConfig(cfg);
+    await apiMod.api.saveConfig({});
+    await apiMod.api.saveConfig(cfg, "v9");
+    const puts = sent().filter((s) => s.method === "PUT");
+    expect(puts[0]!.headers["x-config-version"]).toBe("v1");
+    expect(puts[1]!.headers["x-config-version"]).toBeUndefined();
+    expect(puts[2]!.headers["x-config-version"]).toBe("v9");
+  });
+
   it("sends no token before one is set", async () => {
     await apiMod.api.saveConfig({});
     expect(sent()[0]!.headers["x-csrf-token"]).toBeUndefined();

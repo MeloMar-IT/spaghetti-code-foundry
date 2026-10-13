@@ -2160,7 +2160,7 @@ not followed; the command says where the server points to and stops.
   accepted, unless the field is one the command does not let `--data` set.
 - An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
   contain `/` or `\`.
-- `scf settings set` replaces the whole settings file, so it insists on `--data`. Start from
+- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. Start from
   `scf settings show --json`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
@@ -2306,6 +2306,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 ![Settings](images/settings.png)
 
 **Saving.** Next to **Save** the page says "Saving…", then "Saved at …" or "Not saved.". A message also appears. **Clean up** in the Disk section asks first in a dialog.
+
+**Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
@@ -2952,8 +2954,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings |
-| `PUT /api/config` | yes | no | change the settings |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file |
+| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
 | `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |

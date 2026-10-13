@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, configVersion } from "./api.js";
 import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
 import { check, input, lockReadOnly } from "./fields.js";
 import { loadingState } from "./states.js";
@@ -38,6 +38,7 @@ export function serverFrom(v) {
 export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
   const [c, info] = await Promise.all([api.config(), api.info()]);
+  let version = configVersion(c);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
   const conc = input(String(c.concurrency), { type: "number", min: 1 });
@@ -110,7 +111,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     saveNote.setAttribute("class", "status");
     mount(saveNote, "Saving…");
     try {
-      await api.saveConfig(next);
+      const saved = await api.saveConfig(next, version);
+      version = configVersion(saved) ?? version;
       mount(err);
       markInvalid(Object.values(fields));
       saveNote.setAttribute("class", "status ok");
@@ -118,7 +120,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       toast("Settings saved");
     } catch (e) {
       mount(err, h("div", { class: "errors", role: "alert" }, e.message));
-      markInvalid(Object.values(fields), fields[fieldFor(e.message, SETTINGS_PAIRS)]);
+      markInvalid(Object.values(fields), e.status === 409 ? undefined : fields[fieldFor(e.message, SETTINGS_PAIRS)]);
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
     } finally {
