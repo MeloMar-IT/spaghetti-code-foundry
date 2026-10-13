@@ -235,7 +235,13 @@ describe("ui server", () => {
     expect((await json("PUT", "/api/flows/bad", { yaml: conflict, scope: "repo" })).status).toBe(400);
     expect((await json("PUT", "/api/flows/other", { yaml: FLOW, scope: "repo" })).status).toBe(400); // name mismatch
     expect((await json("PUT", "/api/flows/mine", { yaml: FLOW, scope: "repo" })).status).toBe(200);
-    const flows = (await (await json("GET", "/api/flows")).json()) as Array<{ name: string; scope: string }>;
+    expect(((await (await json("GET", "/api/flows/mine")).json()) as { var_info: unknown }).var_info).toEqual({});
+    const gitflow = (await (await json("GET", "/api/flows/issue-gitflow")).json()) as { var_info: Record<string, unknown> };
+    expect(gitflow.var_info.risk_threshold).toMatchObject({ kind: "number", min: 0, max: 100 });
+    const unknown = await json("PUT", "/api/flows/mine", { yaml: FLOW.replace("steps:", "var_info:\n  nope: {kind: text}\nsteps:"), scope: "repo" });
+    expect(unknown.status).toBe(400);
+    expect(((await unknown.json()) as { error: string }).error).toContain('unknown variable "nope"');
+    const flows =(await (await json("GET", "/api/flows")).json()) as Array<{ name: string; scope: string }>;
     expect(flows.find((f) => f.name === "mine")?.scope).toBe("repo");
     expect(flows.find((f) => f.name === "issue-gitflow")?.scope).toBe("builtin");
     expect((await json("DELETE", "/api/flows/issue-gitflow")).status).toBe(403);

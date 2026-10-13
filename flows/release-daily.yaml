@@ -18,6 +18,25 @@ vars:
   build_cmd: ""
   develop_branch: develop
   main_branch: main
+var_info:
+  github_repo:
+    set_by_run: true
+  test_cmd:
+    label: Test command
+    help: Use auto to find the command from the project files, or type the command that builds and tests the project.
+    kind: text
+  build_cmd:
+    label: Build command
+    help: "The command that builds the project. Empty: no build."
+    kind: text
+  develop_branch:
+    label: Develop branch
+    help: The branch that feature branches are merged into.
+    kind: text
+  main_branch:
+    label: Main branch
+    help: The branch that releases go to.
+    kind: text
 steps:
   - id: clone
     type: shell

@@ -199,7 +199,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
   if (res.timedOut) return { ...base, ok: false, error: "timed out" };
   if (failure || res.exitCode !== 0) {
     const err = failure ?? `codex exited with code ${res.exitCode}. ${res.stderr.trim().slice(-500)}`;
-    return { ...base, ok: false, error: /not logged in|401|unauthorized/i.test(err) ? `${err} — run \`codex login\`` : err };
+    return { ...base, ok: false, error: /not logged in|\b401\b|unauthorized/i.test(err) ? `${err} — run \`codex login\`` : err };
   }
   return { ...base, ok: true };
 }

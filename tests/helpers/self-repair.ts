@@ -240,7 +240,7 @@ export async function makeWorld(o: WorldOptions = {}): Promise<World> {
       return [...made, ...gh.comments().map((c) => c.body).filter((b) => b.includes("claude-factory monitor-"))];
     },
     storyCalls() {
-      const calls = ghLines().filter((l) => (/^gh api repos\/\S+\/issues(\s|\?|\/\d|$)/.test(l) && !l.includes("/issues/comments/")) || (l.startsWith("gh label create") && !l.includes("--force")));
+      const calls = ghLines().filter((l) => (/^gh api repos\/\S+\/issues(\s|\?|\/\d|$)/.test(l) && !l.includes("/issues/comments/") && !l.includes("?state=all&per_page=100&sort=created&direction=desc&page=")) || (l.startsWith("gh label create") && !l.includes("--force")));
       return [...calls, ...gh.comments().filter((c) => c.body.includes("claude-factory monitor-")).map((c) => `comment on #${c.issue}`)];
     },
     log(event?: string) {

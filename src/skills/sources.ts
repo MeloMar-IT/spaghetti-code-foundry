@@ -50,7 +50,7 @@ export const hasUnsafeChar = (s: string): boolean => UNSAFE.test(s);
 const UNSAFE_G = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const TRACK_RE = /^[A-Za-z0-9._/-]{1,200}$/;
-const OWNER_RE = /^@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
+export const OWNER_RE =/^@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
 const SHOWN_MAX = 80;
 
 const escapeUnsafe = (s: string) => s.replace(UNSAFE_G, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);

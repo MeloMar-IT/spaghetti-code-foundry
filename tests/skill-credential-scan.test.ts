@@ -8,6 +8,7 @@ import {
   PLACEHOLDER,
   RISKY_FILE,
   SAFE_FILE,
+  credentialHits,
   credentialProblem,
   riskyFileName,
 } from "../src/skills/credential-scan.js";
@@ -52,6 +53,9 @@ describe("parity with tools/secret-scan", () => {
 describe("guard: the files of this feature pass the tool's line rules", () => {
   const files = [
     "src/skills/credential-scan.ts",
+    "src/skills/scan.ts",
+    "src/skills/scan-rules.ts",
+    "tests/skill-scan.test.ts",
     "tests/skill-credential-scan.test.ts",
     "tests/skill-package-credentials.test.ts",
     "tests/skill-package.test.ts",
@@ -230,4 +234,106 @@ describe("riskyFileName", () => {
     "false: %s",
     (p) => expect(riskyFileName(p)).toBe(false),
   );
+});
+
+describe("credentialHits", () => {
+  const END = "-----END RSA " + "PRIVATE KEY-----";
+  const TOKEN2 = "ghp_" + "Z9y8X7w6V5".repeat(4);
+  const named: [string, string][] = [
+    ["private key", PEM + "\n" + "A".repeat(64)],
+    ["AWS access key", "AKIA" + "ABCDEFGHIJKLMNOP"],
+    ["AWS secret key", "aws_secret_access_key" + " = " + "A1b2C3d4E5".repeat(4)],
+    ["GitHub token", "ghp_" + "a1B2c3D4e5".repeat(4)],
+    ["Anthropic key", TOKEN_SLUG],
+    ["OpenAI key", "sk-" + "proj-" + "A1b2C3d4E5".repeat(4)],
+    ["Slack token", "xox" + "b-" + "1234567890" + "abcdef"],
+    ["Google API key", "AIza" + "A1b2C3d4E5".repeat(3) + "A1b2C"],
+    ["Stripe live key", "sk_" + "live_" + "a1B2c3D4e5".repeat(3)],
+    ["npm token", "npm_" + "a1B2c3D4e5".repeat(3) + "a1B2c3"],
+    ["connection string with password", "jdbc:oracle:thin:scott/" + "tiger123" + "@//h:1521/x"],
+    ["connection string with password", url("https", "user:" + "passw0rd1" + "@git.corp.net/r.git")],
+    ["hard-coded secret", "api_key" + ' = "' + "abc123def456ghi" + '"'],
+    ["connection endpoint", "kafka://kafka-prod-01.corp.net:9092"],
+    ["connection endpoint", "jdbc:oracle:thin:@//ora12.internal:1521/ORCL"],
+  ];
+  const clean = ["kafka://<broker>:9092", "kafka://localhost:9092", "https://api.corp.net/v1", 'password: "onlyletterslong"', PEM + " ".repeat(400) + "A".repeat(64), ""];
+
+  it.each(named)("first hit is %s", (rule, s) => {
+    expect(credentialHits(s)[0]?.rule).toBe(credentialProblem(s));
+    expect(credentialHits(s)[0]?.rule).toBe(rule);
+  });
+  it.each(clean)("no hit: %#", (s) => expect(credentialHits(s)).toEqual([]));
+
+  it("two tokens give two hits, each one token", () => {
+    const a = "ghp_" + "a1B2c3D4e5".repeat(4);
+    const text = `x ${a} y\n${TOKEN2} z`;
+    const hits = credentialHits(text);
+    expect(hits.map((h) => text.slice(h.start, h.end))).toEqual([a, TOKEN2]);
+  });
+
+  describe("key block", () => {
+    const l1 = "A".repeat(64);
+    it("runs from the BEGIN line to the END line", () => {
+      const block = [PEM, l1, "B".repeat(64), END].join("\n");
+      const text = "before\n" + block + "\nafter " + "C".repeat(64);
+      const hits = credentialHits(text);
+      expect(hits).toHaveLength(1);
+      expect(text.slice(hits[0]!.start, hits[0]!.end)).toBe(block);
+    });
+    it("two keys with the same first line are two different blocks", () => {
+      const k = (second: string) => [PEM, l1, second, END].join("\n");
+      const text = k("B".repeat(64)) + "\n" + k("C".repeat(64));
+      const slices = credentialHits(text).map((h) => text.slice(h.start, h.end));
+      expect(slices).toEqual([k("B".repeat(64)), k("C".repeat(64))]);
+    });
+    it("without an END line the hit runs to the end of the text", () => {
+      const text = PEM + "\n" + "A".repeat(64);
+      expect(credentialHits(text)[0]!.end).toBe(text.length);
+    });
+    it("without an END line the hit stops at the next BEGIN line", () => {
+      const first = PEM + "\n" + l1 + "\n";
+      const text = first + PEM + "\n" + "B".repeat(64);
+      const hits = credentialHits(text);
+      expect(hits[0]!.end).toBe(first.length);
+      expect(hits[1]!.start).toBe(first.length);
+    });
+    it("an END line right after the BEGIN line still reaches the first key data", () => {
+      const text = PEM + "\n" + END + "\n" + "A".repeat(64);
+      expect(credentialHits(text)[0]!.end).toBe(text.length);
+    });
+  });
+
+  it("later match wins: only the real value is a hit", () => {
+    const real = "kafka://real.corp.net:9092";
+    const t1 = "kafka://<broker>:9092 or " + real;
+    expect(credentialHits(t1).map((h) => t1.slice(h.start, h.end))).toEqual([real]);
+    const t2 = 'password: "${DB_PASSWORD}"\npassword: "' + "realvalue1234" + '"';
+    const h2 = credentialHits(t2);
+    expect(h2).toHaveLength(1);
+    expect(t2.slice(h2[0]!.start)).toContain("realvalue1234");
+    const t3 = PEM + " ".repeat(400) + PEM + "\n" + "A".repeat(64);
+    const h3 = credentialHits(t3);
+    expect(h3).toHaveLength(1);
+    expect(h3[0]!.start).toBe(PEM.length + 400);
+  });
+
+  it("a call to credentialProblem between two calls changes nothing", () => {
+    const text = "ghp_" + "a1B2c3D4e5".repeat(4) + " " + TOKEN2;
+    const first = credentialHits(text);
+    credentialProblem("AKIA" + "ABCDEFGHIJKLMNOP");
+    expect(credentialHits(text)).toEqual(first);
+  });
+
+  it.each([
+    ["a.".repeat(131072)],
+    ["jdbc:".repeat(52000)],
+    ["jdbc:oracle:thin:".repeat(15000)],
+    ["ab://".repeat(52000)],
+    ["password ".repeat(29000)],
+    [(PEM + "\n" + "A".repeat(40) + "\n").repeat(Math.ceil(262144 / (PEM.length + 42))).slice(0, 262144)],
+  ])("speed: crafted input %#", (text) => {
+    const t = performance.now();
+    credentialHits(text);
+    expect(performance.now() - t).toBeLessThan(500);
+  });
 });

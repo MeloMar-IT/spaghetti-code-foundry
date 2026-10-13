@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { closeIssue, listNewestIssues, listOpenIssues, updateIssue } from "../src/github.js";
+import { closeIssue, listAllIssues, listNewestIssues, listOpenIssues, updateIssue } from "../src/github.js";
 import { fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 
 let gh: ReturnType<typeof fakeGithub>;
@@ -73,6 +73,51 @@ describe("listOpenIssues", () => {
   it("a list call without page= is unchanged: newest first, closed included", async () => {
     gh.setBugIssues([issue(1), issue(2, { state: "closed" }), issue(3)]);
     expect((await listNewestIssues("o/r")).map((i) => i.number)).toEqual([3, 2, 1]);
+  });
+});
+
+describe("listAllIssues", () => {
+  it("reads 501 issues in 6 calls, newest first, closed included, pull requests left out", async () => {
+    gh.setBugIssues([...many(501, (n) => (n % 2 ? { state: "closed" } : {})), issue(502, { pull_request: {} }), issue(503, { pull_request: {} })]);
+    const at = gh.ghLog().length;
+    const r = await listAllIssues("o/r", { pages: 20 });
+    expect(r.cut).toBe(false);
+    expect(r.issues).toHaveLength(501);
+    expect(r.issues.map((i) => i.number)).toEqual(many(501).map((i) => i.number).reverse());
+    expect(r.issues.some((i) => i.state === "closed")).toBe(true);
+    expect(listCalls(at)).toHaveLength(6);
+    expect(listCalls(at)[0]).toContain("state=all");
+  });
+  it("is cut at the page limit", async () => {
+    gh.setBugIssues(many(201));
+    const r = await listAllIssues("o/r", { pages: 2 });
+    expect(r.issues).toHaveLength(200);
+    expect(r.cut).toBe(true);
+  });
+  it("rejects a bad page count", async () => {
+    await expect(listAllIssues("o/r", { pages: 0 })).rejects.toThrow(/pages/);
+  });
+  it("rejects an issue that is not well formed", async () => {
+    const bad: unknown[] = [
+      null, { ...issue(1), title: undefined }, { ...issue(1), state: "weird" }, { ...issue(1), labels: "bug" }, { ...issue(1), labels: [1] },
+      { ...issue(1), created_at: "never" }, { ...issue(1), number: 0 }, { ...issue(1), body: 5 }, { ...issue(1), closed_at: "never" },
+    ];
+    for (const b of bad) {
+      gh.setBugIssues([issue(2), b as FakeIssue]);
+      await expect(listAllIssues("o/r", { pages: 1 })).rejects.toThrow(/not well formed/);
+    }
+  });
+  it("checks a later page", async () => {
+    gh.setBugIssues(many(150, (n) => (n === 1 ? { state: "weird" as "open" } : {})));
+    const at = gh.ghLog().length;
+    await expect(listAllIssues("o/r", { pages: 20 })).rejects.toThrow(/not well formed/);
+    expect(listCalls(at).some((l) => l.includes("page=2"))).toBe(true);
+  });
+  it("checks the sentinel page", async () => {
+    gh.setBugIssues(many(101, (n) => (n === 1 ? { state: "weird" as "open" } : {})));
+    const at = gh.ghLog().length;
+    await expect(listAllIssues("o/r", { pages: 1 })).rejects.toThrow(/not well formed/);
+    expect(listCalls(at)).toHaveLength(2);
   });
 });
 

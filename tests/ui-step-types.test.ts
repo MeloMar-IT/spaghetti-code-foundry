@@ -82,7 +82,7 @@ describe("data-field and data-section markers", () => {
     const editor: any = await import("../ui/editor.js" as string);
     expect(editor.editable({ name: "t", steps: [{ id: "a" }], defaults: {} })).toBe(true);
     expect(editor.editable({ name: "t" })).toBe(true);
-    for (const bad of [null, [], "x", { steps: "nope" }, { steps: ["a"] }, { steps: {} }, { defaults: "x" }, { vars: [] }, { publish: 3 }]) {
+    for (const bad of [null, [], "x", { steps: "nope" }, { steps: ["a"] }, { steps: {} }, { defaults: "x" }, { vars: [] }, { publish: 3 }, { name: "t", var_info: [] }]) {
       expect(editor.editable(bad), JSON.stringify(bad)).toBe(false);
     }
   });

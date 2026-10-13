@@ -158,6 +158,8 @@ hand.
 Skills reach an agent in a fixed order. Each stage has its own module:
 
 - **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
+- **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
+- **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
 - **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
 - **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
@@ -887,8 +889,11 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
+| `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
+
+A save of `config.yaml` edits the file text in place (`src/config-edit.ts`, `editConfigText` in `src/config.ts`): comments and key order stay, only the changed keys are written, and the result is parsed again before it is written. The settings and watcher reads send `X-Config-Version`, the sha256 of the file text; a `PUT /api/config` with a stale version gets 409.
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
 

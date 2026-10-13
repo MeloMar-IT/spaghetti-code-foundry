@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEP_REF_SOURCE, dependencies, dependencyRange, dependencyText, openDependencies } from "../src/queue/deps.js";
+import { DEP_REF_SOURCE, dependencies, dependencyRange, dependencyText, openDependencies, titleIndex } from "../src/queue/deps.js";
 
 const all = [
   { number: 1, title: "Story 1 — Publish update metadata", state: "CLOSED" },
@@ -107,5 +107,20 @@ describe("dependencyRange", () => {
     expect("see #12.".match(re())).toEqual(["#12"]);
     expect("owner/repo#12".match(re())).toBeNull();
     expect("a#12".match(re())).toBeNull();
+  });
+});
+
+describe("title index", () => {
+  const body = "Depends on: Story 7 — Install the update";
+  it("gives the same answer as no index", () => {
+    expect(dependencies(body, 99, all, titleIndex(all))).toEqual(dependencies(body, 99, all));
+    expect(dependencies(body, 99, all)).toEqual([7]);
+  });
+  it("without an index it follows a changed title, in place or replaced", () => {
+    const list = all.map((i) => ({ ...i }));
+    list[4]!.title = "Story 8 — Something else";
+    expect(dependencies(body, 99, list)).toEqual([]);
+    list[3] = { number: 6, title: "Story 7 — Install the update", state: "OPEN" };
+    expect(dependencies(body, 99, list)).toEqual([6]);
   });
 });

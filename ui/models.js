@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, configVersion } from "./api.js";
 import { confirmDialog, fieldFor, glyph, h, markInvalid, mount, tableBox, toast } from "./dom.js";
 import { emptyState, errorState, explainError, loadingState, permissionState } from "./states.js";
 
@@ -99,11 +99,14 @@ function testBox(defaultSpec, owner = "") {
 
 // Every change to the config is read, changed and written inside this queue: two actions cannot overwrite each other.
 let configLock = Promise.resolve();
-function changeConfig(change) {
+// `form` belongs to one drawn page: it holds the version of the file that page was drawn from.
+function changeConfig(form, change) {
   const run = configLock.then(async () => {
+    const version = form.version; // before the fresh read: a reload that ends meanwhile must not give this save a newer one
     const c = await api.config();
     change(c);
-    await api.saveConfig(c);
+    const saved = await api.saveConfig(c, version);
+    form.version = configVersion(saved) ?? version;
   });
   configLock = run.catch(() => {});
   return run;
@@ -124,7 +127,7 @@ function agentsCard(agents) {
       : null);
 }
 
-function providersCard(cfg, providers, reload, problem) {
+function providersCard(cfg, providers, reload, problem, form) {
   const name = input("", { class: "mono", placeholder: "my-proxy" });
   const kind = h("select", {}, ["ollama", "lmstudio", "anthropic-compatible"].map((k) => h("option", { value: k }, k)));
   const url = input("", { class: "mono", placeholder: "http://localhost:11434" });
@@ -141,7 +144,7 @@ function providersCard(cfg, providers, reload, problem) {
     // What was typed when the button was pressed is what is saved, even if the fields change while the config loads.
     const entry = { kind: kind.value, base_url: url.value.trim() || undefined, api_key_env: keyEnv.value.trim() || undefined, default_model: defModel.value.trim() || undefined };
     try {
-      await changeConfig((c) => { c.providers[n] = entry; });
+      await changeConfig(form, (c) => { c.providers[n] = entry; });
     } catch (e) {
       markInvalid(inputs, fieldFor(e.message, [[/base_url/, url], [/api_key_env/, keyEnv], [/default_model/, defModel], [/"kind"/, kind], [/providers/, name]]));
       return toast(e.message, "error");
@@ -193,7 +196,7 @@ const PRESETS = (local) => [
   ...(local ? [{ label: `Small jobs on ${local}`, rules: [{ step: "^(triage|learn)$", model: local }] }] : []),
 ];
 
-function routingCard(cfg, specs, localSpec) {
+function routingCard(cfg, specs, localSpec, form) {
   const rules = cfg.router.rules.map((r) => ({ ...r }));
   const body = h("tbody");
   const defModel = input(cfg.default_model ?? "", { class: "mono", list: "models", placeholder: "Claude Code's default" });
@@ -250,7 +253,7 @@ function routingCard(cfg, specs, localSpec) {
       },
     };
     try {
-      await changeConfig((c) => { Object.assign(c, snap); });
+      await changeConfig(form, (c) => { Object.assign(c, snap); });
     } catch (e) {
       markInvalid(everyInput(), configField(e.message));
       return toast(e.message, "error");
@@ -292,18 +295,19 @@ export async function renderModels(main) {
         : errorState(explainError(cfg.reason, { what: "The models page could not be loaded." }), { onRetry: load }));
       return;
     }
+    const form = { version: configVersion(cfg.value) };
     const head = h("div", { class: "toolbar" }, h("h1", {}, "Models"), h("span", { class: "muted" }, "Agents, providers and which model runs which step"),
       h("span", { class: "spacer" }), h("button", { onClick: load, "aria-label": "Reload" }, "↻"));
     if (st.status === "rejected") {
       // The routing rules do not need the provider list: they stay usable and can be saved.
       const problem = explainError(st.reason, { what: "The agents and providers could not be checked.", safe: "Routing below still works and can be saved." });
-      mount(box, head, providersCard(cfg.value, [], load, problem), routingCard(cfg.value, specSuggestions([]), undefined));
+      mount(box, head, providersCard(cfg.value, [], load, problem, form), routingCard(cfg.value, specSuggestions([]), undefined, form));
       return;
     }
     void refreshModelLists(st.value);
     const specs = specSuggestions(st.value.providers);
     const localSpec = specs.find((s) => /^(ollama|lmstudio):/.test(s) && /coder|gpt-oss|devstral/.test(s)) ?? specs.find((s) => /^(ollama|lmstudio):/.test(s) && !/:(0\.5b|135m|1b)$/.test(s));
-    mount(box, head, agentsCard(st.value.agents), providersCard(cfg.value, st.value.providers, load), routingCard(cfg.value, specs, localSpec));
+    mount(box, head, agentsCard(st.value.agents), providersCard(cfg.value, st.value.providers, load, undefined, form), routingCard(cfg.value, specs, localSpec, form));
   };
   await load();
 }
@@ -340,7 +344,7 @@ function testSpecFor(name, p, cfg) {
 }
 
 /** Settings of one provider. A built-in one (not in the config yet) keeps its kind: saving adds an override. */
-function providerForm(name, entry, reload, builtin) {
+function providerForm(name, entry, reload, builtin, form) {
   const kinds = builtin ? [entry.kind] : [...new Set(["ollama", "lmstudio", "anthropic-compatible", entry.kind].filter(Boolean))];
   const kind = h("select", {}, kinds.map((k) => h("option", { value: k }, k)));
   kind.value = entry.kind;
@@ -352,7 +356,7 @@ function providerForm(name, entry, reload, builtin) {
     markInvalid(inputs);
     const next = { kind: kind.value, base_url: url.value.trim() || undefined, api_key_env: keyEnv.value.trim() || undefined, default_model: defModel.value.trim() || undefined };
     try {
-      await changeConfig((c) => { c.providers[name] = { ...c.providers[name], ...next }; });
+      await changeConfig(form, (c) => { c.providers[name] = { ...c.providers[name], ...next }; });
     } catch (e) {
       markInvalid(inputs, fieldFor(e.message, [[/base_url/, url], [/api_key_env/, keyEnv], [/default_model/, defModel], [/"kind"/, kind]]));
       return toast(e.message, "error");
@@ -388,6 +392,7 @@ export async function renderModelDetail(main, name, { go = (hash) => { location.
       return;
     }
     const c = cfg.value;
+    const form = { version: configVersion(c) };
     const p = st.value.providers.find((x) => x.name === name);
     if (!p) {
       mount(box, h("div", { class: "empty" }, h("p", {}, "This provider is not set up."), h("a", { href: "#/models" }, "Back to Models")));
@@ -402,7 +407,7 @@ export async function renderModelDetail(main, name, { go = (hash) => { location.
     const settings = section("Settings",
       h("p", { class: "muted flush" }, [p.kind, p.base_url, p.agents.length ? `Used by: ${p.agents.join(", ")}` : null].filter(Boolean).join(" · ")),
       p.models.length ? h("div", { class: "row tighter" }, p.models.map((m) => h("span", { class: "pill mono" }, m))) : h("span", { class: "muted" }, "—"),
-      providerForm(name, inConfig ? c.providers[name] : { kind: p.kind, base_url: p.base_url }, load, !inConfig));
+      providerForm(name, inConfig ? c.providers[name] : { kind: p.kind, base_url: p.base_url }, load, !inConfig, form));
     const tryIt = section("Try a model",
       testBox(testSpecFor(name, p, c), name),
       h("small", {}, "Sends one tiny read-only prompt through the agent and provider."));
@@ -413,7 +418,7 @@ export async function renderModelDetail(main, name, { go = (hash) => { location.
       const ok = await confirmDialog({ title: `Remove provider ${name}?`, text: "Rules and fallbacks that name it stop working. You can add it again later.", confirm: "Remove provider" });
       if (!ok) return;
       try {
-        await changeConfig((cur) => { delete cur.providers[name]; });
+        await changeConfig(form, (cur) => { delete cur.providers[name]; });
       } catch (e) {
         return toast(e.message, "error");
       }

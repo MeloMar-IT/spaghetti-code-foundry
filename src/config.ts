@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
-import { parse, stringify } from "yaml";
+import { isDeepStrictEqual } from "node:util";
+import { parse } from "yaml";
 import { z } from "zod";
+import { editYamlText } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
@@ -542,9 +545,21 @@ export type RepoWatcherOptions = z.infer<typeof RepoWatcherSchema>;
 
 export const CONFIG_PATH = () => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "config.yaml");
 
-export function loadConfig(path = CONFIG_PATH()): Config {
-  if (!existsSync(path)) return ConfigSchema.parse({});
-  const res = ConfigSchema.safeParse(parse(readFileSync(path, "utf8")) ?? {});
+export const STALE_CONFIG = "the settings changed since you loaded them — reload first";
+
+/** The text of config.yaml; "" when there is no file. */
+export function readConfigText(path = CONFIG_PATH()): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+/** Names one state of the file: sha256 of its text, hex. */
+export function configVersion(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/** The settings in this text. */
+export function parseConfigText(text: string, path = CONFIG_PATH()): Config {
+  const res = ConfigSchema.safeParse(parse(text) ?? {});
   if (!res.success) {
     const issues = res.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`${path}: invalid config\n${issues}`);
@@ -552,11 +567,33 @@ export function loadConfig(path = CONFIG_PATH()): Config {
   return res.data;
 }
 
+export function loadConfig(path = CONFIG_PATH()): Config {
+  if (!existsSync(path)) return ConfigSchema.parse({});
+  return parseConfigText(readConfigText(path), path);
+}
+
+const round = (v: unknown) => JSON.parse(JSON.stringify(v ?? null));
+
+/** `text` with `body` applied in place. Throws a ZodError for a bad body, an Error for unreadable text. */
+export function editConfigText(text: string, body: unknown, path = CONFIG_PATH()): { text: string; config: Config } {
+  const next = ConfigSchema.parse(body);
+  const before = parseConfigText(text, path);
+  const out = editYamlText(text, before, next, ConfigSchema.parse({}));
+  const again = ConfigSchema.safeParse(parse(out) ?? {});
+  if (!again.success || !isDeepStrictEqual(round(again.data), round(next))) {
+    throw new Error("this change cannot be written to config.yaml without touching other settings; edit the file by hand");
+  }
+  return { text: out, config: next };
+}
+
 export function saveConfig(config: unknown, path = CONFIG_PATH()): Config {
-  const parsed = ConfigSchema.parse(config);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringify(parsed, { lineWidth: 0 }));
-  return parsed;
+  const text = readConfigText(path);
+  const out = editConfigText(text, config, path);
+  if (out.text !== text) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, out.text);
+  }
+  return out.config;
 }
 
 /** Per-repo settings in <repo>/.claude-factory/config.yaml (e.g. test_cmd). */

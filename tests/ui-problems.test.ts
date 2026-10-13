@@ -21,6 +21,9 @@ let fails: Record<string, string>;
 let failStatus: Record<string, number>;
 let details: any;
 let config: any;
+let putVersions: (string | undefined)[];
+/** The `x-config-version` of the answer to `METHOD url`. */
+let versionOf: Record<string, string>;
 
 const finding = (n: number, over: Record<string, unknown> = {}) => ({
   id: String(n).padStart(16, "0"), detector: "restart-loop", summary: `sentence ${n}`, severity: "critical", firstSeen: iso(9), lastSeen: iso(10), count: 3, gone: false, state: "seen", ...over,
@@ -43,10 +46,13 @@ beforeEach(() => {
   state = base();
   details = { evidence: ["Flows: issue-gitflow"], stories: [{ issue: 12, url: "https://github.com/o/a/issues/12", current: true }, { issue: 9, url: "http://x/9", current: false }], runs: [{ id: "run-1", status: "failed", startedAt: iso(9) }] };
   config = { monitor: { restart_loop: { resumes: 5, within_minutes: 10 }, report_to: "o/a" }, other: 1 };
-  (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+  putVersions = [];
+  versionOf = {};
+  (globalThis as any).fetch = async (url: string, init: { method: string; body?: string; headers?: Record<string, string> }) => {
     sent.push({ method: init.method, url });
     bodies.push(init.body ? JSON.parse(init.body) : undefined);
-    const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
+    if (init.method === "PUT") putVersions.push(init.headers?.["x-config-version"]);
+    const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", headers: { get: (n: string) => (n === "x-config-version" ? (versionOf[`${init.method} ${url}`] ?? null) : null) }, json: async () => body });
     const failed = Object.keys(fails).find((k) => `${init.method} ${url}` === k);
     if (failed) return reply({ error: fails[failed] }, failStatus[failed] ?? 409);
     if (url === "/api/monitor") return reply(state);
@@ -325,6 +331,16 @@ describe("the page", () => {
     await wait();
     expect(again.textContent).toContain("Give a number.");
     expect(sent).toEqual([]);
+  });
+
+  it("a stale Save sends the version the page was drawn with, and shows the refusal", async () => {
+    versionOf = { "GET /api/monitor": "v1", "GET /api/config": "v2" };
+    fails["PUT /api/config"] = "the settings changed since you loaded them — reload first";
+    const r = rowOf((await draw()).all("table").at(-1)!, "restart-loop");
+    button(r, "Save")!.click();
+    await wait();
+    expect(putVersions).toEqual(["v1"]);
+    expect(r.textContent).toContain("reload first");
   });
 
   it("a server error on Save is shown in the row", async () => {

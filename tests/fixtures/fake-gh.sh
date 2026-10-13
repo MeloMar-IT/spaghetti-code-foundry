@@ -62,9 +62,19 @@ case "$all" in
     exit 0 ;;
   "api repos/"*"/issues?"*)
     api_fail list
-    # A real page= parameter (not the one inside per_page=): filter by state=open, sort by number, slice.
+    # A real page= parameter (not the one inside per_page=): filter by state=open, sort by number (direction=desc: highest first), slice.
+    # state=all: starts with the issues of $FAKE_GH_ISSUES_BY_REPO[owner/name] (from the path), else $FAKE_GH_ISSUES, in the REST shape,
+    # then adds the bug issues above whose number is not there yet, unchanged (so a test can plant a malformed one).
     case "$all" in *"?page="*|*"&page="*)
-      node -e 'const fs=require("fs");const f=process.argv[1];let l=process.env.FAKE_GH_BUG_ISSUES?JSON.parse(process.env.FAKE_GH_BUG_ISSUES):fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const a=process.argv[2];const q=new URLSearchParams(a.slice(a.indexOf("?")+1));if(q.get("state")==="open")l=l.filter(x=>x.state==="open");l=l.slice().sort((x,y)=>x.number-y.number);const pp=Number(q.get("per_page")||30),p=Number(q.get("page"));console.log(JSON.stringify(l.slice((p-1)*pp,p*pp)))' "$FAKE_GH_LOG.issues.json" "$2"
+      node -e 'const fs=require("fs");const f=process.argv[1];const a=process.argv[2];const q=new URLSearchParams(a.slice(a.indexOf("?")+1));
+let l=process.env.FAKE_GH_BUG_ISSUES?JSON.parse(process.env.FAKE_GH_BUG_ISSUES):fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];
+if(q.get("state")==="open")l=l.filter(x=>x.state==="open");
+if(q.get("state")==="all"){const repo=a.slice(6).split("/").slice(0,2).join("/");let base=[];
+try{const by=process.env.FAKE_GH_ISSUES_BY_REPO?JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO)[repo]:undefined;base=by!==undefined?by:JSON.parse(process.env.FAKE_GH_ISSUES||"[]")}catch(e){base=[]}
+if(!Array.isArray(base))base=[];
+base=base.map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels||[],state:String(x.state||"open").toLowerCase(),state_reason:null,closed_at:null,created_at:x.createdAt||"2026-01-01T00:00:00Z",html_url:"https://github.com/"+repo+"/issues/"+x.number}));
+const have=new Set(base.map(x=>x.number));l=[...base,...l.filter(x=>!have.has(x&&x.number))]}
+const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.number)||0)-((y&&y.number)||0)));const pp=Number(q.get("per_page")||30),p=Number(q.get("page"));console.log(JSON.stringify(l.slice((p-1)*pp,p*pp)))' "$FAKE_GH_LOG.issues.json" "$2"
       exit 0 ;;
     esac
     if [ -n "$FAKE_GH_BUG_ISSUES" ]; then printf '%s\n' "$FAKE_GH_BUG_ISSUES"

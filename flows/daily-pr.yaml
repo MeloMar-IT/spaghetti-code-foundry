@@ -18,6 +18,25 @@ vars:
   build_cmd: ""
   branch_prefix: factory/daily-
   timezone: Europe/Berlin
+var_info:
+  github_repo:
+    set_by_run: true
+  test_cmd:
+    label: Test command
+    help: Use auto to find the command from the project files, or type the command that builds and tests the project.
+    kind: text
+  build_cmd:
+    label: Build command
+    help: "The command that builds the project. Empty: no build."
+    kind: text
+  branch_prefix:
+    label: Branch prefix
+    help: The day's branch starts with this text, followed by the date.
+    kind: text
+  timezone:
+    label: Time zone
+    help: The time zone that decides which day a run belongs to, for example Europe/Berlin.
+    kind: text
 steps:
   - id: clone
     type: shell

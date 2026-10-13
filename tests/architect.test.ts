@@ -9,6 +9,7 @@ import {
   GETTING_READY,
   architectReason,
   architectView,
+  architectLock,
   askArchitect,
   pausedReason,
   settleFinished,
@@ -64,9 +65,13 @@ function stub(runs: RunSummary[] = [], queued: string[] = [], active: string[] =
   const sources = new Map<string, string>();
   /** The flow and the task of a queued job, when a test sets them. */
   const jobs = new Map<string, { flow?: string; task?: string }>();
+  /** The lock key of a queued or active job, when a test sets it. */
+  const locks = new Map<string, string>();
+  const metas: any[] = [];
   const scheduler = {
-    submit: (job: any) => {
+    submit: (job: any, meta?: any) => {
       calls.submitted.push(job);
+      metas.push(meta);
       return job.kind === "run" ? `new-${calls.submitted.length}` : job.runId;
     },
     cancel: (id: string) => {
@@ -82,11 +87,11 @@ function stub(runs: RunSummary[] = [], queued: string[] = [], active: string[] =
     isActive: (id: string) => active.includes(id),
     isQueued: (id: string) => queued.includes(id),
     briefs: () => runs.filter((r) => r.source).map((r) => ({ runId: r.runId, source: r.source, startedAt: r.startedAt })),
-    queue: () => ({ pending: queued.map((runId) => ({ runId, source: sources.get(runId), ...jobs.get(runId) })), active: active.map((runId) => ({ runId, source: sources.get(runId) })) }),
+    queue: () => ({ pending: queued.map((runId) => ({ runId, source: sources.get(runId), lockKey: locks.get(runId), ...jobs.get(runId) })), active: active.map((runId) => ({ runId, source: sources.get(runId), lockKey: locks.get(runId) })) }),
   };
   const logs: string[] = [];
   const deps: ArchitectDeps = { scheduler: scheduler as any, repo: home, log: (m) => void logs.push(m) };
-  return { deps, calls, byId, logs, queued, active, sources, jobs, breakReads: () => (broken = true) };
+  return { deps, calls, byId, logs, queued, active, sources, jobs, locks, metas, breakReads: () => (broken = true) };
 }
 
 const session = (idea = "An idea") => createSession(ANN, { repo: "acme/app", idea }, OK);
@@ -160,6 +165,23 @@ describe("architectView", () => {
   });
 });
 
+describe("architectView of a queued run", () => {
+  it("says how many architect runs of the account are first: the active one and the earlier queued ones", () => {
+    const s = stub([], ["q1", "other", "q2"], ["a1", "story"]);
+    for (const id of ["a1", "q1", "q2"]) s.locks.set(id, architectLock(ANN));
+    s.locks.set("other", "acme/app#7");
+    expect(architectView(s.deps, { architect: { runId: "q1", at: "" } })).toEqual({ state: "queued", kind: "brief", runId: "q1", behind: 1 });
+    expect(architectView(s.deps, { architect: { runId: "q2", at: "" } })).toEqual({ state: "queued", kind: "brief", runId: "q2", behind: 2 });
+  });
+
+  it("has no count when no run of the account is first, or the job has no lock", () => {
+    const s = stub([], ["q1", "old"], ["story"]);
+    s.locks.set("q1", architectLock(ANN));
+    expect(architectView(s.deps, { architect: { runId: "q1", at: "" } })).toEqual({ state: "queued", kind: "brief", runId: "q1" });
+    expect(architectView(s.deps, { architect: { runId: "old", at: "" } })).toEqual({ state: "queued", kind: "brief", runId: "old" });
+  });
+});
+
 describe("settleSession", () => {
   it("stores the brief of a succeeded run", () => {
     const id = started();
@@ -208,13 +230,35 @@ describe("settleSession", () => {
 describe("askArchitect", () => {
   beforeEach(() => void addRepo(ANN, "acme/app", { ownerOk: () => true }));
 
-  it("refuses to start while a read of another session is marked failed but its run is active", () => {
+  it("queues a read while the architect works for another session of the account, under the account's lock", () => {
     const other = session();
     setArchitectRun(owner, other.id, "live");
-    endArchitectRun(other.id, "live", { failed: "It was cancelled" });
     const s = stub([], [], ["live"]);
-    expect(() => askArchitect(s.deps, owner, session().id)).toThrow(/reading for another of your sessions/);
-    expect(s.calls.submitted).toEqual([]);
+    const mine = session("A second idea");
+    const got = askArchitect(s.deps, owner, mine.id);
+    expect(got).toEqual({ runId: "new-1", resumed: false });
+    expect(s.calls.submitted).toHaveLength(1);
+    expect(s.metas[0]).toMatchObject({ lockKey: architectLock(ANN), owner: ANN });
+    expect(getSession(mine.id)!.architect?.runId).toBe("new-1");
+    // the other session keeps its run
+    expect(getSession(other.id)!.architect?.runId).toBe("live");
+  });
+
+  it("queues a read while another session's read is queued or paused, and still refuses a second one for the same session", () => {
+    const waiting = session();
+    setArchitectRun(owner, waiting.id, "q1");
+    const paused = session("Paused idea");
+    setArchitectRun(owner, paused.id, "p1");
+    const s = stub([runOf({ runId: "p1", status: "stopped", reason: "usage limit reached" })], ["q1"]);
+    const mine = session("A third idea");
+    expect(askArchitect(s.deps, owner, mine.id).resumed).toBe(false);
+    s.queued.push("new-1");
+    expect(() => askArchitect(s.deps, owner, mine.id)).toThrow(/reading for this session already/);
+    expect(s.calls.submitted).toHaveLength(1);
+  });
+
+  it("gives every account its own lock", () => {
+    expect(architectLock(ANN)).not.toBe(architectLock("22222222-2222-4222-8222-222222222222"));
   });
 
   it("adopts a queued job the session does not know, and refuses a second one", () => {

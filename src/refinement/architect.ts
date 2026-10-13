@@ -71,11 +71,15 @@ export interface ArchitectView {
   doing?: string;
   /** Why it failed or is paused, in plain words. */
   reason?: string;
+  /** When queued: how many architect runs of the same account (other sessions) are before this one. Not there when none. */
+  behind?: number;
 }
 
 export const GETTING_READY = "Getting ready";
 const upper = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const sourceOf = (id: string) => REFINEMENT_SOURCE + id;
+/** The lock all architect runs of one account share: the scheduler works on one of them at a time, the others wait in the queue. */
+export const architectLock = (owner: string) => `architect ${owner}`;
 
 const TOKEN_SENTENCES = [NEEDS_TOKEN, TOKEN_MISSING, TOKEN_UNREADABLE, NO_RUN_OWNER, TOKEN_REFUSED_REASON, KEY_MISSING, KEY_UNREADABLE, ...SIGN_IN_SENTENCES];
 
@@ -324,6 +328,19 @@ export function architectWorking(deps: ArchitectDeps, s: Pick<Session, "architec
   return a.failed === undefined && statusOf(deps, a.runId) !== "stopped";
 }
 
+/** How many jobs with the same lock (the account's other architect runs) are before a queued run: the active one and the earlier queued ones. */
+function aheadOf(deps: ArchitectDeps, runId: string): number {
+  try {
+    const q = deps.scheduler.queue();
+    const i = q.pending.findIndex((p) => p.runId === runId);
+    const key = i < 0 ? undefined : q.pending[i]!.lockKey;
+    if (!key) return 0;
+    return q.active.filter((a) => a.lockKey === key).length + q.pending.slice(0, i).filter((p) => p.lockKey === key).length;
+  } catch {
+    return 0;
+  }
+}
+
 /** The state of the architect for a session (as settled: call settleSession first). Never throws. */
 export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">): ArchitectView {
   const a = s.architect;
@@ -331,7 +348,10 @@ export function architectView(deps: ArchitectDeps, s: Pick<Session, "architect">
   const runId = a.runId;
   const kind = a.kind ?? "brief";
   const what = kind === "suggest" ? { kind, draft: a.draft, field: a.field } : kind === "review" || kind === "impact" || kind === "ready" || kind === "split" ? { kind, draft: a.draft } : { kind };
-  if (deps.scheduler.isQueued(runId)) return { state: "queued", ...what, runId };
+  if (deps.scheduler.isQueued(runId)) {
+    const behind = aheadOf(deps, runId);
+    return { state: "queued", ...what, runId, ...(behind ? { behind } : {}) };
+  }
   if (deps.scheduler.isActive(runId)) {
     let run: RunSummary | undefined;
     try {
@@ -368,8 +388,9 @@ export interface ArchitectRequest {
 
 /**
  * The owner asks the architect for a session: the read of the code, a round of questions or the answer to an own question.
- * A new run, or the resume of a paused one. At most one run per account is queued, running or paused. Returns the run id and
- * whether it was a resume.
+ * A new run, or the resume of a paused one. A session has one run at a time; the runs of the sessions of one account share a
+ * lock, so one of them works and the others wait in the queue in the order they were asked. Returns the run id and whether it
+ * was a resume.
  */
 export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask: ArchitectRequest = { kind: "brief" }): { runId: string; resumed: boolean } {
   const kind = ask.kind;
@@ -386,17 +407,9 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   if (!s) throw new RefinementError("not-found", "no such refinement session");
   if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
 
-  // This session, then the other sessions of the account: queued, running, or paused (not failed).
+  // One run per session. A run of another session of the account does not refuse this one: both share the account's lock and wait their turn.
   if (s.architect && live(deps, s.architect.runId)) throw busy("the architect is reading for this session already");
-  for (const listed of listSessions(s.owner)) {
-    if (listed.id === s.id) continue;
-    const o = settleSession(deps, listed.id) ?? listed;
-    if (!o.architect) continue;
-    const running = live(deps, o.architect.runId);
-    if (running || (o.architect.failed === undefined && statusOf(deps, o.architect.runId) === "stopped")) {
-      throw busy(`the architect is ${running ? "reading" : "paused"} for another of your sessions; ${running ? "wait until it is done" : "ask again there, or drop that session"}`);
-    }
-  }
+  const lockKey = architectLock(s.owner);
 
   const source = sourceOf(s.id);
   const cur = s.architect;
@@ -451,7 +464,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
         s = getSession(id) ?? s;
       } else {
         if (run?.workdir && existsSync(run.workdir)) {
-          deps.scheduler.submit({ kind: "resume", runId: cur.runId }, { source, queuedBy: actor.id, lockKey: source });
+          deps.scheduler.submit({ kind: "resume", runId: cur.runId }, { source, queuedBy: actor.id, lockKey });
           noteArchitectResumed(s.id, cur.runId);
           return { runId: cur.runId, resumed: true };
         }
@@ -524,7 +537,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   }
   const runId = deps.scheduler.submit(
     { kind: "run", flow, task, repo: resolve(deps.repo), vars: { ...flow.vars, github_repo: s.repo, ...(kind !== "brief" ? { ask: kind } : {}), ...(kind === "suggest" ? { field } : {}), ...(kind === "ready" ? { items: unsure.map((i) => i.id).join(",") } : {}) }, frozenVars: true },
-    { source, owner: actor.id, queuedBy: actor.id, lockKey: source },
+    { source, owner: actor.id, queuedBy: actor.id, lockKey },
   );
   try {
     setArchitectRun(actor, s.id, runId, { kind, question, ...(draft ? { draft: draft.id, ...(kind === "suggest" ? { field } : {}) } : {}) });

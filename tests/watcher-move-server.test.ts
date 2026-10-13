@@ -149,4 +149,66 @@ describe("PUT /api/config after the move", () => {
     expect((await put({ ...current, concurrency: 3, watchers: [leftover, { id: "mon", source: "monitor" }] })).status).toBe(200);
     expect(readFileSync(join(home, "config.yaml"), "utf8")).toContain("mon");
   });
+
+  it("versions the file: header on the three reads, 409 for a stale save, hand edits kept", async () => {
+    const path = join(home, "config.yaml");
+    const MON = "# my notes\nconcurrency: 2 # mine\nmonitor:\n  restart_loop:\n    resumes: 7\nwatchers:\n  - id: mon\n    source: monitor\n    every: 2h\n";
+    config(MON);
+    await start();
+    const admin = await signInAs(base);
+    const get = (p: string) => fetch(base + p, { headers: admin.headers("GET") });
+    const put = (c: object, version?: string) =>
+      fetch(base + "/api/config", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...admin.headers("PUT"), ...(version ? { "x-config-version": version } : {}) },
+        body: JSON.stringify(c),
+      });
+    const [a, b, m] = await Promise.all([get("/api/config"), get("/api/watchers"), get("/api/monitor")]);
+    const v1 = a.headers.get("x-config-version")!;
+    expect(v1).toBeTruthy();
+    expect(b.headers.get("x-config-version")).toBe(v1);
+    expect(m.headers.get("x-config-version")).toBe(v1);
+    const current = (await a.json()) as Record<string, any>;
+
+    const ok = await put({ ...current, concurrency: 3 }, v1);
+    expect(ok.status).toBe(200);
+    const v2 = ok.headers.get("x-config-version")!;
+    expect(v2).not.toBe(v1);
+    const after = readFileSync(path, "utf8");
+    expect(after).toContain("# my notes");
+    expect(after).toContain("concurrency: 3 # mine");
+
+    // another admin's save came first: the old version is refused and nothing is written
+    const stale = await put({ ...current, concurrency: 4 }, v1);
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: string }).error).toContain("reload first");
+    expect(readFileSync(path, "utf8")).toBe(after);
+
+    expect((await put({ ...current, concurrency: 5 })).status).toBe(200);
+
+    // a hand edit
+    const hand = readFileSync(path, "utf8").replace("resumes: 7", "resumes: 9").replace("every: 2h", "every: 3h");
+    writeFileSync(path, hand);
+    const edited = (await (await get("/api/config")).json()) as Record<string, any>;
+    expect(edited.monitor.restart_loop.resumes).toBe(9);
+    const w = await get("/api/watchers");
+    const v3 = w.headers.get("x-config-version")!;
+    expect(v3).not.toBe(v2);
+    const mon = ((await w.json()) as any[]).find((x) => x.id === "mon");
+    expect(mon.file.every).toBe("3h");
+    expect(mon.every).not.toBe("3h");
+    const det = (await (await get("/api/monitor")).json()) as { detectors: { key: string; thresholds?: Record<string, number> }[] };
+    expect(det.detectors.find((d) => d.key === "restart_loop")?.thresholds?.resumes).toBe(9);
+    expect((await put({ ...edited, concurrency: 6 }, v2)).status).toBe(409);
+    expect((await put({ ...edited, concurrency: 6 }, v3)).status).toBe(200);
+    const final = readFileSync(path, "utf8");
+    expect(final).toContain("resumes: 9");
+    expect(final).toContain("every: 3h");
+
+    const before = readFileSync(path, "utf8");
+    const bad = await put({ ...edited, audit: { retention_days: 0 } });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toContain("retention_days");
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
 });

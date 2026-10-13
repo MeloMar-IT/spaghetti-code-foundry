@@ -104,6 +104,10 @@ describe("pure functions", () => {
   it("architectStatus", () => {
     for (const a of [undefined, { state: "idle" }, { state: "weird" }]) expect(ui.architectStatus(a)).toMatchObject({ busy: false, text: "" });
     expect(ui.architectStatus({ state: "queued" })).toMatchObject({ busy: true, text: "The architect is waiting for its turn." });
+    expect(ui.architectStatus({ state: "queued", behind: 1 }).detail).toBe("It first finishes for another of your sessions. Then it reads the code.");
+    expect(ui.architectStatus({ state: "queued", kind: "round", behind: 3 }).detail).toBe("It first finishes for 3 of your other sessions. Then it writes its questions.");
+    expect(ui.architectStatus({ state: "queued", behind: 0 }).detail).toBe("Then it reads the code.");
+    expect(ui.architectStatus({ state: "queued", behind: "2" }).detail).toBe("Then it reads the code.");
     expect(ui.architectStatus({ state: "running", doing: "Reading the open issues." })).toMatchObject({ busy: true, detail: "Reading the open issues." });
     expect(ui.architectStatus({ state: "paused", reason: "The usage limit is reached; ask again later" })).toMatchObject({ busy: false, text: "The architect paused.", detail: "The usage limit is reached; ask again later." });
     expect(ui.architectStatus({ state: "failed", reason: "It broke." })).toMatchObject({ bad: true, detail: "It broke." });

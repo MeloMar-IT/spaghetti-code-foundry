@@ -335,22 +335,52 @@ async function listPage(repo: string, query: string, timeoutMs?: number): Promis
   return { issues: list.filter((i) => !i.pull_request), full: list.length >= 100 };
 }
 
-/** The open issues (not pull requests), oldest number first, 100 per call, at most `pages` pages. `cut`: there are more. */
-export async function listOpenIssues(repo: string, o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }> {
+/** Pages of the issue list for a query (without page=): pull requests left out. `check` runs on every element first, the sentinel page too. */
+async function pagedIssues(repo: string, query: string, o: { pages: number; timeoutMs?: number }, check?: (v: unknown) => void): Promise<{ issues: RestIssue[]; cut: boolean }> {
   if (!Number.isInteger(o.pages) || o.pages < 1) throw new Error("pages must be a whole number of 1 or more");
-  const openPage = async (page: number) => {
-    const out = (await gh(["api", `repos/${repo}/issues?state=open&per_page=100&sort=created&direction=asc&page=${page}`], undefined, o.timeoutMs)).trim();
+  const readPage = async (page: number) => {
+    const out = (await gh(["api", `repos/${repo}/issues?${query}&page=${page}`], undefined, o.timeoutMs)).trim();
     const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
     if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
+    if (check) for (const v of list) check(v);
     return list;
   };
   const issues: RestIssue[] = [];
   for (let p = 1; p <= o.pages; p++) {
-    const list = await openPage(p);
+    const list = await readPage(p);
     issues.push(...list.filter((i) => !i.pull_request));
     if (list.length < 100) return { issues, cut: false };
   }
-  return { issues, cut: (await openPage(o.pages + 1)).length > 0 };
+  return { issues, cut: (await readPage(o.pages + 1)).length > 0 };
+}
+
+/** The open issues (not pull requests), oldest number first, 100 per call, at most `pages` pages. `cut`: there are more. */
+export function listOpenIssues(repo: string, o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }> {
+  return pagedIssues(repo, "state=open&per_page=100&sort=created&direction=asc", o);
+}
+
+const isTimeOrNull = (v: unknown) => v === undefined || v === null || (typeof v === "string" && !Number.isNaN(Date.parse(v)));
+const isTextOrNull = (v: unknown) => v === undefined || v === null || typeof v === "string";
+
+/** Throws unless the element is an issue of the shape the issue list store needs. */
+function checkIssue(v: unknown): void {
+  const i = v as Record<string, unknown> | null;
+  const ok =
+    !!i && typeof i === "object" &&
+    Number.isInteger(i.number) && (i.number as number) >= 1 && (i.number as number) <= 2147483647 &&
+    typeof i.title === "string" &&
+    (i.state === "open" || i.state === "closed") &&
+    Array.isArray(i.labels) && i.labels.every((l) => typeof l === "string" || (!!l && typeof l === "object" && typeof (l as { name?: unknown }).name === "string")) &&
+    typeof i.created_at === "string" && !Number.isNaN(Date.parse(i.created_at)) &&
+    isTextOrNull(i.body) && isTextOrNull(i.state_reason) && isTimeOrNull(i.closed_at);
+  if (!ok) throw new Error("GitHub gave an issue that is not well formed");
+}
+
+/** All issues (not pull requests), open and closed, newest first, 100 per call, at most `pages` pages. `cut`: there are more. Throws on an answer that is not a list of well-formed issues. */
+export async function listAllIssues(repo: string, o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }> {
+  const r = await pagedIssues(repo, "state=all&per_page=100&sort=created&direction=desc", o, checkIssue);
+  const seen = new Set<number>();
+  return { issues: r.issues.filter((i) => !seen.has(i.number) && !!seen.add(i.number)), cut: r.cut };
 }
 
 /** Like listNewestIssues, and whether GitHub's page was full (100 issues and pull requests), so that older ones may be missing. */

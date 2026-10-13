@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const SKILLS = "src/skills";
 const BUILTIN = new Set(["crypto", "fs", "path", "os", "url", "module"]);
 const PACKAGES = new Set(["zod", "yaml"]);
-const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js"]);
+const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js"]);
 
 const codeLines = (text: string) => text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 
@@ -59,6 +59,16 @@ describe("skill code does not reach the network", () => {
       expect(gitCode.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       const net = modulesOf(gitText).filter((m) => NETWORK_MODULES.test(`"${m}"`));
       expect(net).toEqual(["node:child_process"]);
+    });
+    it("local-git.ts starts one local `git` with an argument array, and no network API", () => {
+      const text = readFileSync("src/engine/local-git.ts", "utf8");
+      const code = codeLines(text);
+      const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toContain('spawnSync("git", [...args], {');
+      expect(code.filter((l) => /(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(|\bshell\b/.test(l))).toEqual([]);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual(["node:child_process"]);
     });
     it("cli.ts uses no process and no network", () => {
       const text = readFileSync("src/skill-import/cli.ts", "utf8");
@@ -122,6 +132,29 @@ describe("skill code does not reach the network", () => {
         expect(cmd!.trim()).toBe('"git"');
         expect(/^\s*"rev-parse",\s*"HEAD"|^\s*"--literal-pathspecs",\s*"diff",\s*"--quiet"/.test(args!), args).toBe(true);
       }
+    });
+  }
+});
+
+describe("the static scanner runs nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
+
+  it("scan.ts imports exactly the reviewed modules", () => {
+    const mods = modulesOf(readFileSync(join(SKILLS, "scan.ts"), "utf8"));
+    expect([...mods].sort()).toEqual(
+      ["node:crypto", "./credential-scan.js", "./import-plan.js", "./normalize.js", "./package.js", "./schema.js", "./scan-rules.js", "./sources.js"].sort(),
+    );
+  });
+  it("scan-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "scan-rules.ts"), "utf8"))).toEqual([]);
+  });
+  for (const f of ["scan.ts", "scan-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      const code = codeLines(text);
+      for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
     });
   }
 });

@@ -1121,6 +1121,8 @@ vars:
 
 The editor keeps empty values (`issue: ""`), so a variable you have just added stays.
 
+A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet.
+
 ### The block library
 
 ![Block library](images/library.png)
@@ -1643,6 +1645,8 @@ watchers:
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
 | `owner` | Only for watchers in `config.yaml`: the e-mail of the account that owns the watcher's runs and may read and approve them. Empty: the first admin. It must be an account. A watcher of a repository uses the repository's owner |
 
+**The issue list.** Each issue watcher check reads the repository's issue list once: open and closed issues, newest first, 100 per GitHub call, at most 2,000 issues (20 calls). Watchers of the same repository share that read. The dependency check uses this list. The Foundry keeps the title, state, labels, links and dependencies of each issue, but no issue text, in the data folder (`issue-lists/`). If the list has more than 2,000 issues, the stored list is marked as cut and older issues are not seen by the dependency check. If the read fails, the check uses the previous way of reading open issues and logs the reason.
+
 **Coding agents run the build themselves.** In the issue flows the coding agent may run the
 project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test`, `cargo`,
 `make`) and read-only git commands — so it can check its own work and, for example, regenerate
@@ -2158,7 +2162,7 @@ not followed; the command says where the server points to and stops.
   accepted, unless the field is one the command does not let `--data` set.
 - An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
   contain `/` or `\`.
-- `scf settings set` replaces the whole settings file, so it insists on `--data`. Start from
+- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. Start from
   `scf settings show --json`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
@@ -2304,6 +2308,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 ![Settings](images/settings.png)
 
 **Saving.** Next to **Save** the page says "Saving…", then "Saved at …" or "Not saved.". A message also appears. **Clean up** in the Disk section asks first in a dialog.
+
+**Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
@@ -2950,8 +2956,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings |
-| `PUT /api/config` | yes | no | change the settings |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file |
+| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
 | `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
@@ -3333,6 +3339,15 @@ sources:
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
 
+#### Owner overrides and project pins
+
+Two reviewed records can choose one approved skill for a capability that allows only one. Both are checked with the CLI; no run reads them yet, so runs choose as before.
+
+- **Project pin** (`.claude-factory/skill-pins.yaml`): read from the default branch of the repository, never from a work branch. One pin per capability.
+- **Owner override** (`skill-overrides.yaml`): for all repositories, or for a list of them (`owner/name`). A repository override beats an `all` override for the same capability. A project pin beats both.
+
+Each entry names the `capability`, the `target` (`id@version`), who chose it (`by`, a GitHub user or team), a `reason`, the start (`from`), and `expires` or `review_by` (or both). A target must be an approved, usable version that passes the licence, safety, tools and compatibility checks. Remove the entry to return to the default choice. `scf skills overrides check` and `scf skills project-pins check` print each entry with its digest and exit 1 for an invalid or expired entry.
+
 #### Import a source into quarantine
 
 `scf skills import <source-id> [<file>]` reads `skill-sources.yaml` (or the file you name), fetches the approved commit of an enabled source and stages its skills in quarantine. Nothing is loaded or run.
@@ -3399,6 +3414,26 @@ Each normalized skill has five identity terms. Nothing reads them yet, so they d
 - `version-conflict`: same repository and name and version, other content.
 - `other-version`: same repository and name, other version and content.
 - `distinct`: anything else. A skill with the same name in another repository is not linked unless the fingerprints match.
+
+#### Skill collisions
+
+When two or more skills overlap, a collision is reported with one class, one reason and a stable id (`col-` and 16 hex characters). The result is the same for any input order. Nothing reads collisions in a run yet: runs do not build them, so skills are offered as before.
+
+| Class | Reason | When |
+|---|---|---|
+| `exact-mirror` | `mirror.same-artifact` | One repository, the same version and content, through more than one source record. |
+| `exact-mirror` | `mirror.same-content` | The same content from another repository, or under another version. |
+| `exact-mirror` | `mirror.settings-differ` | The same content, but the approved copies differ in `skill.yaml` settings (technologies, required tools, dependencies, risk and so on). |
+| `version-reuse` | `version.reused` | The same skill and version with other content. |
+| `id-conflict` | `id.other-version` | The same skill at another version, with other content. |
+| `id-conflict` | `id.other-upstream` | The same id from another repository, with other content. |
+| `fork` | `fork.declared-upstream` | Other content, with a recorded link to the other repository. |
+| `fork` | `fork.same-name` | Other content under the same name in another repository. |
+| `capability-overlap` | `capability.shared` | Different skills that declare the same capability. The report lists the shared capabilities. |
+
+- **What is merged.** Skills with the same content fingerprint are one entry. The entry keeps the representative skill unchanged, the source of every approved copy, and a count of the copies that are not approved. Skills with different content are never merged.
+- **What is held back.** An entry is held back from the planner when its approved copies are in `version-reuse`, `id-conflict` or `mirror.settings-differ`. An unapproved copy is never offered, and it cannot hold back an approved one. Forks and capability overlaps stay offered, each under its own id.
+- **Limits.** A collision check covers at most 1,000 skills. A larger set is refused.
 
 #### Discover candidate sources from Skills.sh
 
@@ -3928,6 +3963,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
+| `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
+| `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
@@ -4474,7 +4511,7 @@ A session keeps the talk with the architect, so it is not lost. The session page
 
 **What is stored.** When the run succeeds, a round is stored as a new round (at most 5 questions), its proposals wait for you, and the `done` sentence is kept when the architect has nothing important left; the log says so (`round-started`, `question`, `round-done`, `architect-round`). An answer is stored with your question and logged (`architect-answered`). A failed or cancelled run changes nothing in the talk; the session says why in plain words.
 
-**One at a time.** One architect run per session and per account is queued, running or paused, counted together with the brief read (409 with a plain sentence). A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
+**One at a time.** A session has one architect run at a time, counted together with the brief read (409 with a plain sentence). You can ask the architect in several sessions: the runs of one account wait in line and the architect works on them one after another, in the order they were asked. A waiting session says how many of your other sessions are first. A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
 
 **What you see of the run.** It shows in your Runs list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Runs list, on the run page and in the queue.
 
@@ -4486,7 +4523,7 @@ The flow `refine-brief` lets the architect read a repository and its open issues
 scf run refine-brief --task "your idea" --var github_repo=owner/name
 ```
 
-**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session and one per account at a time (queued, running or paused); a second ask answers 409. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
+**From a session.** On the session page, the **Context brief** part has the button **Ask the architect to look at the code**. Only the owner of an open session sees it, and not when the repository is not in My repositories any more. While the architect is queued or running, the page says so and what it is doing, updates itself every 5 seconds until the read ends, and has no button. A paused read says why (usage limit, signed out, daily budget) and has **Ask again**. A failed read says why in plain words and has **Try again**. With a brief the button is **Refresh**; the old brief stays on the page until the new one is done. The brief shows its five parts, when it was made and which branch was read, as plain text. The page shows no costs, models or folders. The button calls `POST /api/refinement/:id/architect`; no flow needs to be published. The server starts the read for the idea, on the session's repository, and the session shows its state: *idle*, *queued*, *running* (with what it is doing), *paused* or *failed* (with the reason in plain words). When the read succeeds, the brief is kept with the session (text, time, branch and run id). Asking again refreshes it; the old brief stays until the new read has succeeded, and a failed or cancelled read leaves it as it was. A read paused by a usage limit, a sign-out or the daily budget is resumed by asking again. There is one read per session at a time (a second ask for the same session answers 409). A read asked for while the architect works for another of your sessions waits in line and starts by itself; you do not have to come back to ask again. A read costs at most $3 and counts for the daily budget. The read is in the Runs list, marked with its session, and in the costs and statistics; it is not on the board, in Your turn or in notifications, and a failure shows in the session only. Drop a session and its read is cancelled, also a paused one. An architect run is continued from its session only, not from the Runs page. While the repository is not in My repositories, the session does not show the brief; it comes back with the repository.
 
 **What it reads.** It clones the repository (the `develop` branch when the remote has one, the default branch otherwise) and reads the open issues with all their comments. Up to 200 open issues are read, the newest first. A body is cut at 2,000 characters and a comment at 600; the cut is marked. When the backlog is larger than 200, the brief must say so under "Could not find out", or the run fails.
 

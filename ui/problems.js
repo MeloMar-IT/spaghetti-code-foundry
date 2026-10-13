@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, configVersion } from "./api.js";
 import { h, mount, showError, tableBox, toast } from "./dom.js";
 import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
@@ -176,7 +176,7 @@ function detectorsTable(m, reload) {
       try {
         const config = await api.config();
         config.monitor = { ...config.monitor, [d.key]: { ...config.monitor?.[d.key], ...values } };
-        await api.saveConfig(config);
+        await api.saveConfig(config, configVersion(m));
         toast("Threshold saved");
         await reload();
       } catch (e) {

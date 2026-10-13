@@ -35,7 +35,9 @@ const noViolations = (root: FakeElement) => expect(audit(root)).toEqual([]);
 const realFetch = globalThis.fetch;
 let routes: Record<string, unknown>;
 let failures: Record<string, { status: number; error: string }[]>;
-let sent: { key: string; body: any }[];
+let sent: { key: string; body: any; version?: string }[];
+/** The `x-config-version` answers of the next calls of `METHOD url`, one each. */
+let versions: Record<string, string[]>;
 /** Answers the next call of `METHOD url` with an error. */
 const fail = (method: string, url: string, status: number, error: string) => (failures[`${method} ${url}`] ??= []).push({ status, error });
 
@@ -48,14 +50,16 @@ beforeEach(() => {
   doc().listeners.keydown = [];
   doc().activeElement = null;
   delete (globalThis as any).location;
-  (globalThis as any).fetch = async (url: string, init?: { method?: string; body?: string }) => {
+  versions = {};
+  (globalThis as any).fetch = async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
     const key = `${init?.method ?? "GET"} ${url}`;
-    sent.push({ key, body: init?.body ? JSON.parse(init.body) : undefined });
+    sent.push({ key, body: init?.body ? JSON.parse(init.body) : undefined, version: init?.headers?.["x-config-version"] });
     const failed = failures[key]?.shift();
     if (failed) return { ok: false, status: failed.status, statusText: "x", json: async () => ({ error: failed.error }) };
     const found = key in routes ? key : key.split("?")[0]!;
     if (!(found in routes)) throw new Error(`unexpected call: ${key}`);
-    return { ok: true, status: 200, statusText: "OK", json: async () => routes[found] };
+    const version = versions[found]?.shift();
+    return { ok: true, status: 200, statusText: "OK", headers: { get: (n: string) => (n === "x-config-version" ? (version ?? null) : null) }, json: async () => routes[found] };
   };
 });
 afterAll(() => {
@@ -836,6 +840,25 @@ describe("Settings", () => {
     press(button(main(), "Save"));
     await vi.waitFor(() => expect(alerts(main()).map((a) => a.textContent)).toEqual(["invalid config: nope"]));
     expect(invalid(main())).toEqual([]);
+  });
+  it("a stale save shows the sentence and marks no field", async () => {
+    await show();
+    const text = "the settings changed since you loaded them — reload first";
+    fail("PUT", "/api/config", 409, text);
+    press(button(main(), "Save"));
+    await vi.waitFor(() => expect(alerts(main()).map((a) => a.textContent)).toEqual([text]));
+    expect(invalid(main())).toEqual([]);
+  });
+  it("sends the version it was drawn with, then the one the last save answered", async () => {
+    versions = { "GET /api/config": ["v1"], "PUT /api/config": ["v2"] };
+    await show();
+    routes["PUT /api/config"] = { ...config };
+    press(button(main(), "Save"));
+    await vi.waitFor(() => expect(sent.filter((s) => s.key === "PUT /api/config")).toHaveLength(1));
+    await settle();
+    press(button(main(), "Save"));
+    await vi.waitFor(() => expect(sent.filter((s) => s.key === "PUT /api/config")).toHaveLength(2));
+    expect(sent.filter((s) => s.key === "PUT /api/config").map((s) => s.version)).toEqual(["v1", "v2"]);
   });
   it("a sentence that names a setting marks its control", async () => {
     await show();

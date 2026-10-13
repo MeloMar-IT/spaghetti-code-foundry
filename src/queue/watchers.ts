@@ -5,6 +5,7 @@ import { selfBuild, selfContains } from "../engine/guards.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { readRateLimit, type RateReading } from "../github.js";
 import { dropIssueStates, storedIssueRepos } from "../issue-states.js";
+import { dropIssueList, storedIssueListRepos } from "./issue-list.js";
 import { collectNames } from "../monitor/clean.js";
 import type { DetectorInput, LogLine } from "../monitor/detectors.js";
 import { describeEntry, loadGuard, storiesVerdict, writeLog } from "../monitor/guard.js";
@@ -134,6 +135,7 @@ export class WatcherManager {
     try {
       const watched = new Set(this.o.config().watchers.filter((w) => w.enabled && w.source === "issues").map((w) => w.github_repo));
       for (const repo of storedIssueRepos()) if (!watched.has(repo)) dropIssueStates(repo);
+      for (const repo of storedIssueListRepos()) if (!watched.has(repo)) dropIssueList(repo);
     } catch (e) {
       this.o.log(`! issue states: ${(e as Error).message}`);
     }

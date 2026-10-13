@@ -1,4 +1,4 @@
-import { api } from "./api.js";
+import { api, configVersion } from "./api.js";
 import { confirmDialog, h, mount, tableBox, timeAgo, toast } from "./dom.js";
 import { confirmUnreadable, monitorLists } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
@@ -52,10 +52,11 @@ export function storiesRow(m, reload, { readOnly = false } = {}) {
     h("button", { class: "small", onClick: click }, wantOn ? "Switch bug stories on" : "Switch bug stories off"));
 }
 
-async function saveConfig(mutate, okMsg) {
+/** `version`: that of the list the page was drawn from, not of the config read now. */
+async function saveConfig(mutate, okMsg, version) {
   const config = await api.config();
   mutate(config);
-  await api.saveConfig(config);
+  await api.saveConfig(config, version);
   toast(okMsg);
 }
 
@@ -142,7 +143,7 @@ export async function renderWatchers(main, { data, readOnly = false } = {}) {
     saveConfig((c) => {
       if (c.watchers.some((x) => x.id === entry.id)) throw new Error(`a watcher "${entry.id}" already exists`);
       c.watchers = [...c.watchers, monitorEntry(entry)];
-    }, `Watcher ${entry.id} saved`);
+    }, `Watcher ${entry.id} saved`, configVersion(watchers));
 
   const row = (w, kind) => {
     const st = w.status;
@@ -241,8 +242,9 @@ export async function renderWatcherDetail(main, id, { data, readOnly = false } =
   };
   const saveMonitor = (entry) =>
     saveConfig((c) => {
+      if (!c.watchers.some((x) => x.id === w.id)) throw new Error(`config.yaml has no watcher "${w.id}" any more — reload first`);
       c.watchers = c.watchers.map((x) => (x.id === w.id ? monitorEntry(entry) : x));
-    }, `Watcher ${entry.id} saved`);
+    }, `Watcher ${entry.id} saved`, configVersion(watchers));
   const checkNow = () => {
     const busy = h("span", { class: "muted", role: "status" });
     const btn = h("button", { class: "small", onClick: async () => {
@@ -273,8 +275,8 @@ export async function renderWatcherDetail(main, id, { data, readOnly = false } =
   let del = null;
   if (kind === "file") actions = [w.enabled ? checkNow() : null];
   else if (kind === "monitor") {
-    actions = [w.enabled ? checkNow() : null, edit(() => monitorDialog(w, saveMonitor))];
-    del = remove(() => saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted"));
+    actions = [w.enabled ? checkNow() : null, edit(() => monitorDialog(w.file ? { ...w, ...w.file } : w, saveMonitor))];
+    del = remove(() => saveConfig((c) => (c.watchers = c.watchers.filter((x) => x.id !== w.id)), "Deleted", configVersion(watchers)));
   } else {
     // a watcher whose repository is gone can only be deleted: the API refuses to change it
     if (kind === "repo") {

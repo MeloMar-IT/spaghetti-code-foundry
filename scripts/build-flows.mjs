@@ -21,6 +21,47 @@ const swap = (text, from, to) => {
   return text.replace(from, () => to);
 };
 
+// How each variable of a shipped flow shows in a form (see var_info in docs/FLOW_AUTHORING.md). Shared by name.
+const RUN_SET = { set_by_run: true };
+const pct = { kind: "number", min: 0, max: 100 };
+const VAR_INFO = {
+  github_repo: RUN_SET, issue: RUN_SET, issues: RUN_SET, needs_info_label: RUN_SET, ask: RUN_SET, field: RUN_SET, items: RUN_SET,
+  risk_threshold: { label: "Risk threshold", help: "A plan with a risk score above this number waits for a person to approve it. 0 to 100.", ...pct },
+  auto_split_max_risk: { label: "Auto-split risk limit", help: "A plan above the threshold but not above this score is split into smaller issues instead of waiting for a person. 0 to 100.", ...pct },
+  revise_above_risk: { label: "Revise above risk", help: "A plan with a risk score above this number is revised after Codex has reviewed it. 0 to 100.", ...pct },
+  review_twice_above_risk: { label: "Review twice above risk", help: "Use off, or a risk score from 0 to 100. A plan above that score gets a second review.", kind: "text" },
+  max_files: { label: "Most files per issue", help: "A plan that changes more files than this is split instead of built.", kind: "number", min: 1 },
+  max_code_lines: { label: "Most code lines per issue", help: "A plan with more lines of new or changed production code than this is split instead of built.", kind: "number", min: 1 },
+  test_cmd: { label: "Test command", help: "Use auto to find the command from the project files, or type the command that builds and tests the project.", kind: "text" },
+  quick_test_cmd: { label: "Quick test command", help: "A faster command for the checks between steps. Empty: use the test command.", kind: "text" },
+  build_cmd: { label: "Build command", help: "The command that builds the project. Empty: no build.", kind: "text" },
+  test_slots: { label: "Parallel test runs", help: "How many test runs may run at the same time on this machine.", kind: "number", min: 0 },
+  reuse_test_results: { label: "Reuse test results", help: "Skip a test run when the same code was already tested.", kind: "yes_no" },
+  delete_merged_branches: { label: "Delete merged branches", help: "Delete the feature branch after it is merged.", kind: "yes_no" },
+  close_when_merged: { label: "Close issue when merged", help: "Close the issue when its branch is merged.", kind: "yes_no" },
+  develop_branch: { label: "Develop branch", help: "The branch that feature branches are merged into.", kind: "text" },
+  main_branch: { label: "Main branch", help: "The branch that releases go to.", kind: "text" },
+  feature_prefix: { label: "Feature branch prefix", help: "Feature branches start with this text, followed by the issue.", kind: "text" },
+  hotfix_prefix: { label: "Hotfix branch prefix", help: "Hotfix branches start with this text, followed by the issue.", kind: "text" },
+  branch_prefix: { label: "Branch prefix", help: "The day's branch starts with this text, followed by the date.", kind: "text" },
+  timezone: { label: "Time zone", help: "The time zone that decides which day a run belongs to, for example Europe/Berlin.", kind: "text" },
+  review_plan_label: { label: "Review-plan label", help: "An issue with this label always waits for a person to approve its plan. Empty: no such label.", kind: "text" },
+  trigger_label: { label: "Trigger label", help: "The label that starts the flow on an issue. Empty: the watcher decides.", kind: "text" },
+  code_label: { label: "Code label", help: "The label you add to an issue to have it coded.", kind: "text" },
+  ready_label: { label: "Ready label", help: "The label the flow adds when an issue is coded and ready for review.", kind: "text" },
+  hotfix_labels: { label: "Hotfix labels", help: "Issues with one of these labels are built as hotfixes. Separate labels with commas.", kind: "list", separator: "comma" },
+  forbidden_paths: { label: "Forbidden paths", help: "Paths the agents must not change. Separate paths with spaces.", kind: "list", separator: "space" },
+  docs_required: { label: "Required docs", help: "Files that must be updated with every change. Separate files with spaces.", kind: "list", separator: "space" },
+  union_merge_files: { label: "Union-merge files", help: "Files where merges keep both sides, such as a changelog. Separate files with spaces.", kind: "list", separator: "space" },
+  agent_env: { label: "Agent environment", help: "Environment variables for the agent steps, as KEY=value, one per line. A semicolon also separates them.", kind: "list", separator: "line" },
+};
+// The var_info of a shipped flow: one entry per variable; a variable without a description is an error.
+const describeVars = (vars, own = {}) => Object.fromEntries(Object.keys(vars).map((k) => {
+  const info = own[k] ?? VAR_INFO[k];
+  if (!info) throw new Error(`build-flows: no var_info for "${k}"`);
+  return [k, info];
+}));
+
 // The shipped flows are two delivery pipelines, what supports them, and the standalone refinement flow:
 //   human in the loop — issue-plan → (you add Factory_code) → issue-code-daily → daily-pr
 //   gitflow           — epic-questions → issue-gitflow → release-daily
@@ -36,11 +77,14 @@ ${header.lines.map((l) => `# ${l}`).join("\n")}
 # ${"─".repeat(72)}
 `;
   // Flows that change code: one run per repository at a time. Planning / PR-only flows run in parallel.
-  const { description, workspace, ...rest } = flow;
+  const { description, workspace, vars, var_info, steps: flowSteps, ...rest } = flow;
   const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "issue-gitflow", "refine-brief", "refine-round"].includes(name);
-  const ordered = { name, description, workspace, ...(coding ? { one_per_repo: true } : {}), ...rest };
-  // Retired flows are no longer shipped; they stay as test material (tests/fixtures/flows).
-  const dir = RETIRED.has(name) ? join("tests", "fixtures", "flows") : "flows";
+  // Retired flows are no longer shipped; they stay as test material (tests/fixtures/flows) and get no var_info.
+  const retired = RETIRED.has(name);
+  const described = vars === undefined || retired ? {} : { var_info: describeVars(vars, var_info) };
+  // Key order: …, vars, var_info, steps
+  const ordered = { name, description, workspace, ...(coding ? { one_per_repo: true } : {}), ...rest, ...(vars === undefined ? {} : { vars }), ...described, steps: flowSteps };
+  const dir = retired ? join("tests", "fixtures", "flows") : "flows";
   writeFileSync(join(root, dir, `${name}.yaml`), text + stringify(ordered, { lineWidth: 0 }));
   console.log(`wrote ${dir}/${name}.yaml (${flow.steps.length} steps)`);
 }

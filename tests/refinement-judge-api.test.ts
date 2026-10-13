@@ -271,15 +271,20 @@ describe("the rules of the other architect runs", () => {
     expect((await get(bare.id)).architect.state).toBe("idle");
   });
 
-  it("refuses a second run while one is live, also from another session", async () => {
+  it("refuses a second run for the session while one is live; another session waits in line", async () => {
     const { id, did } = await withDraft();
+    // made before the first run starts: its brief read would wait in line behind that run
+    const other = await withDraft();
     process.env.FAKE_GH_SLEEP = "20";
     expect((await check(id, did)).status).toBe(202);
     expect((await check(id, did)).status).toBe(409);
-    const other = await withDraft();
-    expect((await check(other.id, other.did)).status).toBe(409);
+    const waiting = await check(other.id, other.did);
+    expect(waiting.status).toBe(202);
+    expect(waiting.json().architect).toMatchObject({ state: "queued", behind: 1 });
+    started!.ctx.scheduler.cancel(waiting.json().architect.runId);
     started!.ctx.scheduler.cancel((await get(id)).architect.runId);
     await failed(id);
+    await failed(other.id);
   });
 
   it("resumes a paused check with the same call, and refuses another kind of ask meanwhile", async () => {

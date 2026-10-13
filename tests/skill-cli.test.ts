@@ -319,3 +319,48 @@ describe("scf skills (spawned)", () => {
     }
   });
 });
+
+describe("skillsCommand overrides check and project-pins check", () => {
+  const NOW = new Date("2026-06-01T00:00:00Z");
+  const entry = (extra: string) => `    capability: cap
+    target: a@1.0.0
+    by: "@octocat"
+    reason: Reviewed
+    from: "2026-01-01T00:00:00Z"
+${extra}`;
+  const files = {
+    overrides: (extra: string) => `schema: 1\noverrides:\n  -\n${entry(extra)}    scope: all\n`,
+    "project-pins": (extra: string) => `schema: 1\npins:\n  -\n${entry(extra)}`,
+  };
+  async function check(kind: "overrides" | "project-pins", text: string | undefined) {
+    const file = join(base, "choices.yaml");
+    if (text !== undefined) writeFileSync(file, text);
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: [kind, "check", file], values: {} }, (l) => lines.push(l), { now: NOW });
+    return { code, out: lines.join("\n") };
+  }
+  for (const kind of ["overrides", "project-pins"] as const) {
+    it(`${kind}: lists a valid file with the digest`, async () => {
+      const r = await check(kind, files[kind](`    expires: "2027-01-01T00:00:00Z"\n`));
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(/cap a@1\.0\.0 @octocat .* sha256:[0-9a-f]{64}\nOK 1 entries$/);
+    });
+    it(`${kind}: fails on an invalid, an expired and a missing file`, async () => {
+      const invalid = await check(kind, "schema: 2\n");
+      expect(invalid.code).toBe(1);
+      expect(invalid.out).toContain("PROBLEM");
+      const expired = await check(kind, files[kind](`    expires: "2026-03-01T00:00:00Z"\n`));
+      expect(expired.code).toBe(1);
+      expect(expired.out).toContain(" EXPIRED");
+      const due = await check(kind, files[kind](`    review_by: "2026-03-01T00:00:00Z"\n`));
+      expect(due.code).toBe(0);
+      expect(due.out).toContain(" REVIEW DUE");
+      rmSync(join(base, "choices.yaml"));
+      expect((await check(kind, undefined)).code).toBe(1);
+    });
+    it(`${kind}: an unknown option or operand is a syntax error`, async () => {
+      await expect(skillsCommand({ positionals: [kind, "check"], values: { repo: "x" } }, () => {}, {})).rejects.toThrow("unexpected option");
+      await expect(skillsCommand({ positionals: [kind, "list"], values: {} }, () => {}, {})).rejects.toThrow('expects "check"');
+    });
+  }
+});

@@ -73,7 +73,7 @@ const REPOS: Cmd[] = [
 
 const SETTINGS: Cmd[] = [
   { area: "settings", action: "show", method: "GET", path: "config", help: "the settings as they are in the configuration file", show: (d) => JSON.stringify(d, null, 2) },
-  // PUT /api/config stores the body as the whole file: nothing is merged
+  // PUT /api/config takes the whole configuration: a setting left out goes back to its default (the server writes only the difference to the file)
   { area: "settings", action: "set", method: "PUT", path: "config", needsData: true,
     help: "REPLACE all settings with --data '{…}' or --data @file; what you leave out goes back to its default. Start from: scf settings show --json",
     confirm: "The whole configuration is replaced by what you give with --data; every setting you leave out goes back to its default.",
