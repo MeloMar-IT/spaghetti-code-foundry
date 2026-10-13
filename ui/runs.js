@@ -14,7 +14,7 @@ import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, ru
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
-import { archivedSections, renderSections, runSections, sectionOf } from "./runs-list.js";
+import { archivedSections, readDensity, renderSections, runSections, sectionOf, writeDensity } from "./runs-list.js";
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "./runs-bar.js";
 // This module and ./user/runs.js import each other: neither uses the other at the top level, only inside functions.
 import { confirmDialog } from "./user/runs.js";
@@ -125,8 +125,9 @@ export async function askRuns(ask, f, names) {
  * a changed address. `alive` tells whether the page is still the one on screen: no request starts after it says no.
  * `ask(title, text, yes, no)` is the yes/no question of "Archive N runs".
  */
-export async function renderRunsList(main, { admin = true, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs"), ask = confirmDialog } = {}) {
+export async function renderRunsList(main, { admin = true, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs"), ask = confirmDialog, store } = {}) {
   let closed = false;
+  let density = readDensity(store);
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let forcing = false;
   let data = null;
@@ -137,7 +138,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
   let shown = null; // { filter, data }: what the page shows now
   const refresh = () => live.refresh();
   const gone = () => closed || !alive();
-  const bar = admin ? runsBar({ admin, onChange: (next) => apply(next) }) : null;
+  const bar = admin ? runsBar({ admin, density, onChange: (next) => apply(next), onDensity: (d) => { density = d; writeDensity(d, store); if (data) render(); } }) : null;
 
   // The selection: ids of runs ticked in Failed, Completed or Archived. `busy` covers the whole batch, the question included.
   const selected = new Set();
@@ -285,7 +286,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     patch(slots.empty, JSON.stringify([f, labels, stale, found, note]), () => (stale ? filterEmpty("runs", vf, { labels, onClear: clear, onDelete: vp.onDelete })
       : found ? null : admin && isActive(f) ? noMatch({ onClear: clear, note }) : !admin && f.repo ? filterEmpty("runs", vf, { labels, note, onClear: clear }) : noRuns()));
     sections.hidden = !found;
-    const can = new Set(renderSections(sections, secs, { admin, onRemove, select, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } }));
+    const can = new Set(renderSections(sections, secs, { admin, onRemove, select, density, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } }));
     for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section
     bulk.show(selected.size, archivedShown, busy);
   }

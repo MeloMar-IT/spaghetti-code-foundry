@@ -471,6 +471,13 @@ The Archived view is `view=archived`. A saved view still remembers the repositor
 The list refreshes every 30 seconds without jumping: your keyboard focus, scroll position, open
 sections and the chosen owner stay as they are, and only the rows that changed are redrawn.
 
+**Density.** The bar has a **Density** group: **Comfortable** (cards, the default) and **Compact**
+(one table per section, one row per run). The compact table has the columns Status, Run, Next,
+Task, Repository and Updated; an admin also sees Owner, Steps and Cost. Each row has the same
+status mark, links, buttons and checkbox as the card. Switching keeps open sections, **Show all**,
+the selection and the focus. The choice is remembered in this browser (`scf-runs-density` in local
+storage); a browser that does not allow storage simply forgets it. The switch is on **My runs** too.
+
 **Archive several runs.** Under **Show**, **Archived** lists the archived runs in one section,
 "Archived (n)", newest first. Rows in Failed, Completed and Archived have a checkbox labelled
 "Select run <flow> <work or id>"; each of these sections also has **Select all**, which ticks the
