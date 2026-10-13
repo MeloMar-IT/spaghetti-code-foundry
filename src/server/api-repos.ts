@@ -11,7 +11,10 @@ import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
-import { RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
+import { type DescribeVars, RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
+import { readFileSync } from "node:fs";
+import { parseFlow, resolveFlowPath } from "../flow/load.js";
+import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
@@ -184,6 +187,20 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
   return false;
 }
 
+/** The `var_info` of the flow a watcher runs ("default" is the flow of its source). Undefined, so no check, when the flow is not found. */
+function describeVars(ctx: ApiContext): DescribeVars {
+  return (w) => {
+    const name = !w.flow || w.flow === "default" ? DEFAULT_FLOWS[w.source] : w.flow;
+    if (!name) return undefined;
+    try {
+      // The resolver a run uses, so a flow given as a path to a YAML file is checked too.
+      return parseFlow(readFileSync(resolveFlowPath(name, ctx.opts.repo), "utf8")).var_info;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 /** The watchers of one repository (admin only): list, add, change (also enable and disable), delete. */
 async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   const repoId = seg[2]!;
@@ -205,7 +222,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
     const rec = known();
     const problem = guardedRepos(ctx, () => watcherRepoProblem(rec, getUser(rec.owner)));
     if (problem) throw new HttpError(400, problem);
-    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id) }));
+    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx) }));
     audit(`watcher ${w.id}: added`);
     ctx.watchers.sync();
     return send(res, 201, rowOf(w.id, w)), true;
@@ -213,7 +230,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
   if (seg.length === 5 && method === "PUT") {
     const body = await readJson(req);
     known();
-    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body));
+    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx) }));
     if (r.changed.length) {
       audit(`watcher ${wid}: ${r.changed.join(", ") === "enabled" ? (r.watcher.enabled ? "enabled" : "disabled") : `changed ${r.changed.join(", ")}`}`);
       ctx.watchers.sync();

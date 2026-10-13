@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { githubKey, githubNameOf } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
+import { varValueProblem, type VarInfo } from "../flow/schema.js";
 import { RepoWatcherSchema, type RepoWatcherOptions, type WatcherConfig } from "../config.js";
 
 /**
@@ -71,9 +72,24 @@ function parseOptions(input: unknown): RepoWatcherOptions {
   throw bad(i.code === "unrecognized_keys" ? `unknown option: ${key}` : `${key || "watcher"}: ${i.message}`);
 }
 
-/** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. */
-export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string } = {}): StoredWatcher {
+/** The `var_info` of the flow a watcher runs; undefined when it has none or cannot be found. */
+export type DescribeVars = (w: RepoWatcherOptions) => Record<string, VarInfo> | undefined;
+
+/** Refuses a described variable whose value does not fit its kind or range. Undescribed and `set_by_run` ones are skipped. */
+function checkVars(options: RepoWatcherOptions, describe?: DescribeVars): void {
+  const info = describe?.(options);
+  if (!info) return;
+  for (const [name, value] of Object.entries(options.vars ?? {})) {
+    if (!Object.hasOwn(info, name) || info[name]!.set_by_run) continue;
+    const problem = varValueProblem(info[name]!, value);
+    if (problem) throw bad(`vars.${name}: ${problem}`);
+  }
+}
+
+/** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. `describe` turns on the variable check. */
+export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string; describe?: DescribeVars } = {}): StoredWatcher {
   const options = parseOptions(input);
+  checkVars(options, opts.describe);
   return withAuthLock(() => {
     const all = read();
     if (all.some((w) => w.id === options.id) || (opts.taken ?? []).includes(options.id)) throw dup(options.id);
@@ -83,8 +99,11 @@ export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: s
   });
 }
 
-/** Changes a watcher: a value sets, `null` removes an option. The id cannot change. `changed` names the options that differ. */
-export function updateRepoWatcher(repoId: string, id: string, patch: unknown): { watcher: StoredWatcher; changed: string[] } {
+/**
+ * Changes a watcher: a value sets, `null` removes an option. The id cannot change. `changed` names the options that differ.
+ * With `describe`, a patch that names vars, flow or source is checked; one that only enables or disables is not.
+ */
+export function updateRepoWatcher(repoId: string, id: string, patch: unknown, opts: { describe?: DescribeVars } = {}): { watcher: StoredWatcher; changed: string[] } {
   if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw bad("the change must be an object");
   const p = patch as Record<string, unknown>;
   if ("id" in p && p.id !== id) throw bad("the id of a watcher cannot be changed");
@@ -99,6 +118,7 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown): {
       else merged[k] = v;
     }
     const options = parseOptions(merged);
+    if ("vars" in p || "flow" in p || "source" in p) checkVars(options, opts.describe);
     const before = current as Record<string, unknown>;
     const after = options as Record<string, unknown>;
     const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));

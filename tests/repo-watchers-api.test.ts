@@ -1,8 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";import { randomUUID } from "node:crypto";
 import { addRepo, removeRepo, reposPath } from "../src/auth/repos.js";
 import { saveConfig } from "../src/config.js";
 import { OWNER_BLOCKED, addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
@@ -267,6 +266,72 @@ describe("watchers of a repository: the routes", () => {
     kc.fail();
     expect(ctx.watchers.tracked().map((t) => t.watcher.id)).not.toContain("eve-w");
     expect((await call(admin, "DELETE", `/api/users/${eve.user.id}`)).status).toBe(200);
+  });
+
+  describe("described variables", () => {
+    const flowFile = (name: string) => join(tmp, ".claude-factory", "flows", `${name}.yaml`);
+    const described = `name: described\nvars:\n  risk_threshold: "75"\n  note: x\n  run_id: ""\nvar_info:\n  risk_threshold: {kind: number, min: 0, max: 100}\n  note: {kind: text}\n  run_id: {set_by_run: true}\nsteps:\n  - {id: a, type: shell, run: echo}\n`;
+    const post = (body: object) => call(admin, "POST", path(annRepo), body);
+    beforeAll(() => {
+      mkdirSync(join(tmp, ".claude-factory", "flows"), { recursive: true });
+      for (const n of ["described", "issue-gitflow", "release-daily"]) writeFileSync(flowFile(n), described.replace("name: described", `name: ${n}`));
+    });
+    afterAll(() => {
+      for (const n of ["described", "issue-gitflow", "release-daily"]) rmSync(flowFile(n), { force: true });
+    });
+    const clean = async (id: string) => void (await call(admin, "DELETE", path(annRepo, id)));
+
+    it("refuses a value that does not fit, with the variable named; accepts the rest", async () => {
+      const r = await post({ id: "dv1", flow: "described", vars: { risk_threshold: "150" } });
+      expect([r.status, r.error()]).toEqual([400, "vars.risk_threshold: 150 is above max 100"]);
+      expect((await post({ id: "dv1", flow: "described", vars: { risk_threshold: "abc" } })).error()).toBe('vars.risk_threshold: "abc" is not a number');
+      expect((await post({ id: "dv1", flow: "described", vars: { other: "anything", run_id: "x", note: "" } })).status).toBe(201);
+      expect((await post({ id: "dv2", flow: "nope", vars: { risk_threshold: "abc" } })).status).toBe(201);
+      expect((await post({ id: "dv3", flow: "../x.yaml", vars: { risk_threshold: "abc" } })).status).toBe(201);
+      for (const id of ["dv1", "dv2", "dv3"]) await clean(id);
+    });
+
+    it("checks a flow given as the path of an existing YAML file, as a run resolves it", async () => {
+      const r = await post({ id: "dv6", flow: flowFile("described"), vars: { risk_threshold: "abc" } });
+      expect([r.status, r.error()]).toEqual([400, 'vars.risk_threshold: "abc" is not a number']);
+      expect((await post({ id: "dv6", flow: flowFile("described"), vars: { risk_threshold: "9" } })).status).toBe(201);
+      await clean("dv6");
+    });
+
+    it("resolves the flow `default` from the source", async () => {
+      expect((await post({ id: "dv4", flow: "default", source: "issues", vars: { risk_threshold: "abc" } })).status).toBe(400);
+      expect((await post({ id: "dv4", flow: "default", source: "schedule", task: "t", every: "1d", vars: { risk_threshold: "abc" } })).status).toBe(400);
+      expect((await post({ id: "dv4", flow: "default", source: "issues", vars: { risk_threshold: "5" } })).status).toBe(201);
+      await clean("dv4");
+    });
+
+    it("lets a stored bad value run and be enabled or disabled, and refuses it when saved again", async () => {
+      const bad = { id: "dv5", flow: "described", vars: { risk_threshold: "500" } };
+      addRepoWatcher(annRepo, bad); // stored without the check, as an old watcher is
+      expect((await call(admin, "PUT", path(annRepo, "dv5"), { enabled: false })).status).toBe(200);
+      expect((await call(admin, "PUT", path(annRepo, "dv5"), { enabled: true })).status).toBe(200);
+      expect((await call(admin, "PUT", path(annRepo, "dv5"), { vars: { risk_threshold: "500" } })).error()).toMatch(/^vars\.risk_threshold: 500 is above max 100/);
+      expect((await call(admin, "PUT", path(annRepo, "dv5"), { vars: { risk_threshold: "50" } })).status).toBe(200);
+      await clean("dv5");
+    });
+
+    it("answers GET /api/flows/<name> with the variables and their descriptions", async () => {
+      const r = (await call(admin, "GET", "/api/flows/described")).json() as { vars: object; var_info: Record<string, unknown> };
+      expect(r.vars).toEqual({ risk_threshold: "75", note: "x", run_id: "" });
+      expect(Object.keys(r.var_info)).toEqual(["risk_threshold", "note", "run_id"]);
+    });
+
+    it("PUT /api/config saves an unchanged file watcher with an old value and refuses a changed one", async () => {
+      const config = (await call(admin, "GET", "/api/config")).json();
+      const w = { id: "file-w", github_repo: "acme/file", enabled: false, flow: "described", vars: { risk_threshold: "500" } };
+      saveConfig({ ...config, watchers: [w] });
+      ctx.reloadConfig();
+      expect((await call(admin, "PUT", "/api/config", { ...config, watchers: [w] })).status).toBe(200);
+      const changed = await call(admin, "PUT", "/api/config", { ...config, watchers: [{ ...w, vars: { risk_threshold: "501" } }] });
+      expect([changed.status, changed.error()]).toEqual([400, expect.stringMatching(/Watchers page/)]);
+      saveConfig({ ...config, watchers: [{ id: "file-w", github_repo: "acme/file", enabled: false }] });
+      ctx.reloadConfig();
+    });
   });
 
   it("answers a broken store with a fixed sentence and no path", async () => {

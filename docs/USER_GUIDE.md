@@ -1121,7 +1121,7 @@ vars:
 
 The editor keeps empty values (`issue: ""`), so a variable you have just added stays.
 
-A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet.
+A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet. A watcher's form shows one field per described variable (see "Add watcher" in section 6).
 
 ### The block library
 
@@ -1232,6 +1232,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **From the repository.** The heading of each repository group is a link to the repository view (`#/repos/<id>`). Its **Watchers** section lists the watchers of that repository, with **+ Add watcher** and, per watcher, **Enable** or **Disable**, **Edit** and **Delete** (**Delete** asks first). If the server refuses a change, its sentence is shown.
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
+- **Variables.** The form shows one field per variable the chosen flow describes, with its label, help and default (as the placeholder): a number field with its range, a switch, a text box, a list or a choice. Changing the flow changes the fields. A field left at its default is not stored. Variables the flow does not describe go in the box "Variables for each run", one `name=value` per line; a described variable typed there moves to its field when the form opens. `agent_env` is a list of `KEY=value` pairs and may hold secrets.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
 - **One watcher.** The list is compact: the id (a link to `#/watchers/<id>`, crumbs **Administration › Watchers › <id>**), the state mark, what it does, the last successful check and a problem line. The watcher's page has the next steps, notes, error details and recent activity; for the monitor also the bug-story switch and the findings. **Check now**, **Edit** and **Enable** or **Disable** are together; **Delete** is alone in a **Danger** group. List rows have no Delete button.
 - **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`. If only the monitor cannot be loaded, the watchers are still shown and the monitor card says so, with **Retry**.
@@ -1243,7 +1244,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 The page uses these routes. A watcher stored for a connected repository has the same options as one in `config.yaml`, except `github_repo` and `owner`: they come from the
 repository. The source `monitor` is not allowed.
 
-- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
+- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. A described variable whose value does not fit its kind or range is refused (400, the message names the variable, as `vars.<name>: …`); a stored value that is already out of range still runs and is refused only when the watcher is saved again. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
 - **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
 - **Runs** belong to the repository's owner, so they show in that user's "My runs".

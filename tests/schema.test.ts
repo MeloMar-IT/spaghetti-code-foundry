@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, loadConfig, saveConfig } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
+import { varValueProblem } from "../src/flow/schema.js";
 import { outputEnvName, render } from "../src/engine/template.js";
 
 const minimal = (steps: string) => `name: t\nsteps:\n${steps}`;
@@ -74,6 +75,27 @@ describe("flow schema", () => {
   it("rejects unknown fields and bad regex", () => {
     expect(() => parseFlow(minimal("  - {id: a, type: shell, run: x, bogus: 1}"))).toThrow(/invalid flow/);
     expect(() => parseFlow(minimal("  - {id: a, type: shell, run: x, pass_if: '('}"))).toThrow(/invalid regex/);
+  });
+});
+
+describe("varValueProblem", () => {
+  const num = { kind: "number", min: 0, max: 100 } as const;
+  it("checks a number against its range, and accepts exponent form", () => {
+    expect(varValueProblem(num, "abc")).toBe('"abc" is not a number');
+    expect(varValueProblem(num, "-1")).toBe("-1 is below min 0");
+    expect(varValueProblem(num, "101")).toBe("101 is above max 100");
+    expect(varValueProblem(num, "7.5")).toBeUndefined();
+    expect(varValueProblem({ kind: "number", max: 1 }, "1e-7")).toBeUndefined();
+  });
+  it("checks yes_no and choice", () => {
+    expect(varValueProblem({ kind: "yes_no" }, "maybe")).toBe('"maybe" must be yes or no');
+    expect(varValueProblem({ kind: "yes_no" }, "no")).toBeUndefined();
+    expect(varValueProblem({ kind: "choice", choices: ["a", ""] }, "b")).toBe('"b" is not one of the choices');
+    expect(varValueProblem({ kind: "choice", choices: ["a", ""] }, "")).toBeUndefined();
+  });
+  it("accepts any text for text and list", () => {
+    expect(varValueProblem({ kind: "text" }, "a\nb")).toBeUndefined();
+    expect(varValueProblem({ kind: "list" }, "!!")).toBeUndefined();
   });
 });
 
