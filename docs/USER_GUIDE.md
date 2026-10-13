@@ -3406,6 +3406,7 @@ SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 2 block
 - **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command or call, ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
 - **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or excluded, or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
 - **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
+- **Connector report.** A source with a reviewed connector profile (today: `github.com/prisma/skills`) also gets one line per mapped skill: `CONNECTOR <connector> <skill>: specific=… general=… orm=… engines=… runtime=… needs=… risk=… evaluations=… reviewed=yes|no`. `CONNECTOR … unmapped` names a skill the profile does not know or whose companion skill is missing; `CONNECTOR … absent` names a profile skill that is not in the import. The report reads nothing else and runs nothing. `reviewed=no` means the skill's commit is not one the profile was checked against, so the skill fails the safety gate and is not offered.
 
 ##### The exception file
 
@@ -4079,9 +4080,9 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
-| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
+| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

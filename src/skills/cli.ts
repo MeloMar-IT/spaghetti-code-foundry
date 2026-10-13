@@ -7,6 +7,7 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
+import { applyConnector, connectorFor } from "./connector.js";
 import { credentialProblem } from "./credential-scan.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
@@ -30,7 +31,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
-       scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
+       scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
@@ -179,6 +180,21 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
       blocked++;
       out(`BLOCKED ${label}: not normalized (${reasons.join("; ")})`);
     }
+  }
+  const connector = connectorFor(source);
+  if (connector) {
+    const c = applyConnector(connector, normalized);
+    const list = (xs: readonly string[], none = "none") => (xs.length ? xs.join(",") : none);
+    for (const m of c.mapped) {
+      const r = m.record;
+      out(
+        `CONNECTOR ${connector.id} ${r.id}: specific=${list(r.specific)} general=${list(r.general)} orm=${r.orm ?? "any"} engines=${list(r.engines, "any")} runtime=${r.runtime ?? "any"} needs=${list(r.requirements)} risk=${m.skill.package.risk} evaluations=${list(r.evaluations)} reviewed=${r.reviewed ? "yes" : "no"}`,
+      );
+    }
+    for (const u of c.unmapped) {
+      out(`CONNECTOR ${connector.id} unmapped ${u.root}: not offered, ${u.reason === "companion-missing" ? "a skill it points to is missing" : `the profile does not name ${u.name}`}`);
+    }
+    for (const a of c.absent) out(`CONNECTOR ${connector.id} absent ${a}`);
   }
   for (const r of record.rejected) out(`REJECTED ${hidden(r.root)}: ${r.reasons.map(hidden).join("; ")}`);
   out(`SCANNED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${blocked} blocked`);

@@ -1,6 +1,7 @@
 import type { Config, SkillsConfig } from "../config.js";
 import { buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, renderSkillCatalogue } from "./catalogue.js";
 import { CATALOGUE_SCORING } from "./catalogue-rules.js";
+import { CANONICAL_STOP_PREFIX } from "./canonical-rules.js";
 import { canonicalKey, canonicalStop, selectCanonicalSkills, type CanonicalCandidate, type CanonicalPolicy, type CanonicalResult } from "./canonical.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
 import { checkSkillChoices, choiceStop, planSkillChoices, type AppliedChoice, type ChoicePlan, type ChoiceProblem, type SkillOverride } from "./choices.js";
@@ -54,6 +55,11 @@ export interface RunCatalogueDeps {
   canonical?: {
     policy: Omit<CanonicalPolicy, "mandatory">;
     candidate: (skill: RegisteredSkill) => CanonicalCandidate | undefined;
+    /**
+     * Default: none. A skill whose candidate this returns true for is left out even when it provides no exclusive capability
+     * (a failed safety gate must not depend on what else the skill offers). A mandatory skill that is withheld stops the step.
+     */
+    withhold?: (candidate: CanonicalCandidate) => boolean;
     /**
      * Owner overrides and project pins, already read by the caller. With this field the choices replace policy.pins and
      * policy.overrides, and every failure to read or check them stops the step. No run supplies this yet.
@@ -205,6 +211,16 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
         if (choiceBlock) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: choiceBlock };
       }
       const leftIds = new Set(canonical.left.flatMap((k) => (byKey.has(k) ? [byKey.get(k)!.id] : [])));
+      const withhold = deps.canonical.withhold;
+      if (withhold) {
+        const chosen = new Set(canonical.selected);
+        for (const c of candidates) {
+          const s = byKey.get(canonicalKey(c));
+          if (s && !chosen.has(canonicalKey(c)) && withhold(c)) leftIds.add(s.id);
+        }
+        const held = mandatoryRoots.find((m) => leftIds.has(m.id) && candidates.some((c) => byKey.get(canonicalKey(c))?.id === m.id && withhold(c)));
+        if (held) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: `${CANONICAL_STOP_PREFIX}"${held.id}" is always loaded (skills.selection.include) but it fails a safety gate. Take it off the include list or fix the gate, then run again.` };
+      }
       const before = pool.length;
       pool = pool.filter((s) => !leftIds.has(s.id) && needs(s, leftIds) === undefined);
       notCanonical = before - pool.length;
