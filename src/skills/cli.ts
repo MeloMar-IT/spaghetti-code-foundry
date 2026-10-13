@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
 import { loadConfig, type Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
+import { OVERRIDES_FILE, PINS_FILE } from "./choice-rules.js";
+import { choiceDigest, type SkillChoice, type SkillOverride } from "./choices.js";
+import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
@@ -12,15 +15,43 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
+       scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
+       scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
   /** Where a relative source file is looked for (default: the current folder). */
   cwd?: string;
+  /** The time entries are checked against (default: now). For tests. */
+  now?: Date;
+}
+
+/** `scf skills overrides check` and `scf skills project-pins check`: offline; prints checked fields and the entry digest only. */
+function choicesCheck(file: string, kind: "overrides" | "project-pins", out: (line: string) => void, now: Date): number {
+  const r = kind === "overrides" ? readChoiceFile(file, "overrides") : readChoiceFile(file, "project-pins");
+  if (r.state === "none") {
+    out(`PROBLEM the ${kind === "overrides" ? "owner overrides" : "project pins"} file does not exist`);
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  let expired = 0;
+  for (const e of r.items as (SkillChoice | SkillOverride)[]) {
+    const scope = "scope" in e ? (e.scope === "all" ? "all" : e.scope.repositories.join(",")) : "repository";
+    const end = e.expires !== undefined ? `expires ${e.expires}` : `review ${e.review_by}`;
+    const isExpired = e.expires !== undefined && Date.parse(e.expires) <= now.getTime();
+    const due = e.review_by !== undefined && Date.parse(e.review_by) <= now.getTime();
+    if (isExpired) expired++;
+    out(`${e.capability} ${e.target} ${e.by} ${scope} ${e.from} → ${end} ${choiceDigest(e)}${isExpired ? " EXPIRED" : due ? " REVIEW DUE" : ""}`);
+  }
+  out(`OK ${r.items.length} entries`);
+  return expired ? 1 : 0;
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
@@ -82,7 +113,13 @@ export async function skillsCommand(
     return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
   }
 
-  const { skills, cwd: _cwd, ...discover } = opts;
+  if (sub === "overrides" || sub === "project-pins") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax(`scf skills ${sub}: expects "check" and at most one file`);
+    const dflt = sub === "overrides" ? OVERRIDES_FILE : PINS_FILE;
+    return choicesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? dflt), sub, out, opts.now ?? new Date());
+  }
+
+  const { skills, cwd: _cwd, now: _now, ...discover } = opts;
   if (sub === "unpin") {
     const key = operands[0]!;
     if (removeSkillPin(key)) {
