@@ -4,6 +4,16 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill evaluation 1a: the evaluation record and the promotion gate, pure (#501). Part 1 of 4 of #203.
+  - **Record.** New `src/skills/evaluation.ts` and `src/skills/evaluation-rules.ts`. `parseEvaluationRecord` checks an `EvaluationRecord` (`schema: 1`): the candidate (id, version, digest, fingerprint, source, repository key, commit), the suite digest and the inputs of each scenario, the runtime (Foundry, and agent and model when a model was used), `evaluatedAt`, the score of every sample per dimension, findings and evidence references. `evaluationRecordDigest` is stable: key order and the order of scenarios, findings and evidence do not change it.
+  - **Credentials.** A record that holds credential-like text is refused with `record-credential`. The message names the rule, never the text.
+  - **Gate.** `evaluationGate` returns `passed` only when every mandatory dimension meets its threshold, `promotionBlockers` is empty and the licence is `allowed`. Modes: `new` (absolute thresholds), `upgrade` (thresholds and not worse than the baseline record) and `duplicate` (two candidates for one capability; the clearly better one is named, otherwise "no clear difference").
+  - **Defaults.** `selection` ≥ 0.9; `conflicts`, `context` and `tools` = 1 (every sample must be 1); `instructions` ≥ 0.8, optional unless the suite makes it mandatory. A regression needs a drop larger than the sample spread and than 0.1. `instructions` needs at least 3 samples. A suite can only make these stricter.
+  - **Reason codes.** Every failure carries a code such as `dimension-missing`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `too-few-samples`, `below-threshold`, `baseline-missing`, `regression` or `worse-duplicate`. A missing mandatory dimension, a record for another digest and a suite other than the expected one each fail closed.
+  - **Outcome.** `evaluationOutcome(result, candidate?)` gives the `"passed" | "failed"` value of `CanonicalCandidate.evaluation`. For a duplicate result the candidate must be named; without it the outcome is `"failed"`.
+  - **Pure.** The time is an input (`evaluatedAt`); no file system, process, clock or network is used, and the inputs are not changed.
+  - **Tests.** New `tests/skill-evaluation.test.ts`; `tests/skill-no-network.test.ts` covers both new files.
+  - **Not done.** Nothing calls it yet: no command, run or flow runs a suite, stores a record or sets `CanonicalCandidate.evaluation`. `promoteImport`, `SkillProvenance` and `CanonicalCandidate` are unchanged.
 - Refinement: the architect can be asked in several sessions at once; the runs wait in line.
   - **Before.** While the architect was queued, running or paused for one session, asking in another session of the same account answered 409 ("the architect is reading for another of your sessions"). The person had to come back later.
   - **Now.** The ask is accepted. All architect runs of one account share one scheduler lock (`architectLock` in `src/refinement/architect.ts`), so one works and the others wait in the queue in the order they were asked. One run per session stays (409). A paused run of another session no longer refuses a new one.
