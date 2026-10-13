@@ -22,7 +22,7 @@ export interface SkillImportOptions {
 const syntax = (why: string) => new Error(`${why}\n${IMPORT_USAGE}`);
 const INTERRUPTED = "PROBLEM the import was interrupted; nothing was staged";
 
-function gitSentence(code: GitTreeErrorCode, key: string, commit: string): string {
+export function gitSentence(code: GitTreeErrorCode, key: string, commit: string): string {
   switch (code) {
     case "no-git":
       return "git was not found; install git and try again";

@@ -3450,6 +3450,42 @@ ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> e
 - **Exit codes.** 0 when the report is printed, even when every skill is excluded: an exclusion is the expected result. 1 for a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, or no workflow profile).
 - **Not done.** Nothing promotes a candidate yet. `workflowBlockers`, `declaredPackage` and `workflowProvenance` in `src/skills/workflow.ts` are for a later promotion step to call. A promoted skill would record its declaration in `SkillProvenance.workflow`.
 
+#### Evaluate a source
+
+`scf skills evaluate <source-id> [<technology>@<version> ...]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
+
+```
+scf skills evaluate oracle-skills oracle-database@19 oracle-apex@24
+```
+
+```
+SKILL sql-tuning 1.2.0 skills/sql-tuning capabilities=database-sql risk=low
+COMPATIBILITY sql-tuning: oracle-database >=19 (source); project: compatible
+TOOLS sql-tuning: sqlplus
+ACCESS sql-tuning: asks for nothing; importing grants none
+LICENCE sql-tuning: allowed Apache-2.0
+NOTICE sql-tuning: kept 1 files: NOTICE.txt
+RECOMMEND database-sql: sql-tuning@1.2.0 (verified, by trust); not chosen: none
+EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…: 0 refused, 0 conflicts
+```
+
+- **Technologies.** Up to 8, each `<name>@<version>` with a lower-case name such as `oracle-database@19`. A skill is compatible when its version range admits the version you give. Without any technology, no `COMPATIBILITY` verdict is shown.
+- **Source scope.** A source entry in `skill-sources.yaml` can state what upstream does not: `scope` with up to 8 `capabilities` and up to 8 `technologies` (a name and a version range such as `">=19"`). A range the skill declares itself wins. The scope adds to the skill; it never removes one.
+
+```yaml
+- id: oracle-skills
+  scope:
+    capabilities: [database-sql]
+    technologies:
+      oracle-database: ">=19"
+```
+
+- **Access.** `ACCESS` lists what a skill asks for (network, credentials, tools). Importing grants none of it: no cloud credential or live database access is given by an import.
+- **Licence and notices.** `LICENCE` is per skill, from the source's `licence.allow`. A skill whose licence is not allowed is `REFUSED`. The attribution files of an allowed skill are listed as `NOTICE`, so the notices can be kept with it.
+- **Overlap.** For each capability that an imported skill and an installed skill both provide, the report uses the canonical selection. `RECOMMEND` names the winner and why it won; `CONFLICT` means no winner can be chosen; `NONE` means no skill is eligible. A recommendation is not applied: nothing is pinned or changed.
+- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. A `PROBLEM` line also exits 1 and names the file or field.
+- **Limits.** The same fetch limits as `scf skills import`. An evaluation that is interrupted (Ctrl-C) prints `PROBLEM` and writes nothing.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -4045,6 +4081,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
+| `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

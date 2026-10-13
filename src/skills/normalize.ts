@@ -20,7 +20,7 @@ import { shownValue } from "./sources.js";
 import type { SkillWorkflow } from "./workflow.js";
 
 // Turns the skills of a prepared import (import-plan.ts) into SkillPackage values with source-qualified ids, and reports
-// every skill that cannot be mapped completely. Pure: no file system, no process, no clock. Nothing calls it yet.
+// every skill that cannot be mapped completely. Pure: no file system, no process, no clock. Callers: `scf skills scan` and evaluateSource (source-evaluation.ts).
 
 export interface NormalizeOrigin {
   source: string;

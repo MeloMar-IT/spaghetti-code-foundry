@@ -51,6 +51,7 @@ Usage:
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
+  scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -227,8 +228,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `scan …` and `assess …` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "scan" || arg === "assess"))) {
+  // `scf skills sources …`, `scan …`, `assess …` and `evaluate …` only read: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "sources" || arg === "scan" || arg === "assess" || arg === "evaluate"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -303,6 +304,7 @@ async function main(argv: string[]): Promise<number> {
       const { skillsCommand } = await import("./skills/cli.js");
       const { help: _h, ...given } = values;
       if (arg === "import") return (await import("./skill-import/cli.js")).skillImportCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
+      if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
     }

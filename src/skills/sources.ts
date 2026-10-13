@@ -1,7 +1,9 @@
 import { lstatSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { parseRepoUrl, RepoError } from "../auth/repo-url.js";
+import { rangeSatisfied } from "./canonical-facts.js";
 import { credentialProblem } from "./credential-scan.js";
+import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
 import { relativePathProblem, SKILL_ID_RE } from "./schema.js";
 
@@ -13,6 +15,7 @@ export const SOURCE_STATUSES = ["enabled", "disabled", "quarantined", "retired"]
 export const SOURCE_ADAPTERS = ["agent-skills"] as const;
 export const SOURCE_TRUST_TIERS = ["first-party", "verified", "community"] as const;
 export const SOURCE_CADENCES = ["manual", "daily", "weekly", "monthly"] as const;
+export const SOURCE_SCOPE_LIMITS = { capabilities: 8, technologies: 8 } as const;
 export const SOURCE_LICENCES = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "CC0-1.0", "CC-BY-4.0", "Unlicense"] as const;
 
 export type SourceStatus = (typeof SOURCE_STATUSES)[number];
@@ -31,6 +34,8 @@ export interface SkillLibrarySource {
   adapter: (typeof SOURCE_ADAPTERS)[number];
   trust: SourceTrustTier;
   licence: { allow: string[] };
+  /** What the maintainer states about the library that upstream does not: capabilities to add and technology version ranges. */
+  scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
   update: { cadence: (typeof SOURCE_CADENCES)[number] };
   owner: string;
 }
@@ -177,7 +182,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
       return v;
     };
 
-    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "update", "owner"], "");
+    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "update", "owner"], "");
 
     // id
     const id = text(idRaw, "id");
@@ -301,6 +306,57 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
       }
     }
 
+    // scope
+    let scope: SkillLibrarySource["scope"];
+    if (e.scope !== undefined) {
+      const sc = sub(e.scope, "scope");
+      if (sc) {
+        keys(sc, ["capabilities", "technologies"], "scope");
+        if (sc.capabilities === undefined && sc.technologies === undefined) err("scope", "must name capabilities or technologies");
+        const caps: string[] = [];
+        if (sc.capabilities !== undefined) {
+          const max = SOURCE_SCOPE_LIMITS.capabilities;
+          if (!Array.isArray(sc.capabilities) || sc.capabilities.length < 1 || sc.capabilities.length > max) {
+            err("scope.capabilities", `must be a list of 1 to ${max} capabilities`);
+          } else {
+            sc.capabilities.forEach((cv, j) => {
+              const c = text(cv, `scope.capabilities[${j}]`);
+              if (c === undefined) return;
+              if (!SKILL_ID_RE.test(c)) err(`scope.capabilities[${j}]`, "must be a lower-case slug");
+              else if (caps.includes(c)) err(`scope.capabilities[${j}]`, `"${c}" is listed twice`);
+              else caps.push(c);
+            });
+          }
+        }
+        const techs: { name: string; version: string }[] = [];
+        if (sc.technologies !== undefined) {
+          const max = SOURCE_SCOPE_LIMITS.technologies;
+          if (!isObject(sc.technologies) || Object.keys(sc.technologies).length < 1 || Object.keys(sc.technologies).length > max) {
+            err("scope.technologies", `must be a map of 1 to ${max} technologies`);
+          } else {
+            for (const [name, raw] of Object.entries(sc.technologies)) {
+              const field = `scope.technologies.${shownValue(name)}`;
+              if (!SKILL_ID_RE.test(name)) {
+                err(field, "the technology name must be a lower-case slug");
+                continue;
+              }
+              const v = text(raw, field)?.trim();
+              if (v === undefined) continue;
+              if (v.length < 1 || v.length > NORMALIZE_LIMITS.rangeChars || rangeSatisfied(v, "0.0.0") === undefined) {
+                err(field, 'is not a version range like ">=19" or "^21.0"');
+              } else techs.push({ name, version: v });
+            }
+          }
+        }
+        if (caps.length || techs.length) {
+          scope = {
+            capabilities: caps.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))),
+            technologies: techs.sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name))),
+          };
+        }
+      }
+    }
+
     // owner
     const owner = text(e.owner, "owner");
     if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
@@ -317,6 +373,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
         adapter,
         trust,
         licence: { allow },
+        ...(scope ? { scope } : {}),
         update: { cadence },
         owner,
       });
