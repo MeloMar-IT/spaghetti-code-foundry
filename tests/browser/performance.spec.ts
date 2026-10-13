@@ -10,7 +10,6 @@ const KNOWN: Record<string, string> = {
   "CLS_LOAD home": "0.137 on load, over 0.1. Follow-up: UI quality 5 - no layout shift when the page shell loads.",
   "CLS_LOAD runs": "0.137 on load, over 0.1. Follow-up: UI quality 5 - no layout shift when the page shell loads.",
   "CLS_LOAD board": "0.137 on load, over 0.1. Follow-up: UI quality 5 - no layout shift when the page shell loads.",
-  "LARGE_LOG_MS": "5993 ms, over 3000 ms. Follow-up: UI quality 6 - draw a long live log in one step (not a layout per line).",
 };
 
 test.describe.configure({ mode: "default" });
@@ -21,6 +20,7 @@ const HOME_READY: Ready = { selector: "#main", text: "Seeded gate run" };
 const BOARD_READY: Ready = { selector: "#main", text: "acme/app" };
 const HOME_MARKER: Marker = { selector: "#main .home > div > section.home-section", startsWith: "Active" };
 const RUNS_MARKER: Marker = { selector: "#main .toolbar" };
+const LOG_READY: Ready = { selector: "#main pre.log", children: 2000, visible: true, last: "line 5000 of the large log" };
 
 /** Opens a fresh context, runs `fn` on its page and closes the context. */
 async function onFreshPage<T>(browser: Browser, hash: string, ready: Ready, opts: { large?: boolean; clock?: boolean }, fn: (page: import("@playwright/test").Page) => Promise<T>): Promise<T> {
@@ -76,6 +76,29 @@ test.describe("harness", () => {
     });
   });
 
+  test("a log is ready only when it is visible, long enough and ends with the last line", async ({ browser }) => {
+    await onFreshPage(browser, "#/runs", RUNS_READY, {}, async (page) => {
+      const ready = await page.evaluate((r) => {
+        const P = (window as any).__perf;
+        const pre = document.createElement("pre");
+        pre.id = "ready-probe";
+        document.body.append(pre);
+        const fill = (n: number) => { pre.replaceChildren(...Array.from({ length: n }, (_, i) => Object.assign(document.createElement("span"), { textContent: `line ${i + 1} of the large log` }))); };
+        const out: Record<string, boolean> = {};
+        fill(2000); // 2,000 lines that end before line 5000
+        out.early = P.check(r);
+        fill(5000);
+        pre.hidden = true;
+        out.hidden = P.check(r);
+        pre.hidden = false;
+        out.done = P.check(r);
+        pre.remove();
+        return out;
+      }, { selector: "#ready-probe", children: 2000, visible: true, last: "line 5000 of the large log" } as Ready);
+      expect(ready).toEqual({ early: false, hidden: false, done: true });
+    });
+  });
+
   test("a polling tick with an unchanged answer does not redraw the Runs list", async ({ browser }) => {
     await onFreshPage(browser, "#/runs", RUNS_READY, { clock: true }, async (page) => {
       const m = await pollTick(page, { marker: RUNS_MARKER, unchanged: true });
@@ -118,13 +141,23 @@ test.describe("budgets", () => {
   budgetTest("LARGE_RUNS_MS", BUDGETS.LARGE_RUNS_MS, async (b) => (await bigRuns(b)).renderMs);
   budgetTest("LARGE_RUNS_ROWS", BUDGETS.LARGE_RUNS_ROWS, async (b) => (await bigRuns(b)).rows);
 
-  budgetTest("LARGE_LOG_MS", BUDGETS.LARGE_LOG_MS, async (b) =>
-    (await load("large-log", b, "#/runs/ui-big-log", { selector: "#main pre.log", children: 5000 }, { large: true })).renderMs);
+  budgetTest("LARGE_LOG_MS", BUDGETS.LARGE_LOG_MS, async (browser) =>
+    (await collect("large-log", () => medianOf(() => onFreshPage(browser, "#/runs/ui-big-log", LOG_READY, { large: true }, async (page) => {
+      await page.locator('button[data-tab="log"]').click();
+      const m = await loadMetrics(page);
+      const lines = page.locator("#main pre.log > span:not(.log-note)");
+      await expect(lines).toHaveCount(2000);
+      await expect(lines.last()).toHaveText(/^line 5000 of the large log/);
+      await expect(page.locator("#main pre.log .log-note")).toHaveText("3000 earlier lines are not shown");
+      return m;
+    })))).renderMs);
 
   budgetTest("LARGE_DIFF_MS", BUDGETS.LARGE_DIFF_MS, async (browser) => {
     const m = await collect("large-diff", () => medianOf(() =>
       onFreshPage(browser, "#/runs/ui-big-diff", { selector: "#main", text: "Large seeded diff run" }, { large: true }, async (page) => {
-        const { ms } = await clickMetrics(page, 'button[data-tab="diff"]', { selector: "#main pre.diff", children: 2000 });
+        const { ms } = await clickMetrics(page, 'button[data-tab="diff"]', { selector: "#main pre.diff", children: 1500 });
+        await page.locator("#main .more-row button").click();
+        await page.waitForFunction(() => (document.querySelector("#main pre.diff")?.children.length ?? 0) >= 2000, undefined, { timeout: 30_000 });
         const counts = await page.evaluate(() => ({
           adds: document.querySelectorAll("#main pre.diff .add").length,
           dels: document.querySelectorAll("#main pre.diff .del").length,

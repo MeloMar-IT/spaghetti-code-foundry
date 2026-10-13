@@ -78,12 +78,14 @@ export const api = {
   deleteBlock: (id) => req("DELETE", `/api/blocks/${enc(id)}`),
   validate: (yaml) => req("POST", "/api/validate", { yaml }),
   generate: (request, current) => req("POST", "/api/generate", { request, current }),
-  /** `params` is an owner id (a string) or an object of query parameters (q, repo, flow, status, since, owner). */
+  /** `params` is an owner id (a string) or an object of query parameters (q, repo, flow, status, since, owner, archived: "1"). */
   runs: (params) => {
     const p = typeof params === "string" ? { owner: params } : params ?? {};
-    const text = ["q", "repo", "flow", "status", "since", "owner"].filter((k) => typeof p[k] === "string" && p[k]).map((k) => `${k}=${enc(p[k])}`).join("&");
+    const text = ["q", "repo", "flow", "status", "since", "owner", "archived"].filter((k) => typeof p[k] === "string" && p[k]).map((k) => `${k}=${enc(p[k])}`).join("&");
     return req("GET", text ? `/api/runs?${text}` : "/api/runs");
   },
+  archiveRun: (id) => req("POST", `/api/runs/${enc(id)}/archive`, {}),
+  unarchiveRun: (id) => req("POST", `/api/runs/${enc(id)}/unarchive`, {}),
   runFilters: () => req("GET", "/api/run-filters"),
   /** The runs with one status (the server applies the filter before its cap of 200 runs). */
   runsWithStatus: (status) => req("GET", `/api/runs?status=${enc(status)}`),
@@ -197,6 +199,15 @@ export const api = {
   stats: () => req("GET", "/api/stats"),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
+  // Ask SCF. `stay`: a typed question must survive a session that ended.
+  helpConversations: (archived = false) => req("GET", `/api/help/conversations${archived ? "?archived=1" : ""}`, undefined, true),
+  helpConversation: (id) => req("GET", `/api/help/conversations/${enc(id)}`, undefined, true),
+  retryHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/retry`, {}, true),
+  cancelHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/cancel`, {}, true),
+  archiveHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/archive`, {}, true),
+  restoreHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/restore`, {}, true),
+  deleteHelp: (id) => req("DELETE", `/api/help/conversations/${enc(id)}`, undefined, true),
+  askHelp: (id, body) => req("POST", id ? `/api/help/conversations/${enc(id)}/messages` : "/api/help/conversations", body, true),
   search: (q) => req("GET", `/api/search?q=${enc(q)}`),
   /** The recent items again, as the server sees them now: `refs` are { type, id }, answered in the groups of a search. */
   recent: (refs) => req("GET", `/api/search?${refs.map((r) => `id=${enc(`${r.type}:${r.id}`)}`).join("&")}`),

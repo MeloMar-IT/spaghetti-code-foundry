@@ -9,7 +9,8 @@ import {
   changePassword, checkSignIn, createUser, createUserWithLink, getUser, listUsers, redeemPasswordLink, resetPassword, setStatus, usersPath, type UserError,
 } from "../src/auth/users.js";
 import { throttlesOf } from "../src/server/api-auth.js";
-import { startServer } from "../src/server/server.js";
+import type { startServer } from "../src/server/server.js";
+import { startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
 
 const PW = TEST_PASSWORD;
@@ -223,21 +224,10 @@ describe("POST /api/password", () => {
     now = Date.now();
     logs = [];
     seen = [];
-    for (let i = 0; ; i++) {
-      const port = 20000 + Math.floor(Math.random() * 20000);
-      try {
-        const started = await startServer({
-          repo: home, runsDir: join(home, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false,
-          log: (m) => void logs.push(m), signInClock: () => now,
-        });
-        base = `http://127.0.0.1:${port}`;
-        close = started.close;
-        ctx = started.ctx;
-        return;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      }
-    }
+    ({ base, close, ctx } = await startTestServer({
+      repo: home, runsDir: join(home, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false,
+      log: (m) => void logs.push(m), signInClock: () => now,
+    }));
   });
   afterEach(() => {
     // no password, hash or token in any answer or log line of the test

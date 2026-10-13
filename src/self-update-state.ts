@@ -1,9 +1,10 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, realpathSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, realpathSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { FACTORY_HOME } from "./flow/load.js";
+import { markFinder } from "./self-update-tests.js";
 import type { PendingUpdate, StartGuard } from "./supervise.js";
 
 /**
@@ -20,8 +21,13 @@ const StateSchema = z.object({
   pending: z.object({ from: Sha, to: Sha, phase: z.enum(["apply", "installed"]), stamp: z.number().optional() }).optional(),
   /** The commit of main that built and passed its tests in the stage folder. */
   tested: z.object({ commit: Sha, at: z.string() }).optional(),
+  /** The test step failed; the same commit is tried again after a wait. */
+  retry: z.object({ commit: Sha, tries: z.number().int().min(1), at: z.string() }).optional(),
   failed: z
-    .object({ commit: Sha, stage: z.enum(STAGES), back: Sha.optional(), backOk: z.boolean().optional(), lines: z.array(z.string().max(300)).max(5).optional(), at: z.string() })
+    .object({
+      commit: Sha, stage: z.enum(STAGES), back: Sha.optional(), backOk: z.boolean().optional(), lines: z.array(z.string().max(300)).max(5).optional(), at: z.string(),
+      tries: z.number().int().optional(), tests: z.array(z.string().max(300)).max(20).optional(),
+    })
     .optional(),
   updated: z.object({ from: Sha, to: Sha, at: z.string() }).optional(),
 });
@@ -113,6 +119,30 @@ export interface UpdateStep {
   cmd: string;
   args: string[];
   timeoutMs?: number;
+  /** Added to the environment of the step, over `stepEnv()`. */
+  env?: Record<string, string>;
+  /** With `startMark`: how long the step may wait before it prints the mark. */
+  waitMs?: number;
+  /** A line on stdout that says the real work started: the time limit starts again there, and the line is not kept. */
+  startMark?: string;
+  /** The test slot folder the step runs through: a slot held by the killed step itself is freed when it ends. */
+  slotsDir?: string;
+}
+
+/** Removes the slots in `dir` whose holder is `pid` (a killed `test-slot` cannot free its own). Slots of others stay. */
+function freeSlots(dir: string, pid: number): void {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!/^slot-\d+$/.test(name)) continue;
+      try {
+        if (readFileSync(join(dir, name, "pid"), "utf8").trim() === String(pid)) rmSync(join(dir, name), { recursive: true, force: true });
+      } catch {
+        // no pid file: not ours
+      }
+    }
+  } catch {
+    // no slots folder
+  }
 }
 const MIN = 60_000;
 export const DEFAULT_STEPS: UpdateStep[] = [
@@ -138,16 +168,33 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
     let output = "";
     let child: ChildProcess;
     try {
-      child = spawn(step.cmd, step.args, { cwd, env: stepEnv(), detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(step.cmd, step.args, { cwd, env: { ...stepEnv(), ...step.env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     } catch (e) {
       return done({ ok: false, output: String((e as Error).message) });
     }
     running.add(child);
     const take = (b: Buffer) => { output = (output + b.toString()).slice(-20_000); };
-    child.stdout?.on("data", take);
+    const own = step.timeoutMs ?? 10 * MIN;
+    const finder = step.startMark ? markFinder(step.startMark) : undefined;
+    let timer = setTimeout(() => killGroup(child), finder ? (step.waitMs ?? 0) + own : own);
+    if (finder) {
+      let started = false;
+      child.stdout?.on("data", (b: Buffer) => {
+        const text = finder.push(b.toString());
+        if (text) output = (output + text).slice(-20_000);
+        if (!started && finder.found()) {
+          started = true;
+          clearTimeout(timer);
+          timer = setTimeout(() => killGroup(child), own);
+        }
+      });
+    } else {
+      child.stdout?.on("data", take);
+    }
     child.stderr?.on("data", take);
-    const timer = setTimeout(() => killGroup(child), step.timeoutMs ?? 10 * MIN);
     const end = (ok: boolean, extra = "") => {
+      if (finder) output = (output + finder.rest()).slice(-20_000);
+      if (step.slotsDir && child.pid) freeSlots(step.slotsDir, child.pid);
       clearTimeout(timer);
       running.delete(child);
       done({ ok, output: output + extra, ...(killed !== mark ? { killed: true } : {}) });

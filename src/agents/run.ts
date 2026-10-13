@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { readOnlyStep, reviewerStepProblem, type ClaudeStep } from "../flow/schema.js";
+import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBin, runClaude } from "../steps/claude.js";
 import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
@@ -15,8 +15,11 @@ import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { render } from "../engine/template.js";
 import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, specOf, toTarget, type Target } from "./targets.js";
-import { stepOverride } from "../analyst/overrides.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, type Target } from "./targets.js";
+import { stepOverride, type Override } from "../analyst/overrides.js";
+import { modelOf } from "../analyst/reference.js";
+import type { Config } from "../config.js";
+import { stepIdentity } from "../evidence/record.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -148,6 +151,31 @@ function catalogueRecord(o: WithOptions): Pick<StepResult, "skillCatalogue"> {
   return o.catalogue?.record ? { skillCatalogue: o.catalogue.record } : {};
 }
 
+/**
+ * What the analyst set for this step, as far as it applies now: nothing when a router rule of yours
+ * matches the step (your policy wins), and nothing when the flow no longer says what it said when the
+ * analyst set it (`from`), so an edit of the flow wins too. A model is only replaced inside the
+ * step's own target: the agent and the provider stay, and it must be a Claude step (the analyst only
+ * knows the Claude model levels).
+ */
+export function analystSet(step: ClaudeStep, flow: Flow, config: Config, visit: number): { target?: Target; effort?: Override["effort"] } {
+  const o = stepOverride(flow.name, step.id);
+  if (!o.model && !o.effort) return {};
+  if (routeModel(config, flow.name, step.id, visit)) return {};
+  let own: Target;
+  try {
+    own = resolveTarget(step, flow, config, visit);
+  } catch {
+    return {}; // the step's own target is the error to report, not the override
+  }
+  if (o.from && (o.from.model !== modelOf(own.label) || o.from.effort !== (step.effort ?? flow.defaults.effort ?? ""))) return {};
+  const model = own.agent === "claude" && o.model !== own.model ? o.model : undefined;
+  return {
+    ...(o.effort ? { effort: o.effort } : {}),
+    ...(model ? { target: { ...own, model, label: formatSpec({ agent: own.agent, provider: own.providerName, model }) } } : {}),
+  };
+}
+
 async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, env: Record<string, string | undefined>, o: WithOptions): Promise<Ran> {
   const { isolated, short, boxed, profile, bin } = o;
   const { ctx, flow } = scope;
@@ -157,7 +185,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   // profiles may not nest: the outer profile holds a boxed step, so the agent's own sandbox is off
   const sandboxed = boxed ? false : asked;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
-  const tuned = stepOverride(flow.name, step.id).effort;
+  const tuned = analystSet(step, flow, engine.config, scope.visits[step.id] ?? 1).effort;
   if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
   const effort = tuned ?? step.effort ?? d.effort;
   const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
@@ -323,9 +351,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   try {
     const visit = scope.visits[step.id] ?? 1;
     // your router rules are your policy and win; below them the analyst may have set another model for this step
-    const tuned = routeModel(config, scope.flow.name, step.id, visit) ? undefined : stepOverride(scope.flow.name, step.id).model;
-    target = engine.budgetFallback ?? (tuned ? toTarget(specOf(tuned, config), config) : resolveTarget(step, scope.flow, config, visit));
-    if (tuned && !engine.budgetFallback) engine.log(`    · model ${tuned}: set by the analyst`);
+    const tuned = engine.budgetFallback ? undefined : analystSet(step, scope.flow, config, visit).target;
+    target = engine.budgetFallback ?? tuned ?? resolveTarget(step, scope.flow, config, visit);
+    if (tuned) engine.log(`    · model ${tuned.model}: set by the analyst`);
   } catch (e) {
     return { ok: false, output: "", error: (e as Error).message };
   }
@@ -346,6 +374,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     defaults: scope.flow.defaults,
     sandbox: { step: step.sandbox, flow: scope.flow.sandbox.claude, config: config.sandbox.claude, boxed },
   });
+  const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+  let fallbackFrom: string | undefined;
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -354,6 +384,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
     }
+    if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools });
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
@@ -364,6 +395,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.log(`    ↻ ${target.label}: ${(r.error || r.output).trim().split("\n")[0]!.slice(0, 120)} — trying again in ${Math.round(wait / 1000)}s`);
       engine.summary.totalCostUsd += r.costUsd ?? 0;
       if (!(await pause(wait, engine.signal))) return { ...r, ...tries() };
+      engine.evidence?.stepRetried(identity, "outage");
       continue;
     }
     // Signed out: pause like a usage limit (the run is tried again by itself) instead of failing.
@@ -384,6 +416,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     engine.log(`    ↪ ${target.label} hit a limit — retrying on ${next.label}`);
     engine.summary.totalCostUsd += r.costUsd ?? 0;
     models++;
+    engine.evidence?.stepRetried(identity, "limit");
+    fallbackFrom = target.label;
     target = next;
   }
 }

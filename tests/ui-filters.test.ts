@@ -50,6 +50,13 @@ describe("parseQuery", () => {
     for (const t of ["repo=All", "repo=ALL"]) expect(f.parseQuery(t), t).toEqual({});
   });
 
+  it("reads the method filter and drops an unknown method", () => {
+    expect(f.parseQuery("method=github-app")).toEqual({ method: "github-app" });
+    expect(f.parseQuery("method=x")).toEqual({});
+    expect(f.formatQuery({ method: "github-app", owner: "u1", repo: "a/b" })).toBe("?repo=a%2Fb&owner=u1&method=github-app");
+    expect(f.formatQuery({ method: "x" })).toBe("");
+  });
+
   it("gives a plain object with only own keys repo and owner", () => {
     const q = f.parseQuery("repo=a%2Fb&owner=u1&x=1");
     expect(Object.keys(q).sort()).toEqual(["owner", "repo"]);
@@ -255,7 +262,7 @@ describe("the routers", () => {
       expect(src, file).toMatch(/location\.hash( \?\? "")?\)?\.split\("\?"\)\[0\]\.split\("\/"\)\[1\]/);
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\("\/"\)/);
     }
-    for (const file of ["refinement", "repos", "admin-repos"]) {
+    for (const file of ["refinement", "repos"]) {
       const src = readFileSync(`ui/${file}.js`, "utf8");
       expect(src, file).toContain("splitHash(location.hash");
       expect(src, file).not.toMatch(/location\.hash( \?\? "")?\)?\.split\(/);
@@ -267,7 +274,7 @@ describe("the routers", () => {
     const app = readFileSync("ui/app.js", "utf8");
     expect(app).toContain("renderAllRepos(main, { query: to.query, go })");
     expect(app).toContain("renderRefinement(main, { admin: true, id: arg, query: to.query, go })");
-    expect(app).toContain("renderRepos(box, { admin: true, query: to.query, go })");
+    expect(app).toContain("renderRepos(box, { admin: true, switcher: true, query: to.query, go })");
     const user = readFileSync("ui/user/app.js", "utf8");
     expect(user).toContain("renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go })");
     expect(user).toContain("renderRepos(box, { admin: false, readOnly, query: to.query, go })");
@@ -735,6 +742,29 @@ describe("the admin Runs list", () => {
     expect(new Set(asked)).toEqual(new Set(["/api/runs", "/api/queue"]));
     expect(chips(m)).toEqual(["Repository: acme/app"]);
     stop();
+  });
+
+  it("the Density switch draws tables, stores the choice and leaves the address alone", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const store = { getItem: vi.fn(() => null as string | null), setItem: vi.fn() };
+    const stop = await runs.renderRunsList(m, { admin: true, go, store });
+    const dens = (name: string) => m.all("button").find((b) => b.attrs["data-focus"] === `runs-density-${name}`)!;
+    expect(m.all("div").find((d) => d.attrs["aria-label"] === "Density")).toBeDefined();
+    expect(dens("comfortable").attrs["aria-pressed"]).toBe("true");
+    expect(m.all("table")).toHaveLength(0);
+    dens("compact").click();
+    expect(store.setItem).toHaveBeenCalledWith("scf-runs-density", "compact");
+    expect(m.all("table").length).toBeGreaterThan(0);
+    expect(m.all("li")).toHaveLength(0);
+    expect(dens("compact").attrs["aria-pressed"]).toBe("true");
+    expect(go).not.toHaveBeenCalled();
+    stop();
+    const m2 = connected();
+    store.getItem.mockReturnValue("compact");
+    const stop2 = await runs.renderRunsList(m2, { admin: true, go: vi.fn(), store });
+    expect(m2.all("table").length).toBeGreaterThan(0);
+    stop2();
   });
 
   it("an older answer does not overwrite a newer one, and a page that was left is not drawn on", async () => {

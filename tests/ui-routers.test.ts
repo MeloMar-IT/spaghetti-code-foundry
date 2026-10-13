@@ -82,6 +82,7 @@ describe("user router", () => {
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "/palette.js": { initPalette: vi.fn(() => () => {}) },
+    "/ask.js": { initAsk: vi.fn(async () => null) },
     "/context.js": contextStub(),
     "/home.js": never,
     "/states.js": real.states,
@@ -144,6 +145,16 @@ describe("user router", () => {
     expect(stop).not.toHaveBeenCalled();
     onEnded();
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts Ask SCF for a user, and not in a preview or when the view cannot be shown", async () => {
+    const initAsk = vi.fn(async () => null);
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk } }));
+    expect(initAsk.mock.calls).toEqual([["user"]]);
+    initAsk.mockClear();
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
+    await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
+    expect(initAsk).not.toHaveBeenCalled();
   });
 
   it("starts no palette when the view cannot be shown", async () => {
@@ -256,6 +267,9 @@ describe("user router", () => {
     await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns: vi.fn() }, "/repos.js": { renderRepos }, "/repo-view.js": { renderRepo } }));
     await vi.waitFor(() => expect(renderRepo).toHaveBeenCalledTimes(1));
     expect(renderRepo.mock.calls[0]![1]).toMatchObject({ id: "r1", admin: false });
+    expect(Object.keys(renderRepo.mock.calls[0]![1])).not.toEqual(expect.arrayContaining(["sections"]));
+    expect(renderRepo.mock.calls[0]![1].source).toBeUndefined();
+    expect(renderRepo.mock.calls[0]![1].attention).toBeUndefined();
     expect(renderRepos).not.toHaveBeenCalled();
     setup("#/repos");
     await loadRouter("user/app.js", deps({ "/user/runs.js": { renderMyRun: vi.fn(), renderMyRuns: vi.fn() }, "/repos.js": { renderRepos }, "/repo-view.js": { renderRepo } }));
@@ -274,7 +288,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -285,6 +299,7 @@ describe("admin router", () => {
       "./viewport.js": real.viewport,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./palette.js": { initPalette: vi.fn() },
+      "./ask.js": { initAsk: vi.fn(async () => null) },
       "./context.js": contextStub(),
       "./states.js": real.states,
       "./icons.js": { flowNameMark: () => "" },
@@ -360,6 +375,13 @@ describe("admin router", () => {
       expect(mocks[fn].mock.calls[0]!.slice(1), hash).toEqual(expected);
       for (const [name, other] of Object.entries(mocks)) if (name !== fn) expect(other, hash).not.toHaveBeenCalled();
     }
+  });
+
+  it("starts Ask SCF for an admin", async () => {
+    setup("#/dashboard");
+    const initAsk = vi.fn(async () => null);
+    await loadRouter("app.js", stub({ "./ask.js": { initAsk }, "./dashboard.js": { renderDashboard: vi.fn() } }));
+    expect(initAsk.mock.calls).toEqual([["admin"]]);
   });
 
   it("starts the palette for an admin", async () => {
@@ -477,6 +499,7 @@ describe("support levels", () => {
     "./viewport.js": real.viewport,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./ask.js": { initAsk: vi.fn(async () => null) },
     "./context.js": contextStub(),
     "./states.js": real.states,
     "./icons.js": { flowNameMark: () => "" },
@@ -487,7 +510,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,
@@ -564,9 +587,11 @@ describe("support levels", () => {
     await load("#/repos/r1", 1024, { "./repo-view.js": { renderRepo }, "./repos.js": { renderRepos } });
     await vi.waitFor(() => expect(renderRepo).toHaveBeenCalledTimes(1));
     expect(renderRepo.mock.calls[0]![1]).toMatchObject({ id: "r1", admin: true });
+    expect(Object.keys(renderRepo.mock.calls[0]![1])).toEqual(expect.arrayContaining(["sections", "source", "attention"]));
     expect(renderRepos).not.toHaveBeenCalled();
     await load("#/repos", 1024, { "./repo-view.js": { renderRepo }, "./repos.js": { renderRepos } });
     await vi.waitFor(() => expect(renderRepos).toHaveBeenCalledTimes(1));
+    expect(renderRepos.mock.calls[0]![1]).toMatchObject({ admin: true, switcher: true });
     expect(renderRepo).toHaveBeenCalledTimes(1);
   });
 

@@ -14,6 +14,8 @@ import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhC
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { shortEnv, shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
+import type { Actor, StepIdentity } from "../evidence/identity.js";
+import { stepIdentity, type RunRecorder } from "../evidence/record.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -45,6 +47,8 @@ export interface LoopResult {
   /** Step to continue from if the run is resumed. */
   next: string | null;
   lastOutput: string;
+  /** Evidence only: the step whose failure ended the loop. */
+  failedStep?: StepIdentity;
 }
 
 export interface Engine {
@@ -70,6 +74,10 @@ export interface Engine {
   accessFailed?: boolean;
   /** A human decision for the approval step the run is waiting at (consumed on use). */
   decision?: ApprovalDecision & { stepId: string };
+  /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
+  evidence?: RunRecorder;
+  /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
+  actor?: Actor;
 }
 
 export interface ApprovalDecision {
@@ -122,6 +130,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     visit,
   };
   engine.save();
+  engine.evidence?.stepEnded(rec);
   const secs = (rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${res.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${res.error ? ` — ${res.error}` : ""}`);
@@ -282,6 +291,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const visit = (scope.visits[id] = (scope.visits[id] ?? 0) + 1);
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
+          engine.evidence?.stepStarted(stepIdentity(sub, scope.prefix, visit));
           let res: StepResult;
           try {
             res = await executeStep(sub, scope, engine, lf);

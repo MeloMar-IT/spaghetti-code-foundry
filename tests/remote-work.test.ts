@@ -49,7 +49,7 @@ let walk: string;
 beforeAll(async () => {
   w = await remoteWorld();
   for (const [name, yaml] of [["walk", WALK], ["slow", SLOW]] as const) {
-    const r = await w.scf(["api", "PUT", `flows/${name}`, "--data", JSON.stringify({ yaml, scope: "repo" })]);
+    const r = await w.scf(["api", "PUT", `flows/${name}`, "--data", JSON.stringify({ yaml, scope: "repo" }), "--yes"]);
     expect(r.code).toBe(0);
   }
   walk = await start("walk", "Feed the quokka\nsecond line");
@@ -96,7 +96,7 @@ describe("runs", () => {
     expect((await scf(["runs", "list", "quokka", "--status", "waiting", "--json"])).json<Run[]>().map((r) => r.runId)).toEqual([walk]);
     expect((await scf(["runs", "list", "--status", "failed"])).out).toBe("no runs");
     const bad = await scf(["runs", "list", "--status", "odd"]);
-    expect([bad.code, bad.out]).toEqual([1, "error: status must be one of: running, succeeded, failed, cancelled, stopped, waiting"]);
+    expect([bad.code, bad.err]).toEqual([1, "error: status must be one of: running, succeeded, failed, cancelled, stopped, waiting"]);
   });
 
   it("shows one run: where it stands and its steps", async () => {
@@ -109,14 +109,19 @@ describe("runs", () => {
     expect(out).toMatch(/waits for:\s+Go\?\n/);
     expect(out).toMatch(/\nN\s+STEP\s+TYPE\s+OK\s+STARTED\s+TOOK\n0\s+say\s+shell\s+yes\s/);
     const gone = await scf(["runs", "show", "nope"]);
-    expect([gone.code, gone.out]).toEqual([1, "error: run not found"]);
+    expect([gone.code, gone.err]).toEqual([1, "error: run not found"]);
   });
 
   it("reads the transcript of a step and the changes", async () => {
     expect((await scf(["runs", "log", walk, "0"])).out).toMatch(/^step say \(shell\)\n\n/);
-    expect((await scf(["runs", "log", walk, "9"])).out).toBe("error: no such step");
+    expect((await scf(["runs", "log", walk, "9"])).err).toBe("error: no such step");
     const diff = await scf(["runs", "diff", walk]);
     expect([diff.code, diff.out]).toEqual([0, "no changes"]);
+    const evidence = await scf(["runs", "evidence", walk]);
+    expect(evidence.code).toBe(0);
+    expect(evidence.out).toMatch(new RegExp(`^(no )?evidence · run ${walk} · [a-z-]+\\n\\n`));
+    const none = await scf(["runs", "evidence", "nope"]);
+    expect([none.code, none.err]).toEqual([1, "error: run not found"]);
   });
 
   it("names the owners and the filter values", async () => {
@@ -126,7 +131,7 @@ describe("runs", () => {
 
   it("approves a waiting run, archives it and takes it back", async () => {
     const busy = await scf(["runs", "archive", walk]);
-    expect([busy.code, busy.out]).toEqual([1, "error: only a finished run can be archived; this run is running, waiting or queued"]);
+    expect([busy.code, busy.err]).toEqual([1, "error: only a finished run can be archived; this run is running, waiting or queued"]);
     expect((await scf(["runs", "approve", walk, "--note", "fine"])).out).toBe(`run ${walk} continues: approved`);
     await until(walk, "succeeded");
     expect((await scf(["runs", "archive", walk])).out).toBe(`run ${walk} is archived`);
@@ -135,9 +140,9 @@ describe("runs", () => {
     expect((await scf(["runs", "unarchive", walk])).out).toBe(`run ${walk} is back in the list of runs`);
     expect((await scf(["runs", "list"])).out).toContain(walk);
     const late = await scf(["runs", "reject", walk]);
-    expect([late.code, late.out]).toEqual([1, "error: run is not waiting for approval"]);
+    expect([late.code, late.err]).toEqual([1, "error: run is not waiting for approval"]);
     const answer = await scf(["runs", "answer", walk, "yes"]);
-    expect([answer.code, answer.out]).toEqual([1, "error: this run did not stop with questions"]);
+    expect([answer.code, answer.err]).toEqual([1, "error: this run did not stop with questions"]);
   });
 
   it("asks before it cancels a run", async () => {
@@ -154,16 +159,16 @@ describe("runs", () => {
     const ann = await w.signIn("ann@example.com");
     expect((await scf(["runs", "list"], { as: ann })).out).toBe("no runs");
     // another account's run answers like an unknown one
-    expect((await scf(["runs", "show", walk], { as: ann })).out).toBe("error: run not found");
+    expect((await scf(["runs", "show", walk], { as: ann })).err).toBe("error: run not found");
     for (const words of [["runs", "owners"], ["turn", "list"], ["board", "show"], ["board", "next"], ["turn", "clarity"]]) {
       const r = await scf(words, { as: ann });
-      expect([words.join(" "), r.code, r.out.startsWith("error: ")]).toEqual([words.join(" "), 4, true]);
+      expect([words.join(" "), r.code, r.err.startsWith("error: ")]).toEqual([words.join(" "), 4, true]);
     }
     const own = await scf(["runs", "start", "walk", "Ann's walk"], { as: ann });
     expect(own.out).toMatch(/^run \S+ (started|is queued)$/);
     expect((await scf(["runs", "list", "--json"], { as: ann })).json<Run[]>()).toHaveLength(1);
     const hidden = await scf(["runs", "start", "slow"], { as: ann });
-    expect([hidden.code, hidden.out]).toEqual([1, "error: flow not found"]);
+    expect([hidden.code, hidden.err]).toEqual([1, "error: flow not found"]);
   });
 });
 
@@ -174,7 +179,7 @@ describe("your turn, the board and search", () => {
   it("says what changed since a time", async () => {
     const out = (await scf(["board", "since", "2020-01-01"])).out;
     expect(out).toMatch(/^since 2020-01-01 00:00: 1 change\n\n1 newly waiting for you\nAT\s+WHERE\s+TITLE\n\S+ \S+\s+run \S+\s+Ann's walk$/);
-    expect((await scf(["board", "since", "soon"])).out).toBe('error: "since" must be a time');
+    expect((await scf(["board", "since", "soon"])).err).toBe('error: "since" must be a time');
   });
 
   it("lists what waits for you, with the key and what is asked", async () => {
@@ -195,15 +200,15 @@ describe("your turn, the board and search", () => {
     expect([gone.dismissed, gone.groups.flatMap((g) => g.items).some((i) => i.key === key)]).toEqual([1, false]);
     expect((await scf(["turn", "list"])).out).toContain("1 dismissed (scf turn restore brings them back)");
     expect((await scf(["turn", "restore"])).out).toContain(key);
-    expect((await scf(["turn", "dismiss", "no|such|item"])).out).toBe("error: no such item");
+    expect((await scf(["turn", "dismiss", "no|such|item"])).err).toBe("error: no such item");
   });
 
   it("answers an item without an issue with the server's reason", async () => {
     // a run started by hand has no issue: there is no comment to read or to write
     const detail = await scf(["turn", "show", key]);
-    expect([detail.code, detail.out]).toEqual([1, "error: there is nothing to show for this item here"]);
+    expect([detail.code, detail.err]).toEqual([1, "error: there is nothing to show for this item here"]);
     const act = await scf(["turn", "approve", key, "--stamp", "s", "--digest", "d"]);
-    expect([act.code, act.out]).toEqual([1, "error: that is not possible for this item"]);
+    expect([act.code, act.err]).toEqual([1, "error: that is not possible for this item"]);
     expect((await scf(["turn", "clarity", "--json"])).json<{ waitingNow: number }>().waitingNow).toBeGreaterThan(0);
     expect((await scf(["turn", "clarity"])).code).toBe(0);
   });
@@ -227,6 +232,6 @@ describe("your turn, the board and search", () => {
     expect(out).toMatch(/^Runs\nID\s+TITLE\s+STATUS\s+REPO\s+DETAIL\s+WHEN\nr-story\s+Repair the gizmo\s+\S.*acme\/app\s+walk · #254\s/);
     expect((await scf(["find", "id", "run:r-story", "--json"])).json<{ groups: { hits: { id: string }[] }[] }>().groups[0]!.hits[0]!.id).toBe("r-story");
     expect((await scf(["find", "all", "zzzz-nothing"])).out).toBe("nothing found");
-    expect((await scf(["find", "id", "r-story"])).out).toBe("error: an id must look like <type>:<id>");
+    expect((await scf(["find", "id", "r-story"])).err).toBe("error: an id must look like <type>:<id>");
   });
 });

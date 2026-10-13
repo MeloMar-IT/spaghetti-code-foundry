@@ -126,6 +126,20 @@ const show = async (r: any, opts: object = {}) => {
   return { navs, off };
 };
 
+describe("a source that returns foreign and back", () => {
+  it("hides the owner-only actions and uses the returned back link", async () => {
+    const r = deployRec();
+    repos = [r];
+    const source = { load: async () => ({ repo: r, foreign: true, back: { label: "Repositories", href: "#/all-repos" } }) };
+    await view.renderRepo(main(), { id: r.id, admin: true, nav: () => {}, source });
+    expect(button(main(), "Change authentication")).toBeUndefined();
+    expect(button(main(), "Remove")).toBeUndefined();
+    expect(button(main(), "Generate a new key")).toBeUndefined();
+    expect(section("danger").textContent).toContain("Only the owner can remove this repository or generate a new key.");
+    expect(walk(main()).find((e) => e.tag === "a" && e.textContent === "Repositories")!.attrs.href).toBe("#/all-repos");
+  });
+});
+
 describe("the sections", () => {
   it("draws Overview, Connection and Dangerous actions in that order, the last one as a fail card", async () => {
     await show(rec());
@@ -137,12 +151,33 @@ describe("the sections", () => {
     expect(section("connection").textContent).not.toContain("Public key");
   });
 
-  it("shows the user name of an https token", async () => {
+  it("shows provider, identity and scope of a token, a deploy key and a repository on another host", async () => {
     await show(rec({ method: "https-token", username: "ann" }));
-    expect(section("connection").textContent).toContain("User name");
-    expect(section("connection").textContent).toContain("ann");
-    await show(rec());
+    expect(section("connection").textContent).toContain("ProviderGitHubIdentitytoken of annScopeRead not checked, Write not checked, GitHub API not checked");
     expect(section("connection").textContent).not.toContain("User name");
+    await show(rec());
+    expect(section("connection").textContent).toContain("Identityfine-grained token");
+    await show(deployRec());
+    expect(section("connection").textContent).toContain("Identitydeploy key ssh-ed25519");
+    expect(section("connection").textContent).toContain("GitHub API not checked, limited to this repository");
+    await show(rec({ url: "https://Git.Example.org/x/y", method: "https-token", username: "bob" }));
+    expect(section("connection").textContent).toContain("Providergit.example.org");
+  });
+
+  it("shows the result of the last test in the scope, with a skipped check as not checked", async () => {
+    await show(rec({ connection: badConn() }));
+    expect(section("connection").textContent).toContain("Read failed, Write not checked, GitHub API not checked");
+    await show(rec({ connection: goodConn() }));
+    expect(section("connection").textContent).toContain("Read works, Write works, GitHub API works");
+  });
+
+  it("never asks for the stored credentials", async () => {
+    const urls: string[] = [];
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = (url: string, init: any) => (urls.push(url), real(url, init));
+    await show(rec());
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.some((u) => u.includes("/api/admin/credentials"))).toBe(false);
   });
 
   it("shows the key with Copy and the hint for a deploy key, and Generate a new key under danger", async () => {

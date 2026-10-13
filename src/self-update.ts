@@ -4,6 +4,7 @@ import { githubKey, tryParseRepoUrl } from "./auth/repo-url.js";
 import type { SelfUpdateConfig } from "./config.js";
 import { redactText } from "./credentials/redact.js";
 import { cleanLine } from "./errors.js";
+import { detectTestCmd, failingTests, passedBefore, pinsTests, sameTests, slotStep } from "./self-update-tests.js";
 import {
   branchOf, DEFAULT_STEPS, foundryDir, git, headOf, isClean, killSteps, loadUpdateState, readVersion, rollBack, runStep, short, updateFile, updateState,
   type FailStage, type UpdateStep,
@@ -11,9 +12,11 @@ import {
 import { buildStamp, RESTART_CODE } from "./supervise.js";
 
 export const CHECK_EVERY_MS = 300_000;
+export const TEST_TRIES = 3;
+const RETRY_WAIT_MS = 20 * 60_000;
 
 export type UpdateReason = "broken_state" | "needs_repair" | "not_git" | "unsupervised" | "wrong_repo" | "unreachable"
-  | "not_main" | "local_changes" | "no_fast_forward" | "failed_before" | "building" | "runs";
+  | "not_main" | "local_changes" | "no_fast_forward" | "failed_before" | "building" | "runs" | "retry_wait";
 
 export interface UpdateView {
   version?: { commit: string; date: string };
@@ -29,6 +32,8 @@ export interface UpdaterOptions {
   beforeExit: () => void;
   log: (m: string) => void;
   // for tests:
+  testCmd?: (cwd: string) => Promise<string | undefined> | string | undefined;
+  slot?: { waitSec?: number; slots?: number; pollMs?: number } | false;
   dir?: string;
   file?: string;
   steps?: UpdateStep[];
@@ -38,12 +43,14 @@ export interface UpdaterOptions {
   exit?: (code: number) => void;
   everyMs?: number;
   checkEveryMs?: number;
+  retryWaitMs?: number;
+  now?: () => number;
 }
 
 type Check =
   | { kind: "none" }
   | { kind: "blocked"; reason: UpdateReason; commit?: string }
-  | { kind: "stage"; commit: string }
+  | { kind: "stage"; commit: string; try: number }
   | { kind: "ready"; commit: string; head: string };
 
 const STAGE_TEXT: Record<FailStage, string> = {
@@ -110,6 +117,16 @@ export class SelfUpdater {
     }
   }
 
+  private now(): number {
+    return (this.o.now ?? Date.now)();
+  }
+
+  /** How long the wait before the next try of the tests still lasts. A time that cannot be read is due now. */
+  private waitLeft(at: string): number {
+    const t = Date.parse(at);
+    return Number.isNaN(t) ? 0 : Math.max(0, t + (this.o.retryWaitMs ?? RETRY_WAIT_MS) - this.now());
+  }
+
   private async round(force: boolean): Promise<void> {
     if (this.stopped) return;
     const cfg = this.o.config();
@@ -133,13 +150,14 @@ export class SelfUpdater {
     if (res.kind === "stage") {
       this.set({ waiting: true, commit: res.commit, text: this.text("building", res.commit) });
       this.lastLogged = `building|${res.commit}`;
-      this.say(`self-update: building and testing ${short(res.commit)}`);
-      const ok = await this.stage(res.commit);
+      this.say(`self-update: building and testing ${short(res.commit)}${res.try > 1 ? ` (try ${res.try} of ${TEST_TRIES})` : ""}`);
+      const out = await this.stage(res.commit, res.try);
       if (this.stopped) return;
       if (!this.o.config().enabled) return this.set(undefined); // switched off while it built: no drain
-      if (ok) this.waitForRuns(res.commit);
-      else this.block("failed_before", res.commit);
-      if (ok && !this.drained) {
+      if (out === "retry") this.block("retry_wait", res.commit);
+      else if (out === "failed") this.block("failed_before", res.commit);
+      else if (out === "ok") this.waitForRuns(res.commit);
+      if (out === "ok" && !this.drained) {
         this.drained = true;
         this.say(`self-update: ${short(res.commit)} is tested; no new runs start, and it is installed when the active runs are done`);
         this.o.drain();
@@ -171,13 +189,13 @@ export class SelfUpdater {
   private block(reason: UpdateReason, commit?: string) {
     const { state } = loadUpdateState(this.file);
     const text = this.text(reason, commit, state.failed);
-    this.update = { waiting: ["not_main", "local_changes", "no_fast_forward", "failed_before", "building", "runs"].includes(reason), ...(commit ? { commit } : {}), text };
+    this.update = { waiting: ["not_main", "local_changes", "no_fast_forward", "failed_before", "building", "runs", "retry_wait"].includes(reason), ...(commit ? { commit } : {}), text };
     const key = `${reason}|${commit ?? ""}`;
     if (key !== this.lastLogged) this.say(`self-update: ${text}`);
     this.lastLogged = key;
   }
 
-  private text(reason: UpdateReason, commit?: string, failed?: { commit: string; stage: FailStage; back?: string }): string {
+  private text(reason: UpdateReason, commit?: string, failed?: { commit: string; stage: FailStage; back?: string; tries?: number; tests?: string[] }): string {
     const sha = commit ? short(commit) : "";
     const repo = this.o.config().repo ?? "";
     switch (reason) {
@@ -195,9 +213,19 @@ export class SelfUpdater {
       case "no_fast_forward": return `An update is waiting (${sha}): the checkout has commits that are not on main.`;
       case "building": return `An update is waiting (${sha}): it is being built and tested.`;
       case "runs": return `An update is waiting (${sha}): it is installed when the active runs are done.`;
+      case "retry_wait": {
+        const r = loadUpdateState(this.file).state.retry;
+        const m = Math.max(1, Math.ceil((r ? this.waitLeft(r.at) : 0) / 60_000));
+        return `An update is waiting (${sha}): its tests failed (try ${r?.tries ?? 1} of ${TEST_TRIES}). They run again in about ${m} minute${m === 1 ? "" : "s"}.`;
+      }
       case "failed_before": {
         const f = failed ?? loadUpdateState(this.file).state.failed;
-        const x = f?.stage === "start" ? `it did not start healthy and the Foundry went back to ${f.back ? short(f.back) : "the previous version"}` : STAGE_TEXT[f?.stage ?? "install"];
+        let x = f?.stage === "start" ? `it did not start healthy and the Foundry went back to ${f.back ? short(f.back) : "the previous version"}` : STAGE_TEXT[f?.stage ?? "install"];
+        if (f?.stage === "test" && (f.tries ?? 1) > 1) {
+          const t = f.tests ?? [];
+          const shown = t.slice(0, 3).join(", ") + (t.length > 3 ? `, and ${t.length - 3} more` : "");
+          x = `its tests failed ${f.tries} times${t.length ? ` (${shown})` : ""}`;
+        }
         return `An update is waiting (${sha}): ${x}. The Foundry waits for a newer commit on main.`;
       }
     }
@@ -238,7 +266,8 @@ export class SelfUpdater {
     if (commit === head) return { kind: "none" };
     if (state.failed?.commit === commit) return blocked("failed_before", commit);
     if (!(await git(this.dir, ["merge-base", "--is-ancestor", head, commit])).ok) return blocked("no_fast_forward", commit);
-    return state.tested?.commit === commit ? { kind: "ready", commit, head } : { kind: "stage", commit };
+    if (state.retry?.commit === commit && this.waitLeft(state.retry.at) > 0) return blocked("retry_wait", commit);
+    return state.tested?.commit === commit ? { kind: "ready", commit, head } : { kind: "stage", commit, try: state.retry?.commit === commit ? state.retry.tries + 1 : 1 };
   }
 
   private safe(text: string): string {
@@ -259,6 +288,16 @@ export class SelfUpdater {
     }
   }
 
+  /** The names of the failing tests: redacted first, then parsed and cleaned. A name that is too long is dropped, never cut. */
+  private names(output: string): string[] {
+    try {
+      const found = failingTests((this.o.redact ?? redactText)(output)).map((n) => cleanLine(n)).filter((n) => n && n.length <= 300);
+      return [...new Set(found)].slice(0, 20);
+    } catch {
+      return [];
+    }
+  }
+
   private stageDir(): string {
     return join(dirname(this.file), "self-update-stage");
   }
@@ -270,32 +309,65 @@ export class SelfUpdater {
     await git(this.dir, ["worktree", "prune"]);
   }
 
-  /** Builds and tests `commit` in a separate worktree. True: it passed and `tested` is written. */
-  private async stage(commit: string): Promise<boolean> {
+  /**
+   * Builds and tests `commit` in a separate worktree, as try `n`. "ok": it passed and `tested` is written. "retry": the tests failed and
+   * `retry` is written. "failed": `failed` is written. "stopped": it was cut off and nothing is written.
+   */
+  private async stage(commit: string, n: number): Promise<"ok" | "failed" | "retry" | "stopped"> {
     this.working = true;
     try {
-      updateState((s) => { s.tested = undefined; }, this.file);
+      updateState((s) => {
+        s.tested = undefined;
+        if (s.retry?.commit !== commit) s.retry = undefined;
+      }, this.file);
       await this.cleanStage(); // a leftover of a server that was stopped while it built
-      const fail = (stage: FailStage, output: string) => {
+      const fail = (stage: FailStage, output: string): "failed" | "retry" => {
         const lines = this.lines(output);
-        updateState((s) => { s.failed = { commit, stage, lines, at: new Date().toISOString() }; }, this.file);
-        this.say(`self-update: ${short(commit)} failed at ${stage}: ${lines.join(" | ")}`);
-        return false;
+        const tests = stage === "test" ? this.names(output) : [];
+        const names = tests.length ? ` — failing tests: ${tests.join(", ")}` : "";
+        if (stage === "test" && n < TEST_TRIES) {
+          updateState((s) => {
+            s.retry = { commit, tries: n, at: new Date(this.now()).toISOString() };
+            s.failed = undefined;
+          }, this.file);
+          this.say(`self-update: ${short(commit)} failed at test (try ${n} of ${TEST_TRIES}): ${lines.join(" | ")}${names}`);
+          return "retry";
+        }
+        updateState((s) => {
+          s.failed = { commit, stage, ...(stage === "test" ? { tries: n, ...(tests.length ? { tests } : {}) } : {}), lines, at: new Date().toISOString() };
+          s.retry = undefined;
+        }, this.file);
+        this.say(`self-update: ${short(commit)} failed at ${stage}: ${lines.join(" | ")}${names}`);
+        return "failed";
       };
       const added = await git(this.dir, ["worktree", "add", "--detach", this.stageDir(), commit]);
       if (!added.ok) return fail("install", added.out);
+      const known = await this.known(commit); // before the install: a fresh clone, as the release check sees it
+      if (this.stopped) return "stopped";
       for (const name of ["install", "build", "test"] as const) {
         const step = this.steps.find((s) => s.name === name);
         if (!step) continue;
-        const r = await runStep(step, this.stageDir());
-        if (r.killed || this.stopped) return false;
+        if (name === "test") {
+          const by = this.testedBefore(step, known);
+          if (by) {
+            this.say(`self-update: ${short(commit)} is not tested again: the release check passed these tests on this code (${by})`);
+            continue;
+          }
+        }
+        // the tests wait for a test slot, like the tests of stories; the tool is the running version's
+        const run = name === "test" && this.o.slot !== false
+          ? slotStep(step, { tool: join(this.dir, "tools", "test-slot"), slotsDir: join(dirname(this.file), "test-slots"), ...this.o.slot })
+          : step;
+        const r = await runStep(run, this.stageDir());
+        if (r.killed || this.stopped) return "stopped";
         if (!r.ok) return fail(name, r.output);
       }
       updateState((s) => {
         s.tested = { commit, at: new Date().toISOString() };
         s.failed = undefined;
+        s.retry = undefined;
       }, this.file);
-      return true;
+      return "ok";
     } finally {
       try {
         await this.cleanStage();
@@ -303,6 +375,31 @@ export class SelfUpdater {
         // the next staging removes what is left
       }
       this.working = false;
+    }
+  }
+
+  /** What the skip check needs, read before the install: the tree of `commit` and the test command the release check detects in a
+   *  fresh clone of it. Every doubt (a pinned test_cmd, no command, an error) leaves it empty. Never throws. */
+  private async known(commit: string): Promise<{ tree?: string; cmd?: string }> {
+    try {
+      const dir = this.stageDir();
+      if (pinsTests(dir)) return {};
+      const cmd = await (this.o.testCmd ?? ((cwd: string) => detectTestCmd(cwd, join(this.dir, "tools", "detect-commands"))))(dir);
+      const tree = await git(this.dir, ["rev-parse", "--verify", "--quiet", `${commit}^{tree}`]);
+      return cmd && tree.ok ? { tree: tree.out, cmd } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** "run <id>, <time>" when the release check passed exactly these tests on exactly this code. Not async on purpose: nothing is
+   *  awaited between the build and the tests, so a stop cannot slip in. Every doubt, and every error, is undefined. */
+  private testedBefore(step: UpdateStep, k: { tree?: string; cmd?: string }): string | undefined {
+    try {
+      if (!k.tree || !k.cmd || !sameTests(step, k.cmd)) return undefined;
+      return passedBefore(join(dirname(this.file), "tested"), k.tree, k.cmd);
+    } catch {
+      return undefined;
     }
   }
 

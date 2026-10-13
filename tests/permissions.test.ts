@@ -6,17 +6,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { userCommand } from "../src/auth/cli.js";
 import { RULES, findRule, permissionTable, ruleKey } from "../src/server/permissions.js";
-import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 let tmp: string;
 let repo: string;
 let runsDir: string;
 let close: () => void;
-let ctx: Awaited<ReturnType<typeof startServer>>["ctx"];
+let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let kc: FakeKeychain;
 let saved: string | undefined;
 let admin: TestSession;
@@ -51,10 +50,9 @@ beforeAll(async () => {
   const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: repo, stdio: "ignore" });
   git("init", "-q");
   git("commit", "-q", "--allow-empty", "-m", "init");
-  ({ close, ctx } = await startServer({
+  ({ close, ctx, base } = await startTestServer({
     repo,
     runsDir,
-    port,
     claudeBin: resolve("tests/fixtures/fake-claude.mjs"),
     watchers: false,
     log: (m) => void logs.push(m),
@@ -160,6 +158,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST runs/:id/reject": { path: "runs/nope/reject", body: {}, user: 404, admin: 404 },
   "GET runs/:id/events": { path: "runs/nope/events", user: 404, admin: 200 },
   "GET runs/:id/diff": { path: "runs/nope/diff", user: 404, admin: 404 },
+  "GET runs/:id/evidence": { path: "runs/nope/evidence", user: 404, admin: 404 },
   "GET runs/:id/transcript/:n": no("runs/nope/transcript/0", 404),
   "GET next": no("next", 200),
   "GET health": no("health", 200),
@@ -200,6 +199,20 @@ const EXAMPLES: Record<string, Example> = {
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
+  "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
+  // Ask SCF is off by default: a question is refused before it is looked at
+  "POST help/conversations": { path: "help/conversations", body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/messages": { path: `help/conversations/${UNKNOWN}/messages`, body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/retry": { path: `help/conversations/${UNKNOWN}/retry`, body: {}, user: 503, admin: 503 },
+  "POST help/conversations/:id/cancel": { path: `help/conversations/${UNKNOWN}/cancel`, body: {}, user: 404, admin: 404 },
+  "POST help/context": { path: "help/context", body: { page: "#/runs" }, user: 503, admin: 503 },
+  "GET help/export": { path: "help/export", user: 200, admin: 200 },
+  "GET help/usage": no("help/usage", 200),
+  "GET help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
+  "POST help/conversations/:id/complete": { path: `help/conversations/${UNKNOWN}/complete`, body: {}, user: 404, admin: 404 },
+  "POST help/conversations/:id/archive": { path: `help/conversations/${UNKNOWN}/archive`, body: {}, user: 404, admin: 404 },
+  "POST help/conversations/:id/restore": { path: `help/conversations/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
+  "DELETE help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
   "GET refinement/backlog": { path: "refinement/backlog", user: 400, admin: 400 },
@@ -412,6 +425,7 @@ describe("own runs", () => {
     "POST runs/:id/reject": 202,
     "GET runs/:id/events": 200,
     "GET runs/:id/diff": 200,
+    "GET runs/:id/evidence": 200,
   };
   const own = RULES.filter((r) => r.user === "own");
 

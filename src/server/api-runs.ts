@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import { actorOf } from "../evidence/record.js";
 import { CANNOT_READ, redactedJson } from "../credentials/redact.js";
 import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
+import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
 import { ownsRepo } from "../auth/repos.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
@@ -200,7 +202,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { runId: id, archived }), true;
   }
   if (action === "cancel" && method === "POST") {
-    const cancelled = scheduler.cancel(id);
+    const cancelled = scheduler.cancel(id, actorOf(undefined, user.id));
     if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
     return send(res, 200, { cancelled }), true;
   }
@@ -308,6 +310,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (!admin && (s.flowDef?.workspace === "inplace" || (s.workdir !== undefined && s.workdir === s.repo))) throw new HttpError(403, "only an admin can see the changes of a run that works in the server's folder");
     return send(res, 200, runDiff(s)), true;
   }
+  if (action === "evidence" && !seg[3] && method === "GET") return send(res, 200, hide(runEvidenceView(s, admin))), true;
   if (action === "transcript" && method === "GET") {
     const n = Number(seg[3]);
     const rec = s.history[n];

@@ -9,7 +9,7 @@ import { collect } from "./collect.js";
 import { askClaude, isStale, loadReference, modelOf, refresh, saveReference, type Ask } from "./reference.js";
 import { loadOverrides, overridesPath, saveOverrides } from "./overrides.js";
 import { report } from "./report.js";
-import { loadTuning, resetTuning, saveTuning, tune, tuningSection } from "./tune.js";
+import { loadTuning, reconcile, resetTuning, saveTuning, tune, tuningSection } from "./tune.js";
 
 export const ANALYST_LABEL = "com.spaghetti-code-foundry.analyst";
 export const EVERY_HOURS = 6;
@@ -105,14 +105,15 @@ export async function runAnalyst(o: { runs: RunSummary[]; now: Date; dir: string
   // self-tuning: judge the running trials and, when it is switched on, start new ones
   const tuningFile = join(o.dir, "tuning.json");
   const overridesFile = join(o.dir, "overrides.json");
-  const before = loadOverrides(overridesFile);
-  const tuned = tune({ tuning: loadTuning(tuningFile), overrides: before, advice, runs: o.runs, now: o.now });
-  if (tuned.events.length) {
-    // the overrides first: a trial that is recorded but not applied would be judged on nothing
-    saveOverrides(tuned.overrides, overridesFile);
-    saveTuning(tuningFile, tuned.tuning);
-  }
-  const text = report(collected, advice, ref, note, tuningSection(tuned.tuning, tuned.overrides, tuned.events));
+  const stored = loadOverrides(overridesFile);
+  const tuning = loadTuning(tuningFile);
+  // the tuning record owns the overrides: one that no trial owns is dropped, one a running trial misses is set again
+  const tuned = tune({ tuning, overrides: reconcile(stored, tuning), advice, runs: o.runs, now: o.now, ref });
+  // the record first: an override that no trial owns would never be judged or put back. Should the
+  // check stop between the two, the next one sets the missing override again from the record.
+  if (tuned.events.length) saveTuning(tuningFile, tuned.tuning);
+  if (JSON.stringify(tuned.overrides) !== JSON.stringify(stored)) saveOverrides(tuned.overrides, overridesFile);
+  const text = report(collected, advice, ref, note, tuningSection(tuned.tuning, tuned.overrides, tuned.events, tuned.notes));
   mkdirSync(o.dir, { recursive: true });
   writeFileSync(join(o.dir, "report.md"), text);
   writeFileSync(join(o.dir, "latest.json"), JSON.stringify({ at: o.now.toISOString(), from: collected.from, runs: collected.runs, advice }, null, 2));
@@ -131,7 +132,11 @@ function loadRuns(): RunSummary[] {
   });
 }
 
-/** `scf analyst …`. Reads run files and writes only in <data folder>/analyst; it changes no flow and no setting. */
+/**
+ * `scf analyst …`. Reads run files and writes only in <data folder>/analyst; it changes no flow file and
+ * no setting. With self-tuning on, what it writes there (`overrides.json`) changes the model or effort
+ * agent steps run on: the engine reads that file at the start of every agent step.
+ */
 export async function analystCommand(positionals: string[], o: { cliPath: string; noWeb?: boolean }, out: (line: string) => void): Promise<number> {
   const [sub = "status", ...rest] = positionals;
   const tuningFile = join(analystDir(), "tuning.json");

@@ -7,25 +7,32 @@ import { END_NO_SPLIT_DRAFT, SPLIT_READ_ONLY } from "../src/refinement/draft-spl
 import { END_BAD_FORM, refinementsPath } from "../src/refinement/store.js";
 import { OWN_WAY_HEADING } from "../src/refinement/split-text.js";
 import { TALK_FIRST_LINE } from "../src/refinement/talk-text.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 
 let gh: ReturnType<typeof fakeGithub>;
 let tmp: string;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
 const saved: Record<string, string | undefined> = {};
 const ENV = ["FACTORY_HOME", "FAKE_GH_EXPECT_TOKEN", "FAKE_GH_SLEEP", "FAKE_BRIEF", "FAKE_ROUND", "FAKE_GH_ISSUES"];
-const opts = (): ServerOptions => ({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
+const opts = (): Omit<ServerOptions, "port"> => ({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 });
+
+/** Signs the three accounts in. Also needed after a restart: a new port gives a new cookie name. */
+async function signIn() {
+  admin = await signInAs(base);
+  ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
+  bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
+}
 
 beforeEach(async () => {
   gh = fakeGithub();
@@ -39,10 +46,9 @@ beforeEach(async () => {
   delete process.env.FAKE_ROUND;
   delete process.env.FAKE_GH_ISSUES;
   kc = fakeKeychain();
-  started = await startServer(opts());
-  admin = await signInAs(base);
-  ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
-  bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });
+  started = await startTestServer(opts());
+  base = started.base;
+  await signIn();
   addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN });
   addRepo(bob.user.id, { url: "other/thing", method: "github-token", token: TOKEN });
 });
@@ -266,7 +272,9 @@ describe("split", () => {
     f.sessions[0].log = f.sessions[0].log.filter((l: any) => !["split-asked", "architect-split"].includes(l.what));
     f.sessions[0].updated = "2020-01-01T00:00:00.000Z";
     writeFileSync(refinementsPath(), JSON.stringify(f));
-    started = await startServer(opts());
+    started = await startTestServer(opts());
+    base = started.base;
+    await signIn();
     const s = await get(id);
     expect(s.architect.state).toBe("idle");
     expect(s.drafts[0].split.ways).toHaveLength(2);
@@ -295,7 +303,9 @@ describe("confirming a split", () => {
     const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
     f.sessions.find((s: any) => s.id === id).drafts[index].published = { issue: 42, url: "https://github.com/acme/app/issues/42", at: "2026-01-01T00:00:00.000Z" };
     writeFileSync(refinementsPath(), JSON.stringify(f));
-    started = await startServer(opts());
+    started = await startTestServer(opts());
+    base = started.base;
+    await signIn();
     await get(id);
   };
 
@@ -475,7 +485,9 @@ describe("moving a criterion of a split", () => {
     const f = JSON.parse(readFileSync(refinementsPath(), "utf8"));
     fn(f.sessions.find((s: any) => s.id === id));
     writeFileSync(refinementsPath(), JSON.stringify(f));
-    started = await startServer(opts());
+    started = await startTestServer(opts());
+    base = started.base;
+    await signIn();
     await get(id);
   };
 

@@ -8,7 +8,7 @@ import { competingSelectors, importsOf, parseCss, readUiCss, sharedSelectors, ui
 
 const ORDER = [
   "tokens", "reset", "layout", "templates", "components", "utilities",
-  "pages/shell", "pages/editor", "pages/runs", "pages/dashboard", "pages/turn", "pages/board", "pages/start", "pages/refinement", "pages/gallery", "pages/work", "responsive",
+  "pages/shell", "pages/editor", "pages/runs", "pages/dashboard", "pages/turn", "pages/board", "pages/start", "pages/refinement", "pages/gallery", "pages/work", "pages/ask", "responsive",
 ].map((n) => `/css/${n}.css`);
 // Classes that components.css names but whose base rule a page file owns, each with the reason.
 const OWNED_BY_PAGE: Record<string, string> = {

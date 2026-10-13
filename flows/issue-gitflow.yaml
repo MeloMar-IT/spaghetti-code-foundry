@@ -169,7 +169,7 @@ steps:
         echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
       else
         "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
         tail -150 "{{run.dir}}/tests.log"
         echo; echo "=== summary ==="
         { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -199,7 +199,7 @@ steps:
       marker="{{run.dir}}/tests.marker"; touch "$marker"
       echo "\$ $cmd"
       "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -978,7 +978,7 @@ steps:
           echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
         else
           "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-          if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+          if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
           tail -150 "{{run.dir}}/tests.log"
           echo; echo "=== summary ==="
           { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -1075,7 +1075,7 @@ steps:
         echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"
       else
         "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+        if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
         tail -150 "{{run.dir}}/tests.log"
         echo; echo "=== summary ==="
         { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -1179,7 +1179,7 @@ steps:
       marker="{{run.dir}}/tests.marker"; touch "$marker"
       echo "\$ $cmd"
       "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
@@ -1311,7 +1311,7 @@ steps:
       marker="{{run.dir}}/tests.marker"; touch "$marker"
       echo "\$ $cmd"
       "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
-      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi
+      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"

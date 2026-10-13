@@ -13,9 +13,9 @@ import { explainError } from "../src/errors.js";
 import { classifyFailure } from "../src/failure.js";
 import { parseFlow } from "../src/flow/load.js";
 import { classifyGit, sshKeyEnv } from "../src/repos/connect.js";
-import { startServer } from "../src/server/server.js";
 import { claudeBin, fakeGithub, fakeSsh } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 import { fakeKeygen, type FakeKeygen } from "./helpers/ssh-keygen.js";
 
@@ -374,9 +374,8 @@ describe("the sweep at server start", () => {
 
   it("runs when the server starts", async () => {
     const runDir = folder("leftover");
-    const port = 20000 + Math.floor(Math.random() * 20000);
     const logs: string[] = [];
-    const { close } = await startServer({ repo: gh.tmp, runsDir: runs(), port, claudeBin, watchers: false, log: (m) => void logs.push(m) });
+    const { close } = await startTestServer({ repo: gh.tmp, runsDir: runs(), claudeBin, watchers: false, log: (m) => void logs.push(m) });
     try {
       expect(existsSync(signInDir(runDir))).toBe(false);
       expect(logs.some((l) => /1 leftover sign-in folder\(s\) of interrupted runs removed/.test(l))).toBe(true);

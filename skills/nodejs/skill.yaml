@@ -1,0 +1,18 @@
+id: nodejs
+version: 1.0.0
+category: platform
+capabilities: [node-runtime, node-service, node-process-lifecycle, node-streams, esm-commonjs]
+# Metadata only: ranking comes from src/skills/repo-profile-rules.ts and candidate-rules.ts.
+detectors:
+  - type: content
+    glob: "**/package.json"
+    contains: '"engines"'
+  - type: content
+    glob: "**/package.json"
+    contains: '"@types/node"'
+  - type: file
+    glob: "**/.nvmrc"
+  - type: file
+    glob: "**/.node-version"
+roles: [coder, reviewer]
+risk: low

@@ -64,12 +64,22 @@ describe("built-in skills", () => {
     expect(reg.problems).toEqual([]);
     expect(findSkill(reg, "small-changes")?.label).toBe("built-in");
     expect(findSkill(reg, "java")?.label).toBe("built-in");
+    expect(findSkill(reg, "spring-boot")?.label).toBe("built-in");
+    expect(findSkill(reg, "spring-boot")?.pkg.dependencies.map((d) => d.id)).toEqual(["java"]);
     expect(findSkill(reg, "typescript")?.label).toBe("built-in");
+    expect(findSkill(reg, "cassandra")?.label).toBe("built-in");
+    expect(findSkill(reg, "oracle")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "oracle", "SKILL.md"))).toBe(true);
     expect(existsSync(join(BUILTIN_SKILLS, "typescript", "REVIEW.md"))).toBe(true);
+    expect(findSkill(reg, "nodejs")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "nodejs", "REVIEW.md"))).toBe(true);
     expect(BUILTIN_SKILLS.endsWith("skills")).toBe(true);
     expect(JSON.parse(readFileSync("package.json", "utf8")).files).toContain("skills");
     expect(existsSync(join(BUILTIN_SKILLS, "small-changes", "SKILL.md"))).toBe(true);
     expect(existsSync(join(BUILTIN_SKILLS, "java", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(BUILTIN_SKILLS, "cassandra", "REVIEW.md"))).toBe(true);
+    expect(findSkill(reg, "ibm-mq")?.label).toBe("built-in");
+    expect(existsSync(join(BUILTIN_SKILLS, "ibm-mq", "REVIEW.md"))).toBe(true);
   });
 
   it("builtin: false leaves the source out without a problem", () => {

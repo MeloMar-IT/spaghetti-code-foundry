@@ -4,20 +4,20 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addRepo } from "../src/auth/repos.js";
 import { createSessionFromIssue } from "../src/refinement/store.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions } from "../src/server/server.js";
 import { fakeGit, fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const TOKEN = ["github", "pat", ""].join("_") + "Zx9".repeat(12);
 
 let gh: ReturnType<typeof fakeGithub>;
 let tmp: string;
 let runsDir: string;
 let kc: FakeKeychain;
-let started: Awaited<ReturnType<typeof startServer>> | undefined;
+let started: Awaited<ReturnType<typeof startTestServer>> | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
@@ -30,8 +30,9 @@ beforeEach(async () => {
   process.env.FACTORY_HOME = join(tmp, "home");
   process.env.FAKE_GH_EXPECT_TOKEN = TOKEN;
   kc = fakeKeychain();
-  const opts: ServerOptions = { repo: tmp, runsDir, port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
-  started = await startServer(opts);
+  const opts: Omit<ServerOptions, "port"> = { repo: tmp, runsDir, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, refinementSweepMs: 3_600_000 };
+  started = await startTestServer(opts);
+  base = started.base;
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
   bob = await signInAs(base, { name: "Bob", email: "bob@example.com", role: "user" });

@@ -12,7 +12,7 @@ export const repoName = (repo) => str(repo?.github) || str(repo?.url);
 export function repoAttention(repo, { admin = false, options } = {}) {
   if (repo?.method === "none" && !admin) return { level: "bad", text: "Needs authentication", action: "auth" };
   if (repo?.method === "github-app" && options && options.githubApp?.available !== true) {
-    return { level: "bad", text: "GitHub App removed", action: "auth" };
+    return { level: "bad", text: "The administrator removed the GitHub App", action: "auth" };
   }
   const c = repo?.connection;
   if (c && !c.ok) {
@@ -28,15 +28,15 @@ export function repoAttention(repo, { admin = false, options } = {}) {
 const RANK = { bad: 0, warn: 1, ok: 2 };
 
 /** A new array: bad, then warn, then ok; the given order is kept inside a level. */
-export function sortByAttention(repos, ctx = {}) {
+export function sortByAttention(repos, ctx = {}, attention = repoAttention) {
   return repos
-    .map((r, i) => ({ r, i, k: RANK[repoAttention(r, ctx).level] }))
+    .map((r, i) => ({ r, i, k: RANK[attention(r, ctx).level] }))
     .sort((a, b) => a.k - b.k || a.i - b.i)
     .map((x) => x.r);
 }
 
 /** How many repositories have a level other than "ok". */
-export const attentionCount = (repos, ctx = {}) => repos.filter((r) => repoAttention(r, ctx).level !== "ok").length;
+export const attentionCount = (repos, ctx = {}, attention = repoAttention) => repos.filter((r) => attention(r, ctx).level !== "ok").length;
 
 export const attentionSummary = (count) =>
   count === 0 ? "No repository needs attention." : count === 1 ? "1 repository needs attention." : `${count} repositories need attention.`;

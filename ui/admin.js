@@ -181,7 +181,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
         f("App ID", appId),
         f("App name (slug)", appSlug, "The last part of https://github.com/apps/<name>. Needed for the method “GitHub App” on My repositories."),
         f("Private key file", keyPath, "The .pem file of the app, readable only by the server's account."),
-        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app."))),
+        f("Installation ID (optional)", instId, "Only for the bot identity: runs then commit and comment as the app.")),
+      h("p", { class: "muted flush" }, h("a", { href: "#/all-repos?method=github-app" }, "Repositories that use the app"))),
     ],
   }));
   if (readOnly) lockReadOnly(main);

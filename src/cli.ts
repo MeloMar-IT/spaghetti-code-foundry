@@ -37,7 +37,9 @@ Usage:
   scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
-  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run]
+  scf eval help [--live]                         Check Ask SCF against its fixed scenarios; no model is called
+                                                 (--live: ask the model of help.model; each scenario costs a turn)
+  scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
   scf flows [--repo <dir>]                       List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
@@ -64,14 +66,17 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
+  scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
                                                  board, find, repos, settings, providers, monitor, flows, blocks, users,
                                                  account, secrets, audit, admin, refine, watchers, server.
                                                  \`scf <area>\` lists an area's commands; \`scf api routes\` lists every call
-  scf analyst run|report|install|uninstall|status   Every 6 hours: how each model does per step, and where another level fits
-  scf governor|flaky|limits|blockage|digest run|report|install|uninstall|status
+  scf analyst run|report|install|uninstall|status|auto on|off|reset
+                                                 Every 6 hours: how each model does per step, and where another level fits;
+                                                 with \`auto on\` it tries that level by itself and puts it back when worse
+  scf governor|flaky|limits|blockage|digest|housekeeping run|report|install|uninstall|status
                                                  Helper processes: machine load, unreliable tests, usage limits,
                                                  what holds work up, and a daily digest (see the user guide)
   scf watch [flow] --var github_repo=o/r         Every 5 min, run the flow (default issue-gitflow) on
@@ -188,9 +193,11 @@ async function main(argv: string[]): Promise<number> {
       source: { type: "string" },
       flows: { type: "string" },
       "older-than": { type: "string" },
+      "evidence-older-than": { type: "string" },
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      live: { type: "boolean" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
@@ -206,6 +213,7 @@ async function main(argv: string[]): Promise<number> {
       "stop-work": { type: "boolean" },
       name: { type: "string" },
       email: { type: "string" },
+      json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -267,6 +275,7 @@ async function main(argv: string[]): Promise<number> {
         runsDir,
         from: cmd === "resume" ? values.from : undefined,
         decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
+        actor: { kind: "cli" },
         log: (m) => process.stdout.write(m + "\n"),
       });
       return report(summary);
@@ -351,7 +360,7 @@ async function main(argv: string[]): Promise<number> {
       let stopping = false;
       process.on("SIGINT", () => {
         if (stopping) {
-          for (const a of scheduler.queue().active) scheduler.cancel(a.runId);
+          for (const a of scheduler.queue().active) scheduler.cancel(a.runId, { kind: "cli" });
           log("cancelling running runs (they resume on the next start)…");
           setTimeout(() => process.exit(130), 3000).unref();
           return;
@@ -432,7 +441,16 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "eval": {
-      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]");
+      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]\n       scf eval help [--live]");
+      if (arg === "help") {
+        // The scenario evaluation of Ask SCF. Without --live no model is called: every scenario has a fixed answer.
+        const { runHelpEval, stubModel, liveModel, reportText, saveHelpEval } = await import("./server/help-evals.js");
+        const { HELP_SCENARIOS } = await import("./server/help-eval-scenarios.js");
+        const live = values.live === true;
+        const report = await runHelpEval(HELP_SCENARIOS, live ? liveModel(loadConfig()) : stubModel, live ? "configured" : "stub");
+        process.stdout.write(`${reportText(report)}\nreport: ${saveHelpEval(report)}\n`);
+        return report.passed ? 0 : 1;
+      }
       const split = (v?: string) => v?.split(",").map((x) => x.trim()).filter(Boolean);
       const { report, file } = await runEval({
         suitePath: arg,
@@ -457,16 +475,19 @@ async function main(argv: string[]): Promise<number> {
     case "clean": {
       const days = Number(values["older-than"] ?? 7);
       if (!(days >= 0)) throw new Error("--older-than must be a number of days");
+      const evidenceDays = values["evidence-older-than"] === undefined ? undefined : Number(values["evidence-older-than"]);
+      if (evidenceDays !== undefined && !(values["evidence-older-than"]!.trim() !== "" && evidenceDays >= 0)) throw new Error("--evidence-older-than must be a number of days");
       const r = cleanRuns({
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
         olderThanDays: days,
+        evidenceOlderThanDays: evidenceDays,
         purge: values.purge,
         includePaused: values["include-paused"],
         dryRun: values["dry-run"],
       });
       const verb = values["dry-run"] ? "would remove" : "removed";
       process.stdout.write(
-        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""} · ${r.freedMb} MB\n` +
+        `${verb} ${r.workspaces.length} workspace(s)${r.runs.length ? ` and ${r.runs.length} run(s)` : ""}${r.planRecords ? ` and ${r.planRecords} plan record(s)` : ""}${r.evidence.length ? ` and the evidence of ${r.evidence.length} run(s)` : ""} · ${r.freedMb} MB\n` +
           (r.planRecordsFailed ? "plan records could not be cleaned (the store is locked or cannot be written) — try again later\n" : "") +
           (r.kept.length ? `kept ${r.kept.length} paused/running run(s) — use --include-paused to clean them too\n` : ""),
       );
@@ -501,12 +522,18 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "governor":
+    case "housekeeping":
     case "flaky":
     case "limits":
     case "blockage":
     case "digest": {
       const { opsCommand } = await import("./ops/cli.js");
       return opsCommand(cmd, positionals.slice(1), fileURLToPath(import.meta.url), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "evidence": {
+      const { evidenceCommand } = await import("./evidence/cli.js");
+      return evidenceCommand(positionals.slice(1), { runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), json: values.json }, (line) => void process.stdout.write(line + "\n"));
     }
 
     case "monitor": {

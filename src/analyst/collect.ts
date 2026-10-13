@@ -25,8 +25,14 @@ export interface StepStats {
   changed: number;
   /** The same numbers for the last `recentDays` only, to see a model getting better or worse. */
   recent: { visits: number; ok: number };
-  /** When the step last ran on this model and effort: the newest pair of a step is what it runs on now. */
+  /**
+   * When the step last ran on this model and effort as its own choice: the newest pair of a step is
+   * what it runs on now. Visits that ran on a router fallback after a limit do not count; "" when
+   * there are no others.
+   */
   lastAt: string;
+  /** Set for a step inside a sub-flow, e.g. "build": its id carries that prefix ("build/implement"). */
+  parent?: string;
 }
 
 export interface Collected {
@@ -37,9 +43,11 @@ export interface Collected {
   totalTokens: number;
 }
 
-export const isReview = (id: string) => /review/.test(id) && !/^(address|revise|fix)_/.test(id);
-const isFix = (id: string) => /^fix_/.test(id);
-const isChange = (id: string) => /^(address|revise)_/.test(id);
+/** A step inside a sub-flow is recorded as "build/fix_tests": what it does is told by the last part. */
+const bare = (id: string) => id.slice(id.lastIndexOf("/") + 1);
+export const isReview = (id: string) => /review/.test(bare(id)) && !/^(address|revise|fix)_/.test(bare(id));
+const isFix = (id: string) => /^fix_/.test(bare(id));
+const isChange = (id: string) => /^(address|revise)_/.test(bare(id));
 const isAgent = (h: StepRecord) => h.agent !== undefined && h.type !== "shell" && h.type !== "approval";
 
 interface FlowStep { id: string; effort?: string; timeout_sec?: number; skill_role?: string }
@@ -59,7 +67,8 @@ export function collect(runs: RunSummary[], now: Date, o: { days?: number; recen
     const flowSteps = new Map((def?.steps ?? []).map((s) => [s.id, s]));
     history.forEach((h, i) => {
       if (h.startedAt < from) return;
-      const fs = flowSteps.get(h.id);
+      // the stored flow is the parent's: it does not hold the steps of a sub-flow
+      const fs = h.parent ? undefined : flowSteps.get(h.id);
       const effort = h.effort ?? fs?.effort ?? def?.defaults?.effort ?? "";
       const key = [run.flow, h.id, h.agent, effort].join("\u0000");
       let s = byKey.get(key);
@@ -68,11 +77,13 @@ export function collect(runs: RunSummary[], now: Date, o: { days?: number; recen
           flow: run.flow, step: h.id, agent: h.agent!, effort, reviewer: fs?.skill_role === "reviewer" || isReview(h.id),
           limitSec: fs?.timeout_sec ?? def?.defaults?.timeout_sec ?? 0,
           visits: 0, ok: 0, timeouts: 0, limited: 0, minutes: 0, inputTokens: 0, outputTokens: 0, fixed: 0, changed: 0, recent: { visits: 0, ok: 0 }, lastAt: "",
+          ...(h.parent ? { parent: h.parent } : {}),
         };
         byKey.set(key, s);
       }
       s.visits++;
-      if (h.startedAt > s.lastAt) s.lastAt = h.startedAt;
+      // a visit that ended on a router fallback says what the step fell back to, not what it is set to
+      if (!h.retried?.models && h.startedAt > s.lastAt) s.lastAt = h.startedAt;
       if (h.ok) s.ok++;
       if (h.error === "timed out") s.timeouts++;
       if (h.limited || h.unreachable) s.limited++;

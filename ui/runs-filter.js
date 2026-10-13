@@ -8,7 +8,7 @@ const FLOW_MAX = 100;
 export const STATUSES = ["running", "waiting", "succeeded", "failed", "cancelled", "stopped"];
 export const TIMES = ["today", "7d", "30d"];
 /** The ids of the sections of the list; "" is All. */
-export const VIEWS = ["needs", "running", "queued", "failed", "completed"];
+export const VIEWS = ["needs", "running", "queued", "failed", "completed", "archived"];
 const DAYS = { today: 0, "7d": 7, "30d": 30 };
 const KEYS = ["q", "repo", "flow", "status", "time", "owner", "needs", "view"];
 const SERVER = ["q", "repo", "flow", "status", "time", "owner"];
@@ -84,11 +84,12 @@ export function filterQuery(filter, now) {
   const since = sinceOf(filter.time, now);
   if (since) out.since = since;
   if (filter.owner) out.owner = filter.owner;
+  if (filter.view === "archived") out.archived = "1";
   return out;
 }
 
 /** What the server is asked: a change in it needs a new request. */
-export const serverKey = (filter) => JSON.stringify(SERVER.map((k) => filter[k] ?? ""));
+export const serverKey = (filter) => JSON.stringify([...SERVER.map((k) => filter[k] ?? ""), filter.view === "archived" ? "1" : ""]);
 
 /** Every name in the list that is the repository, ignoring case (the server matches the exact spelling). */
 export const canonRepos = (name, repos) => (typeof name === "string" && name && Array.isArray(repos)
@@ -96,6 +97,7 @@ export const canonRepos = (name, repos) => (typeof name === "string" && name && 
 
 /** Whether a queued job with no run of its own passes the filter (as matchesRun in src/server/run-filter.ts). */
 export function jobMatches(job, filter, { ownerName, now = Date.now() } = {}) {
+  if (filter.view === "archived") return false;
   if (filter.status) return false;
   if (filter.repo && !(typeof job?.githubRepo === "string" && job.githubRepo.toLowerCase() === filter.repo.toLowerCase())) return false;
   if (filter.flow && job?.flow !== filter.flow) return false;

@@ -1,10 +1,8 @@
 import { api } from "./api.js";
-import { fieldFor, h, modal, mount, showError, tableBox, toast } from "./dom.js";
-import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, withQuery } from "./filters.js";
-import { reposChanged } from "./context.js";
-import { onWish, takeWish } from "./palette-data.js";
-import { connectionProblem, connectionStatus, focusRepoRow, loadFailed, methodLabel, plainError } from "./repos.js";
-import { emptyState, loadingState, staleNote } from "./states.js";
+import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
+import { defaultGo } from "./filters.js";
+import { plainError, renderRepos } from "./repos.js";
+import { repoAttention } from "./repo-status.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
 const PATTERN_HINT = '"*" matches any text, ? one character.';
@@ -37,7 +35,7 @@ function sendFrom({ button, err, send, done, close, state, mark }) {
   mark("");
   state.pending = (async () => {
     try {
-      await send();
+      state.result = await send();
     } catch (e) {
       state.busy = false;
       if (state.closed) return toast(plainError(e), "error");
@@ -50,20 +48,31 @@ function sendFrom({ button, err, send, done, close, state, mark }) {
   })();
 }
 
-/** Edits the settings of one repository. Resolves once the dialog is closed and any request has finished. */
-export function settingsDialog(repo) {
+const formShape = (s = {}) => ({ ...s, docs: (s.docs ?? []).join("\n"), protectedBranches: (s.protectedBranches ?? []).join("\n") });
+
+/**
+ * Edits the settings of one repository. Resolves with the server's row once the dialog is closed after a save (else undefined).
+ * `only` (setting keys) draws just those fields; Save then reads the other settings with `current()` (default: the repository's
+ * own) so they are sent back unchanged, because the server replaces the whole object.
+ */
+export function settingsDialog(repo, { only, title = "Repository settings", current } = {}) {
   const s = repo.settings ?? {};
-  const state = { busy: false, closed: false, pending: null };
-  const shown = modal("Repository settings", (close) => {
-    const els = {
+  const state = { busy: false, closed: false, pending: null, result: undefined };
+  const shown = modal(title, (close) => {
+    const all = {
       testCommand: h("input", { name: "testCommand", class: "mono", value: s.testCommand ?? "", autocomplete: "off", placeholder: "npm test" }),
       docs: h("textarea", { name: "docs", rows: 3, class: "mono", placeholder: "docs/CHANGELOG.md" }),
       protectedBranches: h("textarea", { name: "protectedBranches", rows: 3, class: "mono", placeholder: "release/*" }),
       mainBranch: h("input", { name: "mainBranch", class: "mono", value: s.mainBranch ?? "", placeholder: "main", autocomplete: "off" }),
       developBranch: h("input", { name: "developBranch", class: "mono", value: s.developBranch ?? "", placeholder: "develop", autocomplete: "off" }),
     };
-    els.docs.value = (s.docs ?? []).join("\n");
-    els.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
+    all.docs.value = (s.docs ?? []).join("\n");
+    all.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
+    const els = only ? Object.fromEntries(Object.entries(all).filter(([k]) => only.includes(k))) : all;
+    const labels = {
+      testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
+      mainBranch: ["Main branch"], developBranch: ["Develop branch"],
+    };
     const err = h("p", { class: "status bad flush", role: "alert" });
     const pairs = [
       [/^testCommand/, "testCommand"],
@@ -73,23 +82,21 @@ export function settingsDialog(repo) {
       [/^developBranch/, "developBranch"],
     ];
     const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
-    const save = h("button", { class: "primary", onClick: () =>
-      sendFrom({
-        button: save, err, mark, close, state, done: "Settings saved",
-        send: () => api.setRepoSettings(repo.id, settingsBody(Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value])))),
-      }) }, "Save");
+    const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value]));
+    const send = async () => {
+      if (!only) return api.setRepoSettings(repo.id, settingsBody(typed()));
+      const base = formShape(current ? await current() : s);
+      return api.setRepoSettings(repo.id, settingsBody({ ...base, ...typed() }));
+    };
+    const save = h("button", { class: "primary", onClick: () => sendFrom({ button: save, err, mark, close, state, done: "Settings saved", send }) }, "Save");
     return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
-      field("Test command", els.testCommand),
-      field("Docs to update (one path per line)", els.docs),
-      field("Protected branches (one pattern per line)", els.protectedBranches, PATTERN_HINT),
-      field("Main branch", els.mainBranch),
-      field("Develop branch", els.developBranch),
-      h("small", {}, "Stored with the repository. Runs do not use these settings yet."),
+      Object.entries(els).map(([k, el]) => field(labels[k][0], el, labels[k][1])),
+      only ? null : h("small", {}, "Stored with the repository. Runs do not use these settings yet."),
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { state.closed = true; });
-  return shown.then(() => state.pending);
+  return shown.then(() => state.pending).then(() => state.result);
 }
 
 /** The default Definition of Ready (the same ids and texts as the server's). */
@@ -109,9 +116,9 @@ export function readyBody(rows) {
   return { items: rows.map((r) => (r.id ? { id: r.id, text: String(r.text ?? "").trim() } : { text: String(r.text ?? "").trim() })) };
 }
 
-/** Edits the Definition of Ready of one repository. Resolves once the dialog is closed and any request has finished. */
+/** Edits the Definition of Ready of one repository. Resolves with the server's row once the dialog is closed after a save (else undefined). */
 export function readyDialog(repo) {
-  const state = { busy: false, closed: false, pending: null };
+  const state = { busy: false, closed: false, pending: null, result: undefined };
   const shown = modal("Definition of Ready", (close) => {
     let rows = (repo.ready?.items ?? READY_DEFAULTS).map((i) => ({ id: i.id, text: i.text }));
     let inputs = [];
@@ -163,12 +170,12 @@ export function readyDialog(repo) {
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { state.closed = true; });
-  return shown.then(() => state.pending);
+  return shown.then(() => state.pending).then(() => state.result);
 }
 
-/** Asks for the e-mail of the new owner. Resolves once the dialog is closed and any request has finished. */
+/** Asks for the e-mail of the new owner. Resolves with the server's row once the dialog is closed after a transfer (else undefined). */
 export function transferDialog(repo) {
-  const state = { busy: false, closed: false, pending: null };
+  const state = { busy: false, closed: false, pending: null, result: undefined };
   const shown = modal("Transfer repository", (close) => {
     const email = h("input", { name: "email", type: "text", placeholder: "name@example.com", autocomplete: "off" });
     const err = h("p", { class: "status bad flush", role: "alert" });
@@ -190,105 +197,34 @@ export function transferDialog(repo) {
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), go));
   });
   shown.then(() => { state.closed = true; });
-  return shown.then(() => state.pending);
+  return shown.then(() => state.pending).then(() => state.result);
 }
 
-// Each load gets a number; an answer that is not the newest load, or that arrives after the person left the page, is dropped.
-let generation = 0;
-// The wish handler of the newest load of this page: a reload replaces it, leaving the page removes it.
-let unwish = () => {};
-const onPage = () => {
-  if (typeof location === "undefined") return true;
-  try {
-    return decodeURIComponent(splitHash(location.hash).path.split("/")[1] ?? "") === "all-repos";
-  } catch {
-    return false;
-  }
+/** The owner cell of a row on the All list: the owner, and a pill when the account is blocked. */
+const ownerCell = (repo) => [ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null];
+
+/**
+ * What needs attention on a row of the All list: the usual states for the owner's role, then (when those are fine) a repository
+ * missing from the owner's app list, then a watcher problem. A failed test or a missing sign-in comes first.
+ */
+export function allAttention(repo, { options } = {}) {
+  const base = repoAttention(repo, { admin: repo.account?.role === "admin", options });
+  if (base.level === "bad") return base;
+  if (repo.offAppList) return { level: "bad", text: "Not on the app list", detail: "The owner may not use the GitHub App for this repository.", action: null };
+  if (repo.watcherProblem) return { level: "warn", text: "Watcher problem", detail: repo.watcherProblem, action: null };
+  return base;
+}
+
+/** The scope of the Repositories list for all accounts (an admin only). */
+export const ALL_SCOPE = {
+  id: "all", page: "all-repos", title: "Repositories", hint: "The repositories of all accounts", caption: "Repositories of all accounts",
+  loading: "Loading the repositories", failed: "The repositories could not be loaded.", denied: "Only an admin can see the repositories of all accounts.",
+  empty: "No repositories yet.", back: { href: "#/repos", label: "My repositories" }, own: false, load: () => api.allRepos(), ownerCell,
+  attention: allAttention, asAdmin: (r) => r.account?.role === "admin", sort: sortRepos,
 };
 
-/** The admin page with the repositories of all accounts. Returns a cleanup. */
-export async function renderAllRepos(main, { query = {}, go = defaultGo } = {}) {
-  const mine = ++generation;
-  let seq = 0; // only the newest fetch of this page draws
-  // the filters live in the state, so a reload keeps them and a removed filter stays removed
-  const state = { repos: [], at: null, stale: false, filters: query.repo ? { repo: query.repo } : {} };
-  const live = () => mine === generation && onPage();
-  const head = () => h("div", { class: "toolbar" }, h("h1", {}, "Repositories"), h("span", { class: "muted" }, "The repositories of all accounts"));
-  const fetchAll = async (n) => {
-    const repos = await api.allRepos();
-    if (n !== seq) return;
-    state.repos = repos;
-    state.at = new Date();
-    state.stale = false;
-  };
-  const load = async () => {
-    mount(main, head(), loadingState("Loading the repositories", { rows: 3, shape: "table" }));
-    const n = ++seq;
-    try {
-      await fetchAll(n);
-    } catch (e) {
-      if (n !== seq || !live()) return;
-      return mount(main, head(), loadFailed(e, {
-        what: "The repositories could not be loaded.", denied: "Only an admin can see the repositories of all accounts.",
-        back: { href: "#/repos", label: "My repositories" }, onRetry: load,
-      }));
-    }
-    if (n === seq && live()) draw();
-  };
-  // the list on screen stays when it cannot be loaded again
-  const reload = async () => {
-    const n = ++seq;
-    try {
-      await fetchAll(n);
-    } catch {
-      if (n === seq) state.stale = true;
-    }
-    if (n === seq && live()) draw();
-  };
-  const row = (repo) => h("tr", { "data-repo": repo.id },
-    h("td", { class: "mono" }, repo.url),
-    h("td", {}, ownerText(repo), repo.account?.status === "blocked" ? [" ", h("span", { class: "pill" }, "blocked")] : null),
-    h("td", {}, methodLabel(repo, repo.account?.role === "admin"), repo.offAppList ? [" ", h("span", { class: "pill" }, "not on the app list")] : null),
-    h("td", {}, h("span", { class: "pill" }, connectionStatus(repo)), connectionProblem(repo)),
-    h("td", {},
-      h("button", { class: "small", onClick: async () => {
-        await settingsDialog(repo);
-        reload();
-      } }, "Settings"), " ",
-      h("button", { class: "small", onClick: async () => {
-        await readyDialog(repo);
-        reload();
-      } }, "Definition of Ready"), " ",
-      h("button", { class: "small", onClick: async () => {
-        await transferDialog(repo); void reposChanged();
-        reload();
-      } }, "Transfer")));
-  const setFilters = (next) => {
-    state.filters = next;
-    go(withQuery("#/all-repos", next));
-    draw();
-  };
-  const clear = () => setFilters({});
-  const draw = () => {
-    const shown = state.filters.repo ? state.repos.filter((r) => matchesRepo(r, state.filters.repo)) : state.repos;
-    mount(main,
-      head(),
-      filterBar(state.filters, { onRemove: clear, onClear: clear }),
-      state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,
-      shown.length
-        ? tableBox(h("table", { class: "table" },
-          h("caption", { class: "sr-only" }, "Repositories of all accounts"),
-          h("thead", {}, h("tr", {}, ["Repository", "Owner", "Authentication", "Connection", h("span", { class: "sr-only" }, "Actions")].map((t) => h("th", { scope: "col" }, t)))),
-          h("tbody", {}, sortRepos(shown).map(row))))
-        : state.filters.repo ? filterGone({ onClear: clear }) : emptyState("No repositories yet."));
-  };
-  // The palette's repository result: a wish that came before this page, or one for the page as it is.
-  unwish();
-  unwish = onWish("all-repos", (w) => focusRepoRow(main, w?.repo));
-  await load();
-  if (live()) focusRepoRow(main, takeWish("all-repos")?.repo);
-  return () => {
-    if (generation === mine) generation++;
-    unwish();
-  };
+/** The admin page with the repositories of all accounts: the Repositories list with the All scope. Returns a cleanup. */
+export function renderAllRepos(main, { query = {}, go = defaultGo } = {}) {
+  return renderRepos(main, { admin: true, switcher: true, scope: ALL_SCOPE, query, go });
 }
+

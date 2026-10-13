@@ -17,9 +17,11 @@ The call-site count is only where to start. One site can serve several dialogs; 
 |---|---|---|---|---|---|
 | `ui/views.js` | Save view | Save view in the filter bar of Runs, Board, Refinement and My runs | name (1–40 characters) | Save | `modal` |
 | `ui/views.js` | Manage views | Manage views in the row of saved views | new name (rename), none (move, delete with an inline confirmation) | Done | `modal` |
-| `ui/admin-repos.js` | Repository settings | Settings button on a row of `#/all-repos` | test command, docs, protected branches, main branch, develop branch | Save | `modal` |
-| `ui/admin-repos.js` | Definition of Ready | Button on a row of `#/all-repos` | checklist items | Save | `modal` |
-| `ui/admin-repos.js` | Transfer repository | Transfer button on a row | new owner e-mail | Transfer | `modal` |
+| `ui/admin-repos.js` | Repository settings | Edit in Branches or Run settings on `#/repos/:id` (`ui/repo-admin-sections.js`); Branches shows the branch fields, Run settings the test command and docs | main branch, develop branch, protected branches / test command, docs | Save | `modal` |
+| `ui/admin-repos.js` | Definition of Ready | Edit Definition of Ready in Run settings on `#/repos/:id` | checklist items | Save | `modal` |
+| `ui/admin-repos.js` | Transfer repository | Transfer in Dangerous actions on `#/repos/:id` | new owner e-mail | Transfer | `modal` |
+| `ui/watcher-form.js` | Add a watcher / Edit a watcher | + Add watcher or Edit in Watchers on `#/repos/:id` (this repository only) | as the dialog on `#/watchers` | Save watcher | `modal` (`repoWatcherDialog`) |
+| `ui/repo-admin-sections.js` | Delete watcher | Delete on a watcher in Watchers on `#/repos/:id` | none | Delete watcher | `confirmDialog` |
 | `ui/admin.js` | Delete watcher | Delete button on a watcher card of `#/watchers` (repository, monitor and not-connected paths) | none | Delete watcher | `confirmDialog` |
 | `ui/operations.js` | Cancel this run | Cancel run in the Health card of the Overview | none | Cancel the run | `confirmDialog` (`ui/health.js`) |
 | `ui/maintenance.js` | Remove workspaces | Clean up button on `#/maintenance` | none | Clean up | `confirmDialog` |
@@ -35,6 +37,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/kit/overlays.js` | Dialog and drawer of the kit | Callers of `dialog()` and `drawer()` (none in a page yet) | whatever `build(close)` returns | set by the caller | kit layer |
 | `ui/work-panel.js` | Story panel | A card on the board, on a narrow screen (a side panel, not a dialog, on a wide one) | none | Back, Close | own dialog |
 | `ui/palette.js` | Search | Search button, Ctrl/⌘+K, `/` | search text; Single-key shortcuts checkbox | Enter opens the active result | own dialog |
+| `ui/ask-view.js` | Ask SCF | Ask SCF button in the top bar of both displays, only while Ask SCF is switched on | question (1–4000 characters); Send the page I am on with my question (checkbox) | Send (also Ctrl/⌘+Enter) | own dialog (a drawer at the right side, built in `ui/ask-view.js`, run by `ui/ask.js`) |
+| `ui/ask.js` | Delete this conversation? | Delete under a conversation in the Ask SCF drawer | none | Delete | `confirmDialog` |
 | `ui/prefs.js` | Appearance | Appearance button in the header | theme (System, Light, Dark), density (Comfortable, Compact) | none; a click applies at once, the ✕ closes it | `modal` |
 | `ui/library.js` | Insert from library | Insert from library button in the flow editor (`flow-page.js`, `onLibrary`) | search; category; one card per block with its scope. Then a preview: steps, variables added, renamed ids | **Insert** in the preview (closes with that block); **Back** returns to the list. An invalid block cannot be picked | `modal` |
 | `ui/library.js` | Save step as block | Button on a step | id, name, category, description, scope | Save | `modal` |

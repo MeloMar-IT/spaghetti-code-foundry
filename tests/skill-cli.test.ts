@@ -9,6 +9,7 @@ import { readSkillLock } from "../src/skills/lock.js";
 import { discoverSkills } from "../src/skills/registry.js";
 import { skillsCommand } from "../src/skills/cli.js";
 import { releaseDigest, type ReleaseManifest } from "../src/skills/release.js";
+import { freePort } from "./helpers/port.js";
 
 const CLI = resolve("dist/cli.js");
 let base: string;
@@ -242,7 +243,7 @@ describe("scf skills (spawned)", () => {
 
   /** Starts `scf serve`, waits for the banner (bounded), stops it and returns what it printed. */
   async function serveUntilBanner(): Promise<string> {
-    const port = 20000 + Math.floor(Math.random() * 20000);
+    const port = await freePort();
     const repo = join(base, "repo");
     mkdirSync(repo, { recursive: true });
     const child = spawn(process.execPath, [CLI, "serve", "--port", String(port), "--repo", repo], {

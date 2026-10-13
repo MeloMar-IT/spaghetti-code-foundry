@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
 
@@ -27,18 +28,42 @@ export function loadSession(path = sessionFile()): CliSession | undefined {
 
 export function saveSession(s: CliSession, path = sessionFile()) {
   mkdirSync(dirname(path), { recursive: true });
-  // created closed: the token is never readable by others, not even for a moment
-  writeFileSync(path, JSON.stringify(s, null, 2), { mode: 0o600 });
-  chmodSync(path, 0o600);
+  // Created closed: the token is never readable by others, not even for a moment. A new file beside the old one
+  // ("wx" fails when the name is taken, also by a link), then moved over it: an old file with open rights or a
+  // link at this path is replaced, never written through.
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600, flag: "wx" });
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
 }
 
 export const clearSession = (path = sessionFile()) => rmSync(path, { force: true });
 
-/** "localhost:4777/" → "http://localhost:4777". Only http and https, and no path, user name or query. */
+/** This machine: "localhost", 127.0.0.0/8 and [::1]. Only there is plain http safe for a password. */
+const isLocal = (host: string) => host === "localhost" || host === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(host);
+
+/**
+ * "localhost:4777/" → "http://localhost:4777", "foundry.example.com" → "https://foundry.example.com".
+ * Only http and https, and no path, user name or query. Plain http only for this machine: anything else is
+ * reached over HTTPS, so the password and the session never travel in clear text.
+ */
 export function serverUrl(text: string): string {
-  const u = new URL(/^https?:\/\//i.test(text) ? text : `http://${text}`);
-  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) {
-    throw new Error(`"${text}" is not a server address; use one like ${DEFAULT_SERVER}`);
+  const notOne = () => new Error(`"${text}" is not a server address; use one like ${DEFAULT_SERVER}`);
+  const typed = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+  let u: URL;
+  try {
+    u = new URL(typed ? text : `http://${text}`);
+    if (!typed && !isLocal(u.hostname)) u = new URL(`https://${text}`);
+  } catch {
+    throw notOne();
+  }
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password || u.search || u.hash || (u.pathname !== "/" && u.pathname !== "")) throw notOne();
+  if (u.protocol === "http:" && !isLocal(u.hostname)) {
+    throw new Error(`"${text}" is plain http: a Foundry on another machine must be reached over HTTPS, or the password and the session travel in clear text. Use https://${u.host}`);
   }
   return u.origin;
 }

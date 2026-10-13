@@ -1,7 +1,7 @@
 // The sections of the runs lists (admin Runs and user My runs): Needs you, Running, Queued, Failed, Completed.
 // The section of a run comes from the server's record only. `renderSections` updates the list row by row, so a
 // refresh keeps the focus, the scroll and the open sections. Relative imports, so a test can load them.
-import { h, timeAgo } from "./dom.js";
+import { h, tableBox, timeAgo } from "./dom.js";
 import { nextStatus, whenParts, whereLink, whoClass } from "./next.js";
 import { firstLine, workText } from "./run-header.js";
 // This module and ./runs.js import each other: neither uses the other at the top level, only inside functions.
@@ -14,9 +14,41 @@ export const SECTIONS = [
   { id: "failed", title: "Failed", tone: "" },
   { id: "completed", title: "Completed", tone: "quiet" },
 ];
+/** The Archived view: one section of the archived runs the server sent (it is not a section of the normal list). */
+export const ARCHIVED = { id: "archived", title: "Archived", tone: "quiet" };
 export const COMPLETED_SHOWN = 10;
+/** The sections whose runs have a checkbox. */
+const SELECTABLE = ["failed", "completed", "archived"];
 
-const startedMs = (r) => Date.parse(r?.startedAt ?? "") || 0;
+export const DENSITY_KEY = "scf-runs-density";
+export const DENSITIES = ["comfortable", "compact"];
+const defaultStore = () => {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
+};
+
+/** "compact" only when storage holds exactly that; anything else, no storage or a throw: "comfortable". */
+export function readDensity(store = defaultStore()) {
+  try {
+    return store?.getItem(DENSITY_KEY) === "compact" ? "compact" : "comfortable";
+  } catch {
+    return "comfortable";
+  }
+}
+
+/** Stores "compact" or "comfortable" (any other value is stored as "comfortable"); never throws. */
+export function writeDensity(value, store = defaultStore()) {
+  try {
+    store?.setItem(DENSITY_KEY, value === "compact" ? "compact" : "comfortable");
+  } catch {
+    // storage that throws (private mode, quota): the choice is just not remembered
+  }
+}
+
+const startedMs =(r) => Date.parse(r?.startedAt ?? "") || 0;
 const when = (e) => (e.run ? startedMs(e.run) : Date.parse(e.job?.enqueuedAt ?? "") || 0);
 const isYou = (e) => e.run?.next?.who === "You" || e.job?.next?.who === "You";
 
@@ -62,6 +94,12 @@ export function runSections(runs, pending, keep = () => true) {
   return SECTIONS.map((s) => ({ id: s.id, title: s.title, entries: by.get(s.id) })).filter((s) => s.entries.length);
 }
 
+/** The Archived section: the runs (newest first) that `keep` lets through; [] when there are none. */
+export function archivedSections(runs, keep = () => true) {
+  const entries = (Array.isArray(runs) ? [...runs] : []).sort((a, b) => startedMs(b) - startedMs(a)).map((run) => ({ run, job: null })).filter(keep);
+  return entries.length ? [{ id: ARCHIVED.id, title: ARCHIVED.title, entries }] : [];
+}
+
 /** When a run last did something, from the timestamps the list answer has: the newest of them. */
 export function activityAt(run) {
   const times = [run?.updatedAt, run?.finishedAt, run?.startedAt, run?.waiting?.since];
@@ -89,32 +127,83 @@ const workOf = (run, job) => {
 
 const field = (label, text, cls = "") => h("div", { class: `run-field ${cls}`.trim(), "data-label": label }, text);
 
-/** A row and its time text node. `place` (from runSections) is the position in the queue. */
-function buildRow({ run, job, place }, { admin = false, onRemove = null } = {}) {
+/** The parts of a row, each built once: `cardRow` and `tableRow` only arrange them. `place` (from runSections) is the position in the queue. */
+function rowParts({ run, job, place }, { admin = false, onRemove = null, select = null } = {}) {
   const id = run?.runId ?? job.runId;
   const n = run?.next ?? job?.next;
-  const task = firstLine(run?.task ?? job?.task);
   const work = workOf(run, job);
   const iso = run ? activityAt(run) : job?.enqueuedAt;
   const timeEl = iso ? h("span", { class: "muted run-when" }, `Updated ${timeAgo(iso)}`) : null;
-  const el = h("li", { class: `run-card${n?.who === "You" ? ` ${whoClass(n)}` : ""}` },
-    h("div", { class: "row" },
-      n ? nextStatus(n, `help-${id}`) : null,
-      job?.priority ? h("span", { class: "pill first" }, "goes first") : null,
-      h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, run?.flow ?? job?.flow ?? "Queued run")),
-      run?.refinement ?? job?.refinement ? refinementMark(run?.refinement ?? job?.refinement, `ref-${id}`) : null),
-    n ? h("p", { class: "run-next muted", "data-label": "What happens next" }, n.text) : null,
-    n && whenParts(n).length ? h("div", { class: "next-parts timing" }, whenParts(n)) : null,
-    admin && job && n ? whereLink(n.where, `where-${id}`) : null,
-    task ? h("div", { "data-label": "Task" }, task) : null,
-    work ? h("div", { class: "muted mono", "data-label": "Repository" }, work) : null,
-    job ? h("div", { class: "muted run-queue" }, h("span", {}, `${place?.n ?? "?"} of ${place?.of ?? "?"}${admin ? "" : " of your queued runs"}`), job.ahead > 0 ? h("span", {}, aheadText(job.ahead)) : null) : null,
-    timeEl,
-    admin ? field("Owner", ownerLabel(run?.ownerName ?? job?.ownerName)) : null,
-    admin && run ? field("Steps", run.history?.length ?? 0, "mono") : null,
-    admin && run ? field("Cost", money(run.totalCostUsd), "mono") : null,
-    job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null);
-  return { el, timeEl, iso };
+  const check = select && run
+    ? h("input", {
+      type: "checkbox", class: "run-select", "data-focus": `select-${id}`, "aria-label": `Select run ${run.flow} ${work || id}`, checked: select.has(id),
+      onChange: (e) => select.toggle(id, e?.target?.checked ?? check.checked),
+    })
+    : null;
+  const parts = n ? whenParts(n) : [];
+  return {
+    check, timeEl, iso, work,
+    cls: n?.who === "You" ? whoClass(n) : "",
+    task: firstLine(run?.task ?? job?.task),
+    status: n ? nextStatus(n, `help-${id}`) : null,
+    first: job?.priority ? h("span", { class: "pill first" }, "goes first") : null,
+    link: h("a", { class: "run-link", href: `#/runs/${encodeURIComponent(id)}`, "data-focus": `open-${id}` }, h("b", {}, run?.flow ?? job?.flow ?? "Queued run")),
+    mark: run?.refinement ?? job?.refinement ? refinementMark(run?.refinement ?? job?.refinement, `ref-${id}`) : null,
+    next: n ? h("p", { class: "run-next muted", "data-label": "What happens next" }, n.text) : null,
+    timing: parts.length ? h("div", { class: "next-parts timing" }, parts) : null,
+    where: admin && job && n ? whereLink(n.where, `where-${id}`) : null,
+    queue: job ? h("div", { class: "muted run-queue" }, h("span", {}, `${place?.n ?? "?"} of ${place?.of ?? "?"}${admin ? "" : " of your queued runs"}`), job.ahead > 0 ? h("span", {}, aheadText(job.ahead)) : null) : null,
+    owner: admin ? ownerLabel(run?.ownerName ?? job?.ownerName) : null,
+    steps: admin && run ? run.history?.length ?? 0 : null,
+    cost: admin && run ? money(run.totalCostUsd) : null,
+    remove: job && onRemove ? h("button", { type: "button", class: "small", "data-focus": `remove-${id}`, "aria-label": "Remove this run from the queue", onClick: () => onRemove(job) }, "Remove") : null,
+  };
+}
+
+/** The comfortable row: a card. */
+function cardRow(p) {
+  return h("li", { class: `run-card${p.cls ? ` ${p.cls}` : ""}` },
+    h("div", { class: "row" }, p.check, p.status, p.first, p.link, p.mark),
+    p.next,
+    p.timing,
+    p.where,
+    p.task ? h("div", { "data-label": "Task" }, p.task) : null,
+    p.work ? h("div", { class: "muted mono", "data-label": "Repository" }, p.work) : null,
+    p.queue,
+    p.timeEl,
+    p.owner !== null ? field("Owner", p.owner) : null,
+    p.steps !== null ? field("Steps", p.steps, "mono") : null,
+    p.cost !== null ? field("Cost", p.cost, "mono") : null,
+    p.remove);
+}
+
+const HEADS = ["Status", "Run", "Next", "Task", "Repository", "Updated"];
+const headOf = ({ admin, selectCol, removeCol }) => [
+  ...(selectCol ? ["Select"] : []), ...HEADS, ...(admin ? ["Owner", "Steps", "Cost"] : []), ...(removeCol ? ["Actions"] : []),
+];
+
+/** The compact row: a table row with the cells of `headOf(cols)`. */
+function tableRow(p, cols) {
+  const td = (...nodes) => h("td", {}, ...nodes);
+  return h("tr", { class: `run-row${p.cls ? ` ${p.cls}` : ""}` },
+    cols.selectCol ? td(p.check) : null,
+    td(p.status, p.first),
+    td(p.link, p.mark),
+    td(p.next, p.timing, p.where, p.queue),
+    td(p.task),
+    td(p.work ? h("span", { class: "muted mono" }, p.work) : null),
+    td(p.timeEl),
+    cols.admin ? td(p.owner) : null,
+    cols.admin ? h("td", { class: "mono" }, p.steps) : null,
+    cols.admin ? h("td", { class: "mono" }, p.cost) : null,
+    cols.removeCol ? td(p.remove) : null);
+}
+
+/** A row and its time text node. `density` "compact" gives a table row; `selectCol` and `removeCol` say which columns its table has. */
+function buildRow(entry, { admin = false, onRemove = null, select = null, density = "comfortable", selectCol = false, removeCol = false } = {}) {
+  const p = rowParts(entry, { admin, onRemove, select });
+  const el = density === "compact" ? tableRow(p, { admin, selectCol, removeCol }) : cardRow(p);
+  return { el, timeEl: p.timeEl, iso: p.iso, check: p.check };
 }
 
 /** One row of the list: a link to the run, its status, what happens next, and Remove for a queued run with `onRemove`. */
@@ -132,7 +221,7 @@ const hiddenInside = (el, box) => {
 function stateOf(box) {
   let st = states.get(box);
   if (!st) {
-    st = { rows: new Map(), secs: new Map(), closed: new Set(), showAll: false, last: null };
+    st = { rows: new Map(), secs: new Map(), closed: new Set(), showAll: false, last: null, selectable: [] };
     states.set(box, st);
   }
   return st;
@@ -150,13 +239,39 @@ function sectionView(st, box, def) {
     v.toggle.setAttribute("aria-expanded", String(!v.body.hidden));
   } });
   v.note = h("span", { class: "muted" });
-  v.ul = h("ul", { class: "run-cards" });
-  v.body = h("div", { id: bodyId }, v.ul);
+  v.ids = [];
+  v.allBox = h("input", {
+    type: "checkbox", class: "run-select", "data-focus": `select-all-${def.id}`, "aria-label": `Select all runs in ${def.title}`,
+    onChange: () => {
+      const sel = st.last?.opts?.select;
+      if (!sel) return;
+      const on = !v.ids.every((id) => sel.has(id));
+      for (const id of v.ids) sel.toggle(id, on);
+      syncChecks(st);
+    },
+  });
+  v.all = h("label", { class: "run-select-all muted" }, v.allBox, "Select all");
+  v.all.hidden = true;
+  v.shape = "comfortable";
+  v.wrap = h("ul", { class: "run-cards" }); // what sits in the body: the ul, or the table box
+  v.list = v.wrap; // where the rows go: the ul, or the tbody
+  v.body = h("div", { id: bodyId }, v.wrap);
   v.more = h("button", { type: "button", class: "small", "data-focus": "more-completed", onClick: () => showAll(box) }, "Show all");
   v.el = h("section", { class: `run-section${def.tone ? ` ${def.tone}` : ""}` },
-    h("div", { class: "run-section-head" }, h("h2", {}, v.toggle), v.note), v.body);
+    h("div", { class: "run-section-head" }, h("h2", {}, v.toggle), v.note, v.all), v.body);
   st.secs.set(def.id, v);
   return v;
+}
+
+/** The container of a section's rows: { wrap, list } — the ul, or the table box and its tbody (`cols` set). */
+function container(def, cols) {
+  if (!cols) {
+    const ul = h("ul", { class: "run-cards" });
+    return { wrap: ul, list: ul };
+  }
+  const list = h("tbody", {});
+  const head = headOf(cols).map((x) => h("th", { scope: "col" }, x === "Select" || x === "Actions" ? h("span", { class: "sr-only" }, x) : x));
+  return { wrap: tableBox(h("table", { class: "table compact run-table", "aria-label": def.title }, h("thead", {}, h("tr", {}, head)), list)), list };
 }
 
 function showAll(box) {
@@ -168,15 +283,35 @@ function showAll(box) {
   first?.[1].el.querySelector("a")?.focus();
 }
 
-/** Draws `sections` (from runSections) into `box`, touching only what changed. */
+// The boxes follow the selection: every shown row, and the Select all of each section.
+function syncChecks(st) {
+  const sel = st.last?.opts?.select;
+  if (!sel) return;
+  for (const [id, row] of st.rows) if (row.check) row.check.checked = sel.has(id);
+  for (const v of st.secs.values()) v.allBox.checked = v.ids.length > 0 && v.ids.every((id) => sel.has(id));
+}
+
+/**
+ * Draws `sections` (from runSections or archivedSections) into `box`, touching only what changed. `select`
+ * ({ has(id), toggle(id, on) }) adds a checkbox to the runs of Failed, Completed and Archived. Returns the ids of every run
+ * in those sections (also the ones the Completed cut does not show), [] without `select`. `density` "compact" draws
+ * each section as a table, anything else as cards.
+ */
 export function renderSections(box, sections, opts = {}) {
   const st = stateOf(box);
   st.last = { sections, opts };
   update(box, sections, opts);
+  return st.selectable;
 }
 
-function update(box, sections, { admin = false, onRemove = null, notes = {} } = {}) {
+function update(box, sections, { admin = false, onRemove = null, notes = {}, select = null, density = "comfortable" } = {}) {
   const st = stateOf(box);
+  // Cached rows call this, not `select`, so a row never holds a page's old object.
+  const pick = {
+    has: (id) => Boolean(st.last?.opts?.select?.has(id)),
+    toggle: (id, on) => { st.last?.opts?.select?.toggle(id, on); syncChecks(st); },
+  };
+  st.selectable = [];
   const active = document.activeElement;
   const inside = Boolean(active && box.contains(active));
   const focusName = inside ? active.getAttribute?.("data-focus") : null;
@@ -187,7 +322,7 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
   const wanted = new Set();
   const order = [];
   for (const sec of sections) {
-    const v = sectionView(st, box, SECTIONS.find((s) => s.id === sec.id));
+    const v = sectionView(st, box, [...SECTIONS, ARCHIVED].find((s) => s.id === sec.id));
     order.push(v.el);
     const text = `${sec.title} (${sec.entries.length})`;
     if (v.countText !== text) { v.countText = text; v.toggle.textContent = text; }
@@ -197,22 +332,39 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
     v.toggle.setAttribute("aria-expanded", String(!v.body.hidden));
     const cut = sec.id === "completed" && !st.showAll && sec.entries.length > COMPLETED_SHOWN;
     const shown = cut ? sec.entries.slice(0, COMPLETED_SHOWN) : sec.entries;
+    const secSelect = Boolean(select) && SELECTABLE.includes(sec.id);
+    const cols = density === "compact" ? { admin, selectCol: secSelect, removeCol: Boolean(onRemove) && shown.some((e) => e.job) } : null;
+    const shape = cols ? JSON.stringify(["compact", admin, cols.selectCol, cols.removeCol]) : "comfortable";
+    if (v.shape !== shape) {
+      const next = container(v.def, cols);
+      v.body.insertBefore(next.wrap, v.wrap);
+      v.wrap.remove();
+      v.wrap = next.wrap;
+      v.list = next.list;
+      v.shape = shape;
+    }
     const els = [];
+    const ids = [];
+    for (const e of sec.entries) if (select && e.run && SELECTABLE.includes(sec.id)) st.selectable.push(e.run.runId);
     for (const e of shown) {
       const id = e.run?.runId ?? e.job.runId;
-      const key = JSON.stringify([e.run, e.job, e.place, admin]);
+      const selectable = Boolean(select) && Boolean(e.run) && SELECTABLE.includes(sec.id);
+      const key = JSON.stringify([e.run, e.job, e.place, admin, selectable, v.shape]);
       let row = st.rows.get(id);
       if (!row || row.key !== key || row.hasRemove !== Boolean(onRemove)) {
-        row = { ...buildRow(e, { admin, onRemove }), key, hasRemove: Boolean(onRemove) };
+        row = { ...buildRow(e, { admin, onRemove, select: selectable ? pick : null, density: cols ? "compact" : "comfortable", selectCol: Boolean(cols?.selectCol), removeCol: Boolean(cols?.removeCol) }), key, hasRemove: Boolean(onRemove) };
         st.rows.set(id, row);
       } else if (row.timeEl) {
         const t = `Updated ${timeAgo(row.iso)}`;
         if (row.timeEl.textContent !== t) row.timeEl.textContent = t;
       }
+      if (selectable) ids.push(id);
       wanted.add(id);
       where.set(id, sec.id);
       els.push(row.el);
     }
+    v.ids = ids;
+    v.all.hidden = ids.length === 0;
     v.shown = els.length;
     v.rowEls = els;
     v.cut = cut;
@@ -225,11 +377,12 @@ function update(box, sections, { admin = false, onRemove = null, notes = {} } = 
   for (const sec of sections) {
     const v = st.secs.get(sec.id);
     const keep = new Set(v.rowEls);
-    for (const c of [...v.ul.children]) if (!keep.has(c)) c.remove();
-    v.rowEls.forEach((el, i) => { if (v.ul.children[i] !== el) v.ul.insertBefore(el, v.ul.children[i] ?? null); });
+    for (const c of [...v.list.children]) if (!keep.has(c)) c.remove();
+    v.rowEls.forEach((el, i) => { if (v.list.children[i] !== el) v.list.insertBefore(el, v.list.children[i] ?? null); });
     if (v.cut && !v.more.parentNode) v.body.append(v.more);
     else if (!v.cut && v.more.parentNode) v.more.remove();
   }
+  syncChecks(st);
   const present = new Set(order);
   for (const v of st.secs.values()) if (!present.has(v.el) && v.el.parentNode) v.el.remove();
   order.forEach((el, i) => { if (box.children[i] !== el) box.insertBefore(el, box.children[i] ?? null); });

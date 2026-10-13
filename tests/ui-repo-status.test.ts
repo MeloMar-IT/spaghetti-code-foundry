@@ -39,7 +39,7 @@ describe("repoAttention", () => {
   });
   it("2: the GitHub App was removed", () => {
     const r = rec({ method: "github-app" });
-    expect(s.repoAttention(r, { options: APP_OFF })).toEqual({ level: "bad", text: "GitHub App removed", action: "auth" });
+    expect(s.repoAttention(r, { options: APP_OFF })).toEqual({ level: "bad", text: "The administrator removed the GitHub App", action: "auth" });
     expect(s.repoAttention(r, {}).text).toBe("Never tested");
     expect(s.repoAttention(r, { options: { githubApp: { available: true } } }).text).toBe("Never tested");
   });
@@ -64,7 +64,7 @@ describe("repoAttention", () => {
   });
   it("keeps the order of the rules", () => {
     expect(s.repoAttention(rec({ method: "none", connection: failed() }), { admin: false }).text).toBe("Needs authentication");
-    expect(s.repoAttention(rec({ method: "github-app", connection: failed() }), { options: APP_OFF }).text).toBe("GitHub App removed");
+    expect(s.repoAttention(rec({ method: "github-app", connection: failed() }), { options: APP_OFF }).text).toBe("The administrator removed the GitHub App");
   });
 });
 
@@ -79,6 +79,13 @@ describe("sorting and counting", () => {
     const out = s.sortByAttention(input);
     expect(out.map((r: any) => r.id)).toEqual(["bad1", "bad2", "warn", "ok1", "ok2"]);
     expect(input.map((r) => r.id)).toEqual(["ok1", "warn", "bad1", "ok2", "bad2"]);
+  });
+  it("uses a given attention function, and the default is unchanged", () => {
+    const custom = (r: any) => ({ level: r.id === "ok1" ? "bad" : "ok", text: "", action: null });
+    expect(s.sortByAttention([ok, warn, bad], {}, custom).map((r: any) => r.id)).toEqual(["ok1", "warn", "bad1"]);
+    expect(s.attentionCount([ok, warn, bad], {}, custom)).toBe(1);
+    expect(s.attentionCount([ok, warn, bad])).toBe(2);
+    expect(s.sortByAttention([ok, warn, bad]).map((r: any) => r.id)).toEqual(["bad1", "warn", "ok1"]);
   });
   it("handles 50 rows", () => {
     const rows = Array.from({ length: 50 }, (_, i) => rec({ id: `r${i}`, connection: i % 3 === 0 ? good : i % 3 === 1 ? failed() : undefined }));

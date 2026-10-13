@@ -27,7 +27,7 @@ export function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   return env;
 }
 
-const SAFE_OPTIONS = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null"];
+export const SAFE_OPTIONS = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null"];
 
 /** Runs git with a clean environment and what is left of the time budget. */
 function makeGit(bin: string, budgetMs: number) {

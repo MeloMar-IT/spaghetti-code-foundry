@@ -10,8 +10,9 @@ import { parseFlow } from "../src/flow/load.js";
 import { RULES, ruleKey } from "../src/server/permissions.js";
 import { resolveSkills } from "../src/skills/resolve.js";
 import { buildRunSkillLock, planHashOf, runSkillLockSummary, writeRunSkillLock } from "../src/skills/run-lock.js";
-import { startServer, type ServerOptions } from "../src/server/server.js";
+import type { ServerOptions, startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
 
 /* A server for each describe on its own data folder: FACTORY_HOME is set while it runs. */
@@ -67,26 +68,19 @@ function prepare() {
   return { tmp, home, repo, runsDir: join(tmp, "runs") };
 }
 
-async function boot(p: ReturnType<typeof prepare>, extra: Partial<ServerOptions> = {}): Promise<Srv> {
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ repo: p.repo, runsDir: p.runsDir, port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {}, ...extra });
-      const s: Srv = {
-        ...p,
-        base: `http://127.0.0.1:${port}`,
-        ctx: started.ctx,
-        close: () => {
-          started.close();
-          rmSync(p.tmp, { recursive: true, force: true });
-        },
-      };
-      open.push(s);
-      return s;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+async function boot(p: ReturnType<typeof prepare>, extra: Partial<Omit<ServerOptions, "port">> = {}): Promise<Srv> {
+  const started = await startTestServer({ repo: p.repo, runsDir: p.runsDir, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: () => {}, ...extra });
+  const s: Srv = {
+    ...p,
+    base: started.base,
+    ctx: started.ctx,
+    close: () => {
+      started.close();
+      rmSync(p.tmp, { recursive: true, force: true });
+    },
+  };
+  open.push(s);
+  return s;
 }
 
 const call = async (s: Srv, who: TestSession, method: string, path: string, body?: unknown) => {

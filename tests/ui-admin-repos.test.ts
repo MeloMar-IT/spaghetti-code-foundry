@@ -38,6 +38,8 @@ beforeEach(() => {
   const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", json: async () => body });
   getFails = [];
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
+    if (init.method === "GET" && url === "/api/repos/methods") return reply({ methods: ["github-token", "ssh-deploy-key", "https-token", "github-app", "none"], githubApp: { available: true } });
+    if (init.method === "GET" && url.startsWith("/api/runs")) return reply([]);
     if (init.method === "GET") {
       const failed = getFails.shift();
       if (failed === "throw") throw new TypeError("fetch failed");
@@ -101,25 +103,133 @@ describe("pure functions", () => {
     const a1 = rec({ url: "a" });
     expect(ui.sortRepos([bob, a2, a1]).map((r: any) => r.url)).toEqual(["a", "b", "z"]);
   });
+
+  it("allAttention adds the app list and the watcher problem after the usual states", () => {
+    const ok = { at: "2026-01-01T00:00:00Z", ok: true, checks: [] };
+    const failed = { at: "2026-01-01T00:00:00Z", ok: false, checks: [{ check: "clone", ok: false, message: "no" }] };
+    expect(ui.allAttention(rec({ offAppList: true, connection: ok }))).toMatchObject({ level: "bad", text: "Not on the app list", action: null });
+    expect(ui.allAttention(rec({ offAppList: true, connection: ok })).detail).toBeTruthy();
+    expect(ui.allAttention(rec({ watcherProblem: "broken", connection: ok }))).toEqual({ level: "warn", text: "Watcher problem", detail: "broken", action: null });
+    expect(ui.allAttention(rec({ offAppList: true, watcherProblem: "broken", connection: ok }))).toMatchObject({ text: "Not on the app list" });
+    expect(ui.allAttention(rec({ offAppList: true, watcherProblem: "broken", connection: failed }))).toMatchObject({ text: "Last test failed", action: "test" });
+    expect(ui.allAttention(rec({ method: "none", offAppList: true }))).toMatchObject({ text: "Needs authentication" });
+    expect(ui.allAttention(rec({ connection: ok }))).toMatchObject({ level: "ok", text: "Nothing to do" });
+    const admin = { name: "Root", email: "root@example.com", role: "admin", status: "active" };
+    expect(ui.allAttention(rec({ method: "none", account: admin, connection: ok })).text).toBe("Nothing to do");
+  });
 });
 
 describe("the page", () => {
-  it("lists URL, owner, method label and connection status, with Settings and Transfer on every row", async () => {
+  it("lists URL, owner, method label and connection status, with Open on every row and no admin buttons", async () => {
     repos = [rec(), rec({ url: "https://github.com/o/b", method: "none" })];
     await show();
     const text = main().textContent;
-    for (const t of ["https://github.com/o/a", "Ann (ann@example.com)", "GitHub fine-grained personal access token", "Not tested yet", "Needs authentication", "Repositories", "The repositories of all accounts"]) {
+    for (const t of ["https://github.com/o/a", "Ann (ann@example.com)", "GitHub · fine-grained token", "Read not checked, Write not checked, GitHub API not checked", "Not tested yet", "Needs authentication", "Repositories", "The repositories of all accounts"]) {
       expect(text).toContain(t);
     }
-    const rows = walk(main()).filter((e) => e.tag === "tr").slice(1);
+    expect(walk(main()).filter((e) => e.tag === "th").map((e) => e.textContent)).toContain("Owner");
+    const rows = walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]);
     expect(rows).toHaveLength(2);
-    for (const r of rows) expect(walk(r).filter((e) => e.tag === "button").map((e) => e.textContent)).toEqual(["Settings", "Definition of Ready", "Transfer"]);
+    for (const r of rows) {
+      const open = walk(r).find((e) => e.tag === "a" && e.textContent === "Open")!;
+      expect(open.attrs.href).toBe(`#/repos/${r.attrs["data-repo"]}`);
+    }
+    for (const t of ["Settings", "Definition of Ready", "Transfer", "+ Add repository", "Change authentication"]) expect(button(main(), t), t).toBeUndefined();
+  });
+
+  it("draws the Mine / All / Credentials switch with All current", async () => {
+    repos = [rec()];
+    await show();
+    const links = walk(byClass(main(), "scope-switch")[0]!).filter((e) => e.tag === "a");
+    expect(links.map((e) => [e.textContent, e.attrs.href, e.attrs["aria-current"]])).toEqual([["Mine", "#/repos", undefined], ["All", "#/all-repos", "page"], ["Credentials", "#/credentials", undefined]]);
+  });
+
+  describe("the method filter", () => {
+    const gone: string[] = [];
+    const go = (h: string) => { gone.push(h); };
+    const urls = () => walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]).map((e) => byClass(e, "mono")[0]!.attrs.title);
+    const chips = () => byClass(main(), "filter-chip").map((e) => e.textContent);
+    beforeEach(() => {
+      gone.length = 0;
+      repos = [rec({ url: "https://github.com/o/app", method: "github-app" }), rec({ url: "https://github.com/o/tok" })];
+    });
+
+    it("lists only the repositories with that method, with a chip", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "github-app" }, go });
+      expect(urls()).toEqual(["https://github.com/o/app"]);
+      expect(chips()).toEqual(["Authentication: GitHub App×"]);
+    });
+
+    it("shows all again with Clear filters", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "github-app" }, go });
+      press(button(main(), "Clear filters"));
+      expect(urls()).toHaveLength(2);
+      expect(gone).toEqual(["#/all-repos"]);
+    });
+
+    it("says so when no repository uses the method", async () => {
+      await ui.renderAllRepos(main(), { query: { method: "ssh-deploy-key" }, go });
+      expect(main().textContent).toContain("No repository uses this authentication.");
+    });
+
+    it("removes only the chip that was pressed", async () => {
+      await ui.renderAllRepos(main(), { query: { repo: "o/app", method: "github-app" }, go });
+      expect(chips()).toHaveLength(2);
+      press(walk(main()).find((e) => e.tag === "button" && (e.attrs["aria-label"] ?? "").startsWith("Remove filter Repository")));
+      expect(gone).toEqual(["#/all-repos?method=github-app"]);
+      expect(chips()).toEqual(["Authentication: GitHub App×"]);
+      press(walk(main()).find((e) => e.tag === "button" && (e.attrs["aria-label"] ?? "").startsWith("Remove filter Authentication")));
+      expect(gone[1]).toBe("#/all-repos");
+      expect(chips()).toEqual([]);
+    });
+  });
+
+  it("shows the app as the identity of an app repository", async () => {
+    repos = [rec({ method: "github-app" })];
+    await show();
+    expect(main().textContent).toContain("GitHub · GitHub AppRead not checked, Write not checked, GitHub API not checked, limited to this repository");
+  });
+
+  it("sorts by attention, then owner e-mail, then address", async () => {
+    const ok = { at: new Date().toISOString(), ok: true, checks: [] };
+    const bob = { name: "Bob", email: "bob@example.com", role: "user", status: "active" };
+    repos = [
+      rec({ url: "https://github.com/o/ok", connection: ok }),
+      rec({ url: "https://github.com/o/z", account: bob }),
+      rec({ url: "https://github.com/o/b" }),
+      rec({ url: "https://github.com/o/a" }),
+      rec({ url: "https://github.com/o/bad", method: "none" }),
+    ];
+    await show();
+    const urls = walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]).map((e) => e.attrs.title ?? byClass(e, "mono")[0]!.attrs.title);
+    expect(urls).toEqual(["https://github.com/o/bad", "https://github.com/o/a", "https://github.com/o/b", "https://github.com/o/z", "https://github.com/o/ok"]);
+  });
+
+  it("offers only Test connection in Next step, also when the app is not installed, and posts the test", async () => {
+    const failed = { at: new Date().toISOString(), ok: false, checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "The app is not installed." }] };
+    const r = rec({ method: "github-app", connection: failed });
+    repos = [r];
+    await show();
+    const cell = byClass(main(), "next-step")[0]!;
+    expect(cell.textContent).toContain("Last test failed");
+    expect(walk(cell).filter((e) => e.tag === "button").map((e) => e.textContent)).toEqual(["Test again"]);
+    expect(walk(cell).some((e) => e.tag === "a")).toBe(false);
+    press(button(cell, "Test again"));
+    await flush();
+    expect(sent[0]).toMatchObject({ method: "POST", url: `/api/repos/${r.id}/test` });
+  });
+
+  it("shows no deploy-key banner and no methods banner", async () => {
+    repos = [rec({ method: "ssh-deploy-key", publicKey: "ssh-ed25519 AAAA" })];
+    await show();
+    expect(main().textContent).not.toContain("with write access");
+    expect(main().textContent).not.toContain("sign-in methods");
   });
 
   it("reads none as the server's own access for an admin's repository", async () => {
     repos = [rec({ method: "none", account: { name: "Root", email: "root@example.com", role: "admin", status: "active" } })];
     await show();
-    expect(main().textContent).toContain("The server's own access (legacy)");
+    expect(main().textContent).toContain("GitHub · the server's own access");
     expect(main().textContent).not.toContain("Needs authentication");
   });
 
@@ -136,14 +246,19 @@ describe("the page", () => {
     expect(byClass(main(), "pill").map((e) => e.textContent)).toContain("blocked");
   });
 
-  it("marks a repository that is not on the app list, and only then", async () => {
-    repos = [rec({ method: "github-app", offAppList: true }), rec({ url: "https://github.com/o/b", method: "github-app" })];
+  it("marks a repository that is not on the app list or has a watcher problem, and only then", async () => {
+    const ok = { at: new Date().toISOString(), ok: true, checks: [] };
+    repos = [
+      rec({ url: "https://github.com/o/a", method: "github-app", offAppList: true, connection: ok }),
+      rec({ url: "https://github.com/o/b", method: "github-app", connection: ok }),
+      rec({ url: "https://github.com/o/c", watcherProblem: "The flow is gone.", connection: ok }),
+    ];
     await show();
-    const marks = byClass(main(), "pill").map((e) => e.textContent).filter((t) => t === "not on the app list");
-    expect(marks).toHaveLength(1);
-    const rows = walk(main()).filter((e) => e.tag === "tr").slice(1);
-    expect(rows[0]!.textContent).toContain("not on the app list");
-    expect(rows[1]!.textContent).not.toContain("not on the app list");
+    const rows = walk(main()).filter((e) => e.tag === "tr" && e.attrs["data-repo"]);
+    expect(rows[0]!.textContent).toContain("Not on the app list");
+    expect(rows[1]!.textContent).toContain("Watcher problem");
+    expect(rows[1]!.textContent).toContain("The flow is gone.");
+    expect(rows[2]!.textContent).toContain("Nothing to do");
   });
 
   it("shows the empty list text", async () => {
@@ -154,10 +269,9 @@ describe("the page", () => {
 
 describe("settings dialog", () => {
   const S = { testCommand: "npm test", docs: ["a.md", "b.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop" };
-  const open = async (r = rec({ settings: S })) => {
-    repos = [r];
-    await show();
-    press(button(main(), "Settings"));
+  let closed: Promise<any>;
+  const open = async (r = rec({ settings: S }), options?: object) => {
+    closed = ui.settingsDialog(r, options);
     await flush();
     return r;
   };
@@ -173,7 +287,7 @@ describe("settings dialog", () => {
     expect(root().textContent).toContain("Runs do not use these settings yet.");
   });
 
-  it("saves with the exact body, shows the toast, closes and reloads", async () => {
+  it("saves with the exact body, shows the toast, closes and resolves with the server's row", async () => {
     const r = await open();
     field(root(), "docs")!.value = "x.md";
     press(button(root(), "Save"));
@@ -182,6 +296,59 @@ describe("settings dialog", () => {
     expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { ...S, docs: ["x.md"] } }]);
     expect(toastText()).toBe("Settings saved");
     expect(root().children).toHaveLength(0);
+    expect(await closed).toEqual({});
+  });
+
+  it("resolves with nothing when it is closed without a save", async () => {
+    await open();
+    (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
+    expect(await closed).toBeUndefined();
+  });
+
+  describe("with only some fields", () => {
+    const BRANCHES = ["mainBranch", "developBranch", "protectedBranches"];
+    const names = () => walk(root()).filter((e) => ["input", "textarea"].includes(e.tag)).map((e) => e.attrs.name);
+
+    it("draws only those fields and sends the other settings from current(), not from the record", async () => {
+      const current = vi.fn(async () => ({ testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["x"], mainBranch: "trunk", developBranch: "" }));
+      const r = await open(rec({ settings: S }), { only: BRANCHES, title: "Branches", current });
+      expect(names()).toEqual(["protectedBranches", "mainBranch", "developBranch"]);
+      expect(root().textContent).toContain("Branches");
+      expect(root().textContent).not.toContain("Runs do not use these settings yet.");
+      field(root(), "mainBranch")!.value = "main2";
+      press(button(root(), "Save"));
+      await flush();
+      await flush();
+      expect(current).toHaveBeenCalledTimes(1);
+      expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop" } }]);
+    });
+
+    it("falls back to the record's own settings without current()", async () => {
+      await open(rec({ settings: S }), { only: ["testCommand", "docs"] });
+      field(root(), "testCommand")!.value = "pnpm test";
+      press(button(root(), "Save"));
+      await flush();
+      await flush();
+      expect(sent[0]!.body).toEqual({ ...S, testCommand: "pnpm test" });
+    });
+
+    it("shows the sentence of a failed current() and sends nothing", async () => {
+      await open(rec({ settings: S }), { only: BRANCHES, current: async () => { throw new Error("This repository is gone. Reload the page."); } });
+      press(button(root(), "Save"));
+      await flush();
+      expect(errText(root())).toContain("This repository is gone.");
+      expect(sent).toEqual([]);
+      expect(button(root(), "Save")!.disabled).toBeFalsy();
+    });
+
+    it("marks the field for a 400 about it", async () => {
+      await open(rec({ settings: S }), { only: BRANCHES });
+      answers.push({ status: 400, error: "mainBranch must be a valid git branch name" });
+      press(button(root(), "Save"));
+      await flush();
+      expect(errText(root())).toContain("mainBranch must be a valid git branch name");
+      expect(field(root(), "mainBranch")!.attrs["aria-invalid"]).toBe("true");
+    });
   });
 
   it("shows a 400 in the dialog and enables the button again", async () => {
@@ -200,9 +367,7 @@ describe("Definition of Ready dialog", () => {
   const texts = () => inputs().map((e) => e.value);
   const rowButton = (n: number, text: string) => walk(root()).filter((e) => e.tag === "button" && e.textContent === text)[n];
   const open = async (r = rec()) => {
-    repos = [r];
-    await show();
-    press(button(main(), "Definition of Ready"));
+    ui.readyDialog(r);
     await flush();
     return r;
   };
@@ -310,10 +475,9 @@ describe("Definition of Ready dialog", () => {
 });
 
 describe("transfer dialog", () => {
+  let closed: Promise<any>;
   const open = async (r = rec()) => {
-    repos = [r];
-    await show();
-    press(button(main(), "Transfer"));
+    closed = ui.transferDialog(r);
     await flush();
     return r;
   };
@@ -327,7 +491,7 @@ describe("transfer dialog", () => {
     expect(root().textContent).toContain("Owner now: Ann (ann@example.com)");
   });
 
-  it("sends the e-mail, shows the toast and reloads", async () => {
+  it("sends the e-mail, shows the toast and resolves with the server's row", async () => {
     const r = await open();
     field(root(), "email")!.value = " bob@example.com ";
     press(button(root(), "Transfer"));
@@ -336,6 +500,7 @@ describe("transfer dialog", () => {
     expect(sent).toEqual([{ method: "POST", url: `/api/admin/repos/${r.id}/transfer`, body: { email: "bob@example.com" } }]);
     expect(toastText()).toBe("Repository transferred");
     expect(root().children).toHaveLength(0);
+    expect(await closed).toEqual({});
   });
 
   it("explains the token wipe for a token method only", async () => {
@@ -397,6 +562,40 @@ describe("a wish from the command palette", () => {
     expect((document as any).activeElement).toBeNull();
     expect(wishes.takeWish("all-repos")).toEqual({ repo: "x1" });
   });
+
+  // the list module is shared by Mine and All: an old render ending must not remove the handler of the newer one
+  it("keeps the handler of All when a slow Mine render is released and cleaned up afterwards", async () => {
+    const lists = await import("../ui/repos.js" as string);
+    (globalThis as any).location = { hash: "#/repos" };
+    repos = [rec({ id: "x1" })];
+    const gate: (() => void)[] = [];
+    heldGets.push(gate); // the list request of Mine is held
+    const mineMain = (document as any).createElement("div") as FakeElement;
+    const slowMine = lists.renderRepos(mineMain, { admin: true, switcher: true });
+    await flush();
+    (globalThis as any).location = { hash: "#/all-repos" };
+    gate.forEach((r) => r());
+    const offMine = await slowMine;
+    const offAll = await show();
+    offMine();
+    wishes.sendWish("all-repos", { repo: "x1" });
+    expect((document as any).activeElement).toBe(rowOf("x1"));
+    offAll();
+  });
+
+  it("keeps the handler of Mine when an All render is cleaned up after Mine started", async () => {
+    const lists = await import("../ui/repos.js" as string);
+    (globalThis as any).location = { hash: "#/all-repos" };
+    repos = [rec({ id: "x1" })];
+    const offAll = await show();
+    (globalThis as any).location = { hash: "#/repos" };
+    const offMine = await lists.renderRepos(main(), { admin: true, switcher: true });
+    offAll();
+    expect(main().textContent).toContain("My repositories");
+    wishes.sendWish("repos", { repo: "x1" });
+    expect((document as any).activeElement).toBe(rowOf("x1"));
+    offMine();
+  });
 });
 
 describe("late answers", () => {
@@ -438,8 +637,8 @@ describe("the repository filter", () => {
   const setHash = (hash: string) => {
     (globalThis as any).location = { hash };
   };
-  const settings = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Settings");
-  const escape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
+  // Test connection posts, then loads the list again
+  const retest = () => walk(main()).find((e) => e.tag === "button" && e.textContent === "Test connection");
 
   it("shows the matching records of all owners and the chip", async () => {
     setup();
@@ -494,8 +693,7 @@ describe("the repository filter", () => {
     setup();
     setHash("#/all-repos?repo=o%2Fa");
     await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
-    press(settings());
-    escape();
+    press(retest());
     await flush();
     await flush();
     expect(urls()).toHaveLength(2);
@@ -506,10 +704,9 @@ describe("the repository filter", () => {
     setup();
     setHash("#/all-repos?repo=o%2Fa");
     await ui.renderAllRepos(main(), { query: { repo: "o/a" }, go: () => {} });
-    press(settings());
     const gate: (() => void)[] = [];
     heldGets.push(gate);
-    escape();
+    press(retest());
     await flush();
     await flush();
     press(button(main(), "×")); // the old page is still drawn while the reload waits
@@ -630,30 +827,13 @@ describe("wiring", () => {
       expect(byClass(main(), "empty")[0]!.textContent).toContain("No repositories yet.");
     });
 
-    it("keeps the rows and says so when the reload after a dialog fails, and Retry clears it", async () => {
-      const r = rec();
-      repos = [r];
-      await show();
-      press(button(main(), "Settings"));
-      press(button(root(), "Save"));
-      getFails.push({ status: 500, error: "down" });
-      await flush();
-      await flush();
-      expect(toastText()).toBe("Settings saved");
-      expect(main().textContent).toContain(r.url);
-      expect(byClass(main(), "stale-note")[0]!.attrs.class).toContain("failed");
-      press(button(byClass(main(), "stale-note")[0]!, "Retry"));
-      await flush();
-      expect(byClass(main(), "stale-note")).toHaveLength(0);
-    });
-
-    it("shows a failed connection with its reasons, and no test button", async () => {
+    it("shows a failed connection with its reasons, and Test again", async () => {
       repos = [rec({ connection: failedConnection })];
       await show();
       const problem = walk(main()).find((e) => e.attrs["data-state"] === "provider-failure")!;
       expect(problem.textContent).toContain("Connection failed");
       expect(problem.textContent).toContain("Read: The host did not accept the token.");
-      expect(button(main(), "Test again")).toBeUndefined();
+      expect(button(main(), "Test again")).toBeDefined();
       expect(button(main(), "Test connection")).toBeUndefined();
     });
   });
@@ -665,38 +845,3 @@ describe("wiring", () => {
   });
 });
 
-describe("the repository context", () => {
-  let ctx: any;
-  const gh = (github: string) => ({ github, owner: "u1", account: null });
-  const memStore = { getItem: () => null, setItem: () => undefined };
-  const start = async () => {
-    const context = await import("../ui/context.js" as string);
-    const a = { allRepos: vi.fn(() => Promise.resolve([gh("o/a")])) };
-    ctx = context.initContext("admin", { id: "a1" }, { a, go: vi.fn(), notify: vi.fn(), store: context.contextStore("a1", memStore), where: () => "#/all-repos?repo=all" });
-    await ctx.ready;
-    return a;
-  };
-  const pressEscape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape" }));
-  afterEach(() => ctx?.stop());
-
-  it("a completed transfer loads the list of the switcher once more; Settings and Definition of Ready do not", async () => {
-    repos = [rec()];
-    const a = await start();
-    await show();
-    press(button(main(), "Settings"));
-    await flush();
-    pressEscape();
-    press(button(main(), "Definition of Ready"));
-    await flush();
-    pressEscape();
-    await flush();
-    expect(a.allRepos).toHaveBeenCalledTimes(1);
-    press(button(main(), "Transfer"));
-    await flush();
-    field(root(), "email")!.value = "bob@example.com";
-    press(button(root(), "Transfer"));
-    await flush();
-    await flush();
-    expect(a.allRepos).toHaveBeenCalledTimes(2);
-  });
-});

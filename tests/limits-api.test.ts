@@ -5,8 +5,8 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditPath } from "../src/auth/audit.js";
 import { limitsPath } from "../src/auth/limits.js";
-import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
@@ -31,17 +31,9 @@ beforeAll(async () => {
   const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: repo, stdio: "ignore" });
   git("init", "-q");
   git("commit", "-q", "--allow-empty", "-m", "init");
-  for (let i = 0; ; i++) {
-    const port = 20000 + Math.floor(Math.random() * 20000);
-    try {
-      const started = await startServer({ repo, runsDir: join(tmp, "runs"), port, claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
-      base = `http://127.0.0.1:${port}`;
-      close = started.close;
-      break;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-    }
-  }
+  const started = await startTestServer({ repo, runsDir: join(tmp, "runs"), claudeBin, watchers: false, log: (m) => logs.push(m), accountSweepMs: 3_600_000 });
+  base = started.base;
+  close = started.close;
   admin = await signInAs(base);
   ann = await signInAs(base, { name: "Ann", email: "ann@example.com", role: "user" });
 });

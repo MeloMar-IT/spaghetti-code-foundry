@@ -173,6 +173,417 @@ Design rules:
 
 ![The flow editor with a built-in flow](images/flows.png)
 
+### Evidence formats
+
+`src/evidence/` defines two formats for what a run did (#134). The engine writes the events (#135,
+see "The evidence stream" below). Both are extra files in the run folder, so `run.json` stays as it is.
+
+- **`EvidenceEvent`**: one line of `runs/<run-id>/evidence.jsonl`. Every event has `version`, `id`,
+  `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
+  (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
+  `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`). `prevHash` and `hash` come
+  together and are for the hash chain.
+- **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
+  `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
+  and final commit, models, policies, approvals, test results, files, the diff and the pull request.
+  Only `finalizedAt` depends on when it was written.
+- **Identities** (`identity.ts`): step, model, tool, policy, approval, test result, commit, pull
+  request, and who acted (an account id, the command line, a watcher or the Foundry).
+- **No secrets by shape.** There is no free text: only short one-line names, ids and codes. Every
+  object refuses unknown fields. A tool has a name and no arguments; an account has an id and no
+  name; a pull-request address has no sign-in data, query or fragment.
+- **Files are named, not copied.** An `ArtifactRef` is a path inside the run folder (relative, no
+  `..`), its SHA-256, its size, and `required` (false: the file may be removed later).
+- **Versions.** `parseEvidenceEvent` and `parseRunEvidence` look at `version` first. A higher version
+  than this Foundry writes is refused with one sentence that says so; a lower one goes through the
+  steps in `EVENT_MIGRATIONS` or `MANIFEST_MIGRATIONS` and is then checked. A new field means a new
+  version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
+  before this), and never throws.
+
+### Policy contracts
+
+`src/policy/` defines what a policy is, what it is asked and what it answers (#141). Nothing in the
+engine asks a policy yet; the stories after it do. The folder has no side effects: schemas, version
+numbers and pure functions.
+
+- **`PolicyPack`**: one version of one policy. `version` is the version of the format. `policy` is
+  the `id` of the pack and the `version` its author gave the contents: the same pair evidence
+  carries as its policy identity. `mode` is `observe` (decisions are only recorded) or `enforce`.
+  `rules` are read from the first to the last; `defaultOutcome` (`allow` or `deny`) decides when no
+  rule applies.
+- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`.
+  `when` has at most one condition per fact, and all of them must hold: `in` or `notIn` with
+  patterns for a text (`*` stands for any characters, nothing else is special), `in` or `notIn` with
+  fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
+  equal), `true` or `false` for a flag.
+- **`PolicyInput`**: `version`, `boundary`, `runId` and `facts`. The boundaries are `run.start`,
+  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume` and
+  `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
+  workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
+  run and daily cost, and six flags. All are optional and none is free text. A caller gives what it
+  knows and never a guess.
+- **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
+  `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
+  `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
+  SHA-256 of the canonical JSON (keys sorted, no spaces).
+- **Reason codes** are a closed list (`src/policy/reasons.ts`), each with one sentence. A code is
+  never renamed, reused or removed; a new meaning gets a new code. Codes for rules:
+  `branch.protected`, `branch.hotfix-exception`, `secret.detected`, `path.forbidden`,
+  `output.limit-exceeded`, `timeout.exceeded`, `budget.step-exceeded`, `budget.run-exceeded`,
+  `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
+  `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
+  `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
+  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`.
+- **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
+  network, model, clock or randomness; the caller gives the time. A rule that does not name the
+  boundary of the input is passed over. The first rule whose conditions all hold decides. A rule
+  that needs a fact the input does not have cannot be judged: the answer is `deny` with
+  `policy.input-incomplete`. An exception (such as the hotfix merge) is a rule before the rule it
+  is an exception to. Bad data decides nothing: the pack, the input and the time are checked first
+  and a `PolicySchemaError` names the fields that are wrong.
+- **Evidence.** `policyIdentityOf(decision)` is the policy identity of #134, and
+  `policyDenial(decision, tool?)` is the `denial` of a `step.denied` event: only for `deny` in
+  `enforce` mode. Every reason code fits the evidence format.
+- **Versions.** Each contract has its own number in `version.ts`. A record with another version is
+  refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+### Context bundle
+
+`src/context/` defines the format that says what a run was given to read, and where each piece came
+from (#151), and the selector that makes one (#152, see "Context selection" below). No run has a
+bundle yet: the stories after it give the sources to the agents read-only (#153) and show them
+(#154). It is an extra file in the run folder,
+`runs/<run-id>/context.json`, so `run.json` stays as it is.
+
+- **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
+  a `budget`, `policies`, `sources` and `omitted`.
+- **A source** has an `id`, a `kind`, a `uri`, a `revision`, `content` (file, SHA-256, size in
+  bytes), `owners`, a `classification`, `retrievedAt`, `freshness`, a `selection` reason and
+  `consumers`. Every field is required.
+- **Kinds and addresses** (a closed list, `uri.ts`): `repository-file` (`repo:<path>`), `issue`
+  (`issue:<number>`), `issue-comment` (`issue:<number>/comment/<id>`) and `refinement-notes`
+  (`refinement:<session id>`). An address has no host, no folder of the machine, no query and no
+  fragment, and only one spelling. The `id` is `s-` plus 16 hex characters of the SHA-256 of the
+  address, so the same source has the same id in every run.
+- **Revision.** A repository file has the full commit, and it must be the commit of the bundle.
+  The other kinds have a `version`: the time of their last change, as their origin reports it.
+- **Text is stored apart.** The bundle holds no source text. `content.path` is a file under
+  `context/` in the run folder; `sha256` and `bytes` are of exactly that file.
+- **Policy is named, not carried.** `policies` holds id and version only. No source kind is a
+  policy, so source text is always data and never an instruction.
+- **Owners** are host handles (`@user`, `@organisation/team`), never an e-mail address or a name. An
+  empty list means no owner is known.
+- **Classification**: `public`, `internal`, `confidential`, `restricted`, from least to most private
+  (`classificationAtMost`).
+- **Freshness**: `maxAgeSeconds` after `retrievedAt`, or `null` for a copy that does not go stale
+  (`staleAt`, `isStale`; the caller gives the time).
+- **Selection reason**: a code, not a sentence: `task`, `instructions`, `ownership`, `api-schema`,
+  `discovery` (with the `rule` that found the file) or `refinement`. Each kind takes only its own
+  reasons.
+- **Consumers**: the roles that may be given the source (`planner`, `coder`, `reviewer`, `tester`),
+  at least one (`mayConsume`).
+- **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
+  valid.
+- **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
+  `ambiguous`, `over-budget`, `classification`, `generated` (the repository marks the file as made
+  by a program) or `unsupported` (not a regular text file: a link, a submodule or a binary file).
+- **Hash.** `serializeContextBundle` checks the bundle and writes it in one fixed form (lists and
+  fields in a fixed order), so the same bundle always gives the same bytes. `hashContextBundle` is
+  the SHA-256 of that text. `contextBundleRef` gives the evidence `ArtifactRef` for `context.json`
+  (kind `other`, required), which is how evidence names the bundle by its hash; `contextSourceRef`
+  does the same for the text of one source. `hashContextSources` is one hash over the sources only,
+  the same in every run for the same repository state and task.
+- **Versions and old runs.** `parseContextBundle` looks at `version` first, with the same rules as
+  evidence: a higher version is refused with one sentence, a lower one goes through
+  `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
+  made before this), and never throws. Error messages name fields, never values.
+
+### Context selection
+
+`selectContext` (`src/context/select.ts`) makes a bundle and the text of its sources from one
+repository at one commit and the inputs of a task (#152). It is a function: no model, no network
+and no clock (the caller gives `now`). The same repository state and task give the same sources and
+hashes (`hashContextSources`). **It is not called by the engine yet**: giving a run its context is
+#153.
+
+- **Inputs.** A snapshot of the repository, the task (the issue text, its comments and the accepted
+  refinement notes, all fetched by the caller; and the paths the task is about), a budget, the
+  policy profile (id and version, which goes into `policies` and is never a source), and optionally
+  the rules to run, a classification, the most private classification allowed, the consumers and
+  how long a fetched input stays fresh.
+- **Only the declared commit.** `openRepositoryAt(folder, commit)` (`repository.ts`) reads through
+  git only: `ls-tree` of the full commit id, then `cat-file` by the object id from that list. The
+  working tree is never read, so a changed, new or left-over file cannot get in. The folder must be
+  the repository itself (a repository above it is not used), a branch, a tag or a short id is
+  refused, and git runs without the caller's `GIT_*` variables, without user or system settings and
+  without fetching missing objects. A link is listed as a link and never followed; its text is not
+  read either. A path that is not a safe relative path is never looked at.
+- **Rules**, in this fixed order (`CONTEXT_RULES`; the id is written to `selection.rule`):
+
+  | Rule | Picks | When it is not there |
+  |---|---|---|
+  | `task-issue` | the issue text | nothing |
+  | `refinement-notes` | the accepted refinement notes | nothing |
+  | `root-instructions` | `AGENTS.md` and `CLAUDE.md` in the root | both `missing`, when there is neither |
+  | `nested-instructions` | `AGENTS.md` and `CLAUDE.md` in every folder above a path the task names | nothing |
+  | `ownership-file` | the first of `.github/CODEOWNERS`, `CODEOWNERS`, `docs/CODEOWNERS` | `.github/CODEOWNERS` is `missing` |
+  | `task-comments` | the comments on the issue, oldest first | nothing |
+  | `named-in-task` | files the task names: the paths the caller gives, and paths of the commit spelled out in the task text | a path the caller gave is `missing` |
+  | `api-schema-files` | `openapi`, `swagger` and `asyncapi` files (`.json`, `.yaml`, `.yml`), `schema.graphql(s)`, `*.proto`, `*.graphql(s)`, `*.avsc`, `*.openapi.*`; nearest to the root first; not in `node_modules`, `vendor`, `third_party`, `dist`, `build`, `target`, `out` or a folder that starts with a dot | nothing |
+  | `root-readme` | `README.md` in the root | `missing` |
+
+  An address is decided by the first rule that finds it.
+- **Checks per file**, the cheap ones first: not in the commit (`missing`); a link or a submodule
+  (`unsupported`); too private (`classification`); marked `linguist-generated` in `.gitattributes`
+  (`generated`; the nearest `.gitattributes` that speaks about the path decides); does not fit the
+  budget (`over-budget`, known from the size in the list, so the file is not read); not UTF-8 text
+  (`unsupported`); a comment in its first five lines says "Generated by", "@generated", "DO NOT
+  EDIT", "automatically generated" or "auto-generated" (`generated`, as in `flows/*.yaml`).
+- **Budget.** The order of the rules is the order of importance. Candidates are taken in that
+  order; one that is larger than `maxSourceBytes`, or does not fit what is left of `maxSources` and
+  `maxTotalBytes`, is left out as `over-budget` and the next one is tried. So what a later rule
+  found is left out first, and a small file may still fit after a large one did not.
+- **Owners** come from the ownership file, and only when that file is in the bundle: the last line
+  that matches a path decides, as on the host. Only handles are kept; an e-mail address cannot be
+  written in a bundle and is counted, not kept. Patterns are matched part by part with a table,
+  never as a regular expression, so a hostile pattern cannot stall the selector (`patterns.ts`).
+- **Diagnostics.** What a bundle has no field for is returned next to it as a code and a number:
+  owners that are not handles, unsafe paths in the task, paths of the commit that were never looked
+  at, a `.gitattributes` file that could not be read, and omissions above the 1000 a bundle lists.
+- **Writing** (`store.ts`): `writeContextBundle(folder, bundle, texts)` checks every text against
+  its hash, then writes `context/<source id>` per source and `context.json` last, and returns the
+  evidence `ArtifactRef`. It never replaces a file: a folder that already has `context.json` or
+  `context/` is refused. Nothing calls it yet.
+
+### Tool profiles
+
+`src/tool-profile/` defines what an agent session may do with which tools, and what an agent program
+can be made to hold of that (#146). Nothing starts an agent with a profile yet; the stories after it
+do. The folder has no side effects: schemas, version numbers and pure functions.
+
+- **`ToolProfile`**: `version` (of the format), `profile` (`id` and `version` of the contents) and
+  `grants`. It names no agent program. It is closed: a kind, an operation or a target that no grant
+  names is refused, and a profile without grants allows nothing.
+- **Kinds and operations** are closed lists. `files` (the agent's own file tools): `read`, `write`.
+  `shell`: `run`. `git`: `status`, `clone`, `fetch`, `branch`, `commit`, `push`. `github`:
+  `issue.read`, `issue.write`, `pull-request.read`, `pull-request.write`, `pull-request.merge`,
+  `checks.read`. `web` (the agent's own web tools): `fetch`, `search`. `mcp`: `call`. `builtin`
+  (any other tool the agent program brings): `call`. A new kind or operation is a new version.
+- **A grant** names one kind, its `operations` and its `targets`, and declares all of:
+  `dataClassification` (`public`, `internal`, `confidential`, `restricted`: the most sensitive data a
+  call may handle), `credential` (`none`, `repository`, `machine`: the list of the policy contracts),
+  `timeoutMs`, `maxConcurrent` and `outputCapBytes` (for one call; `null` means no limit of its own),
+  and `approval` (`none` or `required`). A `shell` grant also has `sandbox`: `filesystem`
+  (`read-only`, `workspace-write`, `unrestricted`) and `network` (`none`, `unrestricted`) for the
+  commands it starts. Nothing is optional and nothing has a default. One operation of a kind is in
+  one grant only, so two operations can have different targets or conditions.
+- **Targets** are patterns in which `*` stands for any characters and nothing else is special. Each
+  kind has its own form: a path for `files` (relative: in the workspace; starting with `/`: on the
+  machine; `/*` is every file), a command line for `shell`, `owner/name` for `git` and `github`, a
+  host name for `web`, `server/tool` for `mcp`, a tool name for `builtin`. A command line that joins
+  or redirects commands (`;`, `&`, `|`, `<`, `>`, a backquote, `$(`) is only allowed by the target
+  `*`: a pattern is text, not a parser.
+- **`checkToolCall(profile, call)`** answers `allow`, `require_approval` or `deny` for one kind,
+  operation and target. A refusal has the policy reason code `tool.not-allowed`, or
+  `repository.not-allowed` for a repository that is not a target; approval has `approval.required`.
+  `toolCallDenial` gives the `denial` of a `step.denied` evidence event, with the tool name
+  `kind.operation` (such as `git.push`).
+- **Hash and reference.** `normalizeToolProfile` gives the one canonical form (grants, operations
+  and targets in a fixed order). `toolProfileSha256` is the SHA-256 of its canonical JSON, so the
+  order a profile was written in does not count. `toolProfileRef` gives `id`, `version` and `sha256`:
+  what a run keeps of the profile it resolved. Nothing writes it yet.
+- **Least privilege.** `toolProfileExcess(a, b)` lists every point where `a` allows more than `b`;
+  `isAtMostAsPermissive` is true when there is none. `resolveToolProfile(identity, profiles)` gives
+  what all profiles allow under the strictest condition of any: an operation stays only when every
+  profile grants it, a target only when every profile allows all of it, and of each condition the
+  lowest is taken. Targets that overlap in part are dropped, never widened. The result does not
+  depend on the order of the profiles.
+- **`AdapterCapabilities`**: `version`, `agent`, and for every kind how the agent reaches it
+  (`own-tools` or, for `git` and `github`, `shell`) and the controls the adapter can hold:
+  `deny-kind`, `limit-operations`, `limit-targets`, `require-approval`, `timeout`, `concurrency`,
+  `output-cap`; and the sandbox levels it can hold. A control that is not listed is not held.
+  `unenforceable(profile, capabilities)` lists what a profile restricts that the adapter cannot hold,
+  so a later story can refuse the profile or hold the rest another way (the sandbox of a user's run,
+  a broker).
+- **The two adapters today** (`adapters.ts`). Claude Code can deny a kind and limit operations and
+  targets for files, the shell, web, MCP and its other tools, and can hold commands to the
+  workspace. Codex has no list of allowed tools: it can switch off writing files and MCP servers and
+  has three sandbox levels, and nothing else. Neither holds the network of a command, approval or a
+  limit per call. For both, Git and GitHub are commands like any other: while an agent has a shell,
+  a repository operation cannot be held by the adapter.
+- **Flows of today.** `legacyToolProfile(settings)` turns the tool settings of an agent step
+  (permission mode, `allowed_tools`, sandbox, the sandbox of a user's run, no tools, MCP servers,
+  sign-in) into a generated profile with the id `generated.flow-settings`. It follows the same rules
+  as `sessionTools` in `src/skills/tool-policy.ts`, and a test keeps the two equal. A rule it cannot
+  express grants nothing and is returned in `unmapped`. No setting of today grants a Git or GitHub
+  operation, a limit per call or approval, so the generated profile has none.
+- **Skills.** `tool_profile` in a skill's `skill.yaml` stays what it is: what a skill needs, in three
+  words (shell, network, filesystem). A `ToolProfile` is what a session is given.
+  `skillCapabilitiesOf(profile)` puts a profile in those three words and `meetsSkillToolProfile`
+  compares the two. The skill check itself is not changed.
+- **Versions and errors.** Each contract has its own number in `version.ts`. A record with another
+  version is refused with one sentence. A `ToolProfileSchemaError` has a code and the fields that
+  are wrong, and never repeats a value of the record.
+### The evidence stream
+
+Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
+
+- **Where it is written.** `src/evidence/record.ts` (`RunRecorder`) turns what the engine already
+  has into events; `src/evidence/stream.ts` (`EvidenceStream`) writes them. The calls are at the
+  edges of the engine: `runFlow`, `resumeRun`, `finish` and `cancelWaitingRun` for the run; the
+  loop, `recordStep`, the parallel step and the model loop of `runAgentStep` for the steps. The
+  scheduler passes who asked, when the job was queued and who cancelled. No prompt reads or
+  writes evidence.
+- **Order.** `run.queued` comes first when the run came through the queue (a new run has no folder
+  while it waits, so the event is written at the start with the time it was queued), then
+  `run.created` and `run.started`. A resume adds `run.queued` (when queued) and `run.resumed`. Every
+  visit of a step is `step.started`, then what happened in it, then `step.completed` or
+  `step.failed`. A run that waits for approval or pauses ends with `run.stopped`; the approval
+  step itself starts when the decision is there.
+- **One writer, one line.** An event is one `write` of one line to a file opened for append. The
+  writes of a run come one after the other, also when parallel steps end together. `seq` is the
+  place in the file and the id follows from it (`ev-000007`), so both are stable.
+- **Checked before written.** Every event goes through `EvidenceEventSchema`. There is no free
+  text: a refused tool is its name, a model is three labels, a log is a path with its SHA-256 and
+  size (`required: true`). Reasons, notes, outputs and errors are not recorded.
+- **Never in the way.** No call throws. The first problem (the file cannot be written, an event is
+  not valid, the file holds a line that is not an event of this run) is written once to the live
+  log, and the stream stops. It never goes on after a hole, and a
+  stream that stopped has no end event, so such a run cannot count as verified later.
+- **Restart.** The file is read when the first event of a start is written, and again when its
+  size is not what this process left (another process wrote). Whole lines are never changed. A
+  last line without a line end is a write that was cut off: a whole event gets its line end, a
+  piece is removed.
+- **Not followed, not waited for.** The file is opened without following a link and without
+  waiting for a pipe, and only a plain file is used. The OS sandbox of a user's run denies writes
+  to both evidence files.
+- **Privacy.** `append` hides stored secrets in the texts of an event with the redactor of
+  `credentials/redact.ts` (`secretRedactor`, one `stat` while the store is unchanged) and checks
+  the finished line once more; a store that cannot be read, or a line that would still hold a
+  secret, stops the stream like any other problem. `finalizeRunEvidence` checks the whole stream
+  and the manifest text the same way and writes no manifest otherwise. There is no second
+  redaction system.
+- **Retention.** `cleanRuns` (`src/clean.ts`) removes the evidence of a run it keeps only when
+  `evidenceOlderThanDays` is given, and then all four files, manifest first. It never removes a
+  log and keeps the evidence, so a kept run is either verifiable or has no evidence.
+- **API.** `GET /api/runs/:id/evidence` (rule `own`, `src/server/evidence-view.ts`) builds its
+  answer from `verifyRunEvidence` and the manifest on each call and never throws; it sends
+  references, not file content, and a user's answer leaves out models, policies and account ids
+  and goes through `hidePaths`. It adds nothing to the engine.
+- **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
+  in the run folder. While it is there no start of the run continues the stream and the run gets
+  no manifest (#136). Nothing removes it.
+- **What is derived.** A shell step whose id has the word `test` or `tests` is a test run. The
+  pull request of a run is known only when the run was started for one (`vars.pr`). A target
+  without a model name is recorded as model `default`. A cancel or resume nobody is named for is
+  the Foundry's (`system`).
+
+### The hash chain and the manifest
+
+The events of a run are a hash chain, and a run that ends gets a manifest (#136).
+
+**Canonical form** (`src/evidence/canonical.ts`). One text for one value, the rules of RFC 8785:
+
+- An object is `{`, its members, `}`. A member is `"name":value`; members are in the order of
+  their names, compared by UTF-16 code unit, with `,` between them. A member without a value is
+  left out.
+- An array is `[`, its values in their own order with `,` between them, `]`.
+- A string is in double quotes. `"` is `\"`, `\` is `\\`. The control characters U+0000 to
+  U+001F are `\b`, `\t`, `\n`, `\f`, `\r` or `\u00xx` (lower-case hex); a lone surrogate is
+  `\udxxx`. Every other character is written as itself. Nothing is normalized.
+- A number is written as JavaScript writes it (`12`, `-3`, `0.5`); evidence only has whole
+  numbers. `true`, `false` and `null` are these words. There is no space or line break.
+- The text is UTF-8 when it is hashed or written.
+
+**The hash of an event** is the SHA-256 (64 lower-case hex characters) of the canonical form of the
+whole event without its `hash` field. `prevHash` is part of it: `null` for the first event, the
+`hash` of the event before for every other. It is taken over the event as it is written, never
+over one that was brought to a newer version. `tests/evidence-chain.test.ts` holds fixed texts and
+hashes; they change only together with the event version.
+
+**A stream is a chain** (`readEvidenceChain` in `chain.ts`) when every line is a JSON object in
+canonical form, byte for byte; is a valid event with `seq` equal to its place, the run id of the
+stream and an id no earlier line has; has `prevHash` equal to the `hash` of the line before; and
+has the `hash` of its own content. The first line that is not is named with one of eight faults
+(`not-json`, `not-canonical`, `unsupported-version`, `invalid`, `order`, `unchained`, `link`,
+`hash`). The writer checks the chain before it adds to a file it did not write itself, and does
+not continue a file that is not a chain. Someone who can rewrite a line and every line after it
+gets a chain again, with another last hash: that is why the manifest holds the last hash.
+
+**The manifest** (`finalize.ts`). When a run reaches `succeeded`, `failed` or `cancelled`
+(`finish` and `cancelWaitingRun`, right after the end event), `evidence.json` is written:
+
+| Field | From |
+|---|---|
+| `status`, `finishedAt` | the last event (`run.completed`, `run.failed`, `run.cancelled`) and its time |
+| `startedAt` | the time of `run.created` |
+| `flow` | `run.created`, and the SHA-256 of the canonical form of `flowDef` in `run.json` |
+| `events` | `evidence.jsonl`, the number of events, the `hash` of the last one |
+| `git` | base from `run.started`, final from `run.completed` |
+| `models`, `policies` | every model a step was given to or ran on, every policy that refused something: each once |
+| `approvals`, `tests` | every decision at an approval step and every test run, oldest first |
+| `artifacts` | every log, transcript and report the step events name, each path once (named twice: as named last) |
+| `diff` | `evidence.diff`, made at this moment: `git diff <base> <final>` with stored secrets hidden; `required: false` |
+| `pullRequest` | `run.completed` |
+
+- **Deterministic.** The same events and files give the same manifest. The one field that depends
+  on time is `finalizedAt`: the moment of writing, and never before `finishedAt`. The diff is made
+  again each time, from the two commits; it is left out when git fails, takes more than 15
+  seconds or gives more than 20 MB.
+- **Only for the end the run is at.** A resume removes `evidence.json` and `evidence.diff` before
+  its first event; the events stay and the chain goes on. The next end writes a new manifest. The
+  earlier end is still in the chain.
+- **A failure is visible.** Finalizing never throws and never changes the run. When it cannot be
+  done (the stream is not a chain, does not end with the end of the run, ends in another status,
+  has the `evidence.incomplete` mark, or the file cannot be written), any manifest that is there
+  is removed and the live log says so once. A run without a manifest is not a verified run.
+- **Runs that started before evidence.** A resumed older run gets events from the resume on, but
+  no manifest: its stream does not begin with `run.created`.
+- **No secrets.** The manifest is checked with `RunEvidenceSchema` before it is written: ids,
+  names, hashes, commit ids and one pull-request address. Files are written beside their place
+  and moved over it, mode `0600`.
+
+### Verifying evidence
+
+`src/evidence/verify.ts` checks the evidence of a run (#137). `verifyEvidence` is pure: it gets the
+texts of the manifest and the event file, the flow definition, and a function that looks at one
+file. `verifyRunEvidence(runDir, runId)` reads them from a run folder. `scf evidence verify
+<run-id>` (`src/evidence/cli.ts`) prints the result. No model, no network, no server, and nothing
+is written.
+
+The checks run in this order, and the first one that fails ends the run of checks (the later ones
+are `skipped`):
+
+| Check | Passes when | Failure codes |
+|---|---|---|
+| `manifest` | `evidence.json` is a valid manifest of a version this Foundry reads and of this run, and there is no `evidence.incomplete` mark | `incomplete`, `manifest-unreadable`, `manifest-version`, `manifest-run` |
+| `events` | `evidence.jsonl` is a plain file that ends with a whole line | `events-missing`, `events-unreadable`, `events-cut` |
+| `chain` | every line is canonical, a valid event of a readable version, at its place, linked to the line before, with its own hash | `chain-` + the fault of `readEvidenceChain`, with the line |
+| `terminal` | the number of events and the hash of the last one are those of the manifest | `events-added`, `events-removed`, `terminal-hash` |
+| `content` | the manifest built again from the events is the same manifest | `manifest-changed` |
+| `flow` | the canonical hash of `flowDef` in `run.json` is the flow hash of the manifest | `flow-missing`, `flow-changed` |
+| `files` | every named file is a plain file of the run folder with the same SHA-256 and size | `file-missing`, `file-changed`, `file-unreadable` |
+
+- **Result** (`VerifyResult`, version 1): `status`, `verified`, `explanation` (one or two short
+  sentences), `failure` (the first one: `check`, `code`, `message`, `line` or `path`), `checks`,
+  `manifest` (the SHA-256 of the file, its status and time), `events` (count and last hash),
+  `files` (each with `state`: `ok`, `changed`, `missing`, `unreadable`) and `missingOptional`.
+- **Four outcomes.** `verified`; `failed`; `not-finalized` (an unbroken chain but no manifest: the
+  run has not ended, or finalizing failed); `absent` (no evidence at all: a run from before
+  evidence). Only `verified` sets `verified: true`.
+- **Required and optional.** A missing file with `required: true` fails. A missing file with
+  `required: false` is listed in `missingOptional` and does not fail. A changed file fails either
+  way. All files are looked at, so the result shows every state; the failure is the first.
+- **Files stay in the run folder.** A file is read without following a link; a link anywhere on
+  its path, a folder or a pipe is `unreadable`. Messages name lines and paths inside the run
+  folder, never content.
+- **What it cannot see.** The manifest is the anchor: someone who can rewrite the events, the
+  manifest and the files together gets evidence that verifies. The result gives the manifest's
+  SHA-256 so it can be kept somewhere else (the delivery contract, #162).
+- **Fixtures.** `tests/fixtures/evidence-runs.ts` writes four runs from fixed content, with its
+  own canonical form and hashes: valid, a changed event, a missing file, and an old run without
+  evidence.
+
 ---
 
 ## 5. Agents and models
@@ -455,6 +866,8 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
+| Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
+| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the list of actions is empty |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -467,13 +880,14 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | File or folder | Content |
 |---|---|
 | `config.yaml` | Settings and watchers |
-| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace |
+| `runs/<run-id>/` | `run.json`, step logs, transcripts, the workspace, `evidence.jsonl` (the events of the run), `evidence.json` (the manifest of a run that ended), `evidence.diff`, `evidence.incomplete` (a mark: the events are not whole) |
 | `queue.json` | Queued jobs |
 | `locks/` | Code-area and run locks |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
+| `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
-| `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `failed`, `updated` |
+| `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
@@ -496,7 +910,7 @@ supervisor guards the first start after an install: it reads the journal, finish
 when an install was cut off, and puts the previous commit back once when the server stops or
 does not confirm in time. The new server confirms with `GET /api/ready` (loopback only) after it
 checked that `HEAD` and its build stamp are those of the install. A failed go-back is a terminal
-state (`failed.backOk = false`) that a person must repair. The monitor reads the same file.
+state (`failed.backOk = false`) that a person must repair. The monitor reads the same file. The release check (`release-daily` `verify`) writes `tested/<key>`, with `key` = `printf '%s\n%s\n' <tree> <cmd> | shasum | cut -c1-40`, as the one line `run <id>, <UTC time>, tree <sha>` only for a green run on a clean tree whose `HEAD^{tree}` did not change; self-update skips its test step only when the staged commit's tree and its own test command (alone or after `npm ci && `) match that exact line form, and runs the tests otherwise.
 
 ---
 
@@ -560,7 +974,7 @@ The rules for these live in `ui/css/responsive.css` (imported last by `ui/style.
 | `templates.css` | The page templates: `.page`, the eight `.page-<name>` roots and their regions, and grids scoped under a template root (`.page-overview .dash-grid`, and the editor grid under `.page-editor`). No component rules, no `z-index`. |
 | `components.css` | Controls and boxes used on more than one page: buttons, inputs, `.field`, `.pill`, `.badge`, `.card`, `.table`, `.table-box`, `.modal`, `.backdrop`, `#toast`, `.seg`, `.tabs`, `.chips`, `.spinner`, `.empty`, `.errors`, focus rules, and the toolbar and status helpers. **Every variant of a component lives here too**, such as `.pill.who-you`, `.card.failure`, `.table.compact` and `.modal:has(.block-grid)`, even when only one page uses it. |
 | `utilities.css` | One-purpose helpers: `.row`, `.grid`, `.spacer`, `.muted`, and the classes listed under "Utility classes" below. |
-| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. |
+| `pages/*.css` | One file per page area: `shell` (top bar, health, subnav, sidebar, view bar, user display), `editor`, `runs`, `dashboard`, `turn` (holds, next step, Your turn, help), `board`, `start`, `refinement`. `ask` is the Ask SCF drawer. |
 
 **Page templates.** `ui/templates.js` has eight templates: `overviewPage`, `collectionPage`, `boardPage`, `masterDetailPage`, `editorPage`, `settingsPage`, `conversationPage` and `detailPage`. Each returns `div.page.page-<name>` (`overview`, `collection`, `board`, `master-detail`, `editor`, `settings`, `conversation`, `detail`). The module imports only `./dom.js` and `./kit/product.js`; it has no `api`, `fetch(` or `style`.
 - **Head.** The options `title`, `back`, `status` and `actions` go to `pageHeader({ layout: "toolbar", title, back, meta: status, actions })`, so there is one header component. Alternatively `head` is a ready node (the first child, no `h1` is made); `head` with `title` throws. `notices` comes right after the head.
@@ -720,6 +1134,352 @@ derived from it, so the server needed no change. The table is checked against th
 list of routes (`RULES` in `permissions.ts`) in both directions: a command for an unknown route
 fails a test, and so does a new route without a command or a stated reason (`API_ONLY`). The file
 commands keep their words: `remoteCommand` returns "not mine" for anything it does not know.
+
+### Ask SCF: the contract
+
+Ask SCF is the help assistant inside the product (epic #226). Its contract is code, in
+`src/help/contract.ts`: pure data and pure functions, with no model, no storage and no route. Every
+later part (stored conversations, the turn service, the pages) goes through it, so the text of a
+model can never widen what a reply holds.
+
+- **Questions.** Four types (`QUESTION_TYPES`): product help, status, troubleshooting and guided
+  resolution. `QUESTION_RULES` says which evidence each needs: `doc` (the installed documentation)
+  or `state` (what the asker may see now, with `observedAt`).
+- **Parts of a reply.** Five kinds (`PART_KINDS`, `PART_RULES`): answer, recommendation, navigation,
+  draft and action. Only an action has `changesState` and `needsConfirmation`. `ACTIONS` is the
+  server's list of actions and it is empty: the assistant is read-only, and `ACTION_RULES` names the
+  five conditions (server list, preview, confirmation, a second permission check, read-back) a later
+  story must meet before it adds one.
+- **`checkReply(raw, { role, offered, clean })`** turns what a model answered into the `Reply` the
+  server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered` (the model
+  names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the page's own
+  title, an action must be in `ACTIONS`, texts are cut and cleaned, and `dropped` lists what was
+  left out in fixed words. `displayText(reply)` writes the text a person reads from the checked
+  parts; it is never the model's own text.
+- **Uncertainty.** `certaintyOf` lowers the level to `unverified` when no evidence of the needed
+  kind is left; the model may be less sure, never more. The sentences are `CERTAINTY_WORDS`.
+- **Requests that are not served.** A model answers them with a code only (`LIMIT_CODES`);
+  `limitationFor(code, role)` gives the fixed limitation and the safest next step, and never a page
+  the role does not have. The codes `refinement`, `next-step` and `monitor-finding` are the
+  hand-offs to Refinement (#73), "what happens next" (#31) and the Problems page.
+- **Roles.** `forRole(role, value)` removes every field in `ADMIN_ONLY_KEYS` (model, provider,
+  cost, tokens, server detail) for a user, at any depth, and `hideNames` takes model and provider
+  names out of a text. `contractFor(role)` is the contract as a person of that role may read it.
+
+`tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
+chapter 14 of the user guide holds the same sentences as the code.
+
+### Ask SCF: stored conversations
+
+`src/help/store.ts` keeps the conversations in `help.json` (`{ version: 1, conversations }`), read
+and written like the other account files: `withAuthLock`, a temporary file and a rename. The schema
+is strict, so a file of another version or with unknown fields is refused and left untouched.
+
+- **Records.** A conversation has an id, its owner, a title, a state and its messages. A message
+  is a question (`role: user`, with the bounded page context) or a reply (`role: assistant`,
+  `replyTo` its question). A reply holds `status` (`pending`, `done`, `failed`, `cancelled`), the
+  checked `reply` of the contract (citations are `reply.evidence`, proposals `reply.actions`) and,
+  apart from it, `text`, which `finishTurn` writes with `displayText`. `finishTurn` parses the
+  reply with `ReplySchema` again, so nothing unchecked is stored.
+- **Ownership.** Every call that reads or changes takes the owner from the session. An id of
+  another account is `not-found`, the same as an unknown id. The routes (`src/server/api-help.ts`)
+  use only `user.id`; the role adds nothing, and a call with `?as=` is refused, so the support
+  access of administrators is: none. `deleteUser` removes the conversations of the account under
+  the same lock (`removeHelpLocked`).
+- **Turns and retries.** `addQuestion` stores the question and a `pending` reply. The turn ends
+  through `finishTurn` or `failTurn`, which take a `TurnRef` (`message`, `tries`) and write only
+  while that reply is pending with that try: a result of an earlier try, of a stopped turn or of a
+  deleted conversation is dropped. `retryTurn` sets the same reply to `pending` again and counts
+  `tries`; no message is added. `settleInterrupted` (at server start) marks leftover pending replies
+  as failed with `interrupted`.
+- **States.** `active`, `failed` and `cancelled` follow the last turn; `completed`, `archived`
+  (with `stateBefore`) and `deleted` are set by the owner. Completing and archiving are refused
+  while a reply is pending.
+- **Retention.** `deleteConversation` replaces the record with an empty one (`wiped`): no title, no
+  messages. `current()` applies the policy on every read and write: a conversation unchanged for
+  `KEEP_MS` (90 days) is wiped as `expired`, and a wiped record is dropped after `DELETED_KEEP_MS`
+  (30 days). `helpSweeper` runs it hourly.
+
+Tests: `tests/help-store.test.ts` (ownership, retries, states, retention, older and newer files),
+`tests/help-api.test.ts` (the routes, both roles, the preview, a restart, a broken file) and
+`tests/remote-help.test.ts` (`scf ask`).
+
+### Ask SCF: the turn service
+
+`src/help/turn.ts` runs a help turn. It is a runner of its own, apart from flow runs, the
+refinement flows and `src/server/generate.ts`: no flow, no run folder, no scheduler job.
+
+- **One call, no tools.** `HelpTurns.run` resolves the target from `help.model` (else
+  `default_model`) with `toTarget`, and calls `runClaude` like the failure summary does:
+  `noTools`, `noMcp`, `isolated`, permission mode `dontAsk`, no GitHub token variables, an empty
+  temporary folder as working folder that is removed afterwards with the log of the call. A target
+  that is not Claude Code is a `setup` failure (`helpTarget`): Codex always has a shell tool.
+  The answer is text; `jsonOf` finds the JSON object and `checkReply` decides what is kept, so
+  model output cannot name a tool, a command or an action that runs.
+- **The prompt** (`turnPrompt`) holds the rules of the contract for the asker's role, then one
+  JSON value with everything a person wrote: the question, the page context, the last
+  `HISTORY_TURNS` answered turns (each cut to `HISTORY_CHARS`) and the offered sources. `evidence`
+  in `HelpDeps` is where the context stories plug in; today it offers nothing, so every reply is
+  `unverified`.
+- **Queue and fair use.** `admit` refuses before anything is stored (`TurnRefused`): switched off,
+  a turn of the same account running or waiting, a full queue, or the account's turns of the day
+  used. Admitted turns wait in one first-come queue and `pump` runs `help.max_parallel` at once.
+  Each job holds an `AbortController`: `cancel` (after the store marked the reply) and `drop`
+  (a deleted conversation) abort it, `stopAll` on server close.
+- **Failures** are classified by `classifyFailure` into the store's `FAILURE_CODES`; `RETRY` says
+  which can be tried again at once. The stored text is the fixed sentence of the code. The log
+  gets fixed words only.
+- **Usage.** `help.json` has `usage` rows per day and account (`addUsage`): turns, failed, cost,
+  tokens. A file without `usage` (the first version) reads as none. The per-turn cap and
+  `help.daily_budget_usd` use these rows, not the run budget. `GET /api/help/usage` is the
+  administrators' view; `forRole` and `hideNames` keep model, provider, cost and tokens from users.
+
+Tests: `tests/help-turn.test.ts` (the service with a replaced model call, and the fake agent for
+the arguments) and `tests/help-turn-api.test.ts` (the routes with the fake agent).
+
+### Ask SCF: the page context
+
+`src/help/context.ts` holds the envelope a browser may send with a question, and what the server
+makes of it.
+
+- **Shape** (`ContextSchema`, `checkEnvelope`): `page` (an address `#/…`), the selected things
+  (`kind` and `id` of the first version, and `entities`), `filters` and `selection`. Strict: an
+  unknown field (owner, role, permissions, a record, markup) refuses the envelope. Ids and filter
+  values may not be markup or a file path; a filter may not be named after ownership, permission
+  or a secret. The stored schema stays as lenient about `id` as the first version, so older files
+  still read; new input is held to the stricter rule.
+- **Size** (`CONTEXT_MAX`, measured as the JSON text): cut by `CONTEXT_PRIORITY`. A later part
+  never pushes out an earlier one; `truncated` names what lost something and is written by the
+  server only.
+- **Pages** (`HELP_PAGES`, `pageOf`): the server's copy of the pages of `ui/ia.js`, with the same
+  ids, addresses and roles (a test compares them). The address alone identifies the page; an
+  address no page has and a page of the other role both give no page.
+- **Lookup** (`resolveContext`, `EntityResolver`): at the time of the model call every named
+  thing is looked up for the asking account. `helpResolver` in `src/server/api-help.ts` reads the
+  account again (a blocked or removed account finds nothing; a changed role counts as the lower
+  one) and asks the help context service. Not found and not allowed are one answer. Without a
+  resolver nothing is found.
+- **The help context service** (`src/server/help-context.ts`, #231): `helpSnapshot(ctx, asker,
+  { kind, id })` gives a typed, bounded snapshot of one thing for one account, or undefined. It
+  has no rules of its own. Each adapter names the API call it follows, asks the permission table
+  for that call (`findRule`, `authorize`) and reads through the reader of that call: `run`
+  (`GET /api/runs/:id`, `checkedRun` with the owner, then `userRun` for both roles), `queue`
+  (`GET /api/queue`: `ownQueue` for a user, `queueWithNext` for an admin), `repository`
+  (`GET /api/repos` with `listRepos(owner)`; `GET /api/admin/repos` for an admin), `refinement`
+  (`GET /api/refinement/:id`, `sessionFor`, the check the route itself uses), `issue`
+  (`GET /api/board`), `problem` (`GET /api/monitor/findings/:id`), and two without an id, `next`
+  (`GET /api/next`) and `health` (`GET /api/health`). The last four are admin-only in the table,
+  so a user finds nothing. A snapshot holds at most 24 fields, 300 characters per text and 2,000
+  characters in all; every text passes `guardExcerpt`. It records its fields as included
+  (`fields`), `omitted` (left out on purpose, or a text that reads like an order), `redacted` (a
+  secret was taken out), `unavailable` (the record has none now) and `stale` (known to be old: a
+  connection check older than a day, a finding that is gone). An unknown kind, a wrong id, a
+  reader that throws: undefined, never an error. Nothing is logged. In this story only the label
+  of a snapshot reaches the model; the fields are for the evidence stories (#233).
+- **In the request**: `prepareTurn` takes the resolved context only. The model gets a `PAGE` part
+  (page type and title, found things with the server's label, the count of things not found,
+  filters), the marked text as an excerpt with the id `selected-text` (which is not a source and
+  cannot be cited), and in `DATA` the address, or the address pattern (`#/runs/:id`) when its
+  thing was not found. Labels, filters and marked text pass the guard.
+- `POST /api/help/context` (`HelpTurns.describe`) shows the kept envelope and the lookup without
+  storing or asking anything.
+
+Tests: `tests/help-context.test.ts`, `tests/help-context-api.test.ts`.
+
+### Ask SCF: the documentation index
+
+`src/help/docs.ts` (#232) makes the evidence of a product question. No embedding model, no
+network, no dependency.
+
+- **Approved documents** (`HELP_DOCS`): `docs/USER_GUIDE.md` and `docs/FLOW_AUTHORING.md`, read
+  from the install folder (`INSTALL_ROOT` in `api-help.ts`, next to the built-in flows). Both are
+  in `files` of `package.json`. A repository that is worked on is never read: there is no switch
+  for it.
+- **Sections** (`sectionsOf`): a heading of level 2 to 4 starts a section; a heading inside a
+  code fence does not. A section keeps its heading trail, its anchor and its role. In the user
+  guide the role comes from the chapter number (`userChapters`); a chapter that is not listed is
+  for administrators. The id is `doc-` plus 12 hex characters of the hash of path and trail.
+- **Search** (`searchDocs`): the words of the question (three letters or more, no stop words, a
+  plural "s" taken off) against the words of headings and text. A section counts with one heading
+  word or two text words. The score is the sum of `log(1 + N/df)` per word, three times for a
+  heading word; ties keep document order. At most `DOC_SOURCES` (4) sources, each a `Source` with
+  `kind: "doc"`, the title "document: heading trail", the ref `path#anchor (SCF version)` and an
+  excerpt from the best paragraph on, at most 1,200 characters.
+- **In a turn**: `helpTurnsOf` passes `evidence: docs.sources(question, role)`. Nothing else
+  changed: `prepareTurn` guards every source, `checkReply` keeps only cited ids that were
+  offered, and without a fitting source the certainty is "unverified".
+- **Stale index** (`HelpDocs`, `docIndexProblems`): the index holds the version of `package.json`
+  and size, time and SHA-256 of each file. Before each use size, time and version are compared;
+  on a difference the index is built again, and when version, hashes or missing files differ the
+  reasons are logged and kept (`rebuilt`, `rebuiltBecause`). Missing documents are `problems`.
+  `GET /api/help/usage` shows this as `documentation`.
+
+### Ask SCF: live evidence
+
+`src/server/help-evidence.ts` (#233) makes the `state` sources of a turn. It holds no business
+rule: every fact is a field of a snapshot of the help context service (`help-context.ts`), which
+reads through the permission table and the API's readers. The run snapshot now carries the
+next-step record of `GET /api/runs/:id` (`nextFor`, and for a user `ownRecord` and `userRecord`).
+
+- **Which snapshots** (`liveSnapshots`): the things of the page context (looked up again for the
+  account as it is now), a user's two newest waiting or failed runs when the page names none,
+  the queue, and for an admin the health. At most `STATE_SOURCES` (5). The queue entry of each
+  run is read for the comparison only.
+- **As a source** (`sourceOf`): id `state-<kind>-<hash>`, kind `state`, the label as title, the
+  ref `<kind> <id> · <page>`, `observedAt`, and the fields as lines (at most 800 characters),
+  with what is not available and what may be out of date. A snapshot with a stale field gives a
+  source with `uncertain: true`.
+- **Disagreement** (`conflictsOf`, `conflictSource`): three fixed comparisons (finished run in
+  the queue; running run whose next step waits for a person; board status against the run's).
+  A disagreement adds the source `state-conflict`, also `uncertain`.
+- **In the turn**: `Source.uncertain` never leaves the server. `prepareTurn` strips it and lists
+  the ids in `Prepared.uncertain`; after `checkReply`, a "confirmed" reply that cites one of them
+  is stored as "likely". The prompt asks for "Observed:", "So:" and "You could:" in the
+  explanation, and for saying that the state is uncertain when a source says so.
+- `helpTurnsOf` offers the state sources first, then the documentation sections.
+
+### Ask SCF: diagnoses
+
+`src/server/help-diagnosis.ts` (#237) adds, to the `state` sources of a turn, what the product
+itself says is wrong. It holds no diagnosis rule. A cause is one of three things: the
+`failure` of the run's next-step record (`failureSummary` in `failure.ts`: `classifyFailure`
+plus the table of `errors.ts`), the `why` of a next-step record (`next-step.ts`,
+`server/next.ts`; for a queued run, a board issue and a health problem it is the field the
+snapshot already holds), or nothing.
+
+- **Reading** (`diagnosisSources`): for the shown snapshots, in order, at most `DIAGNOSES` (2).
+  For a run the next-step record is read through `runWithNext` of `help-context.ts`, the same
+  permission check and reader as the run snapshot (the snapshot adapter now uses it too), for
+  the account as it is now. The run's reason goes through `explainError` for the role. Nothing
+  else is read: no log, no transcript, no step output.
+- **The diagnosis** (`diagnose`, pure): symptom, cause (optional), `confirmed`, supporting and
+  missing evidence, the next check. A failed run whose explanation is `NOT_EXPLAINED` or "no
+  reason was saved" has no cause, and the next check is the `todo` of `explainError`. A
+  failure note of a model (`byModel`), a snapshot with a stale field and a question whose
+  sources disagree give `confirmed: false`. A repository whose check failed and a monitor
+  finding have no cause: the snapshot holds none. Kinds with nothing to explain give none.
+- **As a source** (`diagnosisSource`): id `diagnosis-<kind>-<hash>`, kind `state`, title
+  "Diagnosis of …", ref `diagnosis · <ref of the snapshot>`, the snapshot's `observedAt`, and
+  five labelled lines within `DIAGNOSIS_MAX` (800). Each text is made one line, passes
+  `guardExcerpt` on its own and is cut, so a record's text cannot add a labelled line; a text
+  that reads like an order is dropped and named under the missing evidence. Without a confirmed
+  cause the source is `uncertain`, so the existing rule of the turn makes a "confirmed" reply
+  that cites it "likely".
+- **In the turn**: one more rule in the prompt: build a "why does it not work" answer on the
+  diagnosis, name the five parts, and never make up a cause or a detail no source holds.
+  `liveEvidence` returns the disagreement, the snapshots, then the diagnoses. With the limit
+  of 10 sources per turn, at least 2 documentation sections remain.
+
+Tests: `tests/help-diagnosis.test.ts`.
+
+### Ask SCF: authorization, retention, audit and limits
+
+#243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
+the store's retention and the usage ledger.
+
+- **Admission** (`helpAllowed` in `api-help.ts`, passed to `HelpTurns` as `allow`): after the
+  off switch and before anything is stored, the account is read again (`currentAccount`), then
+  `help.audience`, `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
+  against the cost of its help turns today (`usageToday`). The refusal code `not-allowed` is 403;
+  `limit` is 429. A check that throws refuses. `POST /api/help/context` uses the same check.
+- **Retention** (`setRetentionDays`, `retentionMs` in `store.ts`): `help.keep_days` replaces the
+  fixed 90 days; the server sets it before each help call and each sweep. Account deletion
+  removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
+  lines stay.
+- **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
+  `help-delete`, `help-export`. Written with `writeAudit` without waiting for the lock; a line
+  that cannot be written is named in the server log and does not fail the call. The turn id is
+  the correlation id: it is the id of the reply message in the conversation. No text of a
+  conversation is in a line. `ui/audit.js` lists the three names for the filter.
+- **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
+
+### Ask SCF: the guard
+
+`src/help/guard.ts` stands between a text and the two places it can go: `help.json` and the model.
+Everything except the asker's own question is untrusted: page context, documents, run records,
+issue text, logs, and the model's answer.
+
+- **Secrets** (`scrub`). Stored credentials are removed by value with the redactor of
+  `src/credentials/redact.ts`; then the shapes in `SHAPES` (private key block, authorization
+  header, cookie, sign-in in an address, token shapes, `name = value` for names that hold
+  `password`, `secret`, `token`, …); then `help.sensitive_patterns`. A removed value is replaced by
+  the fixed words of its category (`REMOVED_WORDS`), and the categories are returned. `Removals`
+  collects them over several texts. The categories are stored on the message (`redacted`), and
+  logged; a value never is.
+- **Orders in copied text** (`looksLikeOrders`, `guardExcerpt`). A source is a piece of evidence
+  with an optional excerpt (`Source` in `turn.ts`). `prepareTurn` scrubs the question, the page
+  context, the earlier turns and every source, cuts an excerpt to `EXCERPT_MAX` (all together
+  `EXCERPTS_MAX`, at most `LIST_MAX.evidence` sources), and drops a source whose title, place or
+  excerpt reads like an order. A dropped source is not in `offered`, so `checkReply` drops a
+  citation of it too.
+- **Three parts in the request** (`turnPrompt`): the rules in the server's words; then
+  `EXCERPTS`, one JSON value on one line; then `DATA`, one JSON value on the last line with the
+  question, the page, the earlier turns and the list of sources. A text inside a JSON value has no
+  line break of its own, so it cannot start or end a part.
+- **`checkReply` is still the only way out.** The guard adds nothing to a reply. An answer that
+  obeyed an injected order still loses every action that is not on the server's list (all), every
+  link that is not a fixed page of the role, and every source that was not offered.
+- **Fail closed.** `scrub` throws `GuardError` when the credential store cannot be read
+  (`BLOCKED`), when a stored credential is still found after its removal, when a configured
+  pattern is broken, or when a text is longer than `GUARD_MAX`. `HelpTurns.ask` then refuses the
+  question (`unsafe`, 503) before anything is stored or counted; `HelpTurns.run` ends the turn
+  with `setup` before the model call; a reply whose check throws is not stored. A failing check
+  for orders holds the text back.
+
+Tests: `tests/help-safety.test.ts` (secret fixtures of every category, hostile texts, the three
+parts of the request, and the fail-closed paths).
+### Ask SCF: the drawer
+
+The interface of Ask SCF is one drawer for both displays (#234). Three files, and the shells only mount it:
+
+| File | What |
+|---|---|
+| `ui/ask-model.js` | The decisions, as pure functions: the page that goes with a question (`pageOf`, `whereOf`, `contextFor`), the suggested questions (`suggestionsFor`), whether Send sends (`sendPlan`), when the conversation is read again (`pollDelay`), what a message looks like (`entryOf`), what is announced (`announce`) and a failed call in plain words (`explainAskError`). No document, no fetch, no timer. |
+| `ui/ask-view.js` | The nodes: the button, the drawer (`role="dialog"`, `aria-modal`, named by its heading), the question form, one message. Every text of a conversation goes in as text. |
+| `ui/ask.js` | `initAsk(role)` asks `GET /api/help/conversations` once; only when `enabled` is true it calls `createAsk`, which puts the button into `#ask-scf` and the drawer at the end of `<body>`. It owns the state, the calls and the timer. |
+
+- **Mounted once per display.** `ui/app.js` calls `initAsk("admin")`, `ui/user/app.js` calls `initAsk("user")`, and not in a preview ("View as user"): the server shows no conversations there, and a 403 in a preview would end the view.
+- **The page is not touched.** The drawer is a sibling of the page, not a route. Opening and closing change no address and draw no page again. While it is open, `#top`, `#skip` and `#content` are `inert`; closing removes that unless the menu of a narrow screen is open.
+- **Opening is free.** `open()` makes no call. Only when a reply was still waited for it reads that conversation again. A question, and the page it is asked on, go out with Send only. The context is `{ page }`: the address without its query, checked against the form the route takes. No `kind` and no `id` yet.
+- **Keyboard.** The focus goes to the question box and comes back to the control that had it (the button when that control is gone). Escape closes; Tab is kept inside with `trapTarget` of `ui/dom.js`. A dialog in `#modal-root` lies over the drawer and gets the keys first.
+- **Status.** `#ask-status` is a polite status line: it says once that Ask SCF is working, and once what came of it. Errors of a call go to `#ask-error` (`role="alert"`).
+- **Reading the answer.** While the drawer is open and the last reply is `pending`, the conversation is read every 1.5 s, after ten reads every 4 s. Four failed reads in a row, or a 404 or 410, end it with a sentence.
+- **Following a turn (#235).** `controlsFor` says which of Stop, Try again, Archive, Take back and Delete are offered; none while a call is on its way (`busy`), so a control cannot be pressed twice. Try again is offered after a stop and after a failure with `failure.retry` true, not after a limit (`entryOf` gives that the kind `limit`). The server keeps the two messages of a retried turn and counts `tries`; `triesNote` shows the count on the one reply. `waitNote` turns the waiting text after 20 s, measured in the tab from the moment it first saw this try.
+- **Late answers.** Every call takes a ticket from `staleGuard` first. Leaving a conversation (a new one, another one, archive, delete) makes all earlier tickets stale, and a result with a stale ticket is not drawn and starts no reading. The two lists (current, archived) are told apart the same way. A change of the page behind does not leave the conversation.
+- **After a reload.** The tab keeps the id of the open conversation in `sessionStorage` (`scf-ask-open`), nothing else. `restorePick` takes it only when the list the server sent at the start still holds it; without one it takes the conversation whose reply is being written. It is read when the drawer opens. A conversation that is gone gives an empty drawer.
+- **History.** `GET /api/help/conversations` (and `?archived=1`) is read each time the list is opened. Delete asks with `confirmDialog` and names the consequence.
+- **A reply by its parts (#236).** `replyLayout(reply, role)` turns the checked `reply` of a message into the short answer, the state of trust, the sources the question needs (`basis`), the cards and the sources with assumptions. A message without `reply` shows its text. `ui/ask-view.js` draws it with `h`, so every string is a text node: nothing of a reply is read as HTML and no address in a text becomes a link.
+  - **Links are checked again in the browser.** `pageLink(role, to)` takes an address only when `resolve` of `ui/ia.js` gives the same address back for the role (no fallback, no alias, no query). A link of a reply must also be a page without an id (`fixed`); a source may point at one run or one repository. Anything else is shown as text in a card that says so. The name of a link is the page's own title.
+  - **Trust has five states** (`trustOf`): `confirmed`, `low` (likely, or unsure with sources), `missing` (no source of the kind `NEEDS` names for the question, whatever certainty the reply claims), `conflict` (two sources with the same kind and place and different titles) and `limit`. Each has its own sign, name and border. The contract has no field for a contradiction, so `conflict` is derived from the sources; a later story may replace that by a field of the server.
+  - **Cards never act.** `cardsOf` marks each card `read-only` or `changes-state`, as `PART_RULES` of the contract does. An action is drawn as a suggestion without any control; running one is #240.
+- **Styles.** `ui/css/pages/ask.css`, class names start with `ask-`. The drawer is `--layer-menu` + 1, so a dialog and a toast lie over it. It is the whole width at 767 px and below. It has no transition and no animation.
+
+### Ask SCF: scenario evaluations
+
+`src/server/help-evals.ts` and `src/server/help-eval-scenarios.ts` (#244) prove the promises of
+Ask SCF on fixed inputs. A scenario is a question, a role, optionally a page context with the
+things the account can see, the sources the server would offer, the answer of a stubbed
+provider, and what must hold.
+
+- **The path** (`runScenario`): `resolveContext` → `prepareTurn` → `turnPrompt` → the model
+  (a function) → `jsonOf` → `checkReply` → `doubted` (the rule of the turn service, now an
+  exported function of `turn.ts`). Nothing is stored; the guard uses the scenario's own
+  patterns and no stored credentials.
+- **The sources** are made by `sourceOf`, `conflictSource`, `diagnose` and `diagnosisSource`,
+  so a scenario offers what a server offers.
+- **Checks** (`CHECKS`): `secret-leak` and `permission-leak` (a text the scenario names is in
+  the prompt or in the kept reply), `unsafe-action`, `citation`, `grounding` (the certainty is no
+  higher than the cited sources allow; with the stub it is also exactly the expected one), `withheld`, `refusal`, `usefulness`,
+  `context-size` (`PROMPT_BUDGET`), `told`, and `sent` / `contract` when no reply is kept.
+- **The verdict** (`runHelpEval`, `THRESHOLDS`): the zero-tolerance numbers, the rates, and
+  with the stub any failed scenario. `blocking` says in fixed words what blocks a release.
+- **The report** (`reportText`, `saveHelpEval`): ids, counts and fixed sentences only; the
+  file goes to `evals/help/` (mode 0600), which `listEvalReports` does not read.
+- **Providers**: `stubModel` in `npm test`; `liveModel` (the options of a turn: no tools, no
+  MCP servers, no GitHub token, an empty folder, the cost limit of a turn) only behind
+  `scf eval help --live`.
+
+Tests: `tests/help-evals.test.ts`.
 
 ### Helper processes
 

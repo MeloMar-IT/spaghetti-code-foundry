@@ -1,0 +1,7 @@
+id: kafka
+version: 1.0.0
+category: interface
+capabilities: [kafka-producer, kafka-consumer, kafka-streams, kafka-schema, kafka-transactions]
+roles: [coder, reviewer]
+# Guidance only: no connectors, no shell and no network, so the skill gives no access to a cluster.
+risk: high

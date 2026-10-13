@@ -41,9 +41,10 @@ export interface Forecast {
 /**
  * The weekly limit is not published, so it is worked out from one reading by a person: tokens used
  * since the reset ÷ the share they saw. That holds only while the mix of work stays about the same,
- * so it is an estimate. Below 5% a reading is too coarse to use.
+ * so it is an estimate. Below 5% a reading is too coarse to use. `effective`: the runs at once that
+ * were allowed when the pace was measured (the configured number, or lower under a cap).
  */
-export function forecast(runs: RunSummary[], family: Family, cal: Calibration | undefined, now: Date, configured: number): Forecast {
+export function forecast(runs: RunSummary[], family: Family, cal: Calibration | undefined, now: Date, configured: number, effective = configured): Forecast {
   const t = now.getTime();
   const perHour = tokensUsed(runs, family, t - 24 * HOUR, t) / 24;
   const limitHits = runs.reduce((n, r) => n + (r.history ?? []).filter((h) => h.limited && h.agent?.startsWith(family) && Date.parse(h.startedAt) >= t - 24 * HOUR).length, 0);
@@ -63,7 +64,10 @@ export function forecast(runs: RunSummary[], family: Family, cal: Calibration | 
   const hoursLeft = left / perHour;
   const hoursToReset = (reset - t) / HOUR;
   if (hoursLeft >= hoursToReset) return out;
-  const runsAtOnce = Math.max(1, Math.min(configured - 1, Math.floor((configured * hoursLeft) / hoursToReset)));
+  // The pace was made by the runs that were allowed at once (`effective`: the configured number or a cap that holds),
+  // so that number is what must shrink — not the configured one, or a cap could go up while the limit is still overrun.
+  const base_ = Math.max(1, Math.min(configured, effective));
+  const runsAtOnce = Math.max(1, Math.min(configured - 1, Math.floor((base_ * hoursLeft) / hoursToReset)));
   return { ...out, emptyAt: new Date(t + hoursLeft * HOUR).toISOString(), ...(configured > 1 ? { runs: runsAtOnce } : {}) };
 }
 
@@ -84,3 +88,18 @@ export function limitsReport(fs: Forecast[], auto: boolean): string {
   out.push(auto ? "Slowing down is on: when a limit would be reached before its reset, the number of runs at once is lowered." : "Slowing down is off (`scf limits auto on`): this is a forecast only.", "");
   return out.join("\n");
 }
+
+/**
+ * The next reset as a person types it. Without a time zone it is local time, also a date alone
+ * ("2026-10-19" is midnight here, not in UTC). NaN when it cannot be read.
+ */
+export function parseReset(text: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(text.trim());
+  if (!m) return Date.parse(text);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0));
+  // 2026-02-31 must not become a day in March
+  return d.getMonth() === Number(m[2]) - 1 && d.getDate() === Number(m[3]) ? d.getTime() : NaN;
+}
+
+/** A week resets within 7 days: a reset further ahead is a typing mistake, and would make every forecast wrong. */
+export const MAX_RESET_AHEAD_MS = WEEK;

@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { dataHome } from "./auth/store.js";
 import { prunePlanRecords } from "./skills/plan-record.js";
 import { listRunIds, loadRun, type RunSummary } from "./engine/state.js";
+import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
 
 export interface CleanOptions {
   runsDir: string;
@@ -17,6 +18,11 @@ export interface CleanOptions {
   /** The data folder whose plan records are cleaned with `purge`; default: the data folder when `runsDir` is its `runs` folder. */
   planRecordsHome?: string;
   isActive?: (runId: string) => boolean;
+  /**
+   * Also remove the evidence files of the cleaned runs that finished at least this many days ago and are kept as runs.
+   * Not set: evidence stays as long as its run (the behaviour before this option).
+   */
+  evidenceOlderThanDays?: number;
 }
 
 export interface CleanResult {
@@ -28,6 +34,39 @@ export interface CleanResult {
   planRecords?: number;
   /** The plan records could not be cleaned (the store is locked or cannot be written). */
   planRecordsFailed?: boolean;
+  /** The ids of the runs whose evidence was removed (or would be, on a dry run) while the run itself stays. */
+  evidence: string[];
+}
+
+/**
+ * The evidence of a run, in the order it is removed: the manifest first, so a removal that is interrupted leaves a run
+ * that is "not finalized", never a manifest without its events. All of it goes or none: the logs and transcripts the
+ * manifest needs stay with the run, so what is left is a run without evidence, not one that fails verification.
+ */
+const EVIDENCE_FILES = [EVIDENCE_MANIFEST_FILE, EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE];
+
+function hasEvidence(runDir: string): boolean {
+  return EVIDENCE_FILES.some((name) => {
+    try {
+      lstatSync(join(runDir, name));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Removes the evidence files (never following a link); false when one of them could not be removed. */
+function removeEvidence(runDir: string): boolean {
+  let all = true;
+  for (const name of EVIDENCE_FILES) {
+    try {
+      rmSync(join(runDir, name), { force: true });
+    } catch {
+      all = false;
+    }
+  }
+  return all;
 }
 
 /** Plan records are kept at least this long, so routine clean-up does not force a new plan. */
@@ -69,7 +108,9 @@ function removeWorkspace(s: RunSummary) {
  */
 export function cleanRuns(o: CleanOptions): CleanResult {
   const cutoff = Date.now() - o.olderThanDays * 86_400_000;
-  const res: CleanResult = { workspaces: [], runs: [], freedMb: 0, kept: [] };
+  const res: CleanResult = { workspaces: [], runs: [], freedMb: 0, kept: [], evidence: [] };
+  const evidenceDays = o.evidenceOlderThanDays;
+  const evidenceCutoff = evidenceDays !== undefined && evidenceDays >= 0 ? Date.now() - evidenceDays * 86_400_000 : undefined;
   for (const id of listRunIds(o.runsDir)) {
     const s = loadRun(o.runsDir, id);
     if (!s) continue;
@@ -95,6 +136,10 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       res.freedMb += sizeMb(s.workdir!);
       res.workspaces.push(s.workdir!);
       if (!o.dryRun) removeWorkspace(s);
+    }
+    // The run stays: its evidence goes when it is past its own age. (A purge removed it with the run.)
+    if (!o.purge && evidenceCutoff !== undefined && when <= evidenceCutoff && hasEvidence(s.runDir)) {
+      if (o.dryRun || removeEvidence(s.runDir)) res.evidence.push(id);
     }
   }
   const home = o.planRecordsHome ?? (resolve(o.runsDir) === resolve(join(dataHome(), "runs")) ? dataHome() : undefined);

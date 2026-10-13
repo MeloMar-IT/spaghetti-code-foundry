@@ -6,12 +6,11 @@ import { ConfigSchema } from "../src/config.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
 import { runFlow } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
-import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
+import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${port}`;
+let base: string;
 const A = "key-var-a-0123456789-abcdef";
 const B = "key-var-b-0123456789-ghijkl";
 const NAMES = ["KEY_VAR_A_FOR_TEST", "KEY_VAR_B_FOR_TEST", "KEY_VAR_SHORT_FOR_TEST"];
@@ -43,7 +42,7 @@ beforeAll(async () => {
   runId = s.id;
   writeFileSync(join(process.env.FACTORY_HOME, "config.yaml"), "providers:\n  pa: { kind: anthropic-compatible, base_url: 'http://127.0.0.1:1', api_key_env: KEY_VAR_A_FOR_TEST }\n");
   resetRedactCache(); // the run above knew nothing of the key variables; the server must register them itself
-  ({ close } = await startServer({ repo: tmp, runsDir: join(tmp, "runs"), port, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
+  ({ close, base } = await startTestServer({ repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, log: (m) => void logs.push(m) }));
   ann = await signInAs(base);
 });
 afterAll(() => {

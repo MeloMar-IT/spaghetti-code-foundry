@@ -43,6 +43,8 @@ a.pill.refinement:hover { text-decoration: underline; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .seg button { border: none; border-radius: var(--radius-none); padding: 5px 12px; }
 .seg button.on { background: var(--panel-2); font-weight: 600; }
+.scope-switch a { padding: 5px 12px; color: inherit; text-decoration: none; }
+.scope-switch a[aria-current="page"] { background: var(--panel-2); font-weight: 600; }
 .prefs { display: grid; gap: var(--space-lg); }
 .prefs .seg { justify-self: start; flex-wrap: wrap; }
 .status { font-size: var(--text-small); }
@@ -156,5 +158,6 @@ button.icon { justify-content: center; }
 
 /* My repositories: a long name wraps inside its cell; compact rows hide the helper texts */
 .table td.repo-name { max-width: 32ch; overflow-wrap: anywhere; }
+.table td.integration, .table td.fingerprint { overflow-wrap: anywhere; }
 .table td.next-step .muted { max-width: 36ch; overflow-wrap: anywhere; font-size: var(--text-small); }
 .table.compact .field small { display: none; }

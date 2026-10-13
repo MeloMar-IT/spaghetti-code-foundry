@@ -686,10 +686,14 @@ write("issue-plan", {
   );
   // Tests of code that was already tested (before the change, after the merge) run once more when they
   // fail: on a busy machine a timing-sensitive test can fail by chance. A real failure fails twice.
+  // The log of the first run is kept as tests.first.log when the second run passes (and only then): it names the
+  // tests that failed by chance, which `scf flaky` reads. Without it the second run's clean log is all that is left.
+  const testsOnceMore =
+    'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi';
   const testsRunRetry = testsRunFull.replace(
     '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
     '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?\n' +
-      'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
+      testsOnceMore,
   );
   // Also: when this exact code (a clean tree) already passed these tests in another run, they are not run
   // again — the tests before a change run on the develop the previous story just tested.
@@ -706,7 +710,7 @@ write("issue-plan", {
     '  echo; echo "=== summary ==="; echo "result: PASSED (already tested)" | tee "{{run.dir}}/last-tests.txt"',
     'else',
     '  "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
-    '  ' + 'if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; [ "$code" -eq 0 ] && echo "passed the second time: a flaky test, not a real failure"; fi',
+    '  ' + testsOnceMore,
     '  tail -150 "{{run.dir}}/tests.log"',
     '  echo; echo "=== summary ==="',
     '  { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"',
@@ -1926,11 +1930,21 @@ write("release-daily", {
       type: "shell",
       description: "Full tests and build on develop",
       run: [
-        // once a day and with a time limit of its own: it starts at once instead of queueing for a test slot behind the stories
-        "export FACTORY_VAR_TEST_SLOTS=0",
+        // Once a day and with a time limit of its own: it takes a test slot like every test run (so the others count it,
+        // and the load governor's limit on test runs holds for it too), but waits five minutes at most instead of
+        // queueing behind the stories for as long as it takes; after that it runs anyway. A value that is set stays.
+        'export FACTORY_TEST_SLOT_WAIT_SEC="${FACTORY_TEST_SLOT_WAIT_SEC:-300}"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
+        // A green run on a clean tree is recorded in tested/ (the checked form, with the tree), so that self-update can skip
+        // its own tests on the same code. Every git exit status is checked. It is written right after the tests and before the
+        // build, so the build can neither hide what the tests left behind nor stop the record. A record that fails changes nothing.
+        'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
         '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
+        'if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then',
+        '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40)',
+        '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi',
+        'fi',
         'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
         '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',

@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
-import { apiAs, openAs, type Api, type Role } from "./helpers.js";
+import { apiAs, cancelRuns, isStart, onlyNote, openAs, seed, startedId, startRun, type Api, type ApiResponse, type OpenOptions, type Role } from "./helpers.js";
 import { journey } from "./journey.js";
 import { BASELINE, KNOWN_OVER, over, REDESIGN, type Counts, type TaskId } from "./journeys-baseline.js";
 
@@ -19,44 +19,45 @@ function settle(id: TaskId, counts: Counts): void {
   expect(gap, `task ${id} is longer than the baseline`).toEqual([]);
 }
 
-async function startRun(api: Api, flow: string, task: string, status: string): Promise<string> {
-  const res = await api.send("POST", "/api/runs", { flow, task });
-  expect(res.status(), `start the ${flow} run`).toBe(201);
-  const { runId } = (await res.json()) as { runId: string };
-  await expect.poll(async () => ((await (await api.send("GET", `/api/runs/${runId}`)).json()) as { status: string }).status, { timeout: 20_000 }).toBe(status);
-  return runId;
-}
-
-async function withPage(browser: Browser, role: Role, hash: string, body: (page: Page, api: Api) => Promise<void>): Promise<void> {
-  const api = await apiAs(role);
-  const page = await openAs(browser, role, W, hash);
+async function withPage(browser: Browser, role: Role, hash: string, body: (page: Page, api: Api) => Promise<void>, opts: OpenOptions = {}): Promise<void> {
+  const api = await apiAs(role, opts.large ? "large" : "default");
+  let page: Page | undefined;
   try {
+    page = await openAs(browser, role, W, hash, opts);
     await body(page, api);
   } finally {
-    await page.context().close();
+    await page?.context().close();
     await api.close();
   }
 }
 
 test.describe("the five tasks", () => {
   test("1 Start work", async ({ browser }) => {
+    // Runs on the large server, where the published `note` flow exists; the flow list is cut to it so the page offers one flow.
+    expect(seed("large").noteFlow).toBe("note");
+    const TASK = "Journey 1 start work";
     await withPage(browser, "user", "", async (page, api) => {
-      const j = await journey(page);
-      await j.click(page.locator('#top-actions a[data-nav="start"]'), { opens: "page" });
-      const task = page.locator('textarea[name="task"]');
-      await j.click(task);
-      await j.fill(task, "Journey 1 start work");
-      await j.click(page.getByRole("button", { name: "Review", exact: true }));
-      await j.click(page.getByRole("button", { name: "Start", exact: true }), { opens: "page" });
+      await onlyNote(page);
+      // the id comes from the answer to the start request, wherever the page ends up
+      let posted: Promise<string | undefined> = Promise.resolve(undefined);
+      page.on("response", (r) => { if (isStart(r.request())) posted = startedId(r); });
       try {
+        const j = await journey(page);
+        await j.click(page.locator('#top-actions a[data-nav="start"]'), { opens: "page" });
+        const task = page.locator('textarea[name="task"]');
+        await j.click(task);
+        await j.fill(task, TASK);
+        await j.click(page.getByRole("button", { name: "Review", exact: true }));
+        await j.click(page.getByRole("button", { name: "Start", exact: true }), { opens: "page" });
         await expect(page).toHaveURL(/#\/runs\/[\w-]+$/);
-        await expect(page.locator("#main")).toContainText("Journey 1 start work");
+        await expect(page.locator("#main")).toContainText(TASK);
         settle(1, await j.finish());
       } finally {
-        const id = /#\/runs\/([\w-]+)$/.exec(page.url())?.[1];
+        const id = await posted;
         if (id) await api.send("POST", `/api/runs/${id}/cancel`, {}).catch(() => undefined);
+        await cancelRuns(api, TASK);
       }
-    });
+    }, { large: true });
   });
 
   test("2 Approve a waiting run", async ({ browser }) => {
@@ -143,6 +144,90 @@ test.describe("the five tasks", () => {
         if (id) await api.send("POST", `/api/refinement/${id}/drop`, {}).catch(() => undefined);
       }
     });
+  });
+});
+
+test.describe("the clean-up", () => {
+  test("cancelRuns cancels a queued job that has no run record", async () => {
+    const task = "Clean-up task";
+    const calls: string[] = [];
+    const answers: Record<string, unknown> = {
+      "/api/queue": { pending: [{ runId: "q-1", task }, { runId: "q-2", task: "Other" }, { runId: "q-3", task }, { runId: "q-4", task }], active: [] },
+      "running": [{ runId: "r-1", task }, { runId: "r-x", task: "Other" }],
+      "waiting": [{ runId: "w-1", task }],
+    };
+    const reply = (status: number, body: unknown): ApiResponse => ({ status: () => status, json: async () => body });
+    const api: Api = {
+      send: async (method, path) => {
+        if (method === "GET") return reply(200, answers[path] ?? answers[new URL(path, "http://x").searchParams.get("status") ?? ""]);
+        calls.push(path);
+        // the first cancel answers 500 and the second request is rejected: the others are still tried, and both are reported
+        if (path === "/api/runs/q-3/cancel") throw new Error("socket hang up");
+        return reply(path === "/api/runs/q-1/cancel" ? 500 : 200, {});
+      },
+      close: async () => undefined,
+    };
+    await expect(cancelRuns(api, task)).rejects.toThrow(/q-1 \(500\).*q-3 \(socket hang up\)/);
+    expect(calls).toEqual(["/api/runs/q-1/cancel", "/api/runs/q-3/cancel", "/api/runs/q-4/cancel", "/api/runs/r-1/cancel", "/api/runs/w-1/cancel"]);
+  });
+
+  test("cancelRuns drains more than 200 waiting runs, filtered by the task", async () => {
+    const task = "Many waiting";
+    const open = new Set(Array.from({ length: 450 }, (_, i) => `w-${i}`));
+    const queries: string[] = [];
+    const reply = (body: unknown): ApiResponse => ({ status: () => 200, json: async () => body });
+    const api: Api = {
+      send: async (method, path) => {
+        if (method === "POST") {
+          open.delete(/\/api\/runs\/([^/]+)\/cancel/.exec(path)?.[1] ?? "");
+          return reply({});
+        }
+        if (path === "/api/queue") return reply({ pending: [], active: [] });
+        const url = new URL(path, "http://x");
+        queries.push(url.search);
+        // like the server: the filter first, then at most 200 rows
+        const rows = url.searchParams.get("status") === "waiting" && url.searchParams.get("q") === task ? [...open].slice(0, 200).map((runId) => ({ runId, task })) : [];
+        return reply(rows);
+      },
+      close: async () => undefined,
+    };
+    await cancelRuns(api, task);
+    expect(open.size).toBe(0);
+    expect(queries.some((x) => x.includes("status=waiting") && x.includes("q=Many%20waiting"))).toBe(true);
+  });
+
+  test("a run whose page never navigated after submit is still cancelled", async ({ browser }) => {
+    const task = "Journey clean-up without navigation";
+    await withPage(browser, "user", "#/start", async (page, api) => {
+      let created: string | undefined;
+      try {
+        // the server creates the run, but the page never sees the answer
+        await page.route((url) => url.pathname === "/api/runs", async (route) => {
+          if (route.request().method() !== "POST") return route.fallback();
+          const response = await route.fetch();
+          expect(response.status(), "the start request").toBe(201);
+          created = await startedId(response);
+          await route.abort();
+        });
+        await page.locator('textarea[name="task"]').fill(task);
+        await page.getByRole("button", { name: "Review", exact: true }).click();
+        const failed = page.waitForEvent("requestfailed", isStart);
+        await page.getByRole("button", { name: "Start", exact: true }).click();
+        await failed;
+        expect(page.url()).toMatch(/#\/start$/);
+        expect(created, "the run id of the created run").toBeTruthy();
+      } finally {
+        await cancelRuns(api, task);
+      }
+      const state = async (): Promise<string> => {
+        const res = await api.send("GET", `/api/runs/${created}`);
+        if (res.status() === 404) return "gone";
+        const body: unknown = await res.json();
+        const status = typeof body === "object" && body !== null ? Reflect.get(body, "status") : undefined;
+        return typeof status === "string" ? status : "unknown";
+      };
+      await expect.poll(state, { timeout: 20_000 }).toMatch(/^(cancelled|gone)$/);
+    }, { large: true, before: onlyNote });
   });
 });
 

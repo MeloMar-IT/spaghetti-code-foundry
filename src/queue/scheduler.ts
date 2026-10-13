@@ -10,6 +10,8 @@ import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { runIdsStartedToday } from "./usage.js";
+import type { Actor } from "../evidence/identity.js";
+import { actorOf } from "../evidence/record.js";
 
 const MAX_LOG_LINES = 5000;
 
@@ -58,6 +60,8 @@ interface Active {
   account?: string;
   /** The round-robin group: the owner when the job was queued, "" for jobs without an owner. Never changes. */
   group: string;
+  /** Evidence only: who cancelled the run. */
+  cancelledBy?: Actor;
 }
 
 /** Which per-user limit holds a job back. */
@@ -267,16 +271,18 @@ export class Scheduler {
     return [...this.active.values()].some((a) => a.queued.lockKey === lockKey) || this.pending.some((p) => p.lockKey === lockKey);
   }
 
-  cancel(runId: string): boolean {
+  /** `by`: who asked, for the evidence of the run; without it the cancel is the Foundry's own. */
+  cancel(runId: string, by?: Actor): boolean {
     const i = this.pending.findIndex((p) => p.runId === runId);
     if (i >= 0) {
       const [job] = this.pending.splice(i, 1);
       this.persist();
-      if (job?.job.kind === "resume") this.cancelWaiting(runId); // a queued approval: the run no longer waits
+      if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits
       return true;
     }
     const a = this.active.get(runId);
-    if (!a) return this.cancelWaiting(runId);
+    if (!a) return this.cancelWaiting(runId, by);
+    a.cancelledBy ??= by;
     a.controller.abort();
     return true;
   }
@@ -311,8 +317,8 @@ export class Scheduler {
   }
 
   /** Cancel a run that waits for approval (no process runs for it). */
-  private cancelWaiting(runId: string): boolean {
-    const summary = cancelWaitingRun(this.o.runsDir, runId, this.o.config());
+  private cancelWaiting(runId: string, by?: Actor): boolean {
+    const summary = cancelWaitingRun(this.o.runsDir, runId, this.o.config(), by);
     if (!summary) return false;
     // A run that is still finishing (its "waiting" notify command runs) shows the new state too.
     const live = this.active.get(runId);
@@ -373,6 +379,10 @@ export class Scheduler {
   }
 
   queue() {
+    const concurrency = this.o.config().concurrency;
+    // A helper's cap (machine load, usage limits) holds back new runs only; see pump().
+    const cap = runLimit(concurrency);
+    const capFull = this.active.size >= cap && this.active.size < concurrency;
     return {
       pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
         const limit = this.limited.get(runId);
@@ -384,6 +394,8 @@ export class Scheduler {
           runId, lockKey, repoLock, source, enqueuedAt, kind: job.kind, waitingFor: blocker?.runId,
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
+          // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
+          ...(capFull && job.kind === "run" && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
@@ -391,7 +403,9 @@ export class Scheduler {
         };
       }),
       active: [...this.active.values()].map((a) => ({ runId: a.queued.runId, lockKey: a.queued.lockKey, repoLock: a.queued.repoLock, source: a.queued.source })),
-      concurrency: this.o.config().concurrency,
+      // the configured number; `cap` is there only while a helper's cap lowers it for new runs
+      concurrency,
+      ...(cap < concurrency ? { cap } : {}),
     };
   }
 
@@ -722,6 +736,10 @@ export class Scheduler {
       },
       // a job without an account falls to the first admin inside runFlow: it stays under the global budget only
       userDailyBudget: this.o.userLimits && account ? (o: string) => this.userDailyBudget(o) : undefined,
+      // evidence only: who asked, when it was queued, and who cancelled it
+      actor: actorOf(q.source, queuerOf(q)),
+      queuedAt: q.enqueuedAt,
+      cancelledBy: () => a.cancelledBy,
     };
     const j = q.job;
     const promise =

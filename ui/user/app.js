@@ -1,3 +1,4 @@
+import { initAsk } from "/ask.js";
 import { initContext } from "/context.js";
 import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
@@ -98,6 +99,8 @@ readOnly = view.readOnly;
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });
+// Ask SCF: only for the person's own display (a preview shows no conversations), and only when it is switched on.
+if (view.ready && !view.readOnly) void initAsk("user");
 // Only now: before the role is known or the context has loaded, a hash change must not draw a page.
 // The first draw below uses the latest address.
 await context?.ready;

@@ -14,8 +14,10 @@ import { isRun, noRuns, part, partNote, runLoadKind, runLoadState, runStream, ru
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "./run-tabs.js";
 import { createTimeline } from "./run-timeline.js";
 import { collectionPage, detailPage } from "./templates.js";
-import { renderSections, runSections, sectionOf } from "./runs-list.js";
-import { noMatch, runsBar } from "./runs-bar.js";
+import { archivedSections, readDensity, renderSections, runSections, sectionOf, writeDensity } from "./runs-list.js";
+import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "./runs-bar.js";
+// This module and ./user/runs.js import each other: neither uses the other at the top level, only inside functions.
+import { confirmDialog } from "./user/runs.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, filterQuery, isActive, isServerActive, jobMatches, serverKey } from "./runs-filter.js";
 
 export { diffView, logLine, transcriptView } from "./run-output.js";
@@ -121,9 +123,11 @@ export async function askRuns(ask, f, names) {
  * Runs list; refreshes itself every 30 seconds through the poller and never rejects. Returns a cleanup function that stops that.
  * `filter` is the full filter of the address (see ./runs-filter.js); without it the filter is built from `query`. `go` writes
  * a changed address. `alive` tells whether the page is still the one on screen: no request starts after it says no.
+ * `ask(title, text, yes, no)` is the yes/no question of "Archive N runs".
  */
-export async function renderRunsList(main, { admin = true, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs") } = {}) {
+export async function renderRunsList(main, { admin = true, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs"), ask = confirmDialog, store } = {}) {
   let closed = false;
+  let density = readDensity(store);
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let forcing = false;
   let data = null;
@@ -134,7 +138,31 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
   let shown = null; // { filter, data }: what the page shows now
   const refresh = () => live.refresh();
   const gone = () => closed || !alive();
-  const bar = admin ? runsBar({ admin, onChange: (next) => apply(next) }) : null;
+  const bar = admin ? runsBar({ admin, density, onChange: (next) => apply(next), onDensity: (d) => { density = d; writeDensity(d, store); if (data) render(); } }) : null;
+
+  // The selection: ids of runs ticked in Failed, Completed or Archived. `busy` covers the whole batch, the question included.
+  const selected = new Set();
+  let busy = false;
+  let archivedShown = false;
+  const select = {
+    has: (id) => selected.has(id),
+    toggle: (id, on) => {
+      if (on) selected.add(id);
+      else selected.delete(id);
+      bulk.show(selected.size, archivedShown, busy);
+    },
+  };
+  const bulk = bulkBar({
+    onAct: () => act(),
+    onClear: () => { selected.clear(); if (data) render(); },
+    home: () => {
+      const toggle = sections.hidden ? null : [...sections.querySelectorAll("button")].find((b) => b.classList.contains("run-section-toggle"));
+      if (toggle) return toggle;
+      const heading = main.querySelector("h1");
+      heading?.setAttribute("tabindex", "-1");
+      return heading;
+    },
+  });
 
   const slot = h("div");
   const states = runsLiveStates({
@@ -155,7 +183,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     actions: [h("span", { class: "spacer" }), states.note, h("button", { "data-focus": "refresh", onClick: refresh }, "↻ Refresh")],
     notices: states.alert,
     filters: [bar?.el, slots.filter.el],
-    list: [slots.owners.el, slots.cap.el, slots.queue.el, sections],
+    list: [slots.owners.el, slots.cap.el, slots.queue.el, bulk.el, sections],
     empty: slots.empty.el,
   });
 
@@ -200,6 +228,8 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
   const apply = (next) => {
     if (closed || JSON.stringify(next) === JSON.stringify(filter)) return;
     const reload = admin && serverKey(next) !== serverKey(filter);
+    const toggled = (next.view === "archived") !== (filter.view === "archived");
+    if (toggled) selected.clear();
     filter = next;
     go(filterHash(filter));
     bar?.sync(filter);
@@ -207,6 +237,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
       if (!pending() && shown) showNow({ ...shown.data, filter });
       return;
     }
+    if (toggled && data) render(); // the boxes and the bar follow the cleared selection at once
     fetchAll().then((d) => { if (!closed && d) showNow(d); }, rollback);
   };
   const clear = () => apply(emptyFilter());
@@ -220,10 +251,13 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     const ownerName = owners?.find((o) => o.id === f.owner)?.name; // queued jobs carry the name, not the id
     const browserRepo = Boolean(f.repo) && !data.canon?.length; // the server does not know this repository: filter here
     const now = Date.now();
+    const arch = f.view === "archived";
+    if (arch !== archivedShown) { selected.clear(); archivedShown = arch; }
     const keep = (e) => {
       if (browserRepo && !sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo, f.repo)) return false;
       if (admin && !e.run && !jobMatches(e.job, f, { ownerName, now })) return false;
       if (f.needs && sectionOf(e) !== "needs") return false;
+      if (arch) return true;
       return !f.view || sectionOf(e) === f.view;
     };
     const labels = { owner: ownerLabel(ownerName) || f.owner };
@@ -233,7 +267,7 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     // Saved views: the owner ids come from the owner list the page already loads (unknown when it failed).
     const vp = views?.parts(vf, { owners: owners ? owners.map((o) => o.id) : null, redraw: () => { slots.empty.key = null; if (!closed && data) render(); } }) ?? {};
     const stale = Boolean(vp.stale); // an out-of-date saved view is open: the empty state, even when the server still sent rows
-    const secs = stale ? [] : runSections(runs, queue?.pending ?? [], keep);
+    const secs = stale ? [] : arch ? archivedSections(runs, keep) : runSections(runs, queue?.pending ?? [], keep);
     const found = secs.length > 0;
 
     // The page is built once; each part changes only when its own content does, so the list keeps its nodes and the focus.
@@ -252,7 +286,31 @@ export async function renderRunsList(main, { admin = true, query = {}, filter: s
     patch(slots.empty, JSON.stringify([f, labels, stale, found, note]), () => (stale ? filterEmpty("runs", vf, { labels, onClear: clear, onDelete: vp.onDelete })
       : found ? null : admin && isActive(f) ? noMatch({ onClear: clear, note }) : !admin && f.repo ? filterEmpty("runs", vf, { labels, note, onClear: clear }) : noRuns()));
     sections.hidden = !found;
-    renderSections(sections, secs, { admin, onRemove, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } });
+    const can = new Set(renderSections(sections, secs, { admin, onRemove, select, density, notes: { queued: admin && queue ? `${queue.active.length}/${queue.concurrency} running` : "" } }));
+    for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section
+    bulk.show(selected.size, archivedShown, busy);
+  }
+
+  // Archive (or take out of the archive) the ticked runs, one request after the other; nothing is drawn or said after the page was left.
+  async function act() {
+    if (busy || !selected.size || gone()) return;
+    busy = true;
+    const ids = [...selected]; // the snapshot, before the question
+    const unarchive = archivedShown;
+    bulk.show(selected.size, archivedShown, busy);
+    let result = null;
+    try {
+      result = await bulkArchive(ids, { unarchive, a: api, ask, gone: () => closed });
+    } finally {
+      busy = false;
+    }
+    if (closed) return;
+    if (!result) { if (data) render(); return; }
+    selected.clear();
+    toast(bulkText(result, unarchive), result.refused.length ? "error" : "info");
+    if (data) render(); // the poller does not redraw an unchanged answer
+    gen++; // an answer asked before the batch still shows the runs
+    refresh();
   }
 
   // Remove a queued run from its row; nothing is drawn or said after the page was left.

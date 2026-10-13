@@ -7,6 +7,7 @@ import { findSession, readSessions, revokeSession, revokeUserSessions, sessionId
 import { createUser, hasAdmin, listUsers, setPassword, setStatus, startSession } from "../src/auth/users.js";
 import { SESSION_RECHECK_MS, throttlesOf } from "../src/server/api-auth.js";
 import { startServer, type ServerOptions } from "../src/server/server.js";
+import { startTestServer } from "./helpers/port.js";
 import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
 
 const PW = TEST_PASSWORD;
@@ -24,14 +25,14 @@ interface Srv {
   restart: () => Promise<void>;
 }
 
-async function listen(opts: Omit<ServerOptions, "port">, port?: number) {
+/** Starts again on the port of the first start: the session cookie is named after it. The old socket may still be closing. */
+async function listenAgain(opts: Omit<ServerOptions, "port">, port: number) {
   for (let i = 0; ; i++) {
-    const p = port ?? 20000 + Math.floor(Math.random() * 20000);
     try {
-      return { port: p, started: await startServer({ ...opts, port: p }) };
+      return await startServer({ ...opts, port });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EADDRINUSE" || i >= 40) throw e;
-      await new Promise((r) => setTimeout(r, port ? 50 : 0));
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
 }
@@ -43,25 +44,25 @@ async function boot(extra: Partial<ServerOptions> = {}): Promise<Srv> {
   process.env.FACTORY_HOME = home;
   const logs: string[] = [];
   const opts = { repo: tmp, runsDir: join(tmp, "runs"), claudeBin: resolve("tests/fixtures/fake-claude.mjs"), watchers: false, sessionRecheckMs: 100, log: (m: string) => void logs.push(m), ...extra };
-  const first = await listen(opts);
+  const first = await startTestServer(opts);
   const s: Srv = {
-    base: `http://127.0.0.1:${first.port}`,
+    base: first.base,
     port: first.port,
     home,
     logs,
-    ctx: first.started.ctx,
+    ctx: first.ctx,
     close: () => {
       closeCurrent();
       rmSync(tmp, { recursive: true, force: true });
     },
     restart: async () => {
       closeCurrent();
-      const again = await listen(opts, first.port);
-      s.ctx = again.started.ctx;
-      closeCurrent = again.started.close;
+      const again = await listenAgain(opts, first.port);
+      s.ctx = again.ctx;
+      closeCurrent = again.close;
     },
   };
-  let closeCurrent = first.started.close;
+  let closeCurrent = first.close;
   return s;
 }
 

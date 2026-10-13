@@ -1,4 +1,4 @@
-// The filter bar of the admin Runs list: search box, selects, "Only what needs me", the Show buttons and Clear filters.
+// The filter bar of the admin Runs list: search box, selects, "Only what needs me", the Show buttons, the Density buttons and Clear filters.
 // The bar is built once and never re-mounted, so the search box keeps its node, text and focus over every redraw.
 // It owns the 300 ms timer of the search box and the text typed but not yet committed (the draft).
 import { h } from "./dom.js";
@@ -9,13 +9,13 @@ export const NO_MATCH = "No runs match your search and filters.";
 
 const STATUS_LABEL = { running: "Running", waiting: "Waiting", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", stopped: "Stopped" };
 const TIME_OPTIONS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"]];
-const SHOW = [["", "All", "all"], ["needs", "Needs you", "needs"], ["running", "Running", "running"], ["queued", "Queued", "queued"], ["failed", "Failed", "failed"], ["completed", "Completed", "completed"]];
+const SHOW = [["", "All", "all"], ["needs", "Needs you", "needs"], ["running", "Running", "running"], ["queued", "Queued", "queued"], ["failed", "Failed", "failed"], ["completed", "Completed", "completed"], ["archived", "Archived", "archived"]];
 // As ownerLabel in ./runs.js (which this module does not import): the server's "deleted account" is shown as "deleted user".
 const ownerName = (name) => (name === "deleted account" ? "deleted user" : name ?? "");
 const list = (v) => (Array.isArray(v) ? v : []);
 
 /** The state of the bar's draft: `onChange(nextFilter)` is called with the whole new filter. */
-export function runsBar({ admin = true, onChange } = {}) {
+export function runsBar({ admin = true, onChange, density: density0 = "comfortable", onDensity } = {}) {
   let current = emptyFilter();
   let draft = null; // text typed and not committed yet
   let timer;
@@ -68,11 +68,32 @@ export function runsBar({ admin = true, onChange } = {}) {
   const shows = SHOW.map(([view, text, id]) => h("button", { type: "button", "data-focus": `runs-view-${id}`, "aria-pressed": "false", onClick: () => emit({ ...current, q: take(), view }) }, text));
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Show" }, shows);
 
+  // Density is the display, not the filter: the bar owns the pressed state and tells the page by `onDensity`.
+  let density = density0 === "compact" ? "compact" : "comfortable";
+  const densities = [["comfortable", "Comfortable"], ["compact", "Compact"]].map(([value, text]) => h("button", {
+    type: "button", "data-focus": `runs-density-${value}`, "aria-pressed": "false",
+    onClick: () => {
+      if (stopped || density === value) return;
+      density = value;
+      paintDensity();
+      onDensity?.(value);
+    },
+  }, text));
+  const paintDensity = () => {
+    densities.forEach((b, i) => {
+      const on = ["comfortable", "compact"][i] === density;
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("class", on ? "on" : "");
+    });
+  };
+  paintDensity();
+  const densitySeg = h("div", { class: "seg", role: "group", "aria-label": "Density" }, densities);
+
   const clear = h("button", { type: "button", "data-focus": "runs-clear", onClick: () => { stopTimer(); draft = null; emit(emptyFilter()); } }, "Clear filters");
   clear.hidden = true;
   const status$ = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
 
-  const el = h("div", { class: "runs-bar", role: "group", "aria-label": "Filter runs" }, search, repo, flow, status, time, owner, needsLabel, seg, clear, status$);
+  const el = h("div", { class: "runs-bar", role: "group", "aria-label": "Filter runs" }, search, repo, flow, status, time, owner, needsLabel, seg, densitySeg, clear, status$);
 
   // Options of a select change only when its list does; the node stays. A value the list lacks is added.
   // `anyCase`: a repository written in another letter case selects the name of the list.
@@ -132,4 +153,77 @@ export function noMatch({ onClear, note } = {}) {
     h("p", {}, NO_MATCH),
     note ? h("p", { class: "muted" }, note) : null,
     h("button", { type: "button", "data-focus": "runs-empty-clear", onClick: onClear }, "Clear filters"));
+}
+
+/**
+ * The bar over the list while runs are selected: "N selected", the action and Clear selection. `show(n, archived, busy)`
+ * draws it; while `busy` both buttons ignore clicks (aria-disabled, so the focus stays). `home()` is where the focus goes
+ * when the bar hides with the focus inside it.
+ */
+export function bulkBar({ onAct, onClear, home } = {}) {
+  let busy = false;
+  const count = h("span", { "aria-live": "polite" });
+  const act = h("button", { type: "button", "data-focus": "bulk-act", onClick: () => { if (!busy) onAct?.(); } }, "Archive runs");
+  const clear = h("button", { type: "button", "data-focus": "bulk-clear", onClick: () => { if (!busy) onClear?.(); } }, "Clear selection");
+  const el = h("div", { class: "bulk-bar", role: "group", "aria-label": "Selected runs" }, count, act, clear);
+  el.hidden = true;
+  const put = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+  return {
+    el,
+    show(n, archived, isBusy) {
+      busy = Boolean(isBusy);
+      if (n <= 0) {
+        const had = el.contains(document.activeElement);
+        el.hidden = true;
+        if (had) home?.()?.focus();
+        return;
+      }
+      el.hidden = false;
+      put(count, `${n} selected`);
+      put(act, archived ? "Take out of the archive" : n === 1 ? "Archive 1 run" : `Archive ${n} runs`);
+      for (const b of [act, clear]) {
+        if (busy) b.setAttribute("aria-disabled", "true");
+        else b.removeAttribute("aria-disabled");
+      }
+    },
+  };
+}
+
+/**
+ * Archives (or, with `unarchive`, takes out of the archive) the runs one after the other. Archiving asks once first
+ * (`ask(title, text, yes, no)`). Returns null when nothing was done (no ids, "no", or the page was left: `gone()`),
+ * else `{ done, refused }` with the sentences of the refusals. Never rejects.
+ */
+export async function bulkArchive(ids, { unarchive = false, a, ask, gone = () => false } = {}) {
+  const n = ids.length;
+  if (!n) return null;
+  if (!unarchive) {
+    let yes = false;
+    try {
+      yes = await ask("Archive runs", n === 1 ? "Archive 1 run? It stays available under Archived." : `Archive ${n} runs? They stay available under Archived.`,
+        n === 1 ? "Archive the run" : "Archive the runs", "Keep them");
+    } catch {
+      return null; // a dialog that fails is a "no"
+    }
+    if (!yes) return null;
+  }
+  if (gone()) return null;
+  let done = 0;
+  const refused = [];
+  for (const id of ids) {
+    try {
+      await (unarchive ? a.unarchiveRun(id) : a.archiveRun(id));
+      done++;
+    } catch (e) {
+      refused.push(e instanceof TypeError ? "Could not reach the server." : e?.message || "The server refused.");
+    }
+  }
+  return { done, refused };
+}
+
+/** The toast of a finished batch. */
+export function bulkText({ done, refused }, unarchive) {
+  const head = unarchive ? `Took ${done === 1 ? "1 run" : `${done} runs`} out of the archive.` : `Archived ${done === 1 ? "1 run" : `${done} runs`}.`;
+  const k = refused.length;
+  return k ? `${head} ${k} ${k === 1 ? "was" : "were"} refused: ${[...new Set(refused)].join(" ")}` : head;
 }
