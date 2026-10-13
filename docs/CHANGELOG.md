@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries safety 2a: static scanner (#472). Part 1 of 3 of #202. `scanSkill` in `src/skills/scan.ts` scans an imported skill without running it and returns `{ schema: 1, digest, findings }`.
+  - **Findings.** Eleven categories; graded severities, with `high` only for clear-cut patterns; `digest` equals the package digest. Finding ids are stable (a hash of the scan header, the rule id, the raw path and the matched text, so renaming a rule changes its ids); every distinct match is reported; a secret value is never shown, and a file that holds a secret gets no excerpts.
+  - **Credentials.** `credentialHits` in `credential-scan.ts` gives the position of every credential, and of a private key the whole key block. `credentialProblem` is unchanged.
+  - **Code and tests.** Rules are in `scan-rules.ts`; tests are in `skill-scan`, `skill-no-network` and `skill-credential-scan`.
+  - Nothing calls it yet: no command, config, run or flow format change.
 - Fix: self-update skips its test run when the daily release check already passed the same tests on the same code (#482). Part 3 of 3 of #463. `release-daily` writes a record of a green run on a clean tree to `<data>/tested/`; self-update skips its test step only when the test command is its own, the staged commit has the same tree and the record has exactly the checked form. Every other case runs the tests as before. The log says "is not tested again" and names the run; install and build still run.
   - **Writer.** The `verify` step of `release-daily` (`scripts/build-flows.mjs`) writes `tested/<key>` with `run <id>, <UTC time>, tree <sha>` only when the tests passed, the tree was clean before and after, and `HEAD^{tree}` did not change. Every git exit status is checked. A failed build keeps the record but still prints `CHECKS: no`. A record that cannot be written never fails the release.
   - **Reader.** `src/self-update-tests.ts` (`testedKey`, `passedBefore`, `detectTestCmd`, `pinsTests`, `sameTests`); `src/self-update.ts` (`testCmd` option for tests; the check sits before the test step). A `test_cmd` pinned in `.claude-factory/config.yaml` always runs the tests. The log prints only the run id and time, after they matched the pattern.
