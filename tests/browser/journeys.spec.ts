@@ -1,5 +1,5 @@
-import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
-import { apiAs, cancelRuns, openAs, seed, startRun, type Api, type ApiResponse, type OpenOptions, type Role } from "./helpers.js";
+import { expect, test, type Browser, type Page } from "@playwright/test";
+import { apiAs, cancelRuns, isStart, onlyNote, openAs, seed, startedId, startRun, type Api, type ApiResponse, type OpenOptions, type Role } from "./helpers.js";
 import { journey } from "./journey.js";
 import { BASELINE, KNOWN_OVER, over, REDESIGN, type Counts, type TaskId } from "./journeys-baseline.js";
 
@@ -29,25 +29,6 @@ async function withPage(browser: Browser, role: Role, hash: string, body: (page:
     await page?.context().close();
     await api.close();
   }
-}
-
-/** Keeps only the `note` flow in the Start work page's flow list (the answer keeps its shape: an array of flows). */
-async function onlyNote(page: Page): Promise<void> {
-  await page.route((url) => url.pathname === "/api/flows", async (route) => {
-    const response = await route.fetch();
-    const flows: unknown = await response.json();
-    const kept = Array.isArray(flows) ? flows.filter((f: unknown) => typeof f === "object" && f !== null && Reflect.get(f, "name") === "note") : flows;
-    await route.fulfill({ response, json: kept });
-  });
-}
-
-const isStart = (req: Request): boolean => req.method() === "POST" && new URL(req.url()).pathname === "/api/runs";
-
-/** The run id in the answer to the start request, when there is one. */
-async function startedId(res: { json(): Promise<unknown> }): Promise<string | undefined> {
-  const body: unknown = await res.json().catch(() => undefined);
-  const id = typeof body === "object" && body !== null ? Reflect.get(body, "runId") : undefined;
-  return typeof id === "string" ? id : undefined;
 }
 
 test.describe("the five tasks", () => {

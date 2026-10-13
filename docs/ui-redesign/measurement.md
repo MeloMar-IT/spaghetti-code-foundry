@@ -154,3 +154,20 @@ The last four columns are empty on purpose; the owner fills them in sessions.
 | 5 Refine an idea into a story draft | 3 | 48.3 | | | | |
 
 Measured time, errors and confidence are open; the owner runs the sessions in a follow-up issue (no `Factory_go`).
+
+## Responsive results
+
+The eight essential journeys of `tests/browser/essential.spec.ts`, run in Chromium at 360 and 768 px as touch devices and at 1024 and 1440 px with a mouse. Filled from a real run.
+
+| Journey | 360 touch | 768 touch | 1024 | 1440 |
+|---|---|---|---|---|
+| 1 Sign in | pass | pass | pass | pass |
+| 2 Find what needs me | pass | pass | pass | pass |
+| 3 Start work | pass | pass | pass | pass |
+| 4 Diagnose a failed run | pass | pass | pass | pass |
+| 5 Board | pass | pass | pass | pass |
+| 6 Refine | pass | pass | pass | pass |
+| 7 Repositories | pass | pass | pass | pass |
+| 8 Sign out | pass | pass | pass | pass |
+
+The Ask SCF drawer is not covered: it is switched off on the seeded servers, so the spec only checks that `#ask-scf` stays hidden and empty.
