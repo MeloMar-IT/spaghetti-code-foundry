@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Watchers 10 — the watcher options that were missing in the form (#499). Part 10 of 11 of #407.
+  - **Controls.** The watcher form (`ui/watcher-form.js`) has controls for `auto_defaults`, `precheck_flow`, `priority_labels`, the five `status_labels`, `wait_for_dependencies`, `dependency_done_labels`, `remove_on_done`, `comment_on_failure`, `status_comment`, `one_at_a_time` and `pause_while_pr_open`. They are grouped under "Labels", "Dependencies" and "Comments", collapsed by default, in new `ui/watcher-options.js`. Only issues watchers show them; a monitor watcher never sends `precheck_flow`.
+  - **Clearing.** `pause_while_pr_open` and `precheck_flow` can be changed and cleared. A cleared option is removed from the stored watcher (`null` on save), never saved as empty text. A list keeps its stored array when its text is untouched, so a label with a comma survives.
+  - **Errors.** A value the server refuses is shown at its own field, found by `fieldOf` in the form, with the server's message; the group that holds that field opens.
+  - **Summary.** The watcher page lists the options that differ from their defaults (`optionNotes`).
+  - **Tests.** New `tests/ui-watcher-options.test.ts`; additions to `tests/ui-watchers.test.ts` and `tests/repo-watchers-api.test.ts`; `tests/ui-user.test.ts` adjusted. `docs/USER_GUIDE.md` updated.
+  - **Server.** No server change was needed: `watcherShape` and `RepoWatcherSchema` already accept these options.
 - Refinement: the architect can be asked in several sessions at once; the runs wait in line.
   - **Before.** While the architect was queued, running or paused for one session, asking in another session of the same account answered 409 ("the architect is reading for another of your sessions"). The person had to come back later.
   - **Now.** The ask is accepted. All architect runs of one account share one scheduler lock (`architectLock` in `src/refinement/architect.ts`), so one works and the others wait in the queue in the order they were asked. One run per session stays (409). A paused run of another session no longer refuses a new one.

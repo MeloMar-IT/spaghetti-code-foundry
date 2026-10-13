@@ -2,12 +2,7 @@ import { api } from "./api.js";
 import { fieldFor, h, modal, showError } from "./dom.js";
 import { mergeVars, splitVars, varFields } from "./var-fields.js";
 
-const f = (label, el, hint) => h("label", { class: "field" }, h("span", {}, label), el, hint ? h("small", {}, hint) : null);
-const input = (value, attrs = {}) => h("input", { value: value ?? "", ...attrs });
-const check = (checked, label) => {
-  const el = h("input", { type: "checkbox", class: "fit", checked: !!checked });
-  return { el, row: h("label", { class: "row tight" }, el, h("span", {}, label)) };
-};
+import { check, f, input, optionsBody, watcherOptions } from "./watcher-options.js";
 
 const SOURCES = {
   issues: "Issues with a label → run a flow (default issue-gitflow)",
@@ -71,6 +66,7 @@ export function repoWatcherBody(v, editing) {
     timezone: opt(v.source === "schedule", v.timezone),
     branch: opt(v.source === "ci-failures", v.branch),
   };
+  Object.assign(body, optionsBody(v.options, v.source, editing));
   for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
   return body;
 }
@@ -179,6 +175,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       return run;
     };
     render({}, {});
+    const opts = watcherOptions(w, flows);
     const enabled = check(w.enabled, "Enabled");
     const err = h("p", { class: "status bad flush", role: "alert" });
     const fields = { id, flow, label, exclude, every, max, task, branch, at, timezone: tz, vars };
@@ -187,7 +184,9 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const mark = (m) => {
       const controls = shown?.controls ?? {};
       const named = /^vars\.([\w-]+):/.exec(String(m ?? ""))?.[1];
-      showError(err, m, { fields: [...Object.values(fields), ...Object.values(controls)], field: (named && controls[named]) || fields[fieldFor(m, PAIRS)] });
+      const own = opts.fieldOf(m);
+      if (own) opts.reveal(own);
+      showError(err, m, { fields: [...Object.values(fields), ...Object.values(controls), ...Object.values(opts.controls)], field: (named && controls[named]) || own || fields[fieldFor(m, PAIRS)] });
     };
     const noRepo = !existing && !available.length;
     let waiting = false;
@@ -206,7 +205,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       if (read.error) return void mark(read.error);
       const body = repoWatcherBody({
         id: id.value, source: source.value, flow: flow.value, label: label.value, exclude: exclude.value, every: every.value, max: max.value,
-        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value,
+        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value, options: opts.values(),
       }, !!existing);
       const send = () => (existing ? api.saveRepoWatcher(existing.repoId, existing.id, body) : api.addRepoWatcher(repo.value, body));
       return guarded(state, save, send, close, mark)();
@@ -221,6 +220,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       taskField.hidden = source.value !== "schedule";
       atField.hidden = source.value !== "schedule";
       branchField.hidden = source.value !== "ci-failures";
+      opts.showFor(source.value);
     };
     showFor();
     const repoField = existing
@@ -245,6 +245,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       h("div", { class: "grid" }, f("Check every", every, "e.g. 5m, 1h — for chores: how often it runs, e.g. 1d, 7d"), f("Max new runs per check", max)),
       fieldsBox,
       f("Variables for each run", vars, "For variables the flow does not describe. One name=value per line. github_repo and issue/pr are set automatically."),
+      opts.el,
       enabled.row, err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   }, { busy: () => state.busy });
 }

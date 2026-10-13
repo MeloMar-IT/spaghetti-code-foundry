@@ -1225,6 +1225,14 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
+**Options of an issues watcher.** The form has three groups, collapsed by default; each control shows its default and one sentence on what it does. Only issues watchers show them.
+
+- **Labels:** labels that go first (default `bug`), a text for each status label (working, done, needs info, waiting, failed; default is the Foundry's own name), and labels to remove when a run succeeds.
+- **Dependencies:** wait for dependencies (default on), labels that count as done, a pause while a pull request whose branch starts with a text is open (cleared by an empty field), and one run at a time (default off).
+- **Comments:** a status comment (default on), a comment when a run fails (default on), a questions check (a flow run once over all new issues before any starts; default none), and answer questions automatically (default off). It means the Foundry answers its own questions with its recommendations, at most twice per issue; after that a person answers.
+
+A field that is cleared is removed from the watcher, so the default applies. A value the server refuses is shown at its field with the server's message. The same options work for a watcher of a repository and for one still in `config.yaml`.
+
 ### The Watchers page (admins)
 
 Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository in **My runs**, without the watcher's name.
