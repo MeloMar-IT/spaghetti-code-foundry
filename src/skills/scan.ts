@@ -1,5 +1,5 @@
 // The static scanner for imported skills. Pure: no file system, no process, no clock, and nothing here runs
-// the content it reads. Nothing calls it yet. The rules are in scan-rules.ts.
+// the content it reads. Called by `scf skills scan` (cli.ts). The rules are in scan-rules.ts.
 import { createHash } from "node:crypto";
 import { credentialHits, credentialProblem, riskyFileName, type CredentialHit } from "./credential-scan.js";
 import { byteCmp } from "./import-plan.js";

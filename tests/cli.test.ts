@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,9 @@ import { fakeGithub } from "./helpers/fake-github.js";
 import { WatcherSchema } from "../src/config.js";
 import { flowDir } from "../src/flow/load.js";
 import { BOT_MARKER } from "../src/github.js";
+import { prepareImport, type TreeEntry } from "../src/skills/import-plan.js";
+import { publishImport } from "../src/skills/import-stage.js";
+import { readSources } from "../src/skills/sources.js";
 import { STATUS_LABELS } from "../src/queue/watcher.js";
 import { LABEL_WORDS } from "../src/words.js";
 
@@ -166,11 +169,13 @@ describe("data folder", () => {
   const lockTool = resolve("tools/area-lock");
   const FLOW = "name: mine\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: 'true'}\n";
   /** Runs a command with HOME set to `home` and no home or lock variables from the test setup. */
-  const clean = (file: string, args: string[], home: string, extra: Record<string, string> = {}) => {
+  const cleanEnv = () => {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/^(FACTORY_|SCF_)/.test(k)) env[k] = v;
-    return spawnSync(file, args, { encoding: "utf8", env: { ...env, HOME: home, ...extra } });
+    return env;
   };
+  const clean = (file: string, args: string[], home: string, extra: Record<string, string> = {}) =>
+    spawnSync(file, args, { encoding: "utf8", env: { ...cleanEnv(), HOME: home, ...extra } });
   const scf = (args: string[], home: string, extra: Record<string, string> = {}) => clean(process.execPath, [cli, ...args], home, extra);
   const withHome = () => {
     const home = mkdtempSync(join(tmpdir(), "scf-home-"));
@@ -267,6 +272,65 @@ describe("data folder", () => {
     writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
     expect(scf(["flows"], home).status).toBe(1);
     expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
+  });
+
+  it("scf skills scan reads the old data folder and does not move, copy or lock it", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const commit = "a".repeat(40);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/example/skills",
+        "    status: enabled",
+        `    ref: {track: main, approved: '${commit}'}`,
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: {allow: [MIT]}",
+        "    update: {cadence: weekly}",
+        "    owner: '@octocat'",
+        "",
+      ].join("\n"),
+    );
+    const parsed = readSources(join(home, "skill-sources.yaml"));
+    if (parsed.state !== "ok") throw new Error("bad sources");
+    const body = "---\nname: demo\ndescription: A demo skill.\n---\n\nBody.\n";
+    const entry: TreeEntry = { path: "skills/demo/SKILL.md", kind: "file", size: Buffer.byteLength(body), id: "id:1" };
+    const staged = publishImport(prepareImport(parsed.manifest.sources[0]!, { list: () => [entry], read: () => [Buffer.from(body)] }), { home: oldDir });
+    expect(staged.state).toBe("staged");
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        const st = statSync(p);
+        return e.isDirectory() ? [`${p} ${st.mode} ${st.mtimeMs}`, ...snap(p)] : [`${p} ${st.mode} ${st.mtimeMs} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    const r = spawnSync(process.execPath, [cli, "skills", "scan", "example-skills"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK ");
+    expect(r.stdout).toContain("SCANNED 1 skill from github.com/example/skills@aaaaaaaaaaaa");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    expect(snap(home)).toEqual(before);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    const after = snap(home);
+    const again = spawnSync(process.execPath, [cli, "skills", "scan", "example-skills"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+    expect(again.status).toBe(1);
+    expect(again.stdout).toContain("PROBLEM no staged import");
+    expect(existsSync(newDir)).toBe(false);
+    expect(snap(home)).toEqual(after);
+  });
+
+  it("scf skills scan is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills scan <source-id>");
+    const r = scf(["skills", "scan"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills scan <source-id> [<exceptions-file>]");
   });
 
   it("--help shows the old folder while only that exists, and does not move it", () => {

@@ -4,12 +4,13 @@ import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock, removeTree } from "../home-migrate.js";
-import { byteCmp, prepareImport, SkillImportError, type ImportRecord, type SourceTree } from "./import-plan.js";
-import { SKILL_ID_RE } from "./schema.js";
+import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type SourceTree } from "./import-plan.js";
+import { skillDigest } from "./package.js";
+import { SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json and files/).
-// Nothing in the quarantine is run or loaded; the registry never scans it. One lock: <data folder>/skill-quarantine.lock.
+// Nothing in the quarantine is run or loaded; the registry never scans it. `scf skills scan` reads it (readStagedImport). One lock: <data folder>/skill-quarantine.lock.
 
 export const QUARANTINE_DIR = "skill-quarantine";
 export const IMPORT_RECORD_FILE = "import.json";
@@ -256,4 +257,129 @@ export function publishImport(
     throw boundary(e);
   }
   return result!;
+}
+
+// --- read only below this line ---
+
+export type StagedImportRead =
+  | { state: "none" }
+  | { state: "invalid"; problem: string }
+  | { state: "ok"; dir: string; record: ImportRecord; recordText: string; files: Map<string, Uint8Array> };
+
+class Invalid extends Error {}
+const refuse = (what: string): never => {
+  throw new Invalid(what);
+};
+const within = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
+const segments = (root: string) => (root === "." ? 0 : root.split("/").length);
+
+/**
+ * Reads a staged import and proves it matches import.json: the folder is walked and compared both ways.
+ * Follows no link, checks modes, takes no lock, writes nothing. Never throws for folder content.
+ * A published import is one rename, so a reader sees a whole import or none.
+ */
+export function readStagedImport(source: string, commit: string, opts: { home?: string } = {}): StagedImportRead {
+  if (!SKILL_ID_RE.test(source)) return { state: "invalid", problem: "the source id is not valid" };
+  if (approvedRefProblem(commit)) return { state: "invalid", problem: "the commit is not a full commit id" };
+  try {
+    let home: string;
+    try {
+      home = realpathSync(opts.home ?? dataHome());
+    } catch (e) {
+      if (enoent(e)) return { state: "none" };
+      throw e;
+    }
+    // each folder on the way: missing means none, a link or a file means invalid
+    const dir = join(home, QUARANTINE_DIR, source, commit);
+    for (const p of [join(home, QUARANTINE_DIR), join(home, QUARANTINE_DIR, source), dir]) {
+      let st;
+      try {
+        st = lstatSync(p);
+      } catch (e) {
+        if (enoent(e)) return { state: "none" };
+        throw e;
+      }
+      if (st.isSymbolicLink() || !st.isDirectory()) return { state: "invalid", problem: `${shownValue(p.slice(home.length + 1))} is not a plain folder` };
+      if ((st.mode & 0o777) !== 0o700) return { state: "invalid", problem: `${shownValue(p.slice(home.length + 1))} has the wrong mode` };
+    }
+
+    const recordPath = join(dir, IMPORT_RECORD_FILE);
+    let rst;
+    try {
+      rst = lstatSync(recordPath);
+    } catch (e) {
+      if (enoent(e)) return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is missing` };
+      throw e;
+    }
+    if (rst.isSymbolicLink()) return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is a link` };
+    if (!rst.isFile()) return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is not a regular file` };
+    if (rst.size > IMPORT_LIMITS.recordBytes) return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is too large` };
+    const raw = readPlain(recordPath, rst.size);
+    if (raw === "link") return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is a link` };
+    if (raw === "other") return { state: "invalid", problem: `${IMPORT_RECORD_FILE} changed while it was read` };
+    const recordText = raw.toString("utf8");
+    const parsed = parseImportRecord(recordText);
+    if ("problem" in parsed) return { state: "invalid", problem: parsed.problem };
+    const record = parsed.record;
+    if (record.source !== source || record.commit !== commit) return { state: "invalid", problem: `${IMPORT_RECORD_FILE} is for another source or commit` };
+
+    // The most files and folders the record allows. Files are what the importer counts; a folder is made only as the
+    // parent of a staged file, so it is a skill root, above one, or inside one on the way to a file.
+    const maxFiles = record.skills.reduce((n, s) => n + s.files, 0);
+    const maxFolders = record.skills.reduce((n, s) => n + segments(s.root) + (SKILL_LIMITS.pathSegments - 1) * s.files, 0);
+    let fileCount = 0;
+    let folderCount = 0;
+    let total = 0;
+    const found: [string, Uint8Array][] = [];
+    const walk = (path: string, rel: string): void => {
+      for (const name of readdirSync(path).sort(byteCmp)) {
+        const p = join(path, name);
+        const r = rel === "" ? name : `${rel}/${name}`;
+        const st = lstatSync(p);
+        if (st.isSymbolicLink()) refuse(`${shownValue(r)} is a link`);
+        if (st.isDirectory()) {
+          if (++folderCount > maxFolders) refuse("the folder holds more folders than the import can have");
+          walk(p, r);
+        } else if (st.isFile()) {
+          if (++fileCount > maxFiles) refuse("the folder holds more files than import.json lists");
+          if (Buffer.byteLength(r) > SKILL_LIMITS.pathChars) refuse(`${shownValue(r)} has a path that is too long`);
+          if (st.size > SKILL_LIMITS.fileBytes) refuse(`${shownValue(r)} is too large`);
+          total += st.size;
+          if (total > IMPORT_LIMITS.totalBytes) refuse("the folder holds more bytes than an import can have");
+          const got = readPlain(p, st.size);
+          if (got === "link") refuse(`${shownValue(r)} is a link`);
+          if (got === "other") refuse(`${shownValue(r)} changed while it was read`);
+          found.push([r, got as Buffer]);
+        } else refuse(`${shownValue(r)} is not a regular file`);
+      }
+    };
+    const fst = lstatSync(join(dir, "files"));
+    if (fst.isSymbolicLink()) refuse("files is a link");
+    if (!fst.isDirectory()) refuse("files is not a folder");
+    walk(join(dir, "files"), "");
+
+    // every file lies in exactly one skill, and each skill matches its line of the record
+    const perSkill = new Map<string, { path: string; content: Uint8Array }[]>(record.skills.map((s) => [s.root, []]));
+    for (const [path, content] of found) {
+      const roots = record.skills.filter((s) => within(s.root, path));
+      if (roots.length !== 1) refuse(`${shownValue(path)} is not part of the import`);
+      const root = roots[0]!.root;
+      perSkill.get(root)!.push({ path: root === "." ? path : path.slice(root.length + 1), content });
+    }
+    for (const s of record.skills) {
+      const mine = perSkill.get(s.root)!;
+      if (mine.length !== s.files || mine.reduce((n, f) => n + f.content.byteLength, 0) !== s.bytes || skillDigest(mine) !== s.digest) refuse(`${shownValue(s.root)} changed`);
+    }
+    if (importDigest(record.skills) !== record.digest) refuse("the digest of import.json does not match its skills");
+
+    const files = new Map(found.sort((a, b) => byteCmp(a[0], b[0])));
+    const problem = folderProblem(dir, recordText, files);
+    if (problem !== undefined) return { state: "invalid", problem };
+    return { state: "ok", dir, record, recordText, files };
+  } catch (e) {
+    if (e instanceof Invalid) return { state: "invalid", problem: e.message };
+    const c = (e as NodeJS.ErrnoException | undefined)?.code;
+    const code = typeof c === "string" && /^[A-Z][A-Z0-9_]{0,39}$/.test(c) ? c : "error";
+    return { state: "invalid", problem: `the staged import cannot be read (${code})` };
+  }
 }
