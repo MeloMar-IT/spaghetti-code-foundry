@@ -73,7 +73,7 @@ export interface EvaluatedSkill {
   connectors: string[];
   needs: string[];
   risk: SkillRisk;
-  licence: { status: LicenceStatus; licences: string[]; reasons: string[]; attribution: string[]; authorNotice: string[] };
+  licence: { status: LicenceStatus | "excluded"; licences: string[]; reasons: string[]; attribution: string[]; authorNotice: string[] };
   blockers: number;
 }
 export interface InstalledIntegrity {
@@ -166,11 +166,13 @@ export function evaluateSource(input: {
   evaluated.sort((a, b) => byteCmp(a.e.id, b.e.id));
   refused.sort((a, b) => byteCmp(a.root, b.root) || byteCmp(a.reasons[0] ?? "", b.reasons[0] ?? ""));
 
+  // An excluded skill (live integration, network, plugin configuration) says nothing about its licence: a connector shows as
+  // the "tools" gate; any other exclusion is held back by the "safety" gate.
   const imported: CanonicalCandidate[] = evaluated.map(({ skill, e }) =>
     canonicalFromCollision(collisionCandidate(skill, source), {
-      licence: e.licence.status,
+      licence: e.licence.status === "excluded" ? "allowed" : e.licence.status,
       sourceStatus: source.status,
-      safety: e.blockers === 0,
+      safety: e.blockers === 0 && !(e.licence.status === "excluded" && e.connectors.length === 0),
       tools,
       ...(project ? { evidence: project } : {}),
     }),
