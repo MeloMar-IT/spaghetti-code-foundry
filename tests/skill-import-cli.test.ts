@@ -6,6 +6,7 @@ import { stringify } from "yaml";
 import { GitTreeError, type GitTree, type GitTreeErrorCode } from "../src/skill-import/git-tree.js";
 import { IMPORT_USAGE, skillImportCommand } from "../src/skill-import/cli.js";
 import type { TreeEntry } from "../src/skills/import-plan.js";
+import { readStagedLicence } from "../src/skills/import-stage.js";
 
 const COMMIT = "a".repeat(40);
 const md = (name: string) => `---\nname: ${name}\ndescription: A skill called ${name}.\n---\n\nBody.\n`;
@@ -93,6 +94,38 @@ describe("output and exit codes", () => {
     const b = await run(fakeTree());
     expect(b.rc).toBe(0);
     expect(b.lines[2]).toBe(a.lines[2]!.replace("(staged)", "(unchanged)"));
+  });
+
+  it("stages the licence and notice files with the skills", async () => {
+    const t = fakeTree({ ...GOOD, LICENSE: "root licence", "skills/a/LICENSE": "a licence", NOTICE: "notice" });
+    const r = await run(t);
+    expect(r.rc).toBe(0);
+    expect(r.lines).toHaveLength(4);
+    expect(t.closed).toBe(1);
+    const l = readStagedLicence("lib", COMMIT, { home });
+    expect(l.state === "ok" && l.evidence.files.map((f) => f.path)).toEqual(["LICENSE", "NOTICE", "skills/a/LICENSE"]);
+    const again = await run(fakeTree({ ...GOOD, LICENSE: "root licence", "skills/a/LICENSE": "a licence", NOTICE: "notice" }));
+    expect(again.lines[2]).toContain("(unchanged)");
+  });
+
+  it("stages nothing when there are more than 200 licence files", async () => {
+    const many = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [[`skills/d${i}/LICENSE`, "x"], [`skills/d${i}/SKILL.md`, md(`d${i}`)]]).flat());
+    const r = await run(fakeTree({ ...GOOD, ...many }));
+    expect(r.rc).toBe(1);
+    expect(r.text).toMatch(/^PROBLEM /);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("stages nothing when the whole file list cannot be read", async () => {
+    const t = fakeTree();
+    const list = t.list;
+    t.list = (p) => {
+      if (p === ".") throw new GitTreeError("bad-listing");
+      return list(p);
+    };
+    const r = await run(t);
+    expect(r.lines).toEqual(["PROBLEM the file list of the commit could not be read"]);
+    expect(quarantine()).toBe(false);
   });
 
   it("returns 1 and prints REJECTED for a bad skill", async () => {

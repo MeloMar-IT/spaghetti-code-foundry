@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
+import { prepareLicenceEvidence, type PreparedLicence } from "../skills/import-licence.js";
 import { prepareImport, SkillImportError, type RejectedSkill } from "../skills/import-plan.js";
 import { publishImport } from "../skills/import-stage.js";
+import { collectLicenceEvidence } from "../skills/licence.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { readSources, shownValue, SOURCES_FILE } from "../skills/sources.js";
 import { GitTreeError, openGitTree, type GitTreeErrorCode } from "./git-tree.js";
@@ -88,11 +90,15 @@ export async function skillImportCommand(
   process.on("SIGTERM", onSignal);
   try {
     let prep: ReturnType<typeof prepareImport> | undefined;
+    let licence: PreparedLicence | undefined;
     let failed: unknown;
     try {
       const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
       try {
         prep = prepareImport(source, tree);
+        licence = prepareLicenceEvidence(
+          collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
+        );
       } finally {
         tree.close();
       }
@@ -109,7 +115,7 @@ export async function skillImportCommand(
     }
     try {
       if (failed !== undefined) throw failed;
-      const done = publishImport(prep!, { home: opts.home });
+      const done = publishImport({ ...prep!, licence }, { home: opts.home });
       const rec = done.record;
       for (const s of rec.skills) out(`${shownValue(s.root).padEnd(40)} ${s.name} ${s.digest} ${s.files} files ${s.bytes} bytes`);
       rejectedLines(out, rec.rejected);

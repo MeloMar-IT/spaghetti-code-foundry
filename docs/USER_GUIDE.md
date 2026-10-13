@@ -3374,8 +3374,10 @@ OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (stage
 Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
 ```
 
-- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
-- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`. The licence and notice files of the same commit are kept with them: `licence.json` and `licence/<upstream path>`.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`. It keeps its form; the licence files are not listed in it.
+- **Licence and notice files.** Every `LICENSE`, `NOTICE` and similar file of the staged skill roots is copied byte for byte into `licence/`, with its path, size and SHA-256 in `licence.json`. The copy is checked against that record when it is read. Limits: 200 files, 256 KiB per file and 4 MiB in total; more than that stages nothing and prints a `PROBLEM`.
+- **An import from before licence files were kept.** The first import of that commit after the upgrade replaces its folder. The old folder is kept as `.old-<commit>` until the new one is verified, and the next import removes it. Until then a reader of the old folder reports that there are no licence files and asks you to import again. `scf skills scan` works on it as before.
 - **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
 - **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
 - **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.

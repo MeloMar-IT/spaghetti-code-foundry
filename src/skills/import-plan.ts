@@ -78,9 +78,9 @@ function parentOf(p: string): string {
 const inside = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
 const relOf = (root: string, p: string) => (root === "." ? p : p.slice(root.length + 1));
 
-type Names = Map<string, { spelled: string; file: boolean }>;
+export type Names = Map<string, { spelled: string; file: boolean }>;
 /** Why the file path cannot live next to the names already taken. Changes nothing. */
-function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
+export function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
   const segs = path.split("/");
   for (let i = 1; i < segs.length; i++) {
     const dir = segs.slice(0, i).join("/");
@@ -92,7 +92,7 @@ function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
   return e.file && e.spelled === path ? "twice" : "clash";
 }
 /** Records the file path and every folder above it. */
-function takeName(taken: Names, path: string): void {
+export function takeName(taken: Names, path: string): void {
   const segs = path.split("/");
   for (let i = 1; i < segs.length; i++) {
     const dir = segs.slice(0, i).join("/");
