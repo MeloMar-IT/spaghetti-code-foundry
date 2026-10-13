@@ -160,6 +160,7 @@ Skills reach an agent in a fixed order. Each stage has its own module:
 - **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
 - **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
 - **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
+- **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
 - **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
 - **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
@@ -174,6 +175,18 @@ Design rules:
 - Messages are built from validated fields, never from request text.
 
 ![The flow editor with a built-in flow](images/flows.png)
+
+#### Evaluation gate
+
+A candidate skill is promoted only on one verdict from its evaluation record (`src/skills/evaluation.ts`, #501):
+
+- **Record.** `EvaluationRecord` (`schema: 1`) holds the candidate, the suite digest and scenario inputs, the runtime, the time, the scores of every sample per dimension, findings and evidence. Its digest hashes a header line and canonical lines, so key order does not change it. A credential-like text anywhere in the record is refused.
+- **Dimensions.** `selection`, `instructions`, `conflicts`, `context` and `tools`. The four offline ones are always mandatory; `instructions` is mandatory only when the suite says so. A suite can make a threshold stricter, never looser.
+- **Verdict.** `evaluationGate` passes only when every mandatory dimension meets its threshold, the safety gate (`promotionBlockers`) has no blocker and the licence is `allowed`. Each failure has a reason code.
+- **Modes.** `new` uses absolute thresholds. `upgrade` also requires that no score is lower than the baseline (the record of the current canonical version) by more than the sample spread or 0.1. `duplicate` compares two candidates for one capability and names the clearly better one, or reports no clear difference.
+- **Outcome.** `evaluationOutcome` turns the result into the `passed` or `failed` value of `CanonicalCandidate.evaluation`.
+
+The gate reads no clock, file, process or network, and gives the same answer for the same input in any order. Running suites and storing records is a later step.
 
 ### Evidence formats
 
