@@ -744,6 +744,29 @@ describe("the admin Runs list", () => {
     stop();
   });
 
+  it("the Density switch draws tables, stores the choice and leaves the address alone", async () => {
+    const m = connected();
+    const go = vi.fn();
+    const store = { getItem: vi.fn(() => null as string | null), setItem: vi.fn() };
+    const stop = await runs.renderRunsList(m, { admin: true, go, store });
+    const dens = (name: string) => m.all("button").find((b) => b.attrs["data-focus"] === `runs-density-${name}`)!;
+    expect(m.all("div").find((d) => d.attrs["aria-label"] === "Density")).toBeDefined();
+    expect(dens("comfortable").attrs["aria-pressed"]).toBe("true");
+    expect(m.all("table")).toHaveLength(0);
+    dens("compact").click();
+    expect(store.setItem).toHaveBeenCalledWith("scf-runs-density", "compact");
+    expect(m.all("table").length).toBeGreaterThan(0);
+    expect(m.all("li")).toHaveLength(0);
+    expect(dens("compact").attrs["aria-pressed"]).toBe("true");
+    expect(go).not.toHaveBeenCalled();
+    stop();
+    const m2 = connected();
+    store.getItem.mockReturnValue("compact");
+    const stop2 = await runs.renderRunsList(m2, { admin: true, go: vi.fn(), store });
+    expect(m2.all("table").length).toBeGreaterThan(0);
+    stop2();
+  });
+
   it("an older answer does not overwrite a newer one, and a page that was left is not drawn on", async () => {
     const m = connected();
     const stop = await runs.renderRunsList(m, { admin: true, go: vi.fn() });

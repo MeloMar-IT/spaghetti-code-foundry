@@ -487,7 +487,7 @@ button.icon { justify-content: center; }
 .run-card.who-you { border-color: var(--color-waiting); }
 .run-card .run-link { overflow-wrap: anywhere; }
 .run-card .run-next { margin: 0; }
-.run-sections { display: grid; gap: var(--space-lg); }
+.run-sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-lg); }
 .run-section-head { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: baseline; margin-bottom: var(--space-sm); }
 .run-section-head h2 { margin: 0; font-size: var(--text-section); }
 .run-section-toggle { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
@@ -513,6 +513,8 @@ button.icon { justify-content: center; }
 .bulk-bar[hidden] { display: none; }
 .run-select { margin: 0; flex: none; }
 .run-select-all { display: inline-flex; align-items: center; gap: var(--space-sm); font-size: var(--text-small); }
+.run-table td { overflow-wrap: anywhere; }
+.run-table .run-next { min-width: 18ch; }
 
 /* The talk of a refinement session (ui/refinement-talk.js) */
 .talk { display: grid; gap: 10px; margin: 14px 0; min-width: 0; }

@@ -181,6 +181,24 @@ describe("renderMyRuns", () => {
     expect(one(first!, "a").attrs.href).toBe("#/runs/q1");
   });
 
+  it("read-only preview: the Density switch draws tables, no checkbox, no Remove, and switches back", async () => {
+    data.runs = [run("r1", { status: "failed" }), run("r2")];
+    data.pending = [job("q1")];
+    const store = { getItem: vi.fn(() => "compact" as string | null), setItem: vi.fn() };
+    main = document.createElement("div") as unknown as FakeElement;
+    const stop = (await ui.renderMyRuns(main, { a, ask, readOnly: true, store })) as () => void;
+    expect(find(main, "table").length).toBeGreaterThan(0);
+    expect(find(main, "li")).toHaveLength(0);
+    expect(find(main, "input", { class: "run-select" }).filter((i) => /^select-r/.test(i.attrs["data-focus"] ?? ""))).toHaveLength(0);
+    expect(find(main, "button").some((b) => b.textContent === "Remove")).toBe(false);
+    expect(find(main, "div", { "aria-label": "Density" })).toHaveLength(1);
+    find(main, "button", { "data-focus": "runs-density-comfortable" })[0]!.click();
+    expect(store.setItem).toHaveBeenCalledWith("scf-runs-density", "comfortable");
+    expect(find(main, "table")).toHaveLength(0);
+    expect(find(main, "li").length).toBeGreaterThan(0);
+    stop();
+  });
+
   it("draws one card per run with a real link and no click handler", async () => {
     data.runs = [run("r1", { vars: { github_repo: "o/r", issue: "7" }, next: rec("approval", "r1") }), run("r2", { vars: { github_repo: "o/r" } }), run("r3")];
     await open();

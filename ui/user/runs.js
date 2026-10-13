@@ -14,7 +14,7 @@ import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveS
 import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
-import { archivedSections, listRow, myRunsEntries, renderSections, runSections, sectionOf } from "../runs-list.js";
+import { archivedSections, listRow, myRunsEntries, readDensity, renderSections, runSections, sectionOf, writeDensity } from "../runs-list.js";
 import { bulkArchive, bulkBar, bulkText, noMatch, runsBar } from "../runs-bar.js";
 import { canonRepos, countText, emptyFilter, filterHash, filterOf, isActive, isServerActive, jobMatches, serverKey } from "../runs-filter.js";
 
@@ -54,7 +54,8 @@ export async function confirmDialog(title, text, yes = "Yes", no = "No") {
  * is never used. `go` writes a changed address. `alive` tells whether the page is still the one on screen: nothing is
  * asked or drawn after it says no.
  */
-export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs") } = {}) {
+export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnly = false, query = {}, filter: start, go = defaultGo, alive = () => true, views = pageViews("runs"), store } = {}) {
+  let density = readDensity(store);
   let rev = 0; // counts filter changes
   let gen = 0; // every request takes a number; the answer or failure of an older one is dropped
   let data = null;
@@ -78,7 +79,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
   mount(main, h("div", { class: "toolbar" }, h("h1", {}, "My runs"), h("span", { class: "spacer" }), h("a", { class: "btn", href: "#/start" }, "Start work")), alertEl, list);
   const states = runsLiveStates({ body: list, label: "Loading your runs", rows: 4, shape: "cards", what: "Could not load your runs.", denied: "You are not allowed to see your runs.", retry: refresh, focus: "my-runs" });
 
-  const bar = runsBar({ admin: false, onChange: (next) => setFilters(next) });
+  const bar = runsBar({ admin: false, density, onChange: (next) => setFilters(next), onDensity: (d) => { density = d; writeDensity(d, store); render(); } });
   // The address and the bar follow at once; a change of what the server is asked loads again, any other only redraws.
   const setFilters = (next) => {
     if (gone()) return;
@@ -180,7 +181,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
     patch(slots.empty, JSON.stringify([f, vp.stale, found, note]), () => (vp.stale ? filterEmpty("runs", vf, { onClear: clear, onDelete: vp.onDelete })
       : found ? null : isActive(f) ? noMatch({ onClear: clear, note }) : noRuns()));
     sections.hidden = !found;
-    const can = new Set(renderSections(sections, secs, { onRemove: readOnly ? null : remove, select: readOnly ? null : select }));
+    const can = new Set(renderSections(sections, secs, { onRemove: readOnly ? null : remove, select: readOnly ? null : select, density }));
     for (const id of [...selected]) if (!can.has(id)) selected.delete(id); // a run that is no longer in a selectable section
     bulk.show(readOnly ? 0 : selected.size, archivedShown, busy);
   };

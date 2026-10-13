@@ -1,4 +1,4 @@
-// The filter bar of the admin Runs list: search box, selects, "Only what needs me", the Show buttons and Clear filters.
+// The filter bar of the admin Runs list: search box, selects, "Only what needs me", the Show buttons, the Density buttons and Clear filters.
 // The bar is built once and never re-mounted, so the search box keeps its node, text and focus over every redraw.
 // It owns the 300 ms timer of the search box and the text typed but not yet committed (the draft).
 import { h } from "./dom.js";
@@ -15,7 +15,7 @@ const ownerName = (name) => (name === "deleted account" ? "deleted user" : name 
 const list = (v) => (Array.isArray(v) ? v : []);
 
 /** The state of the bar's draft: `onChange(nextFilter)` is called with the whole new filter. */
-export function runsBar({ admin = true, onChange } = {}) {
+export function runsBar({ admin = true, onChange, density: density0 = "comfortable", onDensity } = {}) {
   let current = emptyFilter();
   let draft = null; // text typed and not committed yet
   let timer;
@@ -68,11 +68,32 @@ export function runsBar({ admin = true, onChange } = {}) {
   const shows = SHOW.map(([view, text, id]) => h("button", { type: "button", "data-focus": `runs-view-${id}`, "aria-pressed": "false", onClick: () => emit({ ...current, q: take(), view }) }, text));
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Show" }, shows);
 
+  // Density is the display, not the filter: the bar owns the pressed state and tells the page by `onDensity`.
+  let density = density0 === "compact" ? "compact" : "comfortable";
+  const densities = [["comfortable", "Comfortable"], ["compact", "Compact"]].map(([value, text]) => h("button", {
+    type: "button", "data-focus": `runs-density-${value}`, "aria-pressed": "false",
+    onClick: () => {
+      if (stopped || density === value) return;
+      density = value;
+      paintDensity();
+      onDensity?.(value);
+    },
+  }, text));
+  const paintDensity = () => {
+    densities.forEach((b, i) => {
+      const on = ["comfortable", "compact"][i] === density;
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("class", on ? "on" : "");
+    });
+  };
+  paintDensity();
+  const densitySeg = h("div", { class: "seg", role: "group", "aria-label": "Density" }, densities);
+
   const clear = h("button", { type: "button", "data-focus": "runs-clear", onClick: () => { stopTimer(); draft = null; emit(emptyFilter()); } }, "Clear filters");
   clear.hidden = true;
   const status$ = h("div", { class: "sr-only", role: "status", "aria-live": "polite" });
 
-  const el = h("div", { class: "runs-bar", role: "group", "aria-label": "Filter runs" }, search, repo, flow, status, time, owner, needsLabel, seg, clear, status$);
+  const el = h("div", { class: "runs-bar", role: "group", "aria-label": "Filter runs" }, search, repo, flow, status, time, owner, needsLabel, seg, densitySeg, clear, status$);
 
   // Options of a select change only when its list does; the node stays. A value the list lacks is added.
   // `anyCase`: a repository written in another letter case selects the name of the list.
