@@ -24,7 +24,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
-       scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
+       scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
+       scf skills discover [<export-file> [<file>]]            Propose sources from a saved Skills.sh export (never approves)`;
 
 const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [] };
 

@@ -333,6 +333,45 @@ describe("data folder", () => {
     expect(r.stderr).toContain("scf skills scan <source-id> [<exceptions-file>]");
   });
 
+  it("scf skills evaluate checks its input before any fetch and leaves the old data folder alone", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/example/skills",
+        "    status: disabled",
+        "    reason: domain not selected",
+        "    ref: {track: main}",
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: {allow: [MIT]}",
+        "    update: {cadence: weekly}",
+        "    owner: '@octocat'",
+        "",
+      ].join("\n"),
+    );
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        return e.isDirectory() ? [p, ...snap(p)] : [`${p} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    expect(scf(["--help"], home).stdout).toContain("scf skills evaluate <source-id>");
+    for (const args of [[], ["Bad_Id"], ["example-skills"]]) {
+      const r = spawnSync(process.execPath, [cli, "skills", "evaluate", ...args], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+      expect(r.status).not.toBe(0);
+      expect(r.stdout + r.stderr).toMatch(args.length === 1 && args[0] === "example-skills" ? /PROBLEM/ : /scf skills evaluate <source-id>/);
+      expect(r.stderr).not.toContain("note:");
+      expect(existsSync(newDir)).toBe(false);
+      expect(snap(home)).toEqual(before);
+    }
+  });
+
   it("--help shows the old folder while only that exists, and does not move it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

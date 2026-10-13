@@ -76,6 +76,11 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("evaluate-cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/evaluate-cli.ts", "utf8");
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
       const code = codeLines(text);

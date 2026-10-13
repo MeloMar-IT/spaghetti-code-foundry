@@ -8,7 +8,7 @@ import { shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Decides, per skill of a normalized import, whether it may be promoted: its licence must be accepted by the policy of
 // licence.ts. Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
-// no clock. Nothing calls it yet; the story that writes approved artifacts must call it and keep `attribution`.
+// no clock. evaluateSource (source-evaluation.ts) calls it to report; the story that writes approved artifacts must call it and keep `attribution`.
 
 export interface PackageProvenance {
   id: string;
