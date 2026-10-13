@@ -25,8 +25,8 @@ const r = (method: string, path: string, user: UserAccess, note: string): Rule =
 
 export const RULES: Rule[] = [
   r("GET", "info", "no", "server settings and today's cost"),
-  r("GET", "config", "no", "read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file"),
-  r("PUT", "config", "no", "change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked"),
+  r("GET", "config", "no", "read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set"),
+  r("PUT", "config", "no", "change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number"),
   r("GET", "watchers", "no", "list the watchers"),
   r("POST", "watchers/:id/tick", "no", "run a watcher now"),
   r("GET", "monitor", "no", "whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes"),

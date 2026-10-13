@@ -325,12 +325,13 @@ describe("watchers of a repository: the routes", () => {
     it("PUT /api/config saves an unchanged file watcher with an old value and refuses a changed one", async () => {
       const config = (await call(admin, "GET", "/api/config")).json();
       const w = { id: "file-w", github_repo: "acme/file", enabled: false, flow: "described", vars: { risk_threshold: "500" } };
-      saveConfig({ ...config, watchers: [w] });
+      const { slack_webhook_set: _m, ...fileNotify } = config.notify; // the file format has no marker
+      saveConfig({ ...config, notify: fileNotify, watchers: [w] });
       ctx.reloadConfig();
       expect((await call(admin, "PUT", "/api/config", { ...config, watchers: [w] })).status).toBe(200);
       const changed = await call(admin, "PUT", "/api/config", { ...config, watchers: [{ ...w, vars: { risk_threshold: "501" } }] });
       expect([changed.status, changed.error()]).toEqual([400, expect.stringMatching(/Watchers page/)]);
-      saveConfig({ ...config, watchers: [{ id: "file-w", github_repo: "acme/file", enabled: false }] });
+      saveConfig({ ...config, notify: fileNotify, watchers: [{ id: "file-w", github_repo: "acme/file", enabled: false }] });
       ctx.reloadConfig();
     });
   });
