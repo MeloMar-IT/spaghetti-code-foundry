@@ -148,3 +148,27 @@ describe("the static scanner runs nothing", () => {
     });
   }
 });
+
+describe("scf skills scan is offline and read-only", () => {
+  const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
+  for (const f of ["cli.ts", "import-stage.ts", "scan-exceptions.ts", "import-plan.ts", "normalize.ts"]) {
+    it(`${f} imports no process or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
+      const code = codeLines(text);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+  it("src/skills/cli.ts imports nothing from skill-import/", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);
+  });
+  it("the reader in import-stage.ts calls no write function", () => {
+    const text = readFileSync(join(SKILLS, "import-stage.ts"), "utf8");
+    const marker = "// --- read only below this line ---";
+    expect(text.split(marker)).toHaveLength(2);
+    const below = codeLines(text.split(marker)[1]!).join("\n");
+    expect(below).not.toMatch(/writeFileSync|mkdirSync|renameSync|removeTree|acquireLock|claimHomeWrite|importStoreSettings\.rename|chmodSync|unlinkSync|rmSync/);
+  });
+});

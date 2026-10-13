@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries safety 2c: `scf skills scan` prints the owner's security report of a staged import (#474). Part 3 of 3 of #202.
+  - **Command.** `scf skills scan <source-id> [<exceptions-file>]` reads the approved commit from `skill-sources.yaml`, checks the staged import in quarantine against `import.json`, then runs `normalizeImport`, `scanSkill`, `applyExceptions` and `promotionBlockers`. It prints `FINDING`, `BLOCKED`, `OK`, `REJECTED` and `SCANNED` lines, and `PROBLEM` for a refusal. Exit 1 when a skill is blocked or a `PROBLEM` is printed. Offline; nothing is written, loaded or run.
+  - **Reader.** New `readStagedImport(source, commit, { home })` in `src/skills/import-stage.ts`: it follows no link, checks modes and proves the folder matches `import.json` both ways. A changed file, a link or an extra file is refused, and nothing is scanned.
+  - **Not normalized.** A skill that normalization rejects is still scanned and printed under its folder name, with `BLOCKED <folder>: not normalized (<reasons>)`. Credential-like text is printed as `(hidden)`.
+  - **Exception file.** `skill-scan-exceptions.yaml` next to `skill-sources.yaml`; a missing default file means no exceptions, a named one that is missing is a `PROBLEM`.
+  - **Tests.** New `tests/skill-import-read.test.ts` and `tests/skill-scan-cli.test.ts`; `tests/cli.test.ts` (help, syntax, old data folder untouched); `tests/skill-no-network.test.ts` (no process, no network in the command).
+  - **Docs.** `docs/USER_GUIDE.md` has "Scan an import" and the command table row.
+  - **Not done.** Nothing promotes a skill yet: `promotionBlockers` is for a later promotion step to call.
 - Skill libraries safety 2b: reviewed exceptions, dispositions and the promotion gate (#473). Part 2 of 3 of #202.
   - **Exception file.** `skill-scan-exceptions.yaml` (`schema: 1`), read by `readScanExceptions` and checked by `parseScanExceptions` in `src/skills/scan-exceptions.ts`. One entry suppresses exactly one finding of one package: `finding`, `skill`, `digest`, `reason`, `owner`, `reviewed` and either `expires` or `review: required`. There are no wildcards. A new upstream version has a new digest, so its exceptions no longer apply.
   - **Limits.** An exception lasts at most 365 days after `reviewed`; `reviewed` must not be in the future. At most 200 entries. A problem names its entry and field, and never repeats a credential-like value. Unknown keys are refused.

@@ -3359,6 +3359,46 @@ Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef012345
 - **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
 - **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
 
+#### Scan an import
+
+`scf skills scan <source-id> [<exceptions-file>]` prints the security report of the staged import of a source. It is offline and read-only: nothing is written, loaded or run, and no process is started. It reads `skill-sources.yaml` in the current folder for the approved commit (`ref.approved`), then the staged import in quarantine.
+
+```
+scf skills scan example-skills
+```
+
+```
+FINDING <16 hex digits> high open <skill> <path>: <evidence>
+BLOCKED <skill>: 1 high finding
+SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 blocked
+```
+
+- **What it checks first.** The staged files must match `import.json` exactly: a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
+- **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
+- **Not normalized.** A skill that the normalization step rejects (for example a credential or bad metadata) has no package id. Its findings are still printed, with the folder as its name, and it prints `BLOCKED <folder>: not normalized (<reasons>)`.
+- **What blocks.** A high finding that is not accepted blocks its skill. Medium and low findings never block. An accepted finding does not block; a secret finding can never be accepted.
+- **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
+- **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
+
+##### The exception file
+
+`skill-scan-exceptions.yaml` next to `skill-sources.yaml` lists the findings the owner has reviewed. It is changed by pull request and read only by this command. Each entry accepts exactly one finding of one skill version:
+
+```yaml
+schema: 1
+exceptions:
+  - finding: 3f2a9c1d7e8b4a60        # the id from the FINDING line
+    skill: example-demo              # the skill as the FINDING line names it
+    digest: sha256:…                 # the skill's digest in import.json; a new version has a new digest
+    reason: "Reviewed: the script only prints a version"
+    owner: "@octocat"
+    reviewed: 2026-10-13             # YYYY-MM-DD, not in the future
+    expires: 2027-01-13              # at most 365 days after reviewed
+```
+
+- **Expiry.** Use `expires` (a date), or `review: required` when the finding must be looked at again. An entry whose date has passed is `expired`, and `review: required` is `review-required`; neither accepts the finding, so the skill stays blocked.
+- **Limits.** At most 200 entries. No wildcards. Unknown keys are refused. Every problem names its entry and field.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -3950,6 +3990,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
+| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
