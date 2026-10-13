@@ -142,6 +142,13 @@ interface Unit {
 
 const sorted = (list: readonly string[]): string[] => [...list].sort(byteCmp);
 
+/** A key that is equal for equal provenance. The safety record is written one finding per line, so its size never meets the limit of canonicalJson. */
+function provenanceKey(p: SkillProvenance): string {
+  const { safety, ...rest } = p;
+  if (!safety) return canonicalJson(rest);
+  return [canonicalJson(rest), safety.report, ...safety.findings.map((f) => canonicalJson(f))].join("\n");
+}
+
 function settingsOf(skill: NormalizedSkill, targets: Readonly<Record<string, string>> = {}): MemberSettings {
   const { package: pkg, provenance } = skill;
   const names = new Map(provenance.dependencies.map((d) => [d.id, d.name]));
@@ -341,7 +348,7 @@ export function classifySkillCollisions(candidates: readonly CollisionCandidate[
   const entries = units
     .map((u): DedupedSkill => {
       const records = new Map<string, SkillProvenance>();
-      for (const e of u.approved) records.set(canonicalJson(e.candidate.skill.provenance), e.candidate.skill.provenance);
+      for (const e of u.approved) records.set(provenanceKey(e.candidate.skill.provenance), e.candidate.skill.provenance);
       const provenance = [...records.values()].sort(
         (x, y) => byteCmp(x.source, y.source) || byteCmp(x.repositoryKey, y.repositoryKey) || byteCmp(x.commit, y.commit) || byteCmp(x.root, y.root),
       );

@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries safety 2b: reviewed exceptions, dispositions and the promotion gate (#473). Part 2 of 3 of #202.
+  - **Exception file.** `skill-scan-exceptions.yaml` (`schema: 1`), read by `readScanExceptions` and checked by `parseScanExceptions` in `src/skills/scan-exceptions.ts`. One entry suppresses exactly one finding of one package: `finding`, `skill`, `digest`, `reason`, `owner`, `reviewed` and either `expires` or `review: required`. There are no wildcards. A new upstream version has a new digest, so its exceptions no longer apply.
+  - **Limits.** An exception lasts at most 365 days after `reviewed`; `reviewed` must not be in the future. At most 200 entries. A problem names its entry and field, and never repeats a credential-like value. Unknown keys are refused.
+  - **Dispositions.** `applyExceptions` gives every finding one of `open`, `accepted`, `expired` or `review-required`. An expired exception (its date is before today) and `review: required` do not unblock. A secret finding is always `open`: an exception cannot accept it. `today` is a parameter; the code reads no clock.
+  - **Gate.** `promotionBlockers` lists the high findings that are not `accepted`. Medium and low findings never block; they keep their disposition.
+  - **Provenance.** `SkillProvenance.safety` (optional, so `schema` stays 1 and older provenance stays valid) holds the report digest (`scanReportDigest`) and, per finding, its id, severity, disposition and the exception that decided it. `safetyProvenance` refuses a decision that no longer matches its report.
+  - **Tests.** New `tests/skill-scan-exceptions.test.ts` (pure unit tests). The only existing file changed is `src/skills/normalize.ts` (the optional field).
+  - **Not done.** Nothing calls it yet: no command, run, flow or UI reads the exception file, and no run writes `safety` to provenance.
 - A sixth helper process, `scf housekeeping` (every 3 hours, with `run|report|install|uninstall|status` like the others).
   - **Memory record.** Each check writes the memory of the system's file-change tracker (`fseventsd`) and of the Foundry server to `housekeeping/memory.log`. Above 8 GB for the tracker or 6 GB for the server it sends one notification that day and the digest names it. Reason: on a machine up for days the tracker once grew to 56 GB and starved the runs of memory.
   - **Nightly clean-up.** At the first check after 03:00 it removes the workspaces of runs that ended more than 2 days ago (as `scf clean --older-than 2`): run records, logs and branches stay; active and paused runs are not touched. A clean-up that fails is tried again at the next check.

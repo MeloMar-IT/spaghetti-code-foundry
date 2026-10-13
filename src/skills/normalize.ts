@@ -14,6 +14,8 @@ import {
   SKILL_FOLDERS, SKILL_ID_RE, SKILL_RISKS, SKILL_VERSION_RE, SkillToolProfileSchema,
   type SkillFile, type SkillFolder, type SkillPackage, type SkillRisk, type SkillToolProfile,
 } from "./schema.js";
+import type { ScanDisposition } from "./scan-exceptions.js";
+import type { ScanSeverity } from "./scan-rules.js";
 import { shownValue } from "./sources.js";
 
 // Turns the skills of a prepared import (import-plan.ts) into SkillPackage values with source-qualified ids, and reports
@@ -29,6 +31,17 @@ export interface NormalizeOrigin {
 export interface ExternalSkill {
   root: string;
   files: readonly { path: string; content: Uint8Array }[];
+}
+/** The scanner's decision for one package; written by safetyProvenance (scan-exceptions.ts). */
+export interface SkillSafety {
+  /** scanReportDigest of the scan report. */
+  report: string;
+  findings: {
+    id: string;
+    severity: ScanSeverity;
+    disposition: ScanDisposition;
+    exception?: { owner: string; reviewed: string; expires?: string; review?: "required"; reason: string };
+  }[];
 }
 export interface SkillProvenance {
   schema: 1;
@@ -48,6 +61,8 @@ export interface SkillProvenance {
   context: { instructions: number; text: number };
   /** Unrecognised upstream metadata: `frontmatter.<key>`, `metadata.<key>` or `manifest.<key>` → canonical JSON. */
   upstream: Record<string, string>;
+  /** Absent in provenance written before #473. */
+  safety?: SkillSafety;
 }
 export interface NormalizedSkill {
   package: SkillPackage;
