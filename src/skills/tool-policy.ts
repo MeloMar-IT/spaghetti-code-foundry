@@ -164,7 +164,7 @@ function message(code: ToolCode, need: ToolNeed): string {
   return `It needs ${WHAT[n]}, which this step does not give.`;
 }
 
-function policyAllows(need: "shell" | "network" | "write", policy: ToolPolicy): boolean {
+export function policyAllows(need: "shell" | "network" | "write", policy: ToolPolicy): boolean {
   return need === "write" ? policy.filesystem === "write" : policy[need];
 }
 
