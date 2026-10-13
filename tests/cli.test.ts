@@ -274,6 +274,19 @@ describe("data folder", () => {
     expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
   });
 
+  it("scf skills connectors does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const r = scf(["skills", "connectors"], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("awesome-copilot");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    expect(scf(["skills", "connectors"], home).status).toBe(0);
+    expect(scf(["--help"], home).stdout).toContain("scf skills connectors");
+  });
+
   it("scf skills scan reads the old data folder and does not move, copy or lock it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

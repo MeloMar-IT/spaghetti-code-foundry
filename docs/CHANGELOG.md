@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill source connectors 1: a reviewed definition for GitHub's awesome-copilot collection, and `scf skills connectors` (#505). Part 1 of 4 of #215.
+  - **What it does.** New pure module `src/skills/connectors.ts` with `SOURCE_CONNECTORS` (one connector, `awesome-copilot`: root `skills`, adapter `agent-skills`, trust `community`, licence `MIT`, track `main`, no commit), `connectorFor`, `connectorProblems` and `connectorSource`.
+  - **Rule.** `scf skills sources check` (and `import` and `scan`) prints `PROBLEM` and exits 1 for an entry whose repository is the connector's repository, whatever its `id` and however the address is spelled, when it selects a path other than `skills` or a folder below it, or has another trust, adapter or licence. `ref.approved` must still be a full commit id.
+  - **Existing files.** A `skill-sources.yaml` entry for `github/awesome-copilot` with other paths, trust or licences is now refused. Entries for other repositories and the existing files are otherwise unchanged.
+  - **Command.** `scf skills connectors` lists each connector (id, repository key, roots, adapter, trust, licences, track) and `OK 1 connector`. It takes no operands, reads no files and does not need the data folder.
+  - **Not used yet.** Nothing fetches from the connector yet; `connectorSource` is for the import step of part 4.
+  - Tests in new `tests/skill-connectors.test.ts`; cases in `tests/skill-sources.test.ts`, `tests/skill-cli.test.ts` and `tests/cli.test.ts`. `docs/USER_GUIDE.md` updated.
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".

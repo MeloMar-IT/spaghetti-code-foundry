@@ -13,20 +13,22 @@ import { normalizeImport } from "./normalize.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE } from "./scan-exceptions.js";
-import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { SOURCE_CONNECTORS } from "./connectors.js";
+import { readSources,shownValue, SOURCES_FILE } from "./sources.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
-       scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
+       scf skills connectors                                     List the reviewed source connectors; reads nothing
+       scf skills overrides check [<file>]                     Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], connectors: [], overrides: [], "project-pins": [], scan: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -190,6 +192,13 @@ export async function skillsCommand(
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
     return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
+  }
+
+  if (sub === "connectors") {
+    if (operands.length) throw syntax("scf skills connectors: takes no operands");
+    for (const c of SOURCE_CONNECTORS) out(`${c.id.padEnd(24)} ${c.repositoryKey} ${c.roots.join(",")} ${c.adapter} ${c.trust} ${c.licences.join(",")} track ${c.track}`);
+    out(`OK ${plural(SOURCE_CONNECTORS.length, "connector")}`);
+    return 0;
   }
 
   if (sub === "overrides" || sub === "project-pins") {
