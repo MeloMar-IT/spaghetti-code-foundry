@@ -10,7 +10,7 @@ import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { hasUnsafeChar, MAX_SOURCES_BYTES, shownValue, type SourceProblem } from "./sources.js";
 
 // Reviewed exceptions for scanner findings, the disposition of every finding and the promotion gate. Pure except
-// readScanExceptions (it reads one file). No clock: `today` is always a parameter. Nothing calls it yet.
+// readScanExceptions (it reads one file). No clock: `today` is always a parameter. Called by `scf skills scan` (cli.ts).
 
 export const SCAN_EXCEPTIONS_FILE = "skill-scan-exceptions.yaml";
 export const MAX_SCAN_EXCEPTIONS = 200;

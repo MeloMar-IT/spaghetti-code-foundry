@@ -14,7 +14,8 @@ export function notifyFrom(v) {
   const t = (x) => String(x ?? "").trim();
   return {
     macos: !!v.macos,
-    slack_webhook: t(v.slack) || undefined,
+    // empty: the server keeps the stored webhook; null removes it
+    slack_webhook: t(v.slack) || (v.removeSlack ? null : undefined),
     command: t(v.command) || undefined,
     on: v.on,
     successes: !!v.successes,
@@ -44,7 +45,11 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const conc = input(String(c.concurrency), { type: "number", min: 1 });
   const protectedB = input(c.protected_branches.join(", "), { class: "mono" });
   const macos = check(c.notify.macos, "macOS notifications");
-  const slack = input(c.notify.slack_webhook ?? "", { class: "mono", placeholder: "https://hooks.slack.com/services/…" });
+  let hookSet = c.notify.slack_webhook_set === true;
+  const slack = input("", { class: "mono", placeholder: "https://hooks.slack.com/services/…", autocomplete: "off" });
+  const slackState = h("span", {}, hookSet ? "set" : "not set");
+  const slackRemove = check(false, "Remove the Slack webhook");
+  slackRemove.el.disabled = !hookSet;
   const cmd = input(c.notify.command ?? "", { class: "mono", placeholder: 'e.g. say "$FACTORY_STATUS"' });
   const successes = check(c.notify.successes, "Also notify when a run succeeds");
   const throttle = input(c.notify.throttle_minutes ?? 5, { type: "number", min: 1 });
@@ -98,7 +103,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       hotfix_to_main: hotfix.el.checked,
       self_update: { enabled: selfUpdate.el.checked, repo: selfRepo.value.trim() || undefined },
       notify: notifyFrom({
-        macos: macos.el.checked, slack: slack.value, command: cmd.value, on: on.filter(([, x]) => x.el.checked).map(([s]) => s),
+        macos: macos.el.checked, slack: slack.value, removeSlack: slackRemove.el.checked, command: cmd.value, on: on.filter(([, x]) => x.el.checked).map(([s]) => s),
         successes: successes.el.checked, throttle: throttle.value, quietFrom: quietFrom.value, quietTo: quietTo.value, summaryAt: summaryAt.value,
       }),
       bot: { name: botName.value.trim() || undefined, email: botEmail.value.trim() || undefined, gh_token_env: botToken.value.trim() || undefined },
@@ -113,6 +118,11 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     try {
       const saved = await api.saveConfig(next, version);
       version = configVersion(saved) ?? version;
+      hookSet = saved?.notify?.slack_webhook_set === true;
+      mount(slackState, hookSet ? "set" : "not set");
+      slack.value = "";
+      slackRemove.el.checked = false;
+      slackRemove.el.disabled = !hookSet;
       mount(err);
       markInvalid(Object.values(fields));
       saveNote.setAttribute("class", "status ok");
@@ -173,7 +183,11 @@ export async function renderSettings(main, { readOnly = false } = {}) {
         f("Quiet hours from", quietFrom, "Leave both empty for no quiet hours."),
         f("Quiet hours to", quietTo),
         f("Daily summary at", summaryAt, "Empty: no summary.")),
-      h("div", { class: "grid" }, f("Slack webhook", slack), f("Command", cmd, "Runs with $FACTORY_STATUS, $FACTORY_RUN_ID, $FACTORY_MESSAGE.")),
+      h("div", { class: "grid" },
+        h("div", {},
+          h("label", { class: "field" }, h("span", {}, "Slack webhook: ", slackState), slack, h("small", {}, "Never shown. Enter a new address to replace it; leave empty to keep it.")),
+          slackRemove.row),
+        f("Command", cmd, "Runs with $FACTORY_STATUS, $FACTORY_RUN_ID, $FACTORY_MESSAGE.")),
       h("div", { class: "row" }, h("span", { class: "muted" }, "Run the command when a run is:"), on.map(([, x]) => x.row))),
     section("Bot identity",
       h("p", { class: "muted flush" }, "By default commits and comments are made as you (your git config and gh login)."),

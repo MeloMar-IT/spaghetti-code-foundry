@@ -1121,7 +1121,7 @@ vars:
 
 The editor keeps empty values (`issue: ""`), so a variable you have just added stays.
 
-A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet.
+A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet. A watcher's form shows one field per described variable (see "Add watcher" in section 6).
 
 ### The block library
 
@@ -1232,6 +1232,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 - **From the repository.** The heading of each repository group is a link to the repository view (`#/repos/<id>`). Its **Watchers** section lists the watchers of that repository, with **+ Add watcher** and, per watcher, **Enable** or **Disable**, **Edit** and **Delete** (**Delete** asks first). If the server refuses a change, its sentence is shown.
 - **By repository.** Watchers are grouped by connected repository. Each group shows the repository's owner (with a "blocked" mark when the owner is blocked). Runs of a watcher belong to that owner.
 - **Add watcher.** Choose the repository from a list, then the flow, the labels and the other options. There is no `owner` field: the repository's owner is used. Repositories that cannot have a watcher (a deploy key, or not on GitHub) are listed as not available, with the reason.
+- **Variables.** The form shows one field per variable the chosen flow describes, with its label, help and default (as the placeholder): a number field with its range, a switch, a text box, a list or a choice. Changing the flow changes the fields. A field left at its default is not stored. Variables the flow does not describe go in the box "Variables for each run", one `name=value` per line; a described variable typed there moves to its field when the form opens. `agent_env` is a list of `KEY=value` pairs and may hold secrets.
 - **Edit, enable, disable, delete.** These change the watcher at once. Options the form does not show are kept when you edit. If the server refuses a change, its sentence is shown as it is.
 - **One watcher.** The list is compact: the id (a link to `#/watchers/<id>`, crumbs **Administration › Watchers › <id>**), the state mark, what it does, the last successful check and a problem line. The watcher's page has the next steps, notes, error details and recent activity; for the monitor also the bug-story switch and the findings. **Check now**, **Edit** and **Enable** or **Disable** are together; **Delete** is alone in a **Danger** group. List rows have no Delete button.
 - **The monitor** stays on the page, under "The Foundry itself", and is still saved in `config.yaml`. If only the monitor cannot be loaded, the watchers are still shown and the monitor card says so, with **Retry**.
@@ -1243,7 +1244,7 @@ Only admins see the Watchers page. No watcher name or status shows anywhere else
 The page uses these routes. A watcher stored for a connected repository has the same options as one in `config.yaml`, except `github_repo` and `owner`: they come from the
 repository. The source `monitor` is not allowed.
 
-- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
+- **Routes:** `GET` and `POST /api/admin/repos/:id/watchers`, and `PUT` and `DELETE /api/admin/repos/:id/watchers/:wid`. A user gets 403. Changes go to the log. A change starts, stops or restarts the watcher at once. A described variable whose value does not fit its kind or range is refused (400, the message names the variable, as `vars.<name>: …`); a stored value that is already out of range still runs and is refused only when the watcher is saved again. `GET /api/admin/repos` adds a `watcherProblem` sentence to a repository that cannot have a watcher.
 - **Which repositories:** GitHub only, with the sign-in `none` (the owner is an admin), `github-token` or `github-app`. `ssh-deploy-key`, `https-token` and other addresses are refused.
 - **The id** is unique on the whole install, in the store and in `config.yaml` together. A duplicate is refused.
 - **Runs** belong to the repository's owner, so they show in that user's "My runs".
@@ -2162,8 +2163,9 @@ not followed; the command says where the server points to and stops.
   accepted, unless the field is one the command does not let `--data` set.
 - An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
   contain `/` or `\`.
-- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. Start from
-  `scf settings show --json`.
+- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. The Slack
+  webhook is the exception: it stays unless you give `notify.slack_webhook: null`, which removes it. Start from
+  `scf settings show --json`; it does not show the webhook, only `notify.slack_webhook_set`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
 it; `scf api GET runs` (or `POST`, `PUT`, `PATCH`, `DELETE`) makes one. A body is sent only with
@@ -2354,6 +2356,8 @@ lands under **Needs you** on Home (a question, a risky plan or split, a release 
 watcher error). Nothing is sent for progress. A run that succeeds is told only if you switch on
 "Also notify when a run succeeds" (off by default; runs that finished before you switched it on are
 not told).
+
+The Slack webhook is set in **Settings → Notifications**. The page shows only **set** or **not set**. Enter a new address to replace the webhook, leave the field empty to keep it, or tick **Remove the Slack webhook** to remove it. The webhook is never shown again, and no API answer contains it (`GET /api/config` says only `notify.slack_webhook_set`).
 
 No notification and no `notify.command` is sent for a run whose issue is known to be closed on GitHub. When the state is unknown or open, they are sent as before.
 
@@ -2551,10 +2555,11 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `refinement-publish` | Ready drafts of a refinement session were published | session id | repository and issue numbers |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
 | `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
+| `repo-change` (admin) | An admin changes a watcher of a repository | repository id | one line per changed option: `watcher <id>: <option>: <old> -> <new>` |
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
-| `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
+| `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
@@ -2563,10 +2568,17 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
 call that changes nothing (the same repository settings again, a flow saved without a change, an unpublished flow). If an old key
 is left in the Keychain, the change was made, so its line is written even though the answer is an error. Tokens, passwords, keys,
-notes, task text, credential names and setting values are never written. A line that cannot be written does not stop or undo the
+notes, task text, credential names and the values of the masked settings (below) are never written. A line that cannot be written does not stop or undo the
 action, and a line is not written while another `scf` command holds the lock; the server log then says
 `audit: <file> <kind> (<action>)`. Runs that a watcher starts, `scf run`, `scf approve`, `scf reject`, evals, deleting or
 unpublishing a flow, blocks, clean-up and running a watcher now are not logged. A `target` can be up to 255 characters.
+
+**Settings and watcher lines.** A save of the settings writes one line per setting that changed, with the full key path, the old
+value and the new value, for example `monitor.stuck_run.extra_minutes: 30 -> 60`. A setting that was not set shows `(not set)`.
+A watcher in `config.yaml` is named `watchers.<id>.<option>`. A change to a repository watcher is written the same way, as
+`watcher <id>: every: "5m" -> "10m"`. Three settings never show a value, only `changed`: `notify.slack_webhook`, `notify.command`
+and `agent_env` (the environment of a watcher, on any path). A watcher's `owner` (an account's e-mail) and `task` (free text) say
+only `changed` too. A value longer than 80 characters is cut and ends with `…`; a line is at most 2,000 characters.
 
 **The Audit page.** Admins only: **Audit** in the top bar (`#/audit`). It shows who did what, newest first: time, who, action,
 target and result. "Who" is the account's name, "command line" for `scf`, or "not signed in" for a failed sign-in. An account
@@ -2956,8 +2968,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file |
-| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
+| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
 | `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
@@ -3371,6 +3383,48 @@ Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef012345
 - **Ctrl-C.** The import stops and nothing is staged. Once writing into the quarantine has started, the import is finished.
 - **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
 - **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
+
+#### Scan an import
+
+`scf skills scan <source-id> [<exceptions-file>]` prints the security report of the staged import of a source. It is offline and read-only: nothing is written, loaded or run, and no process is started. It reads `skill-sources.yaml` in the current folder for the approved commit (`ref.approved`), then the staged import in quarantine.
+
+```
+scf skills scan example-skills
+```
+
+```
+FINDING <16 hex digits> high open <skill> <path>: <evidence>
+BLOCKED <skill>: 1 high finding
+EXCLUDED <skill>: needs network access
+SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 2 blocked
+```
+
+- **What it checks first.** The staged files must match `import.json` exactly: a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
+- **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
+- **Not normalized.** A skill that the normalization step rejects (for example a credential or bad metadata) has no package id. Its findings are still printed, with the folder as its name, and it prints `BLOCKED <folder>: not normalized (<reasons>)`.
+- **What blocks.** A high finding that is not accepted blocks its skill. Medium and low findings never block. An accepted finding does not block; a secret finding can never be accepted.
+- **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command or call, ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
+- **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or excluded, or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
+- **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
+
+##### The exception file
+
+`skill-scan-exceptions.yaml` next to `skill-sources.yaml` lists the findings the owner has reviewed. It is changed by pull request and read only by this command. Each entry accepts exactly one finding of one skill version:
+
+```yaml
+schema: 1
+exceptions:
+  - finding: 3f2a9c1d7e8b4a60        # the id from the FINDING line
+    skill: example-demo              # the skill as the FINDING line names it
+    digest: sha256:…                 # the skill's digest in import.json; a new version has a new digest
+    reason: "Reviewed: the script only prints a version"
+    owner: "@octocat"
+    reviewed: 2026-10-13             # YYYY-MM-DD, not in the future
+    expires: 2027-01-13              # at most 365 days after reviewed
+```
+
+- **Expiry.** Use `expires` (a date), or `review: required` when the finding must be looked at again. An entry whose date has passed is `expired`, and `review: required` is `review-required`; neither accepts the finding, so the skill stays blocked.
+- **Limits.** At most 200 entries. No wildcards. Unknown keys are refused. Every problem names its entry and field.
 
 #### Skill identity and content fingerprint
 
@@ -3965,6 +4019,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
+| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

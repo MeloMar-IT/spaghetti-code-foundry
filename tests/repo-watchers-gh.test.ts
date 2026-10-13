@@ -91,7 +91,9 @@ describe("a stored watcher's GitHub calls", () => {
     issues();
     const a = addRepo(ann.user.id, { url: "acme/app", method: "github-token", token: TOKEN_A });
     await addWatcher(a.id, "app-w");
-    saveConfig({ ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/app", label: "other-label" }] });
+    const cfg = await (await call(admin, "GET", "/api/config")).json();
+    delete cfg.notify.slack_webhook_set; // the file format has no marker
+    saveConfig({ ...cfg, watchers: [{ id: "file-w", github_repo: "acme/app", label: "other-label" }] });
     ctx.reloadConfig();
     ctx.watchers.sync();
     await firstChecks();

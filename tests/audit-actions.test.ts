@@ -229,15 +229,54 @@ describe("audit log: actions in the web interface", () => {
     })).toEqual([]);
   });
 
-  it("settings: names of the changed top-level settings, never a value", async () => {
+  it("settings: one line per changed setting, secrets only as changed", async () => {
     const { s, admin } = await world();
+    const old = (await call(s, admin, "GET", "/api/config")).json().concurrency;
     const body = { concurrency: 3, notify: { macos: false, command: "echo SECRET-CMD", slack_webhook: "https://example.invalid/SECRET-HOOK" } };
-    expect(await added(async () => expect((await call(s, admin, "PUT", "/api/config", body)).status).toBe(200))).toEqual([
-      expect.objectContaining({ action: "settings-change", target: "config.yaml", detail: "concurrency, notify", by: admin.user.id }),
-    ]);
+    const lines = await added(async () => expect((await call(s, admin, "PUT", "/api/config", body)).status).toBe(200));
+    expect(lines.every((l) => l.action === "settings-change" && l.target === "config.yaml" && l.by === admin.user.id)).toBe(true);
+    expect(lines.map((l) => l.detail)).toEqual(
+      expect.arrayContaining([`concurrency: ${old} -> 3`, "notify.macos: true -> false", "notify.command: changed", "notify.slack_webhook: changed"]),
+    );
+    expect(lines).toHaveLength(4);
     expect(await added(async () => expect((await call(s, admin, "PUT", "/api/config", body)).status).toBe(200))).toEqual([]);
     expect(await added(async () => expect((await call(s, admin, "PUT", "/api/config", { concurrency: 0 })).status).toBe(400))).toEqual([]);
     expect(readFileSync(auditPath(), "utf8")).not.toContain("SECRET");
+  });
+
+  it("the Slack webhook is in no answer; a save that leaves it out keeps it, null removes it", async () => {
+    const { s, admin } = await world();
+    const hook = "https://example.invalid/SECRET-HOOK";
+    expect((await call(s, admin, "PUT", "/api/config", { notify: { slack_webhook: hook } })).status).toBe(200);
+    const get = await call(s, admin, "GET", "/api/config");
+    expect(get.json().notify.slack_webhook_set).toBe(true);
+    const put = await call(s, admin, "PUT", "/api/config", get.json());
+    const bad = await call(s, admin, "PUT", "/api/config", { concurrency: 0, notify: { slack_webhook: "SECRET-HOOK not a url" } });
+    expect(bad.status).toBe(400);
+    for (const r of [get, put, bad, await call(s, admin, "GET", "/api/info"), await call(s, admin, "GET", "/api/watchers"), await call(s, admin, "GET", "/api/monitor")]) {
+      expect(r.text).not.toContain("SECRET-HOOK");
+    }
+    expect(put.json().notify.slack_webhook_set).toBe(true);
+    expect(readFileSync(join(s.tmp, "home", "config.yaml"), "utf8")).toContain(hook);
+    expect(await added(async () => void (await call(s, admin, "PUT", "/api/config", get.json())))).toEqual([]);
+    expect(await added(async () => void (await call(s, admin, "PUT", "/api/config", { ...get.json(), notify: { ...get.json().notify, slack_webhook: null } })))).toEqual([
+      expect.objectContaining({ detail: "notify.slack_webhook: changed" }),
+    ]);
+    expect((await call(s, admin, "GET", "/api/config")).json().notify.slack_webhook_set).toBe(false);
+    expect(readFileSync(auditPath(), "utf8")).not.toContain("SECRET");
+  });
+
+  it("a config.yaml that is not valid YAML is never quoted in an answer", async () => {
+    const { s, admin } = await world();
+    writeFileSync(join(s.tmp, "home", "config.yaml"), 'notify:\n  slack_webhook: "https://example.invalid/SECRET-HOOK\n');
+    const put = await call(s, admin, "PUT", "/api/config", { concurrency: 2 });
+    expect(put.status).toBe(400);
+    expect(put.json().error).toMatch(/^invalid config: /);
+    expect(put.json().error).toContain("not valid YAML");
+    expect(put.text).not.toContain("SECRET-HOOK");
+    const get = await call(s, admin, "GET", "/api/config");
+    expect(get.status).toBe(200);
+    expect(get.text).not.toContain("SECRET-HOOK");
   });
 
   it("failed calls write no line", async () => {

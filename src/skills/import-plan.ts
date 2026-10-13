@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { skillDigest, splitFrontmatter } from "./package.js";
-import { relativePathProblem, SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
+import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, hasUnsafeChar, shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Plans and prepares the import of portable SKILL.md folders from an approved source revision. Pure: no file system,
@@ -242,6 +242,77 @@ export function importDigest(skills: readonly { root: string; digest: string }[]
 }
 
 const isStr = (v: unknown): v is string => typeof v === "string";
+const isInt = (v: unknown, min: number, max: number): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= max;
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const plainText = (v: unknown, max: number): v is string => isStr(v) && v.length >= 1 && v.length <= max && !hasUnsafeChar(v);
+const plainPath = (v: unknown): v is string => isStr(v) && (v === "." || (relativePathProblem(v) === undefined && !hasUnsafeChar(v)));
+
+/**
+ * Checks the form of the text of import.json. Pure. It does not prove who wrote the record: a fresh record is built
+ * from checked fields and the text must equal its written form. Problems are fixed sentences and never repeat a value.
+ */
+export function parseImportRecord(text: string): { record: ImportRecord } | { problem: string } {
+  const bad = (what: string) => ({ problem: `import.json: ${what}` });
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { problem: "import.json is not valid JSON" };
+  }
+  if (!isRec(raw)) return bad("is not an object");
+  if (raw.schema !== 1) return bad("schema is not 1");
+  if (!isStr(raw.source) || !SKILL_ID_RE.test(raw.source)) return bad("source is not a source id");
+  if (!isStr(raw.commit) || approvedRefProblem(raw.commit)) return bad("commit is not a full commit id");
+  if (raw.adapter !== "agent-skills") return bad("adapter is not agent-skills");
+  if (!plainText(raw.repository, 2048)) return bad("repository is not usable");
+  if (!plainText(raw.repositoryKey, 2048)) return bad("repositoryKey is not usable");
+  if (!Array.isArray(raw.paths) || raw.paths.length < 1 || raw.paths.length > 200 || !raw.paths.every(plainPath)) return bad("paths is not usable");
+  if (!isStr(raw.digest) || !SKILL_DIGEST_RE.test(raw.digest)) return bad("digest is not a digest");
+  if (!Array.isArray(raw.skills) || raw.skills.length < 1 || raw.skills.length > IMPORT_LIMITS.skills) return bad("skills is not a list of 1 to 500 skills");
+  const skills: ImportRecord["skills"] = [];
+  const roots = new Set<string>();
+  let files = 0;
+  let bytes = 0;
+  for (const [i, e] of raw.skills.entries()) {
+    if (!isRec(e)) return bad(`skills[${i}] is not an object`);
+    if (!plainPath(e.root) || roots.has(e.root)) return bad(`skills[${i}].root is not usable or is used twice`);
+    if (!isStr(e.name) || !SKILL_ID_RE.test(e.name)) return bad(`skills[${i}].name is not a skill name`);
+    if (!isStr(e.digest) || !SKILL_DIGEST_RE.test(e.digest)) return bad(`skills[${i}].digest is not a digest`);
+    if (!isInt(e.files, 1, SKILL_LIMITS.files)) return bad(`skills[${i}].files is not a count`);
+    if (!isInt(e.bytes, 0, SKILL_LIMITS.totalBytes)) return bad(`skills[${i}].bytes is not a size`);
+    roots.add(e.root);
+    files += e.files;
+    bytes += e.bytes;
+    skills.push({ root: e.root, name: e.name, digest: e.digest, files: e.files, bytes: e.bytes });
+  }
+  if (files > IMPORT_LIMITS.treeEntries) return bad("skills hold more files than an import can have");
+  if (bytes > IMPORT_LIMITS.totalBytes) return bad("skills hold more bytes than an import can have");
+  if (!Array.isArray(raw.rejected) || raw.rejected.length > IMPORT_LIMITS.skills) return bad("rejected is not usable");
+  const rejected: RejectedSkill[] = [];
+  for (const [i, e] of raw.rejected.entries()) {
+    if (!isRec(e) || !isStr(e.root) || e.root.length > 100 || hasUnsafeChar(e.root)) return bad(`rejected[${i}].root is not usable`);
+    const r = e.reasons;
+    if (!Array.isArray(r) || r.length > IMPORT_LIMITS.reasons + 1 || !r.every((x) => isStr(x) && x.length <= IMPORT_LIMITS.reasonChars && !hasUnsafeChar(x))) {
+      return bad(`rejected[${i}].reasons is not usable`);
+    }
+    rejected.push({ root: e.root, reasons: [...(r as string[])] });
+  }
+  const record: ImportRecord = {
+    schema: 1,
+    source: raw.source,
+    repository: raw.repository as string,
+    repositoryKey: raw.repositoryKey as string,
+    commit: raw.commit,
+    paths: [...(raw.paths as string[])],
+    adapter: "agent-skills",
+    digest: raw.digest,
+    skills,
+    rejected,
+  };
+  if (JSON.stringify(record, null, 2) + "\n" !== text) return bad("is not in the form scf writes");
+  if (importDigest(skills) !== record.digest) return bad("digest does not match the skills");
+  return { record };
+}
 
 /** The name, or a fixed text for why SKILL.md is not usable. Never repeats parser text or file content. */
 function skillMdProblem(bytes: Uint8Array): { name: string } | { problem: string } {

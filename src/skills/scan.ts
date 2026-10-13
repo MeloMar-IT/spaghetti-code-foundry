@@ -1,5 +1,5 @@
 // The static scanner for imported skills. Pure: no file system, no process, no clock, and nothing here runs
-// the content it reads. Nothing calls it yet. The rules are in scan-rules.ts.
+// the content it reads. Called by `scf skills scan` (cli.ts). The rules are in scan-rules.ts.
 import { createHash } from "node:crypto";
 import { credentialHits, credentialProblem, riskyFileName, type CredentialHit } from "./credential-scan.js";
 import { byteCmp } from "./import-plan.js";
@@ -49,7 +49,7 @@ interface Entry {
 }
 
 /** The text of a file, or undefined when it is not valid UTF-8 or holds a NUL byte. */
-function decodeText(bytes: Uint8Array): string | undefined {
+export function decodeText(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) return undefined;
   try {
     return STRICT.decode(bytes);
@@ -58,7 +58,7 @@ function decodeText(bytes: Uint8Array): string | undefined {
   }
 }
 
-function fileClass(path: string, text: string): FileClass {
+export function fileClass(path: string, text: string): FileClass {
   if (path.startsWith("scripts/") || text.startsWith("#!")) return "script";
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");

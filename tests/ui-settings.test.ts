@@ -308,3 +308,48 @@ describe("read-only Settings", () => {
     expect(puts).toHaveLength(0);
   });
 });
+
+describe("Settings → Slack webhook", () => {
+  const withHook = (set: boolean) => ({ notify: { ...ConfigSchema.parse({}).notify, slack_webhook_set: set } });
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+  const slackInput = (main: FakeElement) => main.all("input").find((i) => (i.attrs.placeholder ?? "").startsWith("https://hooks.slack.com"))! as any;
+  const removeBox = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Remove the Slack webhook"))!.all("input")[0] as any;
+
+  it("notifyFrom: empty keeps, empty with remove gives null, a typed value wins", () => {
+    expect(ui.notifyFrom({ slack: "" }).slack_webhook).toBeUndefined();
+    expect(ui.notifyFrom({ slack: " ", removeSlack: true }).slack_webhook).toBeNull();
+    expect(ui.notifyFrom({ slack: " https://x.test/h ", removeSlack: true }).slack_webhook).toBe("https://x.test/h");
+  });
+
+  it("says set, shows an empty field and sends no webhook key when untouched", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, withHook(true));
+    expect(main.textContent).toContain("Slack webhook: set");
+    expect(slackInput(main).value).toBe("");
+    await save(main);
+    expect("slack_webhook" in puts[0].notify && puts[0].notify.slack_webhook !== undefined).toBe(false);
+  });
+
+  it("sends null when Remove is checked", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, withHook(true));
+    removeBox(main).checked = true;
+    await save(main);
+    expect(puts[0].notify.slack_webhook).toBeNull();
+  });
+
+  it("says not set and disables Remove", async () => {
+    const { main } = await render({}, "127.0.0.1", 200, withHook(false));
+    expect(main.textContent).toContain("Slack webhook: not set");
+    expect(removeBox(main).disabled).toBe(true);
+  });
+
+  it("shows the new state after a save", async () => {
+    const { main } = await render({}, "127.0.0.1", 200, withHook(true));
+    slackInput(main).value = "https://hooks.slack.com/services/x";
+    await save(main);
+    expect(slackInput(main).value).toBe("");
+    expect(main.textContent).toContain("Slack webhook: set");
+  });
+});
