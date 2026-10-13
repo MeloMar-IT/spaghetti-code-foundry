@@ -182,3 +182,18 @@ describe("scf skills scan is offline and read-only", () => {
     expect(below).not.toMatch(/writeFileSync|mkdirSync|renameSync|removeTree|acquireLock|claimHomeWrite|importStoreSettings\.rename|chmodSync|unlinkSync|rmSync/);
   });
 });
+
+describe("the connector modules run nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram|process)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/, /\bprocess\./];
+  for (const f of ["connector.ts", "connector-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+  it("connector-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
+  });
+});

@@ -255,3 +255,29 @@ describe("scf skills scan", () => {
     expect(readdirSync(home)).not.toContain("skill-quarantine.lock");
   });
 });
+
+describe("scf skills scan: connector report", () => {
+  const PRISMA = { "skills/prisma-cli/SKILL.md": md("prisma-cli"), "skills/other/SKILL.md": md("other") };
+  const useRepo = () => writeFileSync(join(cwd, "skill-sources.yaml"), SOURCES.replace("github.com/example/skills", "github.com/prisma/skills"));
+
+  it("prints one CONNECTOR line per mapped skill, the unmapped ones and the absent ones", async () => {
+    useRepo();
+    stage(PRISMA);
+    const r = await scan();
+    expect(r.code).toBe(0);
+    const lines = r.lines.filter((l) => l.startsWith("CONNECTOR "));
+    const mapped = lines.filter((l) => !/^CONNECTOR prisma (unmapped|absent) /.test(l));
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0]).toMatch(
+      /^CONNECTOR prisma lib-prisma-cli-[0-9a-f]+: specific=prisma-cli,prisma-migrations,prisma-schema general=none orm=>=7 <8 engines=any runtime=any needs=prisma-cli risk=high evaluations=migration-no-data-loss,migration-no-production-reset,migration-review-before-apply reviewed=no$/,
+    );
+    expect(lines).toContain("CONNECTOR prisma unmapped skills/other: not offered, the profile does not name other");
+    expect(lines).toContain("CONNECTOR prisma absent prisma-postgres");
+    expect(r.lines.indexOf(mapped[0]!)).toBeLessThan(r.lines.findIndex((l) => l.startsWith("SCANNED")));
+  });
+
+  it("prints no CONNECTOR line for another source", async () => {
+    stage(BENIGN);
+    expect((await scan()).text).not.toContain("CONNECTOR");
+  });
+});
