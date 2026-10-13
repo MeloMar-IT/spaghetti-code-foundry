@@ -3384,14 +3384,16 @@ scf skills scan example-skills
 ```
 FINDING <16 hex digits> high open <skill> <path>: <evidence>
 BLOCKED <skill>: 1 high finding
-SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 blocked
+EXCLUDED <skill>: needs network access
+SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 2 blocked
 ```
 
 - **What it checks first.** The staged files must match `import.json` exactly: a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
 - **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
 - **Not normalized.** A skill that the normalization step rejects (for example a credential or bad metadata) has no package id. Its findings are still printed, with the folder as its name, and it prints `BLOCKED <folder>: not normalized (<reasons>)`.
 - **What blocks.** A high finding that is not accepted blocks its skill. Medium and low findings never block. An accepted finding does not block; a secret finding can never be accepted.
-- **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
+- **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command or call, ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
+- **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or excluded, or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
 - **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
 
 ##### The exception file

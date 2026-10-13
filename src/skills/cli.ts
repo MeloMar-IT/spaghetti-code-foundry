@@ -8,6 +8,7 @@ import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { credentialProblem } from "./credential-scan.js";
+import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readStagedImport } from "./import-stage.js";
 import { normalizeImport } from "./normalize.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
@@ -135,10 +136,11 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
       const decided = applyExceptions(pkg.package.id, scan, exceptions, opts.today);
       for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
       const n = promotionBlockers(decided).length;
-      if (n > 0) {
-        blocked++;
-        out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
-      } else {
+      const excluded = importExclusions(pkg);
+      if (n > 0 || excluded.length > 0) blocked++;
+      if (n > 0) out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
+      if (excluded.length > 0) out(`EXCLUDED ${pkg.package.id}: ${exclusionReasons(excluded).join("; ")}`);
+      if (n === 0 && excluded.length === 0) {
         out(`OK ${pkg.package.id}: ${plural(scan.findings.length, "finding")}, none blocks`);
       }
     } else {

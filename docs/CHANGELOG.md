@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries: the OpenHands extensions source, with import review rules (#214). Part of #196.
+  - **Source.** `skill-sources.yaml` at the repository root declares `openhands-extensions` (`https://github.com/OpenHands/extensions`, folder `skills`, licence `MIT`, adapter `agent-skills`). It ships `status: disabled` with no `ref.approved`: no commit is approved yet, so nothing is fetched. The owner enables it by pull request with a full commit id.
+  - **Exclusions.** New `src/skills/import-exclusions.ts` and rules in `src/skills/import-review-rules.ts`. An imported skill is refused for promotion (`excluded`) when it needs a connector (an MCP tool), needs network access, uses a web or service command or a web call in its scripts, ships `.mcp.json`, `plugin.json` or a `.plugin/` folder, or declares `mcp_tools`. The exception file does not lift an exclusion.
+  - **`scf skills scan`.** A skill with an exclusion prints `EXCLUDED <skill>: <reasons>`, counts as blocked and makes the command exit 1. Its `OK` line is not printed.
+  - **Promotion.** `promoteImport` in `src/skills/promotion.ts` puts an excluded skill in `refused` with status `excluded`, before the licence check. Nothing calls it yet.
+  - **Evaluation.** New `evaluateImport` in `src/skills/import-evaluation.ts` compares imported skills with existing ones: the review areas (`code-review`, `documentation`, `development-workflow`), capability overlaps with the winner of each shared capability, collisions that block a skill, and the outcome `new`, `duplicate` or `blocked`. It is pure and reads no file. Nothing calls it in the CLI yet.
+  - **Tests.** New `tests/skill-source-openhands.test.ts` (the source declaration, and an in-memory fixture that runs import, scan, evaluation and promotion), `tests/skill-import-exclusions.test.ts` and `tests/skill-import-evaluation.test.ts`; `tests/skill-scan-cli.test.ts` and `tests/skill-promotion.test.ts` extended. No network, no real upstream content.
+  - **Not done.** The real import, the review of the upstream content and the choice of the commit are for the owner. Upstream plugins and live integrations are excluded by rule, not by an approval list.
 - Refinement: the architect can be asked in several sessions at once; the runs wait in line.
   - **Before.** While the architect was queued, running or paused for one session, asking in another session of the same account answered 409 ("the architect is reading for another of your sessions"). The person had to come back later.
   - **Now.** The ask is accepted. All architect runs of one account share one scheduler lock (`architectLock` in `src/refinement/architect.ts`), so one works and the others wait in the queue in the order they were asked. One run per session stays (409). A paused run of another session no longer refuses a new one.

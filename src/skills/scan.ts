@@ -49,7 +49,7 @@ interface Entry {
 }
 
 /** The text of a file, or undefined when it is not valid UTF-8 or holds a NUL byte. */
-function decodeText(bytes: Uint8Array): string | undefined {
+export function decodeText(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) return undefined;
   try {
     return STRICT.decode(bytes);
@@ -58,7 +58,7 @@ function decodeText(bytes: Uint8Array): string | undefined {
   }
 }
 
-function fileClass(path: string, text: string): FileClass {
+export function fileClass(path: string, text: string): FileClass {
   if (path.startsWith("scripts/") || text.startsWith("#!")) return "script";
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
