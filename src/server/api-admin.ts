@@ -1,7 +1,9 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditAction, changedKeys } from "../auth/audit.js";
 import { hasAdmin } from "../auth/users.js";
-import { CONFIG_PATH, ConfigSchema, saveConfig } from "../config.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { CONFIG_PATH, ConfigSchema, STALE_CONFIG, configVersion, editConfigText, parseConfigText, readConfigText, type Config } from "../config.js";
 import { spentToday } from "../engine/state.js";
 import { cleanRuns } from "../clean.js";
 import { listEvalReports } from "../evals.js";
@@ -15,6 +17,15 @@ import { hostAllowed, listenCovers, listenProblem } from "./net.js";
 import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
 import { watcherRows } from "./api-repos.js";
 import type { Route } from "./server.js";
+
+/** The settings in this text of the file; undefined when it cannot be read (the running ones are used then). */
+function fileSnapshot(text: string): Config | undefined {
+  try {
+    return parseConfigText(text);
+  } catch {
+    return undefined;
+  }
+}
 
 export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const { opts, scheduler, watchers } = ctx;
@@ -35,11 +46,25 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
 
   if (seg[0] === "config") {
-    if (method === "GET") return send(res, 200, ctx.fileConfig()), true;
+    if (method === "GET") {
+      const text = readConfigText();
+      res.setHeader("x-config-version", configVersion(text));
+      return send(res, 200, fileSnapshot(text) ?? ctx.fileConfig()), true;
+    }
     if (method === "PUT") {
       const body = await readJson(req);
+      // From here to the write there is no await, so two saves cannot interleave.
+      const text = readConfigText();
+      const sent = req.headers["x-config-version"];
+      if (typeof sent === "string" && sent !== configVersion(text)) throw new HttpError(409, STALE_CONFIG);
       let saved;
-      const before = ctx.fileConfig();
+      let out: { text: string } | undefined;
+      let before: Config;
+      try {
+        before = parseConfigText(text);
+      } catch (e) {
+        throw new HttpError(400, `invalid config: ${(e as Error).message}`);
+      }
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
         const parsed = ConfigSchema.parse(body);
@@ -57,7 +82,13 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const stored = [...ctx.config().watchers.filter((w) => w.repoId !== undefined), ...ctx.blockedWatchers()];
         const bad = fileWatcherProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
         if (bad) throw new Error(bad);
-        saved = saveConfig(body);
+        const edited = editConfigText(text, body);
+        out = edited;
+        saved = edited.config;
+        if (edited.text !== text) {
+          mkdirSync(dirname(CONFIG_PATH()), { recursive: true });
+          writeFileSync(CONFIG_PATH(), edited.text);
+        }
       } catch (e) {
         throw new HttpError(400, `invalid config: ${(e as Error).message}`);
       }
@@ -65,12 +96,19 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       if (changed.length) auditAction(ctx.diagLog, user.id, "settings-change", "config.yaml", changed.join(", "));
       ctx.reloadConfig();
       watchers.sync();
+      res.setHeader("x-config-version", configVersion(out.text));
       return send(res, 200, saved), true;
     }
   }
 
   if (seg[0] === "watchers") {
-    if (!seg[1] && method === "GET") return send(res, 200, watcherRows(ctx)), true;
+    if (!seg[1] && method === "GET") {
+      const text = readConfigText();
+      res.setHeader("x-config-version", configVersion(text));
+      const file = fileSnapshot(text)?.watchers.find((w) => w.source === "monitor");
+      const rows = watcherRows(ctx).map((w) => (file && w.source === "monitor" && w.id === file.id ? { ...w, file: { id: file.id, every: file.every, enabled: file.enabled } } : w));
+      return send(res, 200, rows), true;
+    }
     if (seg[1] && seg[2] === "tick" && method === "POST") return send(res, 200, await watchers.runNow(seg[1])), true;
   }
 

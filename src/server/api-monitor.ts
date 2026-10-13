@@ -1,3 +1,4 @@
+import { configVersion, parseConfigText, readConfigText, type MonitorConfig } from "../config.js";
 import { storyKey } from "../monitor/breaker.js";
 import { evidenceLines, readFindings, saveFindings, type Finding, type StoryRef } from "../monitor/findings.js";
 import { fixState, tryAgain, waitsForPerson } from "../monitor/fix.js";
@@ -50,9 +51,9 @@ function muteView(m: Mute, byFingerprint: Map<string, Finding>) {
 const fixOf = (r: StoryRef, target?: string) => (target && r.repo.toLowerCase() === target.toLowerCase() ? fixState(r) : undefined);
 
 /** The findings of the monitor (every stored one), the mutes in force and the detector names. */
-function lists(ctx: ApiContext) {
-  const config = ctx.config().monitor;
-  const target = config.report_to;
+function lists(ctx: ApiContext, thresholdsFrom = ctx.config().monitor) {
+  const target = ctx.config().monitor.report_to;
+  const config = thresholdsFrom;
   const read = readFindings();
   const findings = read.findings.sort(byUrgency);
   const byFingerprint = new Map(findings.map((f) => [f.fingerprint, f]));
@@ -118,7 +119,16 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
   if (seg[0] !== "monitor" || seg.length > 3) return false;
   if (seg.length === 1) {
     if (method !== "GET") throw new HttpError(405, "method not allowed");
-    return send(res, 200, { ...view(ctx), ...lists(ctx) }), true;
+    // The thresholds are the ones in the file, from the same text as the version, so a save of another field cannot restore old ones.
+    const text = readConfigText();
+    res.setHeader("x-config-version", configVersion(text));
+    let fromFile: MonitorConfig | undefined;
+    try {
+      fromFile = parseConfigText(text).monitor;
+    } catch {
+      fromFile = undefined;
+    }
+    return send(res, 200, { ...view(ctx), ...lists(ctx, fromFile) }), true;
   }
   if (seg[1] === "mutes") {
     if (seg.length === 2 && method === "POST") {

@@ -891,6 +891,8 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
 | `flows/` | Your own flows (repository flows live in `<repo>/.claude-factory/flows`) |
 
+A save of `config.yaml` edits the file text in place (`src/config-edit.ts`, `editConfigText` in `src/config.ts`): comments and key order stay, only the changed keys are written, and the result is parsed again before it is written. The settings and watcher reads send `X-Config-Version`, the sha256 of the file text; a `PUT /api/config` with a stale version gets 409.
+
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
 
 ---

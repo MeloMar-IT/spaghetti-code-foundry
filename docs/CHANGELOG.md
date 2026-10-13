@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Settings 1: a save changes only the keys that changed in `config.yaml`, and a stale save is refused (#490). Part 1 of 11 of #407.
+  - **In place.** `editYamlText` in new `src/config-edit.ts` and `editConfigText` in `src/config.ts` edit the file text: comments and key order stay, only changed keys are written, and the result is parsed again and must equal the body before anything is written. Lists are aligned, so a comment on an untouched item survives. A list too long to align (over 250,000 comparisons) is refused, not saved.
+  - **Defaults.** A key put back to its default is removed, unless it has a comment; a parent left empty is removed too. A key left out of the body is removed.
+  - **Version.** `configVersion` is the sha256 of the file text. `GET /api/config`, `GET /api/watchers` and `GET /api/monitor` send `x-config-version`. `PUT /api/config` with a stale `x-config-version` answers 409 "the settings changed since you loaded them — reload first" and writes nothing; a PUT without the header is not checked, so `scf settings set`, scripts and open tabs keep working. A PUT answers with the new version.
+  - **Reads from the file.** `GET /api/config` reads `config.yaml` from disk, not the running settings. The `file` field of a monitor row in `GET /api/watchers` and the thresholds of `GET /api/monitor` come from the file too.
+  - **Writes only on change.** `saveConfig` writes nothing when the text is the same. A bad body is refused with 400 and the file bytes stay the same.
+  - **Pages.** Settings, Watchers, Problems and Models send the version their page was drawn with. Models keeps it per drawn form, so a reload during a save cannot hand an old save a newer version. A 409 on Settings marks no field.
+  - **Tests.** New `tests/config-save.test.ts`; route cases in `tests/watcher-move-server.test.ts`; `tests/ui-auth.test.ts`, `tests/ui-a11y-admin.test.ts`, `tests/ui-models.test.ts`, `tests/ui-watchers.test.ts` and `tests/ui-problems.test.ts` extended.
+  - **Limits.** Comments on a key that is removed, inside a list item that is removed or replaced, or inside a value that changes shape are still lost. Whitespace may be normalised on the first changing save. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - A sixth helper process, `scf housekeeping` (every 3 hours, with `run|report|install|uninstall|status` like the others).
   - **Memory record.** Each check writes the memory of the system's file-change tracker (`fseventsd`) and of the Foundry server to `housekeeping/memory.log`. Above 8 GB for the tracker or 6 GB for the server it sends one notification that day and the digest names it. Reason: on a machine up for days the tracker once grew to 56 GB and starved the runs of memory.
   - **Nightly clean-up.** At the first check after 03:00 it removes the workspaces of runs that ended more than 2 days ago (as `scf clean --older-than 2`): run records, logs and branches stay; active and paused runs are not touched. A clean-up that fails is tried again at the next check.

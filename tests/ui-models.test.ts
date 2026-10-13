@@ -12,7 +12,8 @@ afterAll(() => restore());
 
 const g = globalThis as any;
 const realFetch = globalThis.fetch;
-type Reply = { status?: number; body?: unknown };
+type Reply = { status?: number; body?: unknown; version?: string };
+let sentVersions: (string | undefined)[];
 let routes: Record<string, (body?: any) => Reply | Promise<Reply>>;
 let config: any;
 let saved: any[];
@@ -49,10 +50,12 @@ beforeEach(async () => {
     "GET /api/providers": () => ({ body: { agents, providers: providerList() } }),
     "POST /api/providers/test": (b) => { tested.push(b.spec); return { body: { ok: true, target: b.spec, seconds: 2 } }; },
   };
-  g.fetch = async (url: string, init?: { method?: string; body?: string }) => {
+  sentVersions = [];
+  g.fetch = async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+    if (init?.method === "PUT" && url === "/api/config") sentVersions.push(init.headers?.["x-config-version"]);
     const r = await routes[`${init?.method ?? "GET"} ${url}`]!(init?.body ? JSON.parse(init.body) : undefined);
     const code = r.status ?? 200;
-    return { ok: code < 400, status: code, statusText: "x", json: async () => r.body };
+    return { ok: code < 400, status: code, statusText: "x", headers: { get: (n: string) => (n === "x-config-version" ? (r.version ?? null) : null) }, json: async () => r.body };
   };
   main().replaceChildren();
   toastEl().className = "";
@@ -101,6 +104,45 @@ describe("Provider detail", () => {
     delete want.providers.ollama;
     delete saved[0].providers.ollama;
     expect(saved[0]).toEqual(want);
+  });
+
+  it("sends the version the page was drawn with, not the one read at Save time, and then the one the last save gave", async () => {
+    let gets = 0;
+    routes["GET /api/config"] = () => ({ body: structuredClone(config), version: ++gets === 1 ? "v1" : "v2" });
+    routes["PUT /api/config"] = (b) => { saved.push(b); config = b; return { body: {}, version: "v3" }; };
+    await detail("ollama");
+    const first = button("Save provider");
+    first.click();
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    await vi.waitFor(() => expect(button("Save provider")).not.toBe(first)); // the page was drawn again, with v2
+    first.click(); // the same form again: it moved on to the version its own save answered
+    await vi.waitFor(() => expect(saved).toHaveLength(2));
+    expect(sentVersions).toEqual(["v1", "v3"]);
+  });
+
+  it("shows the refusal of a stale save", async () => {
+    routes["GET /api/config"] = () => ({ body: structuredClone(config), version: "v1" });
+    routes["PUT /api/config"] = () => ({ status: 409, body: { error: "the settings changed since you loaded them — reload first" } });
+    await page.renderModels(main());
+    button("Save routing").click();
+    await vi.waitFor(() => expect(toastEl().textContent).toContain("reload first"));
+    expect(sentVersions).toEqual(["v1"]);
+  });
+
+  it("a reload that ends while a save waits for its read does not give that save the newer version", async () => {
+    const slow = held<Reply>();
+    let gets = 0;
+    routes["GET /api/config"] = () => ({ body: structuredClone(config), version: ++gets === 1 ? "v1" : "v2" });
+    await page.renderModels(main());
+    const old = button("Save routing");
+    routes["GET /api/config"] = () => slow.promise;
+    old.click(); // its read is held
+    routes["GET /api/config"] = () => ({ body: structuredClone(config), version: "v2" });
+    main().all("button").find((b) => b.getAttribute("aria-label") === "Reload")!.click();
+    await vi.waitFor(() => expect(main().all("button").some((b) => b.textContent === "Save routing" && b !== old)).toBe(true));
+    slow.resolve({ body: structuredClone(config), version: "v2" });
+    await vi.waitFor(() => expect(sentVersions).toHaveLength(1));
+    expect(sentVersions).toEqual(["v1"]);
   });
 
   it("drops a cleared Base URL from the body", async () => {
