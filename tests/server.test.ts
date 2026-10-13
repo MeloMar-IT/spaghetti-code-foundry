@@ -58,7 +58,8 @@ describe("ui server", () => {
     for (const [n, y] of [["used-by-watcher", used], ["used-by-step", FLOW.replace("name: mine", "name: used-by-step")], ["parent", parent]] as const) {
       expect((await json("PUT", `/api/flows/${n}`, { yaml: y, scope: "repo" })).status).toBe(200);
     }
-    const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[] };
+    const cfg = (await (await json("GET", "/api/config")).json()) as { watchers: unknown[]; notify: Record<string, unknown> };
+    delete cfg.notify.slack_webhook_set; // the file format has no marker
     const watcher = { id: "off", enabled: false, github_repo: "acme/app", label: "x", flow: "used-by-watcher" };
     const { saveConfig } = await import("../src/config.js");
     saveConfig({ ...cfg, watchers: [watcher] }); // a file watcher: the API no longer saves one

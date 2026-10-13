@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vites
 import { checkRepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
 import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, removeGithubRepo, removeRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo, watchersRemovedDetail } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
-import { AuditEntrySchema } from "../src/auth/audit.js";
+import { AuditEntrySchema, DETAIL_MAX } from "../src/auth/audit.js";
 import { addRepoWatcher, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 import { createUser, setStatus } from "../src/auth/users.js";
@@ -470,7 +470,7 @@ describe("removing a repository removes its watchers", () => {
   it("writes the audit detail in short form and cuts a long list to what the log accepts", () => {
     expect(watchersRemovedDetail(["a", "b"])).toBe("watchers removed: a, b");
     const long = watchersRemovedDetail(Array.from({ length: 200 }, (_, i) => `watcher-${i}`));
-    expect(long.length).toBeLessThanOrEqual(500);
+    expect(long.length).toBeLessThanOrEqual(DETAIL_MAX);
     expect(long.endsWith("…")).toBe(true);
     const entry = { action: "repo-change", by: "cli", time: new Date().toISOString(), result: "ok", target: ANN, detail: long };
     expect(AuditEntrySchema.safeParse(entry).success).toBe(true);

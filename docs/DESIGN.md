@@ -895,6 +895,8 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 
 A save of `config.yaml` edits the file text in place (`src/config-edit.ts`, `editConfigText` in `src/config.ts`): comments and key order stay, only the changed keys are written, and the result is parsed again before it is written. The settings and watcher reads send `X-Config-Version`, the sha256 of the file text; a `PUT /api/config` with a stale version gets 409.
 
+The audit lines of a save come from the diff of the parsed configs before and after (`configChanges` in `src/auth/audit-changes.ts`): one line per changed leaf, with the watchers matched by id. `MASKED_KEYS` there is the one list of settings that say only "changed"; a value is rendered and cut to 80 characters. `auditActions` (`src/auth/audit.ts`) writes all lines of one save under one lock. The Slack webhook never leaves the server: `configView` (`src/server/config-view.ts`) answers `notify.slack_webhook_set`, and `withStoredWebhook` keeps the stored value when a save leaves the key out.
+
 Run ids are timestamps, so folders sort by time. Old workspaces are removed by `scf clean`.
 
 ---

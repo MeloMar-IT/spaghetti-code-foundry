@@ -9,7 +9,7 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
  * The audit log: one JSON line per account change or event (a sign-in), in `audit.jsonl` (not `.json`, so the
  * data-folder move leaves it alone). The file is only appended; a reader skips lines that do not parse. A line never
  * holds a password, hash, token, key, name or e-mail. Lines also record actions made in the web interface; they never
- * hold a note, task text or setting value.
+ * hold a note or task text. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
  */
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
@@ -49,7 +49,7 @@ export const EVENT_ACTIONS = [
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;
-export const DETAIL_MAX = 500;
+export const DETAIL_MAX = 2000;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const short = (max: number) => z.string().refine((s) => s.length >= 1 && s.length <= max && s === s.trim() && !CONTROL.test(s));
 const EventSchema = z
@@ -164,12 +164,41 @@ export function auditAction(log: ((msg: string) => void) | undefined, by: string
   try {
     writeAudit(by, { action, result: "ok", target, ...(detail !== undefined ? { detail } : {}) }, 0);
   } catch (e) {
-    try {
-      log?.(e instanceof StoreError ? `audit: ${basename(e.file)} ${e.kind} (${action})` : `audit: audit.jsonl not-valid (${action})`);
-    } catch {
-      /* the log itself must not fail the action */
-    }
+    auditProblem(log, action, e);
   }
+}
+
+function auditProblem(log: ((msg: string) => void) | undefined, action: EventAction, e: unknown): void {
+  try {
+    log?.(e instanceof StoreError ? `audit: ${basename(e.file)} ${e.kind} (${action})` : `audit: audit.jsonl not-valid (${action})`);
+  } catch {
+    /* the log itself must not fail the action */
+  }
+}
+
+/**
+ * Adds one `ok` line per detail, all under one lock. Best effort like `auditAction`. A line the schema refuses is
+ * skipped (one fixed-word line in `log` after the loop); a file that cannot be written stops the loop.
+ */
+export function auditActions(log: ((msg: string) => void) | undefined, by: string, action: EventAction, target: string, details: readonly string[]): void {
+  if (!details.length) return;
+  let skipped = 0;
+  try {
+    withAuthLock(() => {
+      for (const detail of details) {
+        try {
+          appendAuditLocked(by, { action, result: "ok", target, detail });
+        } catch (e) {
+          if (e instanceof StoreError) throw e;
+          skipped++;
+        }
+      }
+    }, 0);
+  } catch (e) {
+    auditProblem(log, action, e);
+    return;
+  }
+  if (skipped) auditProblem(log, action, new Error("not valid"));
 }
 
 // ---- reading -----------------------------------------------------------------------------------------

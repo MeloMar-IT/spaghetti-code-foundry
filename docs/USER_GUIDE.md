@@ -2163,8 +2163,9 @@ not followed; the command says where the server points to and stops.
   accepted, unless the field is one the command does not let `--data` set.
 - An argument that becomes part of the address (an id, a name) cannot be `.` or `..` and cannot
   contain `/` or `\`.
-- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. Start from
-  `scf settings show --json`.
+- `scf settings set` sets all settings: a setting you leave out goes back to its default, so it insists on `--data`. The Slack
+  webhook is the exception: it stays unless you give `notify.slack_webhook: null`, which removes it. Start from
+  `scf settings show --json`; it does not show the webhook, only `notify.slack_webhook_set`.
 
 **Any call directly.** `scf api routes [word]` lists every call the server knows and who may make
 it; `scf api GET runs` (or `POST`, `PUT`, `PATCH`, `DELETE`) makes one. A body is sent only with
@@ -2355,6 +2356,8 @@ lands under **Needs you** on Home (a question, a risky plan or split, a release 
 watcher error). Nothing is sent for progress. A run that succeeds is told only if you switch on
 "Also notify when a run succeeds" (off by default; runs that finished before you switched it on are
 not told).
+
+The Slack webhook is set in **Settings → Notifications**. The page shows only **set** or **not set**. Enter a new address to replace the webhook, leave the field empty to keep it, or tick **Remove the Slack webhook** to remove it. The webhook is never shown again, and no API answer contains it (`GET /api/config` says only `notify.slack_webhook_set`).
 
 No notification and no `notify.command` is sent for a run whose issue is known to be closed on GitHub. When the state is unknown or open, they are sent as before.
 
@@ -2552,10 +2555,11 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `refinement-publish` | Ready drafts of a refinement session were published | session id | repository and issue numbers |
 | `repo-add`, `repo-change`, `repo-remove` | A repository is added, its sign-in is changed, or it is removed | repository id | stored address |
 | `repo-change` (admin) | An admin changes the settings of a repository | repository id | `settings:` and the names of the changed fields |
+| `repo-change` (admin) | An admin changes a watcher of a repository | repository id | one line per changed option: `watcher <id>: <option>: <old> -> <new>` |
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
-| `settings-change` | Settings are saved | `config.yaml` | names of the top-level settings that changed |
+| `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
@@ -2564,10 +2568,17 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
 call that changes nothing (the same repository settings again, a flow saved without a change, an unpublished flow). If an old key
 is left in the Keychain, the change was made, so its line is written even though the answer is an error. Tokens, passwords, keys,
-notes, task text, credential names and setting values are never written. A line that cannot be written does not stop or undo the
+notes, task text, credential names and the values of the masked settings (below) are never written. A line that cannot be written does not stop or undo the
 action, and a line is not written while another `scf` command holds the lock; the server log then says
 `audit: <file> <kind> (<action>)`. Runs that a watcher starts, `scf run`, `scf approve`, `scf reject`, evals, deleting or
 unpublishing a flow, blocks, clean-up and running a watcher now are not logged. A `target` can be up to 255 characters.
+
+**Settings and watcher lines.** A save of the settings writes one line per setting that changed, with the full key path, the old
+value and the new value, for example `monitor.stuck_run.extra_minutes: 30 -> 60`. A setting that was not set shows `(not set)`.
+A watcher in `config.yaml` is named `watchers.<id>.<option>`. A change to a repository watcher is written the same way, as
+`watcher <id>: every: "5m" -> "10m"`. Three settings never show a value, only `changed`: `notify.slack_webhook`, `notify.command`
+and `agent_env` (the environment of a watcher, on any path). A watcher's `owner` (an account's e-mail) and `task` (free text) say
+only `changed` too. A value longer than 80 characters is cut and ends with `…`; a line is at most 2,000 characters.
 
 **The Audit page.** Admins only: **Audit** in the top bar (`#/audit`). It shows who did what, newest first: time, who, action,
 target and result. "Who" is the account's name, "command line" for `scf`, or "not signed in" for a failed sign-in. An account
@@ -2957,8 +2968,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file |
-| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
+| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
 | `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |

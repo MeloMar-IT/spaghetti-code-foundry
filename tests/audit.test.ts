@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuditEntrySchema, EVENT_ACTIONS, TARGET_MAX, auditAction, changedKeys, appendAuditLocked, auditPath, prepareAuditLocked, writeAudit, type AuditEvent } from "../src/auth/audit.js";
+import { AuditEntrySchema, DETAIL_MAX, EVENT_ACTIONS, TARGET_MAX, auditAction, changedKeys, appendAuditLocked, auditPath, prepareAuditLocked, writeAudit, type AuditEvent } from "../src/auth/audit.js";
 import { findSession } from "../src/auth/sessions.js";
 import { createUser, setStatus, startSession } from "../src/auth/users.js";
 import { openAppendLocked, StoreError, withAuthLock } from "../src/auth/store.js";
@@ -249,7 +249,7 @@ describe("event lines", () => {
     expect(ok({ by: id(), result: "ok", userId: id() })).toBe(true);
     expect(ok({})).toBe(true);
     expect(ok({ target: "abc" })).toBe(true);
-    expect(ok({ target: "abc", detail: "x".repeat(500) })).toBe(true);
+    expect(ok({ target: "abc", detail: "x".repeat(DETAIL_MAX) })).toBe(true);
     expect(ok({ by: "cli" })).toBe(true);
   });
 
@@ -265,7 +265,7 @@ describe("event lines", () => {
       { target: "x".repeat(TARGET_MAX + 1) },
       { target: "a\nb" },
       { target: " a" },
-      { target: "a", detail: "x".repeat(501) },
+      { target: "a", detail: "x".repeat(DETAIL_MAX + 1) },
       { email: "a@example.com" },
       { stopWork: true },
       { by: "ann@example.com" },
