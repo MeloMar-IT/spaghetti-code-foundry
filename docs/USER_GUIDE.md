@@ -3335,6 +3335,15 @@ sources:
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
 
+#### Owner overrides and project pins
+
+Two reviewed records can choose one approved skill for a capability that allows only one. Both are checked with the CLI; no run reads them yet, so runs choose as before.
+
+- **Project pin** (`.claude-factory/skill-pins.yaml`): read from the default branch of the repository, never from a work branch. One pin per capability.
+- **Owner override** (`skill-overrides.yaml`): for all repositories, or for a list of them (`owner/name`). A repository override beats an `all` override for the same capability. A project pin beats both.
+
+Each entry names the `capability`, the `target` (`id@version`), who chose it (`by`, a GitHub user or team), a `reason`, the start (`from`), and `expires` or `review_by` (or both). A target must be an approved, usable version that passes the licence, safety, tools and compatibility checks. Remove the entry to return to the default choice. `scf skills overrides check` and `scf skills project-pins check` print each entry with its digest and exit 1 for an invalid or expired entry.
+
 #### Import a source into quarantine
 
 `scf skills import <source-id> [<file>]` reads `skill-sources.yaml` (or the file you name), fetches the approved commit of an enabled source and stages its skills in quarantine. Nothing is loaded or run.
@@ -3950,6 +3959,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
+| `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
+| `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
