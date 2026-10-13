@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
-import { auditAction } from "../auth/audit.js";
+import { auditAction, auditActions } from "../auth/audit.js";
+import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
@@ -215,7 +216,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
     known();
     const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body));
     if (r.changed.length) {
-      audit(`watcher ${wid}: ${r.changed.join(", ") === "enabled" ? (r.watcher.enabled ? "enabled" : "disabled") : `changed ${r.changed.join(", ")}`}`);
+      auditActions(ctx.diagLog, by, "repo-change", repoId, watcherChanges(r.before, r.after).map((c) => changeDetail(c, `watcher ${wid}: `)));
       ctx.watchers.sync();
     }
     return send(res, 200, rowOf(wid!, r.watcher)), true;

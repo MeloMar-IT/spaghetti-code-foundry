@@ -1,5 +1,7 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
-import { auditAction, changedKeys } from "../auth/audit.js";
+import { auditActions } from "../auth/audit.js";
+import { changeDetail, configChanges } from "../auth/audit-changes.js";
+import { configView, storedConfigProblem, withStoredWebhook } from "./config-view.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -49,7 +51,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (method === "GET") {
       const text = readConfigText();
       res.setHeader("x-config-version", configVersion(text));
-      return send(res, 200, fileSnapshot(text) ?? ctx.fileConfig()), true;
+      return send(res, 200, configView(fileSnapshot(text) ?? ctx.fileConfig())), true;
     }
     if (method === "PUT") {
       const body = await readJson(req);
@@ -63,11 +65,12 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       try {
         before = parseConfigText(text);
       } catch (e) {
-        throw new HttpError(400, `invalid config: ${(e as Error).message}`);
+        throw new HttpError(400, `invalid config: ${storedConfigProblem(e)}`);
       }
+      const merged = withStoredWebhook(body, before.notify.slack_webhook);
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
-        const parsed = ConfigSchema.parse(body);
+        const parsed = ConfigSchema.parse(merged);
         const next = parsed.server;
         if (!hostAllowed(req.headers.host, next.allowed_hosts, opts.port)) {
           throw new Error(`allowed_hosts must keep "${req.headers.host}", the name you are using now`);
@@ -82,7 +85,7 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const stored = [...ctx.config().watchers.filter((w) => w.repoId !== undefined), ...ctx.blockedWatchers()];
         const bad = fileWatcherProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
         if (bad) throw new Error(bad);
-        const edited = editConfigText(text, body);
+        const edited = editConfigText(text, merged);
         out = edited;
         saved = edited.config;
         if (edited.text !== text) {
@@ -92,12 +95,11 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       } catch (e) {
         throw new HttpError(400, `invalid config: ${(e as Error).message}`);
       }
-      const changed = changedKeys(before, saved);
-      if (changed.length) auditAction(ctx.diagLog, user.id, "settings-change", "config.yaml", changed.join(", "));
+      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", configChanges(before, saved).map((c) => changeDetail(c)));
       ctx.reloadConfig();
       watchers.sync();
       res.setHeader("x-config-version", configVersion(out.text));
-      return send(res, 200, saved), true;
+      return send(res, 200, configView(saved)), true;
     }
   }
 

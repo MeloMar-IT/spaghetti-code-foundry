@@ -302,7 +302,9 @@ describe("watchers of two repositories", () => {
   it("fails closed when the store cannot be read, and runs again when it can", async () => {
     const repo = addRepo(admin.user.id, { url: "acme/web" });
     await addWatcher(repo.id, "web-w");
-    saveConfig({ ...(await (await call(admin, "GET", "/api/config")).json()), watchers: [{ id: "file-w", github_repo: "acme/file" }] });
+    const cfg = await (await call(admin, "GET", "/api/config")).json();
+    delete cfg.notify.slack_webhook_set; // the file format has no marker
+    saveConfig({ ...cfg, watchers: [{ id: "file-w", github_repo: "acme/file" }] });
     ctx.reloadConfig();
     ctx.watchers.sync();
     expect(ctx.watchers.tracked().map((t) => t.watcher.id).sort()).toEqual(["file-w", "web-w"]);

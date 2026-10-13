@@ -126,8 +126,8 @@ describe("watchers of a repository: the routes", () => {
     expect(ctx.watchers.tracked().map((t) => t.watcher.id)).toEqual(["admin-w"]);
 
     const log = await audit();
-    for (const line of ["watcher ann-w: added", "watcher ann-w: disabled", "watcher ann-w: enabled", "watcher ann-w: removed"]) expect(log).toContain(line);
-    expect(log.split("watcher ann-w: disabled").length).toBe(2);
+    for (const line of ["watcher ann-w: added", "watcher ann-w: enabled: true -> false", "watcher ann-w: enabled: false -> true", "watcher ann-w: removed"]) expect(log).toContain(line);
+    expect(log.split("watcher ann-w: enabled: true -> false").length).toBe(2);
     expect(log).toContain(annRepo);
   });
 
@@ -135,9 +135,10 @@ describe("watchers of a repository: the routes", () => {
     expect((await call(admin, "POST", path(adminRepo), { id: "admin-w" })).status).toBe(409);
     expect((await call(admin, "POST", path(annRepo), { id: "admin-w" })).error()).toMatch(/exists already/);
     const config = (await call(admin, "GET", "/api/config")).json();
+    const { slack_webhook_set: _m, ...fileNotify } = config.notify;
     const put = (watchers: unknown[]) => call(admin, "PUT", "/api/config", { ...config, watchers });
     const w = { id: "file-w", github_repo: "acme/file", enabled: false };
-    saveConfig({ ...config, watchers: [w] }); // a file watcher: the API no longer saves a new one
+    saveConfig({ ...config, notify: fileNotify, watchers: [w] }); // a file watcher: the API no longer saves a new one
     ctx.reloadConfig();
     ctx.watchers.sync();
     expect((await call(admin, "POST", path(annRepo), { id: "file-w" })).status).toBe(409);

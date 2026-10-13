@@ -84,7 +84,7 @@ export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: s
 }
 
 /** Changes a watcher: a value sets, `null` removes an option. The id cannot change. `changed` names the options that differ. */
-export function updateRepoWatcher(repoId: string, id: string, patch: unknown): { watcher: StoredWatcher; changed: string[] } {
+export function updateRepoWatcher(repoId: string, id: string, patch: unknown): { watcher: StoredWatcher; changed: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
   if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw bad("the change must be an object");
   const p = patch as Record<string, unknown>;
   if ("id" in p && p.id !== id) throw bad("the id of a watcher cannot be changed");
@@ -107,7 +107,7 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown): {
       all[at] = watcher;
       save(all);
     }
-    return { watcher, changed };
+    return { watcher, changed, before, after };
   });
 }
 

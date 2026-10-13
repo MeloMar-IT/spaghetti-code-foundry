@@ -562,10 +562,13 @@ export function parseConfigText(text: string, path = CONFIG_PATH()): Config {
   const res = ConfigSchema.safeParse(parse(text) ?? {});
   if (!res.success) {
     const issues = res.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
-    throw new Error(`${path}: invalid config\n${issues}`);
+    throw new ConfigIssuesError(`${path}: invalid config\n${issues}`);
   }
   return res.data;
 }
+
+/** The file is YAML but not valid settings; the message is built from key paths and rules, not from lines of the file. */
+export class ConfigIssuesError extends Error {}
 
 export function loadConfig(path = CONFIG_PATH()): Config {
   if (!existsSync(path)) return ConfigSchema.parse({});
