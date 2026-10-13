@@ -12,6 +12,10 @@ export const usesDrawer = (width: number): boolean => width <= 767; // BREAKPOIN
 export const ESSENTIAL = ["Sign in", "Find what needs me", "Start work", "Diagnose a failed run", "Board", "Refine", "Repositories", "Sign out"] as const;
 export type EssentialName = (typeof ESSENTIAL)[number];
 
+/** The stress items at 360 px, in the order of the stress table in docs/ui-redesign/measurement.md. */
+export const STRESS = ["Repository name", "Text 40 % longer", "Status of 2,000 characters", "Log of 5,000 lines", "Large diff", "Board with 30 cards", "Tall dialog"] as const;
+export type StressName = (typeof STRESS)[number];
+
 export interface Variant { width: Width; touch: boolean; label: string }
 /** 360 and 768 as touch devices, 1024 and 1440 with a mouse; `label` is the column head of the results table. */
 export const VARIANTS: readonly Variant[] = WIDTHS.map((width) => ({ width, touch: width < 1024, label: width < 1024 ? `${width} touch` : `${width}` }));

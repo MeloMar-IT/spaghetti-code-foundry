@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { installFakeDom } from "./helpers/fake-dom.js";
 import { code, tableRows } from "./helpers/md-table.js";
-import { ESSENTIAL, VARIANTS } from "./browser/widths.js";
+import { ESSENTIAL, STRESS, VARIANTS } from "./browser/widths.js";
 import { BASELINE, effortText, KNOWN_OVER, over, REDESIGN, TASKS, type TaskId } from "./browser/journeys-baseline.js";
 
 // docs/ui-redesign/ is a research audit of every screen. This test keeps its tables in step with the code:
@@ -82,7 +82,7 @@ const sectionText = (text: string, heading: string) => {
 };
 const navLinks = (html: string) => [...html.matchAll(/<a [^>]*data-nav="([\w-]+)"[^>]*>([^<]+)</g)].map((m) => ({ name: m[1]!, text: m[2]!.trim() }));
 
-/** What is wrong with the rows of "## Responsive results"; [] when nothing is. */
+/** What is wrong with the rows of a results table; [] when nothing is. */
 function responsiveProblems(rows: string[][], names: readonly string[], columns: number): string[] {
   const problems: string[] = [];
   if (rows.length !== names.length) problems.push(`${rows.length} rows, expected ${names.length}`);
@@ -332,6 +332,19 @@ describe("the documents", () => {
     expect(sectionText(measurement, "## Responsive results")).toContain(`| Journey | ${VARIANTS.map((v) => v.label).join(" | ")} |`);
     const failing = rows.some((r) => r.slice(1).some((c) => c.startsWith("fail")));
     expect(failing, "a fail cell exists exactly when the spec has a test.fixme").toBe(read("tests/browser/essential.spec.ts").includes("test.fixme("));
+  });
+
+  it("has stress results for every item at 360 px", () => {
+    const measurement = doc("measurement.md");
+    const rows = tableRows(measurement, "### Stress content at 360 px");
+    expect(responsiveProblems(rows, STRESS, 1)).toEqual([]);
+    const section = sectionText(measurement, "## Responsive results");
+    expect(section).toContain("### Stress content at 360 px");
+    expect(section).toContain("| Content | Result |");
+    for (const w of ["360", "768", "1024", "1440"]) expect(section, w).toContain(w);
+    expect(section).toMatch(/Ask SCF drawer[^.]*not built/);
+    const failing = rows.some((r) => r.slice(1).some((c) => c.startsWith("fail")));
+    expect(failing, "a fail cell exists exactly when the spec has a test.fixme").toBe(read("tests/browser/stress.spec.ts").includes("test.fixme("));
   });
 
   it("responsiveProblems finds a missing row, a wrong order and a bad cell", () => {
