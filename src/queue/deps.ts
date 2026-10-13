@@ -41,13 +41,19 @@ export function dependencyRange(body: string): { start: number; end: number } | 
 const norm =(s: string) =>
   s.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
+/** The normalised titles of a list, as dependencies() uses them. A snapshot: build a new one when the list changes. */
+export type TitleIndex = readonly { n: number; t: string }[];
+export function titleIndex(all: readonly DepIssue[]): TitleIndex {
+  return all.map((i) => ({ n: i.number, t: norm(i.title) })).filter((i) => i.t.length >= 3);
+}
+
 /** Issue numbers this body depends on: "#12" references, and items matching another issue's title. */
-export function dependencies(body: string, self: number, all: DepIssue[]): number[] {
+export function dependencies(body: string, self: number, all: DepIssue[], titleList?: TitleIndex): number[] {
   const text = dependencyText(body);
   if (!text) return [];
   const found = new Set<number>();
   for (const m of text.matchAll(new RegExp(DEP_REF_SOURCE, "g"))) found.add(Number(m[1]));
-  const titles = all.map((i) => ({ n: i.number, t: norm(i.title) })).filter((i) => i.t.length >= 3);
+  const titles = titleList ?? titleIndex(all);
   const selfTitle = ` ${norm(all.find((i) => i.number === self)?.title ?? "")} `;
   for (const raw of text.split(/[;\n]/)) {
     const item = norm(raw.replace(/^\s*[-*+]\s*(\[[ x]\]\s*)?/i, "").replace(/#\d+/g, ""));

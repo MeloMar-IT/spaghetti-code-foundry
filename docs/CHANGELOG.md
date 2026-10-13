@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Watchers keep a small record of every issue per repository (#483). Part 1 of 7 of #408.
+  - **What it does.** Each issue watcher check reads the whole issue list once (open and closed, 100 per GitHub call, at most 20 pages = 2,000 issues). Watchers of one repository share that read. The record is saved in `issue-lists/` in the data folder: number, title, state, labels, links (epic, parent, part of, epic label), dependencies and stories. No issue text is stored.
+  - **Limit.** A list with more issues is saved as `cut`; the dependency check then sees only the issues in the record. The limit is `issueListPages` on the watcher.
+  - **Fallback.** A failed read keeps the previous file and falls back to the old open-issues call; the reason is logged. A malformed issue from GitHub fails the whole read.
+  - **Dependency check.** Uses the same list. Late writes are dropped when the watcher stopped, a newer check started or the repository's record was removed.
+  - New `src/queue/issue-list.ts`; `listAllIssues` in `src/github.ts`; `titleIndex` in `src/queue/deps.ts`. Tests in `tests/issue-list.test.ts` and `tests/watch-issue-list.test.ts`. `docs/USER_GUIDE.md` and `docs/DESIGN.md` updated.
 - A sixth helper process, `scf housekeeping` (every 3 hours, with `run|report|install|uninstall|status` like the others).
   - **Memory record.** Each check writes the memory of the system's file-change tracker (`fseventsd`) and of the Foundry server to `housekeeping/memory.log`. Above 8 GB for the tracker or 6 GB for the server it sends one notification that day and the digest names it. Reason: on a machine up for days the tracker once grew to 56 GB and starved the runs of memory.
   - **Nightly clean-up.** At the first check after 03:00 it removes the workspaces of runs that ended more than 2 days ago (as `scf clean --older-than 2`): run records, logs and branches stay; active and paused runs are not touched. A clean-up that fails is tried again at the next check.
